@@ -1,0 +1,35 @@
+# General artifacts
+bin/
+build/
+dist/
+*.log
+*.tmp
+*.cache
+
+# Go build artifacts
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+*_test.go
+
+# Vendor and dependency directories
+vendor/
+
+# IDEs and editors
+.vscode/
+.idea/
+*.code-workspace
+
+# OS-specific files
+.DS_Store
+Thumbs.db
+
+# Temporary files from editors
+*~
+*.swp
+*.swo
+*.bak
