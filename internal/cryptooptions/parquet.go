@@ -8,35 +8,79 @@ import (
 	"github.com/parquet-go/parquet-go/compress/zstd"
 )
 
-// WriteParquet writes a slice of Bar1m records to a Parquet file with
-// ZSTD compression.
-func WriteParquet(path string, bars []Bar1m) error {
+const parquetRowGroupSize = 100_000
+
+type BarWriter struct {
+	file   *os.File
+	writer *parquet.GenericWriter[Bar1m]
+}
+
+func NewBarWriter(path string) (*BarWriter, error) {
 	f, err := os.Create(path)
 	if err != nil {
-		return fmt.Errorf("create parquet file %s: %w", path, err)
+		return nil, fmt.Errorf("create parquet file %s: %w", path, err)
 	}
-	defer f.Close()
 
 	writer := parquet.NewGenericWriter[Bar1m](f,
 		parquet.Compression(&zstd.Codec{}),
 		parquet.CreatedBy("toktik", "1.0", ""),
 	)
 
-	const rowGroupSize = 100_000
-	for i := 0; i < len(bars); i += rowGroupSize {
-		end := i + rowGroupSize
-		if end > len(bars) {
-			end = len(bars)
+	return &BarWriter{file: f, writer: writer}, nil
+}
+
+func (w *BarWriter) WriteRows(rows []Bar1m) error {
+	for i := 0; i < len(rows); i += parquetRowGroupSize {
+		end := i + parquetRowGroupSize
+		if end > len(rows) {
+			end = len(rows)
 		}
-		_, err := writer.Write(bars[i:end])
-		if err != nil {
-			writer.Close()
-			return fmt.Errorf("write rows to %s: %w", path, err)
+		if _, err := w.writer.Write(rows[i:end]); err != nil {
+			return fmt.Errorf("write rows: %w", err)
 		}
 	}
+	return nil
+}
+
+func (w *BarWriter) Close() error {
+	if w == nil {
+		return nil
+	}
+	if w.writer == nil && w.file == nil {
+		return nil
+	}
+
+	writer := w.writer
+	file := w.file
+	w.writer = nil
+	w.file = nil
 
 	if err := writer.Close(); err != nil {
-		return fmt.Errorf("close parquet writer %s: %w", path, err)
+		if file != nil {
+			file.Close()
+			return fmt.Errorf("close parquet writer %s: %w", file.Name(), err)
+		}
+		return fmt.Errorf("close parquet writer: %w", err)
+	}
+	if file != nil {
+		if err := file.Close(); err != nil {
+			return fmt.Errorf("close parquet file %s: %w", file.Name(), err)
+		}
+	}
+	return nil
+}
+
+// WriteParquet writes a slice of Bar1m records to a Parquet file with
+// ZSTD compression.
+func WriteParquet(path string, bars []Bar1m) error {
+	writer, err := NewBarWriter(path)
+	if err != nil {
+		return err
+	}
+	defer writer.Close()
+
+	if err := writer.WriteRows(bars); err != nil {
+		return fmt.Errorf("write rows to %s: %w", path, err)
 	}
 
 	return nil

@@ -195,7 +195,7 @@ func ParseCSVFromZST(path string) (<-chan TickRow, func(), error) {
 		return nil, nil, fmt.Errorf("open %s: %w", path, err)
 	}
 
-	decoder, err := zstd.NewReader(f)
+	decoder, err := zstd.NewReader(f, zstd.WithDecoderConcurrency(1))
 	if err != nil {
 		f.Close()
 		return nil, nil, fmt.Errorf("zstd decoder for %s: %w", path, err)
@@ -245,9 +245,7 @@ func ParseCSVFromZST(path string) (<-chan TickRow, func(), error) {
 				}
 				continue
 			}
-			row := make([]string, len(record))
-			copy(row, record)
-			tick, err := parseRow(row, &idx)
+			tick, err := parseRow(record, &idx)
 			if err != nil {
 				badLines++
 				if badLines <= 10 {

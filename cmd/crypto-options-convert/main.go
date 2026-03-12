@@ -110,18 +110,29 @@ func processFile(zstPath, outputDir string) error {
 		}
 	}
 
-	bars := agg.Flush()
+	barCount := agg.Count()
 	log.Printf("[AGGREGATE] %s: %d ticks -> %d bars in %s",
-		baseName, tickCount, len(bars), time.Since(fileStart).Round(time.Second))
+		baseName, tickCount, barCount, time.Since(fileStart).Round(time.Second))
 
-	if len(bars) == 0 {
+	if barCount == 0 {
 		log.Printf("[SKIP] %s: no bars produced", baseName)
 		return nil
 	}
 
 	writeStart := time.Now()
-	if err := cryptooptions.WriteParquet(outPath, bars); err != nil {
+	writer, err := cryptooptions.NewBarWriter(outPath)
+	if err != nil {
+		return fmt.Errorf("open parquet writer: %w", err)
+	}
+	defer func() {
+		_ = writer.Close()
+	}()
+
+	if _, err := agg.FlushSortedBatches(100_000, writer.WriteRows); err != nil {
 		return fmt.Errorf("write parquet: %w", err)
+	}
+	if err := writer.Close(); err != nil {
+		return fmt.Errorf("close parquet writer: %w", err)
 	}
 
 	info, _ := os.Stat(outPath)
@@ -131,7 +142,7 @@ func processFile(zstPath, outputDir string) error {
 	}
 
 	log.Printf("[WRITE] %s -> %s (%.1f MB, %d bars, write took %s)",
-		baseName, filepath.Base(outPath), sizeMB, len(bars),
+		baseName, filepath.Base(outPath), sizeMB, barCount,
 		time.Since(writeStart).Round(time.Millisecond))
 
 	return nil

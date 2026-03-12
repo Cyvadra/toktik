@@ -130,26 +130,62 @@ func (a *Aggregator) Add(tick TickRow) {
 	acc.bar.TickCount++
 }
 
-// Flush returns all accumulated bars sorted by (base_asset, symbol, timestamp)
-// and resets the aggregator.
-func (a *Aggregator) Flush() []Bar1m {
-	bars := make([]Bar1m, 0, len(a.accumulators))
+// FlushSortedBatches sorts accumulated bars by (base_asset, symbol, timestamp),
+// passes them to writeBatch in bounded chunks, and resets the aggregator.
+func (a *Aggregator) FlushSortedBatches(batchSize int, writeBatch func([]Bar1m) error) (int, error) {
+	if len(a.accumulators) == 0 {
+		a.accumulators = make(map[aggregatorKey]*barAccumulator)
+		return 0, nil
+	}
+	if batchSize < 1 {
+		batchSize = len(a.accumulators)
+	}
+
+	ordered := make([]*barAccumulator, 0, len(a.accumulators))
 	for _, acc := range a.accumulators {
-		bars = append(bars, acc.bar)
+		ordered = append(ordered, acc)
 	}
 	a.accumulators = make(map[aggregatorKey]*barAccumulator)
 
-	sort.Slice(bars, func(i, j int) bool {
-		if bars[i].BaseAsset != bars[j].BaseAsset {
-			return bars[i].BaseAsset < bars[j].BaseAsset
+	sort.Slice(ordered, func(i, j int) bool {
+		left := ordered[i].bar
+		right := ordered[j].bar
+		if left.BaseAsset != right.BaseAsset {
+			return left.BaseAsset < right.BaseAsset
 		}
-		if bars[i].Symbol != bars[j].Symbol {
-			return bars[i].Symbol < bars[j].Symbol
+		if left.Symbol != right.Symbol {
+			return left.Symbol < right.Symbol
 		}
-		return bars[i].Timestamp.Before(bars[j].Timestamp)
+		return left.Timestamp.Before(right.Timestamp)
 	})
 
-	return bars
+	batch := make([]Bar1m, 0, min(batchSize, len(ordered)))
+	total := 0
+	for _, acc := range ordered {
+		batch = append(batch, acc.bar)
+		if len(batch) == batchSize {
+			if err := writeBatch(batch); err != nil {
+				return total, err
+			}
+			total += len(batch)
+			batch = batch[:0]
+		}
+	}
+	if len(batch) > 0 {
+		if err := writeBatch(batch); err != nil {
+			return total, err
+		}
+		total += len(batch)
+	}
+
+	return total, nil
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 func (a *Aggregator) Count() int {
