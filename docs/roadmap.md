@@ -1,21 +1,26 @@
 # Toktik Platform - Roadmap
 
-This document captures future plans for the toktik data platform. Items below are **not yet implemented** and serve as a design reference.
+This document captures the current implementation status and future plans for the toktik data platform.
 
 ---
 
 ## Phase 2: K-Line Generation
 
+Status: Implemented
+
 Generate OHLCV bars at multiple time windows from 1-minute data stored in ClickHouse:
 
 - **Intervals**: 5m, 15m, 30m, 1h, 4h, 1d
-- **Approach**: ClickHouse materialized views or query-time aggregation from `crypto_options_bar_1m`
-- **Schema**: `crypto_options_bar_{interval}` tables, same column structure as `crypto_options_bar_1m`
-- **Materialized views** are preferred for pre-computed access; query-time aggregation is fallback for ad-hoc intervals
+- **Approach**: ClickHouse materialized views and query-time aggregation from `crypto_options_bar_1m`
+- **Schema**: Precomputed interval views are exposed as `crypto_options_bar_{interval}` with the same column structure as `crypto_options_bar_1m`
+- **Implementation**: Each precomputed interval uses an `AggregatingMergeTree` state table, a materialized view fed from `crypto_options_bar_1m`, and a query view for read access
+- **Fallback**: Query-time aggregation is supported for ad-hoc intervals that are not precomputed
 
 ---
 
 ## Phase 3: Market Data API (Gin)
+
+Status: Implemented
 
 Expose market data through a RESTful web API powered by Gin:
 
@@ -27,6 +32,7 @@ Expose market data through a RESTful web API powered by Gin:
   - `internal/dto/crypto_options.go` - request/response DTOs
   - `internal/service/crypto_options.go` - business logic using DTOs
 - **Pagination**: cursor-based for time-series data
+- **Interval routing**: `1m` reads from the base table, precomputed intervals read from K-line views, ad-hoc intervals use query-time aggregation
 - **Cache**: Consider Redis or in-memory cache for hot symbol metadata
 
 ---
@@ -77,6 +83,15 @@ The platform is designed to support various markets beyond crypto options:
 ---
 
 ## Architecture Notes
+
+### Current Status
+
+```
+Phase 1: Implemented
+Phase 2: Implemented
+Phase 3: Implemented
+Phase 4+: Planned
+```
 
 ### DTO Pattern
 
