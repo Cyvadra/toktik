@@ -1,138 +1,138 @@
 package main
 
 import (
-"flag"
-"fmt"
-"log"
-"os"
-"path/filepath"
-"runtime"
-"strings"
-"sync"
-"sync/atomic"
-"time"
+	"flag"
+	"fmt"
+	"log"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
 
-"github.com/Cyvadra/toktik/internal/cryptooptions"
+	"github.com/Cyvadra/toktik/internal/cryptooptions"
 )
 
 func main() {
-inputDir := flag.String("input-dir", "", "Directory containing .zst files")
-outputDir := flag.String("output-dir", "", "Directory for output .parquet files")
-workers := flag.Int("workers", runtime.NumCPU()/2, "Number of parallel workers")
-flag.Parse()
+	inputDir := flag.String("input-dir", "", "Directory containing .zst files")
+	outputDir := flag.String("output-dir", "", "Directory for output .parquet files")
+	workers := flag.Int("workers", runtime.NumCPU()/2, "Number of parallel workers")
+	flag.Parse()
 
-if *inputDir == "" || *outputDir == "" {
-fmt.Fprintf(os.Stderr, "Usage: crypto-options-convert --input-dir <dir> --output-dir <dir> [--workers N]\n")
-os.Exit(1)
-}
-if *workers < 1 {
-*workers = 1
-}
+	if *inputDir == "" || *outputDir == "" {
+		fmt.Fprintf(os.Stderr, "Usage: crypto-options-convert --input-dir <dir> --output-dir <dir> [--workers N]\n")
+		os.Exit(1)
+	}
+	if *workers < 1 {
+		*workers = 1
+	}
 
-if err := os.MkdirAll(*outputDir, 0755); err != nil {
-log.Fatalf("create output dir: %v", err)
-}
+	if err := os.MkdirAll(*outputDir, 0755); err != nil {
+		log.Fatalf("create output dir: %v", err)
+	}
 
-entries, err := os.ReadDir(*inputDir)
-if err != nil {
-log.Fatalf("read input dir: %v", err)
-}
+	entries, err := os.ReadDir(*inputDir)
+	if err != nil {
+		log.Fatalf("read input dir: %v", err)
+	}
 
-var zstFiles []string
-for _, e := range entries {
-if !e.IsDir() && strings.HasSuffix(strings.ToLower(e.Name()), ".zst") {
-zstFiles = append(zstFiles, filepath.Join(*inputDir, e.Name()))
-}
-}
+	var zstFiles []string
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(strings.ToLower(e.Name()), ".zst") {
+			zstFiles = append(zstFiles, filepath.Join(*inputDir, e.Name()))
+		}
+	}
 
-if len(zstFiles) == 0 {
-log.Fatalf("no .zst files found in %s", *inputDir)
-}
+	if len(zstFiles) == 0 {
+		log.Fatalf("no .zst files found in %s", *inputDir)
+	}
 
-log.Printf("Found %d .zst files, processing with %d workers", len(zstFiles), *workers)
+	log.Printf("Found %d .zst files, processing with %d workers", len(zstFiles), *workers)
 
-var (
-wg        sync.WaitGroup
-sem       = make(chan struct{}, *workers)
-completed int64
-failed    int64
-)
+	var (
+		wg        sync.WaitGroup
+		sem       = make(chan struct{}, *workers)
+		completed int64
+		failed    int64
+	)
 
-startTime := time.Now()
+	startTime := time.Now()
 
-for _, zstPath := range zstFiles {
-wg.Add(1)
-sem <- struct{}{}
+	for _, zstPath := range zstFiles {
+		wg.Add(1)
+		sem <- struct{}{}
 
-go func(path string) {
-defer wg.Done()
-defer func() { <-sem }()
+		go func(path string) {
+			defer wg.Done()
+			defer func() { <-sem }()
 
-if err := processFile(path, *outputDir); err != nil {
-log.Printf("[ERROR] %s: %v", filepath.Base(path), err)
-atomic.AddInt64(&failed, 1)
-} else {
-n := atomic.AddInt64(&completed, 1)
-log.Printf("[DONE] %d/%d files completed", n, len(zstFiles))
-}
-}(zstPath)
-}
+			if err := processFile(path, *outputDir); err != nil {
+				log.Printf("[ERROR] %s: %v", filepath.Base(path), err)
+				atomic.AddInt64(&failed, 1)
+			} else {
+				n := atomic.AddInt64(&completed, 1)
+				log.Printf("[DONE] %d/%d files completed", n, len(zstFiles))
+			}
+		}(zstPath)
+	}
 
-wg.Wait()
+	wg.Wait()
 
-elapsed := time.Since(startTime)
-log.Printf("Completed: %d succeeded, %d failed, elapsed %s",
-completed, failed, elapsed.Round(time.Second))
+	elapsed := time.Since(startTime)
+	log.Printf("Completed: %d succeeded, %d failed, elapsed %s",
+		completed, failed, elapsed.Round(time.Second))
 }
 
 func processFile(zstPath, outputDir string) error {
-baseName := filepath.Base(zstPath)
-stem := strings.TrimSuffix(baseName, filepath.Ext(baseName))
-outPath := filepath.Join(outputDir, stem+".parquet")
+	baseName := filepath.Base(zstPath)
+	stem := strings.TrimSuffix(baseName, filepath.Ext(baseName))
+	outPath := filepath.Join(outputDir, stem+".parquet")
 
-log.Printf("[START] %s", baseName)
-fileStart := time.Now()
+	log.Printf("[START] %s", baseName)
+	fileStart := time.Now()
 
-tickCh, closer, err := cryptooptions.ParseCSVFromZST(zstPath)
-if err != nil {
-return fmt.Errorf("open zst: %w", err)
-}
-defer closer()
+	tickCh, closer, err := cryptooptions.ParseCSVFromZST(zstPath)
+	if err != nil {
+		return fmt.Errorf("open zst: %w", err)
+	}
+	defer closer()
 
-agg := cryptooptions.NewAggregator()
-var tickCount int64
-for tick := range tickCh {
-agg.Add(tick)
-tickCount++
-if tickCount%10_000_000 == 0 {
-log.Printf("[PROGRESS] %s: %dM ticks processed, %d active bars",
-baseName, tickCount/1_000_000, agg.Count())
-}
-}
+	agg := cryptooptions.NewAggregator()
+	var tickCount int64
+	for tick := range tickCh {
+		agg.Add(tick)
+		tickCount++
+		if tickCount%10_000_000 == 0 {
+			log.Printf("[PROGRESS] %s: %dM ticks processed, %d active bars",
+				baseName, tickCount/1_000_000, agg.Count())
+		}
+	}
 
-bars := agg.Flush()
-log.Printf("[AGGREGATE] %s: %d ticks -> %d bars in %s",
-baseName, tickCount, len(bars), time.Since(fileStart).Round(time.Second))
+	bars := agg.Flush()
+	log.Printf("[AGGREGATE] %s: %d ticks -> %d bars in %s",
+		baseName, tickCount, len(bars), time.Since(fileStart).Round(time.Second))
 
-if len(bars) == 0 {
-log.Printf("[SKIP] %s: no bars produced", baseName)
-return nil
-}
+	if len(bars) == 0 {
+		log.Printf("[SKIP] %s: no bars produced", baseName)
+		return nil
+	}
 
-writeStart := time.Now()
-if err := cryptooptions.WriteParquet(outPath, bars); err != nil {
-return fmt.Errorf("write parquet: %w", err)
-}
+	writeStart := time.Now()
+	if err := cryptooptions.WriteParquet(outPath, bars); err != nil {
+		return fmt.Errorf("write parquet: %w", err)
+	}
 
-info, _ := os.Stat(outPath)
-var sizeMB float64
-if info != nil {
-sizeMB = float64(info.Size()) / (1024 * 1024)
-}
+	info, _ := os.Stat(outPath)
+	var sizeMB float64
+	if info != nil {
+		sizeMB = float64(info.Size()) / (1024 * 1024)
+	}
 
-log.Printf("[WRITE] %s -> %s (%.1f MB, %d bars, write took %s)",
-baseName, filepath.Base(outPath), sizeMB, len(bars),
-time.Since(writeStart).Round(time.Millisecond))
+	log.Printf("[WRITE] %s -> %s (%.1f MB, %d bars, write took %s)",
+		baseName, filepath.Base(outPath), sizeMB, len(bars),
+		time.Since(writeStart).Round(time.Millisecond))
 
-return nil
+	return nil
 }
