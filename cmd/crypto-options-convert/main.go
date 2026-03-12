@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -33,16 +34,9 @@ func main() {
 		log.Fatalf("create output dir: %v", err)
 	}
 
-	entries, err := os.ReadDir(*inputDir)
+	zstFiles, err := findZSTFiles(*inputDir)
 	if err != nil {
-		log.Fatalf("read input dir: %v", err)
-	}
-
-	var zstFiles []string
-	for _, e := range entries {
-		if !e.IsDir() && strings.HasSuffix(strings.ToLower(e.Name()), ".zst") {
-			zstFiles = append(zstFiles, filepath.Join(*inputDir, e.Name()))
-		}
+		log.Fatalf("scan input dir: %v", err)
 	}
 
 	if len(zstFiles) == 0 {
@@ -68,7 +62,7 @@ func main() {
 			defer wg.Done()
 			defer func() { <-sem }()
 
-			if err := processFile(path, *outputDir); err != nil {
+			if err := processFile(*inputDir, path, *outputDir); err != nil {
 				log.Printf("[ERROR] %s: %v", filepath.Base(path), err)
 				atomic.AddInt64(&failed, 1)
 			} else {
@@ -85,9 +79,36 @@ func main() {
 		completed, failed, elapsed.Round(time.Second))
 }
 
-func processFile(zstPath, outputDir string) error {
+func findZSTFiles(inputDir string) ([]string, error) {
+	var zstFiles []string
+
+	err := filepath.WalkDir(inputDir, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		if strings.HasSuffix(strings.ToLower(d.Name()), ".zst") {
+			zstFiles = append(zstFiles, path)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	sort.Strings(zstFiles)
+	return zstFiles, nil
+}
+
+func processFile(inputDir, zstPath, outputDir string) error {
 	baseName := filepath.Base(zstPath)
-	stem := strings.TrimSuffix(baseName, filepath.Ext(baseName))
+	relPath, err := filepath.Rel(inputDir, zstPath)
+	if err != nil {
+		return fmt.Errorf("compute relative path: %w", err)
+	}
+	stem := strings.TrimSuffix(relPath, filepath.Ext(relPath))
 	outPath := filepath.Join(outputDir, stem+".parquet")
 
 	log.Printf("[START] %s", baseName)
@@ -120,6 +141,9 @@ func processFile(zstPath, outputDir string) error {
 	}
 
 	writeStart := time.Now()
+	if err := os.MkdirAll(filepath.Dir(outPath), 0755); err != nil {
+		return fmt.Errorf("create output subdir: %w", err)
+	}
 	writer, err := cryptooptions.NewBarWriter(outPath)
 	if err != nil {
 		return fmt.Errorf("open parquet writer: %w", err)
