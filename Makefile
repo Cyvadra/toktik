@@ -1,11 +1,11 @@
-.PHONY: build-convert build-import build-api build-all build-win-arm clean
+.PHONY: build-convert build-import build-api build-backtest-example build-all build-win-arm clean
 
 BUILD_DIR := bin
 
 GOFLAGS := -trimpath
 LDFLAGS := -s -w
 
-build-all: build-convert build-import build-api
+build-all: build-convert build-import build-api build-backtest-example
 
 build-convert:
 	@mkdir -p $(BUILD_DIR)
@@ -18,6 +18,10 @@ build-import:
 build-api:
 	@mkdir -p $(BUILD_DIR)
 	go build $(GOFLAGS) -ldflags '$(LDFLAGS)' -o $(BUILD_DIR)/api-server ./cmd/api-server
+
+build-backtest-example:
+	@mkdir -p $(BUILD_DIR)
+	go build $(GOFLAGS) -ldflags '$(LDFLAGS)' -o $(BUILD_DIR)/backtest-example ./cmd/backtest-example
 
 build-win-arm:
 	@mkdir -p $(BUILD_DIR)

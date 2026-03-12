@@ -67,3 +67,20 @@ func (h *Handler) GetGreeks(c *gin.Context) {
 
 	c.JSON(http.StatusOK, resp)
 }
+
+// RunBacktest handles POST /api/v1/crypto-options/backtest
+func (h *Handler) RunBacktest(c *gin.Context) {
+	var req dto.BacktestRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: err.Error()})
+		return
+	}
+
+	resp, err := h.cryptoOptions.RunBacktest(c.Request.Context(), req)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, resp)
+}

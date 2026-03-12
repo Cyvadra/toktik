@@ -110,6 +110,25 @@ type GreeksResponse struct {
 	NextCursor string      `json:"next_cursor,omitempty"`
 }
 
+// BacktestRequest is the JSON body for the backtest endpoint.
+type BacktestRequest struct {
+	Symbol          string   `json:"symbol" binding:"required"`
+	Interval        string   `json:"interval" binding:"required"`
+	From            string   `json:"from" binding:"required"`
+	To              string   `json:"to" binding:"required"`
+	Capital         *float64 `json:"capital,omitempty"`
+	Strategy        string   `json:"strategy,omitempty"`
+	CommissionModel string   `json:"commission_model,omitempty"`
+	CommissionValue *float64 `json:"commission_value,omitempty"`
+	SlippagePct     *float64 `json:"slippage_pct,omitempty"`
+	FillMode        string   `json:"fill_mode,omitempty"`
+	ValuationMode   string   `json:"valuation_mode,omitempty"`
+	TriggerMode     string   `json:"trigger_mode,omitempty"`
+	EntryTWAPBars   *int     `json:"entry_twap_bars,omitempty"`
+	FastPeriod      *int     `json:"fast_period,omitempty"`
+	SlowPeriod      *int     `json:"slow_period,omitempty"`
+}
+
 // ErrorResponse is the standard error envelope.
 type ErrorResponse struct {
 	Error string `json:"error"`

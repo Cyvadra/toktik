@@ -16,6 +16,7 @@ func NewRouter(cos *service.CryptoOptionsService) *gin.Engine {
 		co.GET("/bars", h.GetBars)
 		co.GET("/symbols", h.GetSymbols)
 		co.GET("/greeks", h.GetGreeks)
+		co.POST("/backtest", h.RunBacktest)
 	}
 
 	return r

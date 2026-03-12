@@ -39,13 +39,22 @@ Expose market data through a RESTful web API powered by Gin:
 
 ## Phase 4: Backtest Engine
 
-Integrate with backtesting strategies that run efficiently on the platform:
+Status: Implemented
 
-- **Data feed**: Stream 1m/5m bars from ClickHouse to the backtest engine
-- **Strategy interface**: Define a Go interface for strategies to implement
-- **Execution model**: Event-driven with bar-by-bar replay
-- **Performance tracking**: PnL, Sharpe, drawdown, Greeks exposure over time
-- **Output**: Results stored in ClickHouse for historical comparison
+Pine Script-comparable backtest engine with preflight indicator computation and multi-asset support:
+
+- **Architecture**: `internal/backtest/` — market-agnostic engine core; `internal/datafeed/` — market-specific DataFeed adapters
+- **Columnar DataSet**: Each field stored as `[]float64` for cache-friendly vectorized indicator computation
+- **Strategy interface**: `Init(*SetupContext)` for registering indicators and securities, `OnBar(*BarContext)` for per-bar logic
+- **Preflight indicator DAG**: Indicators declare dependencies, engine topologically sorts and computes all series in a single vectorized pass before bar replay. Independent indicators computed in parallel
+- **Built-in indicators**: SMA, EMA, RSI, MACD (multi-output), Crossover/Crossunder, Above/Below (threshold → boolean series), Custom (arbitrary function)
+- **Multi-symbol / multi-asset**: `AddSecurity(market, symbol, interval)` requests cross-symbol data (comparable to Pine Script `request.security`). Strategies can trade on multiple securities simultaneously across different markets
+- **Broker simulator**: Market/Limit/Stop/StopLimit orders with configurable commission (flat/pct/per-unit) and slippage. Next-bar execution prevents lookahead bias
+- **Series alignment**: Binary-search timestamp mapping enables mixed-interval data (e.g. 1m primary + 5m secondary)
+- **Performance metrics**: TotalReturn, AnnualizedReturn, SharpeRatio, MaxDrawdown, WinRate, ProfitFactor, plus full equity curve and trade log
+- **No persistence dependency**: Results stay in-memory with optional JSON export. No ClickHouse or MySQL required for backtest output
+- **DataFeed adapters**: `CryptoOptionsDataFeed` reads from ClickHouse bar tables with interval routing (precomputed views, ad-hoc aggregation)
+- **CLI example**: `cmd/backtest-example/` — golden-cross and delta-filter strategies with configurable parameters
 
 ---
 
@@ -90,7 +99,8 @@ The platform is designed to support various markets beyond crypto options:
 Phase 1: Implemented
 Phase 2: Implemented
 Phase 3: Implemented
-Phase 4+: Planned
+Phase 4: Implemented
+Phase 5+: Planned
 ```
 
 ### DTO Pattern
