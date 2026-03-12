@@ -1,11 +1,11 @@
-.PHONY: build-convert build-import build-all build-win-arm clean
+.PHONY: build-convert build-import build-api build-all build-win-arm clean
 
 BUILD_DIR := bin
 
 GOFLAGS := -trimpath
 LDFLAGS := -s -w
 
-build-all: build-convert build-import
+build-all: build-convert build-import build-api
 
 build-convert:
 	@mkdir -p $(BUILD_DIR)
@@ -14,6 +14,10 @@ build-convert:
 build-import:
 	@mkdir -p $(BUILD_DIR)
 	go build $(GOFLAGS) -ldflags '$(LDFLAGS)' -o $(BUILD_DIR)/crypto-options-import ./cmd/crypto-options-import
+
+build-api:
+	@mkdir -p $(BUILD_DIR)
+	go build $(GOFLAGS) -ldflags '$(LDFLAGS)' -o $(BUILD_DIR)/api-server ./cmd/api-server
 
 build-win-arm:
 	@mkdir -p $(BUILD_DIR)

@@ -1,0 +1,142 @@
+package dto
+
+import (
+	"fmt"
+	"time"
+)
+
+// BarRequest is the query parameters for the bars endpoint.
+type BarRequest struct {
+	Symbol   string `form:"symbol" binding:"required"`
+	Interval string `form:"interval" binding:"required"`
+	From     string `form:"from" binding:"required"`    // RFC3339 or "2006-01-02"
+	To       string `form:"to" binding:"required"`      // RFC3339 or "2006-01-02"
+	Limit    int    `form:"limit" binding:"omitempty"`  // max rows, default 1000
+	Cursor   string `form:"cursor" binding:"omitempty"` // opaque cursor for pagination
+}
+
+// BarRow is a single OHLCV bar returned by the API.
+type BarRow struct {
+	Timestamp            time.Time `json:"timestamp"`
+	SymbolID             uint32    `json:"symbol_id"`
+	BaseAsset            string    `json:"base_asset"`
+	MarkOpen             float32   `json:"mark_open"`
+	MarkHigh             float32   `json:"mark_high"`
+	MarkLow              float32   `json:"mark_low"`
+	MarkClose            float32   `json:"mark_close"`
+	LastOpen             float32   `json:"last_open"`
+	LastHigh             float32   `json:"last_high"`
+	LastLow              float32   `json:"last_low"`
+	LastClose            float32   `json:"last_close"`
+	BidOpen              float32   `json:"bid_open"`
+	BidClose             float32   `json:"bid_close"`
+	AskOpen              float32   `json:"ask_open"`
+	AskClose             float32   `json:"ask_close"`
+	MarkIVOpen           float32   `json:"mark_iv_open"`
+	MarkIVClose          float32   `json:"mark_iv_close"`
+	BidIVOpen            float32   `json:"bid_iv_open"`
+	AskIVOpen            float32   `json:"ask_iv_open"`
+	Delta                float32   `json:"delta"`
+	Gamma                float32   `json:"gamma"`
+	Vega                 float32   `json:"vega"`
+	Theta                float32   `json:"theta"`
+	Rho                  float32   `json:"rho"`
+	UnderlyingPriceOpen  float32   `json:"underlying_price_open"`
+	UnderlyingPriceClose float32   `json:"underlying_price_close"`
+	OpenInterest         float32   `json:"open_interest"`
+	TickCount            uint16    `json:"tick_count"`
+}
+
+// BarResponse wraps paginated bar results.
+type BarResponse struct {
+	Data       []BarRow `json:"data"`
+	NextCursor string   `json:"next_cursor,omitempty"`
+}
+
+// SymbolRequest is the query parameters for the symbols endpoint.
+type SymbolRequest struct {
+	Search    string `form:"search" binding:"omitempty"`     // substring match
+	BaseAsset string `form:"base_asset" binding:"omitempty"` // filter by base asset
+	Limit     int    `form:"limit" binding:"omitempty"`      // max rows, default 100
+	Cursor    string `form:"cursor" binding:"omitempty"`     // opaque cursor
+}
+
+// SymbolRow is a single option symbol returned by the API.
+type SymbolRow struct {
+	SymbolID        uint32    `json:"symbol_id"`
+	Symbol          string    `json:"symbol"`
+	BaseAsset       string    `json:"base_asset"`
+	OptionType      string    `json:"option_type"`
+	StrikePrice     float32   `json:"strike_price"`
+	Expiration      time.Time `json:"expiration"`
+	UnderlyingIndex string    `json:"underlying_index"`
+}
+
+// SymbolResponse wraps paginated symbol results.
+type SymbolResponse struct {
+	Data       []SymbolRow `json:"data"`
+	NextCursor string      `json:"next_cursor,omitempty"`
+}
+
+// GreeksRequest is the query parameters for the greeks endpoint.
+type GreeksRequest struct {
+	Symbol   string `form:"symbol" binding:"required"`
+	Interval string `form:"interval" binding:"omitempty"` // default "1m"
+	From     string `form:"from" binding:"required"`
+	To       string `form:"to" binding:"required"`
+	Limit    int    `form:"limit" binding:"omitempty"`
+	Cursor   string `form:"cursor" binding:"omitempty"`
+}
+
+// GreeksRow is a single greeks snapshot returned by the API.
+type GreeksRow struct {
+	Timestamp            time.Time `json:"timestamp"`
+	SymbolID             uint32    `json:"symbol_id"`
+	Delta                float32   `json:"delta"`
+	Gamma                float32   `json:"gamma"`
+	Vega                 float32   `json:"vega"`
+	Theta                float32   `json:"theta"`
+	Rho                  float32   `json:"rho"`
+	MarkIVOpen           float32   `json:"mark_iv_open"`
+	MarkIVClose          float32   `json:"mark_iv_close"`
+	UnderlyingPriceOpen  float32   `json:"underlying_price_open"`
+	UnderlyingPriceClose float32   `json:"underlying_price_close"`
+	OpenInterest         float32   `json:"open_interest"`
+}
+
+// GreeksResponse wraps paginated greeks results.
+type GreeksResponse struct {
+	Data       []GreeksRow `json:"data"`
+	NextCursor string      `json:"next_cursor,omitempty"`
+}
+
+// ErrorResponse is the standard error envelope.
+type ErrorResponse struct {
+	Error string `json:"error"`
+}
+
+// ParseTimeRange parses from/to strings in RFC3339 or date-only format.
+func ParseTimeRange(from, to string) (time.Time, time.Time, error) {
+	fromT, err := parseFlexibleTime(from)
+	if err != nil {
+		return time.Time{}, time.Time{}, fmt.Errorf("invalid 'from': %w", err)
+	}
+	toT, err := parseFlexibleTime(to)
+	if err != nil {
+		return time.Time{}, time.Time{}, fmt.Errorf("invalid 'to': %w", err)
+	}
+	if !fromT.Before(toT) {
+		return time.Time{}, time.Time{}, fmt.Errorf("'from' must be before 'to'")
+	}
+	return fromT, toT, nil
+}
+
+func parseFlexibleTime(s string) (time.Time, error) {
+	if t, err := time.Parse(time.RFC3339, s); err == nil {
+		return t.UTC(), nil
+	}
+	if t, err := time.Parse("2006-01-02", s); err == nil {
+		return t.UTC(), nil
+	}
+	return time.Time{}, fmt.Errorf("expected RFC3339 or YYYY-MM-DD, got %q", s)
+}
