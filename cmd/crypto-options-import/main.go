@@ -62,6 +62,11 @@ func main() {
 	}
 	log.Printf("Schema initialized from %s", *schemaFile)
 
+	if err := cryptooptions.InitKlineSchema(ctx, conn); err != nil {
+		log.Fatalf("init kline schema: %v", err)
+	}
+	log.Printf("K-line materialized views initialized")
+
 	parquetFiles, err := collectParquetFiles(*inputDir)
 	if err != nil {
 		log.Fatalf("scan input dir: %v", err)
