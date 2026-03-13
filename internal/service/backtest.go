@@ -15,9 +15,9 @@ const (
 	defaultBacktestCapital         = 100000.0
 	defaultBacktestCommissionValue = 0.001
 	defaultBacktestSlippagePct     = 0.0005
-	defaultBacktestFillMode        = "bidask"
-	defaultBacktestValuationMode   = "exit"
-	defaultBacktestTriggerMode     = "canonical"
+	DefaultBacktestFillMode        = "bidask"
+	DefaultBacktestValuationMode   = "exit"
+	DefaultBacktestTriggerMode     = "canonical"
 )
 
 // RunBacktest executes a configured backtest and returns the engine result.
