@@ -12,6 +12,8 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
+const dateLayout = "2006-01-02"
+
 // InitSchema reads the DDL file and executes each statement against ClickHouse.
 func InitSchema(ctx context.Context, conn driver.Conn, ddlPath string) error {
 	data, err := os.ReadFile(ddlPath)
