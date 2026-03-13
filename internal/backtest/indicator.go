@@ -490,6 +490,78 @@ func (t *thresholdIndicator) Compute(inputs map[string][]float64) []float64 {
 	return out
 }
 
+// Highest creates a rolling highest-value indicator over the given period.
+func Highest(source string, period int) Indicator {
+	return &highestIndicator{source: source, period: period}
+}
+
+type highestIndicator struct {
+	source string
+	period int
+}
+
+func (h *highestIndicator) Deps() []string { return []string{h.source} }
+
+func (h *highestIndicator) Compute(inputs map[string][]float64) []float64 {
+	src := inputs[h.source]
+	n := len(src)
+	out := make([]float64, n)
+	for i := 0; i < n; i++ {
+		if i < h.period-1 {
+			out[i] = math.NaN()
+			continue
+		}
+		best := math.Inf(-1)
+		for j := i - h.period + 1; j <= i; j++ {
+			if !math.IsNaN(src[j]) && src[j] > best {
+				best = src[j]
+			}
+		}
+		if math.IsInf(best, -1) {
+			out[i] = math.NaN()
+		} else {
+			out[i] = best
+		}
+	}
+	return out
+}
+
+// Lowest creates a rolling lowest-value indicator over the given period.
+func Lowest(source string, period int) Indicator {
+	return &lowestIndicator{source: source, period: period}
+}
+
+type lowestIndicator struct {
+	source string
+	period int
+}
+
+func (l *lowestIndicator) Deps() []string { return []string{l.source} }
+
+func (l *lowestIndicator) Compute(inputs map[string][]float64) []float64 {
+	src := inputs[l.source]
+	n := len(src)
+	out := make([]float64, n)
+	for i := 0; i < n; i++ {
+		if i < l.period-1 {
+			out[i] = math.NaN()
+			continue
+		}
+		best := math.Inf(1)
+		for j := i - l.period + 1; j <= i; j++ {
+			if !math.IsNaN(src[j]) && src[j] < best {
+				best = src[j]
+			}
+		}
+		if math.IsInf(best, 1) {
+			out[i] = math.NaN()
+		} else {
+			out[i] = best
+		}
+	}
+	return out
+}
+
 // Custom creates an indicator from an arbitrary function.
 func Custom(deps []string, fn func(inputs map[string][]float64) []float64) Indicator {
 	return &customIndicator{deps: deps, fn: fn}

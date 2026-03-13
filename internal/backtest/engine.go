@@ -21,8 +21,9 @@ type Config struct {
 
 // Engine orchestrates backtests: loads data, computes indicators, and replays bars.
 type Engine struct {
-	config Config
-	feeds  map[string]DataFeed // market → DataFeed
+	config        Config
+	feeds         map[string]DataFeed // market → DataFeed
+	chainProvider OptionsChainProvider
 }
 
 // NewEngine creates a backtest engine with the given configuration.
@@ -36,6 +37,13 @@ func NewEngine(cfg Config) *Engine {
 // RegisterDataFeed associates a DataFeed with a market name.
 func (e *Engine) RegisterDataFeed(market string, feed DataFeed) {
 	e.feeds[market] = feed
+}
+
+// SetOptionsChainProvider sets the provider that supplies option chain data
+// during bar replay. This enables strategies to dynamically query available
+// options at each bar.
+func (e *Engine) SetOptionsChainProvider(p OptionsChainProvider) {
+	e.chainProvider = p
 }
 
 // Run executes a full backtest. Steps:
@@ -203,12 +211,18 @@ func (e *Engine) Run(ctx context.Context, market, symbol, interval string, from,
 	equityCurve := make([]float64, nBars)
 	allTrades := make([]Trade, 0)
 
+	spreadTracker := NewSpreadTracker()
+	var scheduledActions []ScheduledAction
+
 	barCtx := &BarContext{
-		primary:    secColumns[0],
-		securities: accessors,
-		broker:     broker,
-		params:     setupCtx.params,
-		primaryRef: primaryRef,
+		primary:          secColumns[0],
+		securities:       accessors,
+		broker:           broker,
+		params:           setupCtx.params,
+		primaryRef:       primaryRef,
+		chainProvider:    e.chainProvider,
+		spreadTracker:    spreadTracker,
+		scheduledActions: &scheduledActions,
 	}
 
 	secRefList := make([]SecurityRef, len(setupCtx.securities))
@@ -216,6 +230,11 @@ func (e *Engine) Run(ctx context.Context, market, symbol, interval string, from,
 		secRefList[i] = sec.ref
 	}
 	barCtx.secRefs = secRefList
+
+	// markPriceForContract returns mark price for a contract using chain data
+	markPriceForContract := func(c OptionContract) float64 {
+		return c.MarkPrice
+	}
 
 	for i := 0; i < nBars; i++ {
 		barCtx.barIndex = i
@@ -232,11 +251,79 @@ func (e *Engine) Run(ctx context.Context, market, symbol, interval string, from,
 			allTrades = append(allTrades, fills...)
 		}
 
+		// Process scheduled actions (time-based position management)
+		if len(scheduledActions) > 0 {
+			var remaining []ScheduledAction
+			for _, sa := range scheduledActions {
+				if !primaryDS.Timestamps[i].Before(sa.TriggerTime) {
+					// Action triggered
+					switch sa.ActionType {
+					case ScheduleCloseLeg:
+						sp := spreadTracker.Get(sa.SpreadID)
+						if sp != nil && sa.LegIndex >= 0 && sa.LegIndex < len(sp.Legs) && !sp.Legs[sa.LegIndex].Closed {
+							// Use current mark price from chain if available, else entry price
+							closePrice := sp.Legs[sa.LegIndex].Contract.MarkPrice
+							if e.chainProvider != nil {
+								contracts := e.chainProvider.AvailableContracts(primaryDS.Timestamps[i])
+								for _, c := range contracts {
+									if c.Symbol == sp.Legs[sa.LegIndex].Contract.Symbol {
+										closePrice = c.MarkPrice
+										break
+									}
+								}
+							}
+							barCtx.CloseSpreadLeg(sa.SpreadID, sa.LegIndex, closePrice)
+						}
+					case ScheduleCloseSpread:
+						sp := spreadTracker.Get(sa.SpreadID)
+						if sp != nil && !sp.IsFullyClosed() {
+							if e.chainProvider != nil {
+								contracts := e.chainProvider.AvailableContracts(primaryDS.Timestamps[i])
+								contractMap := make(map[string]OptionContract, len(contracts))
+								for _, c := range contracts {
+									contractMap[c.Symbol] = c
+								}
+								barCtx.CloseSpread(sa.SpreadID, func(oc OptionContract) float64 {
+									if updated, ok := contractMap[oc.Symbol]; ok {
+										return updated.MarkPrice
+									}
+									return oc.MarkPrice
+								})
+							} else {
+								barCtx.CloseSpread(sa.SpreadID, markPriceForContract)
+							}
+						}
+					}
+				} else {
+					remaining = append(remaining, sa)
+				}
+			}
+			scheduledActions = remaining
+		}
+
 		// Call strategy
 		strategy.OnBar(barCtx)
 
-		// Record equity
-		equityCurve[i] = broker.Equity()
+		// Record equity (include spread positions in equity)
+		spreadEquity := 0.0
+		for _, sp := range spreadTracker.OpenSpreads() {
+			if e.chainProvider != nil {
+				contracts := e.chainProvider.AvailableContracts(primaryDS.Timestamps[i])
+				contractMap := make(map[string]OptionContract, len(contracts))
+				for _, c := range contracts {
+					contractMap[c.Symbol] = c
+				}
+				spreadEquity += sp.TotalUnrealizedPnL(func(oc OptionContract) float64 {
+					if updated, ok := contractMap[oc.Symbol]; ok {
+						return updated.MarkPrice
+					}
+					return oc.MarkPrice
+				})
+			} else {
+				spreadEquity += sp.TotalUnrealizedPnL(markPriceForContract)
+			}
+		}
+		equityCurve[i] = broker.Equity() + spreadEquity
 	}
 
 	// --- Step 6: Compute metrics ---
@@ -248,6 +335,9 @@ func (e *Engine) Run(ctx context.Context, market, symbol, interval string, from,
 		e.config.InitialCapital,
 		secColumns[0], // include primary indicator series for visualization
 	)
+
+	// Attach spread summary to result
+	result.SpreadSummary = computeSpreadSummary(spreadTracker)
 
 	return result, nil
 }

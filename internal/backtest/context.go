@@ -146,6 +146,11 @@ type BarContext struct {
 	params     map[string]interface{}
 	primaryRef SecurityRef
 	secRefs    []SecurityRef
+
+	// Options trading extensions
+	chainProvider    OptionsChainProvider
+	spreadTracker    *SpreadTracker
+	scheduledActions *[]ScheduledAction
 }
 
 // BarIndex returns the current bar index (0-based).
@@ -392,4 +397,126 @@ func (bc *BarContext) ParamFloat(name string, fallback float64) float64 {
 // PrimaryRef returns the SecurityRef for the primary data series.
 func (bc *BarContext) PrimaryRef() SecurityRef {
 	return bc.primaryRef
+}
+
+// --- Options chain access ---
+
+// OptionsChain returns the current bar's options chain, filtered and queryable.
+// Returns nil if no OptionsChainProvider is configured.
+func (bc *BarContext) OptionsChain() *OptionsChain {
+	if bc.chainProvider == nil {
+		return NewOptionsChain(nil, bc.barTime)
+	}
+	contracts := bc.chainProvider.AvailableContracts(bc.barTime)
+	return NewOptionsChain(contracts, bc.barTime)
+}
+
+// --- Spread operations ---
+
+// OpenSpread opens a multi-leg spread position.
+// Each leg specifies the contract, side, quantity, and entry price.
+// Returns the spread ID for later reference.
+func (bc *BarContext) OpenSpread(legs []SpreadLeg, tag string) int {
+	if bc.spreadTracker == nil {
+		return 0
+	}
+	// Fill entry time on legs
+	for i := range legs {
+		legs[i].EntryTime = bc.barTime
+	}
+	// Record cash impact: selling = cash inflow, buying = cash outflow
+	for i := range legs {
+		amount := legs[i].Qty * legs[i].EntryPrice
+		if legs[i].Side == Sell {
+			bc.broker.cash += amount
+		} else {
+			bc.broker.cash -= amount
+		}
+	}
+	return bc.spreadTracker.Open(legs, bc.barTime, bc.barIndex, tag)
+}
+
+// CloseSpreadLeg closes a specific leg of a spread at the given price.
+func (bc *BarContext) CloseSpreadLeg(spreadID, legIndex int, closePrice float64) bool {
+	if bc.spreadTracker == nil {
+		return false
+	}
+	sp := bc.spreadTracker.Get(spreadID)
+	if sp == nil || legIndex < 0 || legIndex >= len(sp.Legs) {
+		return false
+	}
+	leg := &sp.Legs[legIndex]
+	if leg.Closed {
+		return false
+	}
+	// Cash impact of closing
+	amount := leg.Qty * closePrice
+	if leg.Side == Sell {
+		// Closing a short: buy to close = cash outflow
+		bc.broker.cash -= amount
+	} else {
+		// Closing a long: sell to close = cash inflow
+		bc.broker.cash += amount
+	}
+	return bc.spreadTracker.CloseLeg(spreadID, legIndex, closePrice, bc.barTime)
+}
+
+// CloseSpread closes all open legs of a spread using the provided price function.
+func (bc *BarContext) CloseSpread(spreadID int, priceFn func(OptionContract) float64) {
+	if bc.spreadTracker == nil {
+		return
+	}
+	sp := bc.spreadTracker.Get(spreadID)
+	if sp == nil {
+		return
+	}
+	for i := range sp.Legs {
+		if !sp.Legs[i].Closed {
+			price := priceFn(sp.Legs[i].Contract)
+			bc.CloseSpreadLeg(spreadID, i, price)
+		}
+	}
+}
+
+// Spreads returns the spread tracker for querying open/closed spreads.
+func (bc *BarContext) Spreads() *SpreadTracker {
+	return bc.spreadTracker
+}
+
+// --- Scheduled actions ---
+
+// ScheduleCloseLeg schedules automatic closing of a spread leg at a future time.
+func (bc *BarContext) ScheduleCloseLeg(triggerTime time.Time, spreadID, legIndex int) {
+	if bc.scheduledActions == nil {
+		return
+	}
+	*bc.scheduledActions = append(*bc.scheduledActions, ScheduledAction{
+		TriggerTime: triggerTime,
+		SpreadID:    spreadID,
+		LegIndex:    legIndex,
+		ActionType:  ScheduleCloseLeg,
+	})
+}
+
+// ScheduleCloseSpread schedules automatic closing of all legs at a future time.
+func (bc *BarContext) ScheduleCloseSpread(triggerTime time.Time, spreadID int) {
+	if bc.scheduledActions == nil {
+		return
+	}
+	*bc.scheduledActions = append(*bc.scheduledActions, ScheduledAction{
+		TriggerTime: triggerTime,
+		SpreadID:    spreadID,
+		LegIndex:    -1,
+		ActionType:  ScheduleCloseSpread,
+	})
+}
+
+// ScheduleCloseAfter schedules closing all legs of a spread after a duration from now.
+func (bc *BarContext) ScheduleCloseAfter(d time.Duration, spreadID int) {
+	bc.ScheduleCloseSpread(bc.barTime.Add(d), spreadID)
+}
+
+// ScheduleCloseLegAfter schedules closing a specific leg after a duration from now.
+func (bc *BarContext) ScheduleCloseLegAfter(d time.Duration, spreadID, legIndex int) {
+	bc.ScheduleCloseLeg(bc.barTime.Add(d), spreadID, legIndex)
 }

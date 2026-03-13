@@ -39,6 +39,20 @@ type Result struct {
 	EquityCurve []float64            `json:"equity_curve"`
 	Timestamps  []time.Time          `json:"timestamps"`
 	Series      map[string][]float64 `json:"series,omitempty"` // indicator series
+
+	// Options spread summary
+	SpreadSummary *SpreadSummary `json:"spread_summary,omitempty"`
+}
+
+// SpreadSummary aggregates metrics across all spread positions in a backtest.
+type SpreadSummary struct {
+	TotalSpreads   int     `json:"total_spreads"`
+	ClosedSpreads  int     `json:"closed_spreads"`
+	OpenSpreads    int     `json:"open_spreads"`
+	TotalPnL       float64 `json:"total_pnl"`
+	WinningSpreads int     `json:"winning_spreads"`
+	LosingSpreads  int     `json:"losing_spreads"`
+	WinRate        float64 `json:"win_rate"`
 }
 
 // ExportJSON writes the result to a JSON file.
@@ -314,4 +328,36 @@ func ftoa(f float64) string {
 
 func pct(f float64) string {
 	return ftoa(f*100) + "%"
+}
+
+// computeSpreadSummary aggregates metrics from the spread tracker.
+func computeSpreadSummary(tracker *SpreadTracker) *SpreadSummary {
+	if tracker == nil || len(tracker.All()) == 0 {
+		return nil
+	}
+
+	s := &SpreadSummary{
+		TotalSpreads: len(tracker.All()),
+	}
+
+	for _, sp := range tracker.All() {
+		if sp.IsFullyClosed() {
+			s.ClosedSpreads++
+			pnl := sp.TotalRealizedPnL()
+			s.TotalPnL += pnl
+			if pnl > 0 {
+				s.WinningSpreads++
+			} else if pnl < 0 {
+				s.LosingSpreads++
+			}
+		} else {
+			s.OpenSpreads++
+		}
+	}
+
+	if s.ClosedSpreads > 0 {
+		s.WinRate = float64(s.WinningSpreads) / float64(s.ClosedSpreads)
+	}
+
+	return s
 }
