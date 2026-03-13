@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
@@ -98,6 +99,63 @@ symbol_id, symbol, base_asset, option_type, strike_price, expiration, underlying
 		return fmt.Errorf("send symbol_meta batch: %w", err)
 	}
 	return nil
+}
+
+// CountExistingBars returns how many sampled bars already exist in crypto_options_bar_1m.
+func CountExistingBars(ctx context.Context, conn driver.Conn, bars []Bar1m) (int, error) {
+	if len(bars) == 0 {
+		return 0, nil
+	}
+
+	var query strings.Builder
+	query.WriteString(`SELECT count() FROM crypto_options_bar_1m WHERE (toUnixTimestamp(timestamp), symbol_id, base_asset, mark_open, mark_close, last_open, last_close, open_interest, tick_count) IN (`)
+
+	for i, bar := range bars {
+		if i > 0 {
+			query.WriteString(",")
+		}
+
+		query.WriteString("(")
+		fmt.Fprintf(&query, "%d,%d,'%s',%s,%s,%s,%s,%s,%d",
+			bar.Timestamp.UTC().Unix(),
+			bar.SymbolID,
+			escapeSingleQuote(bar.BaseAsset),
+			float32Literal(bar.MarkOpen),
+			float32Literal(bar.MarkClose),
+			float32Literal(bar.LastOpen),
+			float32Literal(bar.LastClose),
+			float32Literal(bar.OpenInterest),
+			bar.TickCount,
+		)
+		query.WriteString(")")
+	}
+
+	query.WriteString(")")
+
+	rows, err := conn.Query(ctx, query.String())
+	if err != nil {
+		return 0, fmt.Errorf("query existing sampled bars: %w", err)
+	}
+	defer rows.Close()
+
+	if !rows.Next() {
+		return 0, nil
+	}
+
+	var count uint64
+	if err := rows.Scan(&count); err != nil {
+		return 0, fmt.Errorf("scan sampled bar count: %w", err)
+	}
+
+	return int(count), nil
+}
+
+func float32Literal(value float32) string {
+	return "toFloat32(" + strconv.FormatFloat(float64(value), 'g', -1, 32) + ")"
+}
+
+func escapeSingleQuote(s string) string {
+	return strings.ReplaceAll(s, "'", "''")
 }
 
 const barInsertSQL = `INSERT INTO crypto_options_bar_1m (

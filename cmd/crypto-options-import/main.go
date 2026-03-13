@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"math/rand"
 	"os"
 	"path/filepath"
 	"sort"
@@ -14,6 +15,11 @@ import (
 	"time"
 
 	"github.com/Cyvadra/toktik/internal/cryptooptions"
+)
+
+const (
+	sampleCountPerRegion = 24
+	sampleWindowSize     = 256
 )
 
 func main() {
@@ -82,6 +88,7 @@ func main() {
 		wg        sync.WaitGroup
 		sem       = make(chan struct{}, *workers)
 		completed int64
+		skipped   int64
 		failed    int64
 		totalRows int64
 	)
@@ -96,10 +103,13 @@ func main() {
 			defer wg.Done()
 			defer func() { <-sem }()
 
-			rows, err := importFile(ctx, *dsn, path, *batchSize)
+			rows, skippedFile, err := importFile(ctx, *dsn, path, *batchSize)
 			if err != nil {
 				log.Printf("[ERROR] %s: %v", filepath.Base(path), err)
 				atomic.AddInt64(&failed, 1)
+			} else if skippedFile {
+				n := atomic.AddInt64(&skipped, 1)
+				log.Printf("[SKIPPED] %d/%d files skipped", n, len(parquetFiles))
 			} else {
 				atomic.AddInt64(&totalRows, rows)
 				n := atomic.AddInt64(&completed, 1)
@@ -111,8 +121,8 @@ func main() {
 	wg.Wait()
 
 	elapsed := time.Since(startTime)
-	log.Printf("Import complete: %d files succeeded, %d failed, %d total rows, elapsed %s",
-		completed, failed, totalRows, elapsed.Round(time.Second))
+	log.Printf("Import complete: %d files succeeded, %d skipped, %d failed, %d total rows, elapsed %s",
+		completed, skipped, failed, totalRows, elapsed.Round(time.Second))
 }
 
 func collectParquetFiles(root string) ([]string, error) {
@@ -138,19 +148,19 @@ func collectParquetFiles(root string) ([]string, error) {
 	return parquetFiles, nil
 }
 
-func importFile(ctx context.Context, dsn, pqPath string, batchSize int) (int64, error) {
+func importFile(ctx context.Context, dsn, pqPath string, batchSize int) (int64, bool, error) {
 	baseName := filepath.Base(pqPath)
 	log.Printf("[START] importing %s", baseName)
 	fileStart := time.Now()
 
 	conn, err := cryptooptions.ConnectClickHouse(ctx, dsn)
 	if err != nil {
-		return 0, fmt.Errorf("connect: %w", err)
+		return 0, false, fmt.Errorf("connect: %w", err)
 	}
 
 	barCh, closer, err := cryptooptions.ReadParquet(pqPath)
 	if err != nil {
-		return 0, fmt.Errorf("read parquet: %w", err)
+		return 0, false, fmt.Errorf("read parquet: %w", err)
 	}
 	defer closer()
 
@@ -172,12 +182,32 @@ func importFile(ctx context.Context, dsn, pqPath string, batchSize int) (int64, 
 		}
 	}
 
+	if len(bars) == 0 {
+		log.Printf("[SKIP] %s: no bars found in parquet file", baseName)
+		return 0, true, nil
+	}
+
+	samples := selectExistenceSamples(bars)
+	existingSamples, err := cryptooptions.CountExistingBars(ctx, conn, samples)
+	if err != nil {
+		return 0, false, fmt.Errorf("check existing bars: %w", err)
+	}
+	if existingSamples > 0 {
+		status := "partially"
+		if existingSamples == len(samples) {
+			status = "fully"
+		}
+		log.Printf("[SKIP] %s: %d/%d sampled bars already exist, file appears %s imported",
+			baseName, existingSamples, len(samples), status)
+		return 0, true, nil
+	}
+
 	symbols := make([]cryptooptions.SymbolMeta, 0, len(symbolMap))
 	for _, s := range symbolMap {
 		symbols = append(symbols, s)
 	}
 	if err := cryptooptions.InsertSymbols(ctx, conn, symbols); err != nil {
-		return 0, fmt.Errorf("insert symbols: %w", err)
+		return 0, false, fmt.Errorf("insert symbols: %w", err)
 	}
 	log.Printf("[SYMBOLS] %s: inserted %d unique symbols", baseName, len(symbols))
 
@@ -191,11 +221,82 @@ func importFile(ctx context.Context, dsn, pqPath string, batchSize int) (int64, 
 
 	rowCount, err := cryptooptions.InsertBars(ctx, conn, barSendCh, batchSize)
 	if err != nil {
-		return rowCount, fmt.Errorf("insert bars: %w", err)
+		return rowCount, false, fmt.Errorf("insert bars: %w", err)
 	}
 
 	log.Printf("[IMPORT] %s: %d bars, %d symbols in %s",
 		baseName, rowCount, len(symbols), time.Since(fileStart).Round(time.Second))
 
-	return rowCount, nil
+	return rowCount, false, nil
+}
+
+func selectExistenceSamples(bars []cryptooptions.Bar1m) []cryptooptions.Bar1m {
+	if len(bars) == 0 {
+		return nil
+	}
+
+	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
+	selected := make(map[int]struct{}, sampleCountPerRegion*2)
+	indices := make([]int, 0, sampleCountPerRegion*2)
+
+	indices = append(indices, randomIndices(rng, 0, min(len(bars), sampleWindowSize), sampleCountPerRegion, selected)...)
+	indices = append(indices, randomIndices(rng, max(0, len(bars)-sampleWindowSize), len(bars), sampleCountPerRegion, selected)...)
+
+	if len(indices) == 0 {
+		indices = append(indices, 0)
+	}
+
+	samples := make([]cryptooptions.Bar1m, 0, len(indices))
+	for _, idx := range indices {
+		samples = append(samples, bars[idx])
+	}
+
+	return samples
+}
+
+func randomIndices(rng *rand.Rand, start, end, count int, selected map[int]struct{}) []int {
+	if start >= end || count <= 0 {
+		return nil
+	}
+
+	pool := make([]int, 0, end-start)
+	for idx := start; idx < end; idx++ {
+		if _, exists := selected[idx]; exists {
+			continue
+		}
+		pool = append(pool, idx)
+	}
+
+	if len(pool) == 0 {
+		return nil
+	}
+
+	if count > len(pool) {
+		count = len(pool)
+	}
+
+	rng.Shuffle(len(pool), func(i, j int) {
+		pool[i], pool[j] = pool[j], pool[i]
+	})
+
+	chosen := pool[:count]
+	for _, idx := range chosen {
+		selected[idx] = struct{}{}
+	}
+
+	return chosen
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
