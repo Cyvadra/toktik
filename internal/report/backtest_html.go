@@ -21,36 +21,40 @@ type HTMLMeta struct {
 }
 
 type htmlReportView struct {
-	Title            string
-	StrategyName     string
-	Asset            string
-	Interval         string
-	Period           string
-	GeneratedAt      string
-	InitialCapital   string
-	FinalEquity      string
-	NetPnL           string
-	TotalReturn      string
-	AnnualizedReturn string
-	SharpeRatio      string
-	MaxDrawdown      string
-	TotalFees        string
-	BarsCount        int
-	TradesCount      int
-	SpreadsCount     int
-	EquityMin        string
-	EquityMax        string
-	DrawdownMax      string
-	EquityPath       string
-	DrawdownPath     string
-	EquityAnalysis   equityAnalysisView
-	TradeOverview    tradeOverviewView
-	SpreadSummary    *spreadSummaryView
-	Trades           []tradeRowView
-	Spreads          []spreadRowView
-	NoTradeRows      bool
-	NoSpreadRows     bool
-	Notes            []string
+	Title               string
+	StrategyName        string
+	Asset               string
+	Interval            string
+	Period              string
+	GeneratedAt         string
+	InitialCapital      string
+	FinalEquity         string
+	NetPnL              string
+	TotalReturn         string
+	AnnualizedReturn    string
+	SharpeRatio         string
+	MaxDrawdown         string
+	TotalFees           string
+	BarsCount           int
+	TradesCount         int
+	SpreadsCount        int
+	EquityMin           string
+	EquityMax           string
+	DrawdownMax         string
+	EquityPath          string
+	DrawdownPath        string
+	HasUnderlyingPrice  bool
+	UnderlyingPricePath string
+	UnderlyingPriceMin  string
+	UnderlyingPriceMax  string
+	EquityAnalysis      equityAnalysisView
+	TradeOverview       tradeOverviewView
+	SpreadSummary       *spreadSummaryView
+	Trades              []tradeRowView
+	Spreads             []spreadRowView
+	NoTradeRows         bool
+	NoSpreadRows        bool
+	Notes               []string
 }
 
 type tradeOverviewView struct {
@@ -196,6 +200,13 @@ func buildHTMLView(result *backtest.Result, meta HTMLMeta) htmlReportView {
 			WinRate:        pct(s.WinRate),
 			TotalPnL:       signedCurrency(s.TotalPnL),
 		}
+	}
+	if underlying, ok := result.Series["close"]; ok && len(underlying) > 0 {
+		view.HasUnderlyingPrice = true
+		minU, maxU := minMax(underlying)
+		view.UnderlyingPriceMin = currency(minU)
+		view.UnderlyingPriceMax = currency(maxU)
+		view.UnderlyingPricePath = linePath(underlying, 960, 320)
 	}
 	view.Notes = buildNotes(result)
 	return view
@@ -566,13 +577,16 @@ const htmlTemplate = `<!DOCTYPE html>
             <div class="rounded-full border border-tide/30 bg-tide/10 px-3 py-1 font-mono text-xs text-tide">Fees {{ .TotalFees }}</div>
           </div>
           <div class="mt-5 overflow-hidden rounded-2xl border border-white/10 bg-[#08131c] p-4">
+            {{ if .HasUnderlyingPrice }}
+            <div class="mb-3 flex items-center gap-4 text-xs text-slate-400">
+              <span class="flex items-center gap-1.5"><span class="inline-block h-0.5 w-5 rounded bg-[#4ad0c2]"></span> Equity</span>
+              <span class="flex items-center gap-1.5"><span class="inline-block h-0.5 w-5 rounded bg-[#e59f32] opacity-70"></span> Underlying Price ({{ .UnderlyingPriceMin }} – {{ .UnderlyingPriceMax }})</span>
+            </div>
+            {{ end }}
             <svg viewBox="0 0 960 320" class="h-72 w-full">
-              <defs>
-                <linearGradient id="equityGlow" x1="0%" x2="0%" y1="0%" y2="100%">
-                  <stop offset="0%" stop-color="#4ad0c2" stop-opacity="0.8" />
-                  <stop offset="100%" stop-color="#4ad0c2" stop-opacity="0.08" />
-                </linearGradient>
-              </defs>
+              {{ if .HasUnderlyingPrice }}
+              <path d="{{ .UnderlyingPricePath }}" fill="none" stroke="#e59f32" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="0.7" />
+              {{ end }}
               <path d="{{ .EquityPath }}" fill="none" stroke="#4ad0c2" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" />
             </svg>
           </div>

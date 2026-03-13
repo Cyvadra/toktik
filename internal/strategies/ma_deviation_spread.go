@@ -2,6 +2,7 @@ package strategies
 
 import (
 	"math"
+	"sort"
 	"time"
 
 	"github.com/Cyvadra/toktik/internal/backtest"
@@ -129,16 +130,16 @@ func (s *MADeviationSpreadStrategy) Init(ctx *backtest.SetupContext) error {
 		[]string{"close", "ma", "m_val"},
 		func(inputs map[string][]float64) []float64 {
 			cls := inputs["close"]
-			ma := inputs["ma"]
+			maSeries := inputs["ma"]
 			m := inputs["m_val"]
 			n := len(cls)
 			out := make([]float64, n)
 			for i := 0; i < n; i++ {
-				if math.IsNaN(cls[i]) || math.IsNaN(ma[i]) || math.IsNaN(m[i]) || m[i] == 0 {
+				if math.IsNaN(cls[i]) || math.IsNaN(maSeries[i]) || math.IsNaN(m[i]) || m[i] == 0 {
 					out[i] = math.NaN()
 					continue
 				}
-				out[i] = (cls[i] - ma[i]) / m[i]
+				out[i] = (cls[i] - maSeries[i]) / m[i]
 			}
 			return out
 		},
@@ -196,18 +197,15 @@ func (s *MADeviationSpreadStrategy) manageSpreads(ctx *backtest.BarContext, now 
 			continue
 		}
 
-		// Check max hold time first
 		if sp.TimeHeld(now) >= s.MaxHoldTime {
 			s.closeSpread(ctx, sp, contractMap)
 			continue
 		}
 
-		// Leg 0 = short leg, Leg 1 = long leg (by convention)
 		shortLeg := &sp.Legs[0]
 		longLeg := &sp.Legs[1]
 
 		if !state.shortLegClosed && !shortLeg.Closed {
-			// Check short leg profit: > 88% unrealized profit → close it
 			shortMarkPrice := s.valuationPrice(*shortLeg, contractMap)
 			pnlPct := sp.LegUnrealizedPnLPct(0, shortMarkPrice)
 			if !math.IsNaN(pnlPct) && pnlPct > s.ShortProfitPct {
@@ -218,15 +216,12 @@ func (s *MADeviationSpreadStrategy) manageSpreads(ctx *backtest.BarContext, now 
 		}
 
 		if state.shortLegClosed && !longLeg.Closed {
-			// Short leg was closed. Check long leg conditions:
-			// 1. Immediately if long leg profit >= 50%
 			longMarkPrice := s.valuationPrice(*longLeg, contractMap)
 			longPnlPct := sp.LegUnrealizedPnLPct(1, longMarkPrice)
 			if !math.IsNaN(longPnlPct) && longPnlPct >= s.LongProfitPct {
 				ctx.CloseSpreadLeg(sp.ID, 1, s.exitPrice(*longLeg, contractMap))
 				continue
 			}
-			// 2. After LongCloseDelay (24h) since short leg close
 			if now.Sub(state.shortCloseTime) >= s.LongCloseDelay {
 				ctx.CloseSpreadLeg(sp.ID, 1, s.exitPrice(*longLeg, contractMap))
 			}
@@ -241,100 +236,127 @@ func (s *MADeviationSpreadStrategy) tryOpenSpread(ctx *backtest.BarContext, now 
 		return
 	}
 
-	// Step 1: Filter by type (puts for bull, calls for bear)
 	var typeChain *backtest.OptionsChain
 	if s.Direction == BullSpread {
 		typeChain = chain.Puts()
 	} else {
 		typeChain = chain.Calls()
 	}
-
 	if typeChain.Len() == 0 {
 		return
 	}
 
-	// Step 2: Filter by minimum expiry, then find nearest to target
 	expiryFiltered := typeChain.ExpiryMin(s.MinExpiryDays)
 	if expiryFiltered.Len() == 0 {
 		return
 	}
-	expiryChain := expiryFiltered.ExpiryNearest(s.TargetExpiryDays)
-	if expiryChain.Len() == 0 {
-		return
-	}
 
-	// Step 3: Find short leg candidates
 	var shortDeltaMin, shortDeltaMax float64
 	if s.Direction == BullSpread {
-		// Sell put: delta between -0.5 and -0.4
-		shortDeltaMin = -s.ShortDeltaMax // -0.5
-		shortDeltaMax = -s.ShortDeltaMin // -0.4
+		shortDeltaMin = -s.ShortDeltaMax
+		shortDeltaMax = -s.ShortDeltaMin
 	} else {
-		// Sell call: delta between 0.4 and 0.5
-		shortDeltaMin = s.ShortDeltaMin // 0.4
-		shortDeltaMax = s.ShortDeltaMax // 0.5
+		shortDeltaMin = s.ShortDeltaMin
+		shortDeltaMax = s.ShortDeltaMax
 	}
 
-	shortCandidates := expiryChain.DeltaRange(shortDeltaMin, shortDeltaMax).MinPremium(s.MinPremium)
-	if shortCandidates.Len() == 0 {
-		return
-	}
-
-	// Select best short leg by spread quality
-	shortLeg := shortCandidates.BestSpread()
-	if shortLeg == nil {
-		return
-	}
-
-	// Step 4: Find long leg candidates (same expiry as short leg)
 	var longDeltaMin, longDeltaMax float64
 	if s.Direction == BullSpread {
-		// Buy put: delta between -0.15 and -0.1
-		longDeltaMin = -s.LongDeltaMax // -0.15
-		longDeltaMax = -s.LongDeltaMin // -0.1
+		longDeltaMin = -s.LongDeltaMax
+		longDeltaMax = -s.LongDeltaMin
 	} else {
-		// Buy call: delta between 0.1 and 0.15
-		longDeltaMin = s.LongDeltaMin // 0.1
-		longDeltaMax = s.LongDeltaMax // 0.15
+		longDeltaMin = s.LongDeltaMin
+		longDeltaMax = s.LongDeltaMax
 	}
 
-	longCandidates := expiryChain.SameExpiry(shortLeg).DeltaRange(longDeltaMin, longDeltaMax)
-	if longCandidates.Len() == 0 {
+	for _, expiry := range s.orderedExpiries(expiryFiltered.Contracts(), now) {
+		expiryRef := &backtest.OptionContract{Expiration: expiry}
+		expiryChain := expiryFiltered.SameExpiry(expiryRef)
+
+		shortCandidates := expiryChain.DeltaRange(shortDeltaMin, shortDeltaMax).MinPremium(s.MinPremium)
+		if shortCandidates.Len() == 0 {
+			continue
+		}
+
+		shortLeg := shortCandidates.BestSpread()
+		if shortLeg == nil {
+			continue
+		}
+
+		longCandidates := expiryChain.SameExpiry(shortLeg).DeltaRange(longDeltaMin, longDeltaMax)
+		if longCandidates.Len() == 0 {
+			continue
+		}
+
+		longLegContract := longCandidates.BestSpread()
+		if longLegContract == nil {
+			continue
+		}
+
+		tag := "bull-put-spread"
+		if s.Direction == BearSpread {
+			tag = "bear-call-spread"
+		}
+
+		legs := []backtest.SpreadLeg{
+			{
+				Contract:   *shortLeg,
+				Side:       backtest.Sell,
+				Qty:        s.PositionSize,
+				EntryPrice: s.EntryPriceMode.EntryPrice(backtest.Sell, *shortLeg),
+			},
+			{
+				Contract:   *longLegContract,
+				Side:       backtest.Buy,
+				Qty:        s.PositionSize,
+				EntryPrice: s.EntryPriceMode.EntryPrice(backtest.Buy, *longLegContract),
+			},
+		}
+
+		spreadID := ctx.OpenSpread(legs, tag)
+		if spreadID > 0 {
+			s.spreadStates[spreadID] = &spreadState{spreadID: spreadID}
+		}
 		return
 	}
+}
 
-	longLegContract := longCandidates.BestSpread()
-	if longLegContract == nil {
-		return
+func (s *MADeviationSpreadStrategy) orderedExpiries(contracts []backtest.OptionContract, now time.Time) []time.Time {
+	if len(contracts) == 0 {
+		return nil
 	}
 
-	// Step 5: Open the spread (configurable contracts per leg)
-	// Short leg: sell at bid price
-	// Long leg: buy at ask price
-	tag := "bull-put-spread"
-	if s.Direction == BearSpread {
-		tag = "bear-call-spread"
+	targetDays := float64(s.TargetExpiryDays)
+	unique := make(map[int64]time.Time, len(contracts))
+	for _, contract := range contracts {
+		if contract.DaysToExpiry(now) < float64(s.MinExpiryDays) {
+			continue
+		}
+		unique[contract.Expiration.Unix()] = contract.Expiration
 	}
 
-	legs := []backtest.SpreadLeg{
-		{
-			Contract:   *shortLeg,
-			Side:       backtest.Sell,
-			Qty:        s.PositionSize,
-			EntryPrice: s.EntryPriceMode.EntryPrice(backtest.Sell, *shortLeg),
-		},
-		{
-			Contract:   *longLegContract,
-			Side:       backtest.Buy,
-			Qty:        s.PositionSize,
-			EntryPrice: s.EntryPriceMode.EntryPrice(backtest.Buy, *longLegContract),
-		},
+	later := make([]time.Time, 0, len(unique))
+	earlier := make([]time.Time, 0, len(unique))
+	for _, expiry := range unique {
+		days := expiry.Sub(now).Hours() / 24
+		if days >= targetDays {
+			later = append(later, expiry)
+		} else {
+			earlier = append(earlier, expiry)
+		}
 	}
 
-	spreadID := ctx.OpenSpread(legs, tag)
-	if spreadID > 0 {
-		s.spreadStates[spreadID] = &spreadState{spreadID: spreadID}
-	}
+	sort.Slice(later, func(i, j int) bool {
+		return later[i].Before(later[j])
+	})
+	sort.Slice(earlier, func(i, j int) bool {
+		return earlier[i].After(earlier[j])
+	})
+
+	ordered := make([]time.Time, 0, len(later)+len(earlier))
+	ordered = append(ordered, later...)
+	ordered = append(ordered, earlier...)
+	return ordered
 }
 
 func (s *MADeviationSpreadStrategy) applyDefaults() {

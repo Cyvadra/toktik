@@ -33,9 +33,9 @@ func main() {
 	slippagePct := flag.Float64("slippage-pct", 0.0, "Slippage fraction (0 = none)")
 	outputJSON := flag.String("output", "", "Optional JSON output file path")
 	outputHTML := flag.String("html-output", "", "Optional HTML report output path (defaults to reports/backtests/<strategy>_<period>.html)")
-	positionSize := flag.Float64("position-size", 100000, "Contracts per leg when opening a spread")
+	positionSize := flag.Float64("position-size", 1, "Contracts per leg when opening a spread")
 	maxHoldHours := flag.Float64("max-hold-hours", 48, "Maximum spread holding time in hours")
-	targetExpiryDays := flag.Int("target-expiry-days", 17, "Target days to expiry when selecting contracts")
+	targetExpiryDays := flag.Int("target-expiry-days", 15, "Target days to expiry when selecting contracts")
 	minExpiryDays := flag.Int("min-expiry-days", 7, "Minimum days to expiry when selecting contracts")
 	minPremium := flag.Float64("min-premium", 0.025, "Minimum bid premium required for the short leg")
 	shortDeltaMin := flag.Float64("short-delta-min", 0.4, "Minimum absolute delta for the short leg")
@@ -150,8 +150,6 @@ func main() {
 		log.Fatalf("Failed to load options chain: %v", err)
 	}
 
-	overviewItems := make([]report.OverviewItem, 0, len(strats))
-
 	for i, strat := range strats {
 		log.Printf("--- Running strategy: %s ---", strat.Name())
 		result, runErr := runOne(ctx, conn, cfg, *baseAsset, *interval, from, to, strat, chainProvider)
@@ -183,20 +181,6 @@ func main() {
 			log.Printf("Warning: failed to write HTML report to %s: %v", htmlPath, writeErr)
 		} else {
 			log.Printf("HTML report written to %s", htmlPath)
-			overviewItems = append(overviewItems, report.OverviewItem{Result: result, HTMLPath: htmlPath})
-		}
-	}
-
-	if len(overviewItems) > 1 {
-		overviewPath := resolveHTMLOverviewPath(*outputHTML, *baseAsset, *interval, from, to)
-		if writeErr := report.WriteBacktestOverviewHTML(overviewPath, overviewItems, report.HTMLMeta{
-			Asset:       *baseAsset,
-			Interval:    *interval,
-			GeneratedAt: time.Now(),
-		}); writeErr != nil {
-			log.Printf("Warning: failed to write HTML overview to %s: %v", overviewPath, writeErr)
-		} else {
-			log.Printf("HTML overview written to %s", overviewPath)
 		}
 	}
 }
@@ -325,24 +309,6 @@ func resolveHTMLOutputPath(base, strategyName, asset, interval string, from, to 
 	fileName := fmt.Sprintf(
 		"%s_%s_%s_%s_%s.html",
 		slugify(strategyName),
-		strings.ToLower(asset),
-		slugify(interval),
-		from.Format("20060102"),
-		to.Format("20060102"),
-	)
-	return filepath.Join("reports", "backtests", fileName)
-}
-
-func resolveHTMLOverviewPath(base, asset, interval string, from, to time.Time) string {
-	if strings.TrimSpace(base) != "" {
-		dot := strings.LastIndex(base, ".")
-		if dot < 0 {
-			return base + "_overview"
-		}
-		return fmt.Sprintf("%s_overview%s", base[:dot], base[dot:])
-	}
-	fileName := fmt.Sprintf(
-		"overview_%s_%s_%s_%s.html",
 		strings.ToLower(asset),
 		slugify(interval),
 		from.Format("20060102"),
