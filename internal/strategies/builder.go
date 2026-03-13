@@ -13,6 +13,7 @@ const (
 	defaultEntryTWAPBars = 1
 	defaultFastPeriod    = 10
 	defaultSlowPeriod    = 50
+	defaultSMAPeriod     = 24 // default underlying SMA period (e.g. 24 × 1 h bars = 1 day)
 )
 
 // Build returns a configured backtest strategy from the request payload.
@@ -33,6 +34,16 @@ func Build(req dto.BacktestRequest) (backtest.Strategy, error) {
 		}, nil
 	case "delta-filter":
 		return &deltaFilterStrategy{entryTWAP: entryTWAPBars}, nil
+	case "bull-put-spread":
+		return &bullPutSpreadStrategy{
+			smaPeriod: intDefault(req.SMAPeriod, defaultSMAPeriod),
+			entryTWAP: entryTWAPBars,
+		}, nil
+	case "bear-call-spread":
+		return &bearCallSpreadStrategy{
+			smaPeriod: intDefault(req.SMAPeriod, defaultSMAPeriod),
+			entryTWAP: entryTWAPBars,
+		}, nil
 	default:
 		return nil, fmt.Errorf("unsupported strategy %q", req.Strategy)
 	}

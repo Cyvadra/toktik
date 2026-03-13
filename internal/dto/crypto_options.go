@@ -127,6 +127,9 @@ type BacktestRequest struct {
 	EntryTWAPBars   *int     `json:"entry_twap_bars,omitempty"`
 	FastPeriod      *int     `json:"fast_period,omitempty"`
 	SlowPeriod      *int     `json:"slow_period,omitempty"`
+	// SMAPeriod is the underlying-price SMA lookback used by the
+	// bull-put-spread and bear-call-spread strategies.
+	SMAPeriod *int `json:"sma_period,omitempty"`
 }
 
 // ErrorResponse is the standard error envelope.
