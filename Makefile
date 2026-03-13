@@ -1,11 +1,11 @@
-.PHONY: build-convert build-import build-missing-days build-api build-backtest-example build-all build-win-arm clean
+.PHONY: build-convert build-import build-missing-days build-api build-backtest-example build-backtest-btc-options build-all build-win-arm clean
 
 BUILD_DIR := bin
 
 GOFLAGS := -trimpath
 LDFLAGS := -s -w
 
-build-all: build-convert build-import build-missing-days build-api build-backtest-example
+build-all: build-convert build-import build-missing-days build-api build-backtest-example build-backtest-btc-options
 
 build-convert:
 	@mkdir -p $(BUILD_DIR)
@@ -26,6 +26,10 @@ build-api:
 build-backtest-example:
 	@mkdir -p $(BUILD_DIR)
 	go build $(GOFLAGS) -ldflags '$(LDFLAGS)' -o $(BUILD_DIR)/backtest-example ./cmd/backtest-example
+
+build-backtest-btc-options:
+	@mkdir -p $(BUILD_DIR)
+	go build $(GOFLAGS) -ldflags '$(LDFLAGS)' -o $(BUILD_DIR)/backtest-btc-options ./cmd/backtest-btc-options
 
 build-win-arm:
 	@mkdir -p $(BUILD_DIR)

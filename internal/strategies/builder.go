@@ -33,6 +33,10 @@ func Build(req dto.BacktestRequest) (backtest.Strategy, error) {
 		}, nil
 	case "delta-filter":
 		return &deltaFilterStrategy{entryTWAP: entryTWAPBars}, nil
+	case "ma-deviation-bull", "bull-put-spread":
+		return NewBullPutSpreadStrategy(), nil
+	case "ma-deviation-bear", "bear-call-spread":
+		return NewBearCallSpreadStrategy(), nil
 	default:
 		return nil, fmt.Errorf("unsupported strategy %q", req.Strategy)
 	}

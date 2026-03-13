@@ -35,13 +35,75 @@ type Result struct {
 	TotalFees     float64 `json:"total_fees"`
 
 	// Series data (for visualization / further analysis)
-	Trades      []Trade              `json:"trades"`
-	EquityCurve []float64            `json:"equity_curve"`
-	Timestamps  []time.Time          `json:"timestamps"`
-	Series      map[string][]float64 `json:"series,omitempty"` // indicator series
+	Trades          []Trade                `json:"trades"`
+	EquityCurve     []float64              `json:"equity_curve"`
+	Timestamps      []time.Time            `json:"timestamps"`
+	Series          map[string][]float64   `json:"series,omitempty"` // indicator series
+	TradeOverview   *TradeOverview         `json:"trade_overview,omitempty"`
+	EquityAnalysis  *EquityAnalysis        `json:"equity_analysis,omitempty"`
+	SpreadPositions []SpreadPositionReport `json:"spread_positions,omitempty"`
 
 	// Options spread summary
 	SpreadSummary *SpreadSummary `json:"spread_summary,omitempty"`
+}
+
+// TradeOverview aggregates raw fill and round-trip level trade metrics.
+type TradeOverview struct {
+	RawFills             int     `json:"raw_fills"`
+	RoundTrips           int     `json:"round_trips"`
+	LongFills            int     `json:"long_fills"`
+	ShortFills           int     `json:"short_fills"`
+	TotalNotional        float64 `json:"total_notional"`
+	GrossProfit          float64 `json:"gross_profit"`
+	GrossLoss            float64 `json:"gross_loss"`
+	NetPnL               float64 `json:"net_pnl"`
+	AvgPnLPerRoundTrip   float64 `json:"avg_pnl_per_round_trip"`
+	AvgCommissionPerFill float64 `json:"avg_commission_per_fill"`
+}
+
+// EquityAnalysis captures higher-level diagnostics on the equity curve.
+type EquityAnalysis struct {
+	PeakEquity              float64   `json:"peak_equity"`
+	PeakTime                time.Time `json:"peak_time"`
+	LowestEquity            float64   `json:"lowest_equity"`
+	LowestTime              time.Time `json:"lowest_time"`
+	BestBarReturn           float64   `json:"best_bar_return"`
+	WorstBarReturn          float64   `json:"worst_bar_return"`
+	BarReturnVolatility     float64   `json:"bar_return_volatility"`
+	PositiveBars            int       `json:"positive_bars"`
+	NegativeBars            int       `json:"negative_bars"`
+	FlatBars                int       `json:"flat_bars"`
+	MaxDrawdownDurationBars int       `json:"max_drawdown_duration_bars"`
+	MaxDrawdownDuration     float64   `json:"max_drawdown_duration_hours"`
+}
+
+// SpreadPositionReport is a report-friendly snapshot of a multi-leg options spread.
+type SpreadPositionReport struct {
+	ID          int               `json:"id"`
+	Tag         string            `json:"tag"`
+	Status      string            `json:"status"`
+	OpenTime    time.Time         `json:"open_time"`
+	CloseTime   *time.Time        `json:"close_time,omitempty"`
+	DaysHeld    float64           `json:"days_held"`
+	NetPremium  float64           `json:"net_premium"`
+	RealizedPnL float64           `json:"realized_pnl"`
+	Legs        []SpreadLegReport `json:"legs"`
+}
+
+// SpreadLegReport is a report-friendly snapshot of an individual spread leg.
+type SpreadLegReport struct {
+	Symbol      string     `json:"symbol"`
+	Side        string     `json:"side"`
+	Type        OptionType `json:"type"`
+	StrikePrice float64    `json:"strike_price"`
+	Expiration  time.Time  `json:"expiration"`
+	Qty         float64    `json:"qty"`
+	EntryPrice  float64    `json:"entry_price"`
+	EntryTime   time.Time  `json:"entry_time"`
+	Closed      bool       `json:"closed"`
+	ClosePrice  float64    `json:"close_price,omitempty"`
+	CloseTime   *time.Time `json:"close_time,omitempty"`
+	RealizedPnL float64    `json:"realized_pnl"`
 }
 
 // SpreadSummary aggregates metrics across all spread positions in a backtest.
@@ -201,7 +263,142 @@ func computeResult(
 		}
 	}
 
+	r.TradeOverview = computeTradeOverview(trades)
+	r.EquityAnalysis = computeEquityAnalysis(equityCurve, timestamps)
+
 	return r
+}
+
+func computeTradeOverview(trades []Trade) *TradeOverview {
+	overview := &TradeOverview{RawFills: len(trades)}
+	if len(trades) == 0 {
+		return overview
+	}
+
+	for _, trade := range trades {
+		overview.TotalNotional += math.Abs(trade.Qty * trade.FillPrice)
+		if trade.Side == Buy {
+			overview.LongFills++
+		} else {
+			overview.ShortFills++
+		}
+		overview.AvgCommissionPerFill += trade.Commission
+	}
+
+	pnls := computeTradePnL(trades)
+	overview.RoundTrips = len(pnls)
+	for _, pnl := range pnls {
+		overview.NetPnL += pnl
+		if pnl > 0 {
+			overview.GrossProfit += pnl
+		} else if pnl < 0 {
+			overview.GrossLoss += -pnl
+		}
+	}
+
+	overview.AvgCommissionPerFill /= float64(len(trades))
+	if len(pnls) > 0 {
+		overview.AvgPnLPerRoundTrip = overview.NetPnL / float64(len(pnls))
+	}
+
+	return overview
+}
+
+func computeEquityAnalysis(equityCurve []float64, timestamps []time.Time) *EquityAnalysis {
+	if len(equityCurve) == 0 {
+		return nil
+	}
+
+	analysis := &EquityAnalysis{
+		PeakEquity:     equityCurve[0],
+		LowestEquity:   equityCurve[0],
+		BestBarReturn:  math.Inf(-1),
+		WorstBarReturn: math.Inf(1),
+	}
+	if len(timestamps) > 0 {
+		analysis.PeakTime = timestamps[0]
+		analysis.LowestTime = timestamps[0]
+	}
+
+	peakIndex := 0
+	currentDrawdownStart := -1
+	for i, eq := range equityCurve {
+		if eq > analysis.PeakEquity {
+			if currentDrawdownStart >= 0 {
+				durationBars := i - currentDrawdownStart
+				if durationBars > analysis.MaxDrawdownDurationBars {
+					analysis.MaxDrawdownDurationBars = durationBars
+					analysis.MaxDrawdownDuration = durationHours(timestamps, currentDrawdownStart, i)
+				}
+				currentDrawdownStart = -1
+			}
+			analysis.PeakEquity = eq
+			peakIndex = i
+			if i < len(timestamps) {
+				analysis.PeakTime = timestamps[i]
+			}
+		}
+		if eq < analysis.LowestEquity {
+			analysis.LowestEquity = eq
+			if i < len(timestamps) {
+				analysis.LowestTime = timestamps[i]
+			}
+		}
+		if eq < analysis.PeakEquity && currentDrawdownStart < 0 {
+			currentDrawdownStart = peakIndex
+		}
+	}
+	if currentDrawdownStart >= 0 {
+		durationBars := len(equityCurve) - 1 - currentDrawdownStart
+		if durationBars > analysis.MaxDrawdownDurationBars {
+			analysis.MaxDrawdownDurationBars = durationBars
+			analysis.MaxDrawdownDuration = durationHours(timestamps, currentDrawdownStart, len(equityCurve)-1)
+		}
+	}
+
+	if len(equityCurve) == 1 {
+		analysis.BestBarReturn = 0
+		analysis.WorstBarReturn = 0
+		return analysis
+	}
+
+	returns := make([]float64, 0, len(equityCurve)-1)
+	for i := 1; i < len(equityCurve); i++ {
+		prev := equityCurve[i-1]
+		if prev == 0 {
+			continue
+		}
+		ret := (equityCurve[i] - prev) / prev
+		returns = append(returns, ret)
+		if ret > analysis.BestBarReturn {
+			analysis.BestBarReturn = ret
+		}
+		if ret < analysis.WorstBarReturn {
+			analysis.WorstBarReturn = ret
+		}
+		switch {
+		case ret > 0:
+			analysis.PositiveBars++
+		case ret < 0:
+			analysis.NegativeBars++
+		default:
+			analysis.FlatBars++
+		}
+	}
+	if len(returns) == 0 {
+		analysis.BestBarReturn = 0
+		analysis.WorstBarReturn = 0
+		return analysis
+	}
+	_, analysis.BarReturnVolatility = meanStd(returns)
+	return analysis
+}
+
+func durationHours(timestamps []time.Time, start, end int) float64 {
+	if start < 0 || end < 0 || start >= len(timestamps) || end >= len(timestamps) || end < start {
+		return 0
+	}
+	return timestamps[end].Sub(timestamps[start]).Hours()
 }
 
 // computeTradePnL pairs entries and exits to compute per-round-trip PnL.
@@ -328,6 +525,93 @@ func ftoa(f float64) string {
 
 func pct(f float64) string {
 	return ftoa(f*100) + "%"
+}
+
+func buildSpreadPositionReports(tracker *SpreadTracker, endTime time.Time) []SpreadPositionReport {
+	if tracker == nil || len(tracker.All()) == 0 {
+		return nil
+	}
+	reports := make([]SpreadPositionReport, 0, len(tracker.All()))
+	for _, spread := range tracker.All() {
+		report := SpreadPositionReport{
+			ID:          spread.ID,
+			Tag:         spread.Tag,
+			Status:      "open",
+			OpenTime:    spread.OpenTime,
+			NetPremium:  spreadNetPremium(spread),
+			RealizedPnL: spread.TotalRealizedPnL(),
+			Legs:        make([]SpreadLegReport, 0, len(spread.Legs)),
+		}
+		closeTime := latestSpreadCloseTime(spread)
+		if closeTime != nil {
+			report.CloseTime = closeTime
+		}
+		if spread.IsFullyClosed() {
+			report.Status = "closed"
+		}
+		referenceEnd := endTime
+		if closeTime != nil {
+			referenceEnd = *closeTime
+		}
+		report.DaysHeld = referenceEnd.Sub(spread.OpenTime).Hours() / 24
+
+		for _, leg := range spread.Legs {
+			legReport := SpreadLegReport{
+				Symbol:      leg.Contract.Symbol,
+				Side:        leg.Side.String(),
+				Type:        leg.Contract.Type,
+				StrikePrice: leg.Contract.StrikePrice,
+				Expiration:  leg.Contract.Expiration,
+				Qty:         leg.Qty,
+				EntryPrice:  leg.EntryPrice,
+				EntryTime:   leg.EntryTime,
+				Closed:      leg.Closed,
+				RealizedPnL: leg.RealizedPnL(),
+			}
+			if leg.Closed {
+				closeAt := leg.CloseTime
+				legReport.ClosePrice = leg.ClosePrice
+				legReport.CloseTime = &closeAt
+			}
+			report.Legs = append(report.Legs, legReport)
+		}
+		reports = append(reports, report)
+	}
+	return reports
+}
+
+func latestSpreadCloseTime(spread *SpreadPosition) *time.Time {
+	if spread == nil {
+		return nil
+	}
+	var latest time.Time
+	closed := false
+	for _, leg := range spread.Legs {
+		if leg.Closed && (!closed || leg.CloseTime.After(latest)) {
+			latest = leg.CloseTime
+			closed = true
+		}
+	}
+	if !closed {
+		return nil
+	}
+	return &latest
+}
+
+func spreadNetPremium(spread *SpreadPosition) float64 {
+	if spread == nil {
+		return 0
+	}
+	total := 0.0
+	for _, leg := range spread.Legs {
+		amount := leg.Qty * leg.EntryPrice
+		if leg.Side == Sell {
+			total += amount
+		} else {
+			total -= amount
+		}
+	}
+	return total
 }
 
 // computeSpreadSummary aggregates metrics from the spread tracker.

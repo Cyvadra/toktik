@@ -338,6 +338,7 @@ func (e *Engine) Run(ctx context.Context, market, symbol, interval string, from,
 
 	// Attach spread summary to result
 	result.SpreadSummary = computeSpreadSummary(spreadTracker)
+	result.SpreadPositions = buildSpreadPositionReports(spreadTracker, result.EndTime)
 
 	return result, nil
 }
