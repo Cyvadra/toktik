@@ -213,6 +213,10 @@ func (e *Engine) Run(ctx context.Context, market, symbol, interval string, from,
 
 	spreadTracker := NewSpreadTracker()
 	var scheduledActions []ScheduledAction
+	spreadPricing := DefaultSpreadPricingConfig()
+	if provider, ok := strategy.(SpreadPricingProvider); ok {
+		spreadPricing = provider.SpreadPricingConfig().WithDefaults()
+	}
 
 	barCtx := &BarContext{
 		primary:          secColumns[0],
@@ -231,9 +235,11 @@ func (e *Engine) Run(ctx context.Context, market, symbol, interval string, from,
 	}
 	barCtx.secRefs = secRefList
 
-	// markPriceForContract returns mark price for a contract using chain data
-	markPriceForContract := func(c OptionContract) float64 {
-		return c.MarkPrice
+	currentSpreadContract := func(contract OptionContract, contractMap map[string]OptionContract) OptionContract {
+		if updated, ok := contractMap[contract.Symbol]; ok {
+			return updated
+		}
+		return contract
 	}
 
 	for i := 0; i < nBars; i++ {
@@ -254,6 +260,14 @@ func (e *Engine) Run(ctx context.Context, market, symbol, interval string, from,
 		// Process scheduled actions (time-based position management)
 		if len(scheduledActions) > 0 {
 			var remaining []ScheduledAction
+			var contractMap map[string]OptionContract
+			if e.chainProvider != nil {
+				contracts := e.chainProvider.AvailableContracts(primaryDS.Timestamps[i])
+				contractMap = make(map[string]OptionContract, len(contracts))
+				for _, c := range contracts {
+					contractMap[c.Symbol] = c
+				}
+			}
 			for _, sa := range scheduledActions {
 				if !primaryDS.Timestamps[i].Before(sa.TriggerTime) {
 					// Action triggered
@@ -261,36 +275,20 @@ func (e *Engine) Run(ctx context.Context, market, symbol, interval string, from,
 					case ScheduleCloseLeg:
 						sp := spreadTracker.Get(sa.SpreadID)
 						if sp != nil && sa.LegIndex >= 0 && sa.LegIndex < len(sp.Legs) && !sp.Legs[sa.LegIndex].Closed {
-							// Use current mark price from chain if available, else entry price
-							closePrice := sp.Legs[sa.LegIndex].Contract.MarkPrice
-							if e.chainProvider != nil {
-								contracts := e.chainProvider.AvailableContracts(primaryDS.Timestamps[i])
-								for _, c := range contracts {
-									if c.Symbol == sp.Legs[sa.LegIndex].Contract.Symbol {
-										closePrice = c.MarkPrice
-										break
-									}
-								}
-							}
+							contract := currentSpreadContract(sp.Legs[sa.LegIndex].Contract, contractMap)
+							closePrice := spreadPricing.ExitMode.ExitPrice(sp.Legs[sa.LegIndex].Side, contract)
 							barCtx.CloseSpreadLeg(sa.SpreadID, sa.LegIndex, closePrice)
 						}
 					case ScheduleCloseSpread:
 						sp := spreadTracker.Get(sa.SpreadID)
 						if sp != nil && !sp.IsFullyClosed() {
-							if e.chainProvider != nil {
-								contracts := e.chainProvider.AvailableContracts(primaryDS.Timestamps[i])
-								contractMap := make(map[string]OptionContract, len(contracts))
-								for _, c := range contracts {
-									contractMap[c.Symbol] = c
+							for legIndex := range sp.Legs {
+								if sp.Legs[legIndex].Closed {
+									continue
 								}
-								barCtx.CloseSpread(sa.SpreadID, func(oc OptionContract) float64 {
-									if updated, ok := contractMap[oc.Symbol]; ok {
-										return updated.MarkPrice
-									}
-									return oc.MarkPrice
-								})
-							} else {
-								barCtx.CloseSpread(sa.SpreadID, markPriceForContract)
+								contract := currentSpreadContract(sp.Legs[legIndex].Contract, contractMap)
+								closePrice := spreadPricing.ExitMode.ExitPrice(sp.Legs[legIndex].Side, contract)
+								barCtx.CloseSpreadLeg(sa.SpreadID, legIndex, closePrice)
 							}
 						}
 					}
@@ -306,21 +304,22 @@ func (e *Engine) Run(ctx context.Context, market, symbol, interval string, from,
 
 		// Record equity (include spread positions in equity)
 		spreadEquity := 0.0
+		var contractMap map[string]OptionContract
+		if e.chainProvider != nil {
+			contracts := e.chainProvider.AvailableContracts(primaryDS.Timestamps[i])
+			contractMap = make(map[string]OptionContract, len(contracts))
+			for _, c := range contracts {
+				contractMap[c.Symbol] = c
+			}
+		}
 		for _, sp := range spreadTracker.OpenSpreads() {
-			if e.chainProvider != nil {
-				contracts := e.chainProvider.AvailableContracts(primaryDS.Timestamps[i])
-				contractMap := make(map[string]OptionContract, len(contracts))
-				for _, c := range contracts {
-					contractMap[c.Symbol] = c
+			for _, leg := range sp.Legs {
+				if leg.Closed {
+					continue
 				}
-				spreadEquity += sp.TotalUnrealizedPnL(func(oc OptionContract) float64 {
-					if updated, ok := contractMap[oc.Symbol]; ok {
-						return updated.MarkPrice
-					}
-					return oc.MarkPrice
-				})
-			} else {
-				spreadEquity += sp.TotalUnrealizedPnL(markPriceForContract)
+				contract := currentSpreadContract(leg.Contract, contractMap)
+				markPrice := spreadPricing.ValuationMode.ExitPrice(leg.Side, contract)
+				spreadEquity += leg.UnrealizedPnL(markPrice)
 			}
 		}
 		equityCurve[i] = broker.Equity() + spreadEquity

@@ -14,6 +14,95 @@ const (
 	Put  OptionType = "put"
 )
 
+// OptionPriceMode controls how option legs are priced during spread lifecycle events.
+type OptionPriceMode int
+
+const (
+	OptionPriceModeUnspecified OptionPriceMode = iota
+	OptionPriceMarkClose
+	OptionPriceBidAsk
+)
+
+// SpreadPricingConfig controls entry, exit, and valuation prices for option spreads.
+type SpreadPricingConfig struct {
+	EntryMode     OptionPriceMode
+	ExitMode      OptionPriceMode
+	ValuationMode OptionPriceMode
+}
+
+// SpreadPricingProvider exposes option spread pricing preferences to the engine.
+type SpreadPricingProvider interface {
+	SpreadPricingConfig() SpreadPricingConfig
+}
+
+// DefaultSpreadPricingConfig preserves the existing spread backtest behavior.
+func DefaultSpreadPricingConfig() SpreadPricingConfig {
+	return SpreadPricingConfig{
+		EntryMode:     OptionPriceBidAsk,
+		ExitMode:      OptionPriceMarkClose,
+		ValuationMode: OptionPriceMarkClose,
+	}
+}
+
+// WithDefaults fills any unspecified modes with the engine defaults.
+func (cfg SpreadPricingConfig) WithDefaults() SpreadPricingConfig {
+	defaults := DefaultSpreadPricingConfig()
+	if cfg.EntryMode == OptionPriceModeUnspecified {
+		cfg.EntryMode = defaults.EntryMode
+	}
+	if cfg.ExitMode == OptionPriceModeUnspecified {
+		cfg.ExitMode = defaults.ExitMode
+	}
+	if cfg.ValuationMode == OptionPriceModeUnspecified {
+		cfg.ValuationMode = defaults.ValuationMode
+	}
+	return cfg
+}
+
+// EntryPrice returns the price used to open a leg for the provided side.
+func (mode OptionPriceMode) EntryPrice(side Side, contract OptionContract) float64 {
+	switch mode {
+	case OptionPriceBidAsk:
+		if side == Buy {
+			return optionPriceFallback(contract.AskPrice, contract.MarkPrice, optionMidPrice(contract), contract.BidPrice)
+		}
+		return optionPriceFallback(contract.BidPrice, contract.MarkPrice, optionMidPrice(contract), contract.AskPrice)
+	case OptionPriceMarkClose:
+		fallthrough
+	default:
+		return optionPriceFallback(contract.MarkPrice, optionMidPrice(contract), contract.BidPrice, contract.AskPrice)
+	}
+}
+
+// ExitPrice returns the price used to close a leg based on its entry side.
+func (mode OptionPriceMode) ExitPrice(entrySide Side, contract OptionContract) float64 {
+	exitSide := Sell
+	if entrySide == Sell {
+		exitSide = Buy
+	}
+	return mode.EntryPrice(exitSide, contract)
+}
+
+func optionMidPrice(contract OptionContract) float64 {
+	if optionPriceValid(contract.BidPrice) && optionPriceValid(contract.AskPrice) {
+		return (contract.BidPrice + contract.AskPrice) / 2
+	}
+	return math.NaN()
+}
+
+func optionPriceFallback(values ...float64) float64 {
+	for _, value := range values {
+		if optionPriceValid(value) {
+			return value
+		}
+	}
+	return math.NaN()
+}
+
+func optionPriceValid(value float64) bool {
+	return !math.IsNaN(value) && !math.IsInf(value, 0) && value > 0
+}
+
 // OptionContract represents a snapshot of a single option at a point in time.
 type OptionContract struct {
 	Symbol      string

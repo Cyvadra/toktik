@@ -284,8 +284,8 @@ func buildSpreadRows(spreads []backtest.SpreadPositionReport) []spreadRowView {
 				StrikePrice: currency(leg.StrikePrice),
 				Expiration:  formatDate(leg.Expiration),
 				Qty:         decimal(leg.Qty),
-				EntryPrice:  currency(leg.EntryPrice),
-				ClosePrice:  nullableCurrency(leg.ClosePrice, leg.Closed),
+				EntryPrice:  currency4(leg.EntryPrice),
+				ClosePrice:  nullableCurrency4(leg.ClosePrice, leg.Closed),
 				RealizedPnL: signedCurrency(leg.RealizedPnL),
 				SideClass:   sideClass(leg.Side),
 			})
@@ -387,6 +387,16 @@ func currency(value float64) string {
 	return "$" + fmt.Sprintf("%.2f", value)
 }
 
+func currency4(value float64) string {
+	if math.IsNaN(value) || math.IsInf(value, 0) {
+		return "-"
+	}
+	if value < 0 {
+		return "-$" + fmt.Sprintf("%.4f", -value)
+	}
+	return "$" + fmt.Sprintf("%.4f", value)
+}
+
 func signedCurrency(value float64) string {
 	if value > 0 {
 		return "+" + currency(value)
@@ -417,6 +427,13 @@ func nullableCurrency(value float64, ok bool) string {
 		return "-"
 	}
 	return currency(value)
+}
+
+func nullableCurrency4(value float64, ok bool) string {
+	if !ok {
+		return "-"
+	}
+	return currency4(value)
 }
 
 func formatDate(value time.Time) string {

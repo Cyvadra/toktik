@@ -140,6 +140,42 @@ func validateBacktestRequest(req dto.BacktestRequest) error {
 	if req.FastPeriod != nil && req.SlowPeriod != nil && *req.FastPeriod >= *req.SlowPeriod {
 		return fmt.Errorf("fast_period must be < slow_period")
 	}
+	if req.PositionSize != nil && *req.PositionSize <= 0 {
+		return fmt.Errorf("position_size must be > 0")
+	}
+	if req.MaxHoldHours != nil && *req.MaxHoldHours <= 0 {
+		return fmt.Errorf("max_hold_hours must be > 0")
+	}
+	if req.TargetExpiryDays != nil && *req.TargetExpiryDays <= 0 {
+		return fmt.Errorf("target_expiry_days must be >= 1")
+	}
+	if req.MinExpiryDays != nil && *req.MinExpiryDays <= 0 {
+		return fmt.Errorf("min_expiry_days must be >= 1")
+	}
+	if req.TargetExpiryDays != nil && req.MinExpiryDays != nil && *req.TargetExpiryDays < *req.MinExpiryDays {
+		return fmt.Errorf("target_expiry_days must be >= min_expiry_days")
+	}
+	if req.MinPremium != nil && *req.MinPremium < 0 {
+		return fmt.Errorf("min_premium must be >= 0")
+	}
+	if req.ShortDeltaMin != nil && *req.ShortDeltaMin < 0 {
+		return fmt.Errorf("short_delta_min must be >= 0")
+	}
+	if req.ShortDeltaMax != nil && *req.ShortDeltaMax < 0 {
+		return fmt.Errorf("short_delta_max must be >= 0")
+	}
+	if req.LongDeltaMin != nil && *req.LongDeltaMin < 0 {
+		return fmt.Errorf("long_delta_min must be >= 0")
+	}
+	if req.LongDeltaMax != nil && *req.LongDeltaMax < 0 {
+		return fmt.Errorf("long_delta_max must be >= 0")
+	}
+	if req.ShortDeltaMin != nil && req.ShortDeltaMax != nil && *req.ShortDeltaMin > *req.ShortDeltaMax {
+		return fmt.Errorf("short_delta_min must be <= short_delta_max")
+	}
+	if req.LongDeltaMin != nil && req.LongDeltaMax != nil && *req.LongDeltaMin > *req.LongDeltaMax {
+		return fmt.Errorf("long_delta_min must be <= long_delta_max")
+	}
 	return nil
 }
 

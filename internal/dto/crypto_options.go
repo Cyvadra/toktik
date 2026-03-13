@@ -112,21 +112,30 @@ type GreeksResponse struct {
 
 // BacktestRequest is the JSON body for the backtest endpoint.
 type BacktestRequest struct {
-	Symbol          string   `json:"symbol" binding:"required"`
-	Interval        string   `json:"interval" binding:"required"`
-	From            string   `json:"from" binding:"required"`
-	To              string   `json:"to" binding:"required"`
-	Capital         *float64 `json:"capital,omitempty"`
-	Strategy        string   `json:"strategy,omitempty"`
-	CommissionModel string   `json:"commission_model,omitempty"`
-	CommissionValue *float64 `json:"commission_value,omitempty"`
-	SlippagePct     *float64 `json:"slippage_pct,omitempty"`
-	FillMode        string   `json:"fill_mode,omitempty"`
-	ValuationMode   string   `json:"valuation_mode,omitempty"`
-	TriggerMode     string   `json:"trigger_mode,omitempty"`
-	EntryTWAPBars   *int     `json:"entry_twap_bars,omitempty"`
-	FastPeriod      *int     `json:"fast_period,omitempty"`
-	SlowPeriod      *int     `json:"slow_period,omitempty"`
+	Symbol           string   `json:"symbol" binding:"required"`
+	Interval         string   `json:"interval" binding:"required"`
+	From             string   `json:"from" binding:"required"`
+	To               string   `json:"to" binding:"required"`
+	Capital          *float64 `json:"capital,omitempty"`
+	Strategy         string   `json:"strategy,omitempty"`
+	CommissionModel  string   `json:"commission_model,omitempty"`
+	CommissionValue  *float64 `json:"commission_value,omitempty"`
+	SlippagePct      *float64 `json:"slippage_pct,omitempty"`
+	FillMode         string   `json:"fill_mode,omitempty"`
+	ValuationMode    string   `json:"valuation_mode,omitempty"`
+	TriggerMode      string   `json:"trigger_mode,omitempty"`
+	EntryTWAPBars    *int     `json:"entry_twap_bars,omitempty"`
+	FastPeriod       *int     `json:"fast_period,omitempty"`
+	SlowPeriod       *int     `json:"slow_period,omitempty"`
+	PositionSize     *float64 `json:"position_size,omitempty"`
+	MaxHoldHours     *float64 `json:"max_hold_hours,omitempty"`
+	TargetExpiryDays *int     `json:"target_expiry_days,omitempty"`
+	MinExpiryDays    *int     `json:"min_expiry_days,omitempty"`
+	MinPremium       *float64 `json:"min_premium,omitempty"`
+	ShortDeltaMin    *float64 `json:"short_delta_min,omitempty"`
+	ShortDeltaMax    *float64 `json:"short_delta_max,omitempty"`
+	LongDeltaMin     *float64 `json:"long_delta_min,omitempty"`
+	LongDeltaMax     *float64 `json:"long_delta_max,omitempty"`
 }
 
 // ErrorResponse is the standard error envelope.

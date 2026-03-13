@@ -26,6 +26,10 @@ const (
 type MADeviationSpreadStrategy struct {
 	Direction SpreadDirection
 
+	EntryPriceMode     backtest.OptionPriceMode
+	ExitPriceMode      backtest.OptionPriceMode
+	ValuationPriceMode backtest.OptionPriceMode
+
 	// Indicator parameters
 	MAPeriod int // SMA period (default 120)
 
@@ -46,6 +50,7 @@ type MADeviationSpreadStrategy struct {
 	LongDeltaMax float64 // e.g. 0.15
 
 	// Position management
+	PositionSize   float64       // contracts per leg (default 1)
 	ShortProfitPct float64       // close short leg at this unrealized profit % (default 0.88)
 	LongProfitPct  float64       // close long leg immediately if profit reaches this (default 0.50)
 	LongCloseDelay time.Duration // delay before closing long leg after short (default 24h)
@@ -60,6 +65,14 @@ type spreadState struct {
 	spreadID       int
 	shortLegClosed bool
 	shortCloseTime time.Time
+}
+
+func (s *MADeviationSpreadStrategy) SpreadPricingConfig() backtest.SpreadPricingConfig {
+	return backtest.SpreadPricingConfig{
+		EntryMode:     s.EntryPriceMode,
+		ExitMode:      s.ExitPriceMode,
+		ValuationMode: s.ValuationPriceMode,
+	}.WithDefaults()
 }
 
 func (s *MADeviationSpreadStrategy) Name() string {
@@ -170,19 +183,11 @@ func (s *MADeviationSpreadStrategy) OnBar(ctx *backtest.BarContext) {
 func (s *MADeviationSpreadStrategy) manageSpreads(ctx *backtest.BarContext, now time.Time) {
 	chain := ctx.OptionsChain()
 
-	// Build a quick lookup of current mark prices from chain
-	priceMap := make(map[string]float64)
+	contractMap := make(map[string]backtest.OptionContract)
 	if chain != nil {
 		for _, c := range chain.Contracts() {
-			priceMap[c.Symbol] = c.MarkPrice
+			contractMap[c.Symbol] = c
 		}
-	}
-
-	markPrice := func(oc backtest.OptionContract) float64 {
-		if p, ok := priceMap[oc.Symbol]; ok {
-			return p
-		}
-		return oc.MarkPrice
 	}
 
 	for _, sp := range ctx.Spreads().OpenSpreads() {
@@ -193,7 +198,7 @@ func (s *MADeviationSpreadStrategy) manageSpreads(ctx *backtest.BarContext, now 
 
 		// Check max hold time first
 		if sp.TimeHeld(now) >= s.MaxHoldTime {
-			ctx.CloseSpread(sp.ID, markPrice)
+			s.closeSpread(ctx, sp, contractMap)
 			continue
 		}
 
@@ -203,10 +208,10 @@ func (s *MADeviationSpreadStrategy) manageSpreads(ctx *backtest.BarContext, now 
 
 		if !state.shortLegClosed && !shortLeg.Closed {
 			// Check short leg profit: > 88% unrealized profit → close it
-			shortMarkPrice := markPrice(shortLeg.Contract)
+			shortMarkPrice := s.valuationPrice(*shortLeg, contractMap)
 			pnlPct := sp.LegUnrealizedPnLPct(0, shortMarkPrice)
 			if !math.IsNaN(pnlPct) && pnlPct > s.ShortProfitPct {
-				ctx.CloseSpreadLeg(sp.ID, 0, shortMarkPrice)
+				ctx.CloseSpreadLeg(sp.ID, 0, s.exitPrice(*shortLeg, contractMap))
 				state.shortLegClosed = true
 				state.shortCloseTime = now
 			}
@@ -215,15 +220,15 @@ func (s *MADeviationSpreadStrategy) manageSpreads(ctx *backtest.BarContext, now 
 		if state.shortLegClosed && !longLeg.Closed {
 			// Short leg was closed. Check long leg conditions:
 			// 1. Immediately if long leg profit >= 50%
-			longMarkPrice := markPrice(longLeg.Contract)
+			longMarkPrice := s.valuationPrice(*longLeg, contractMap)
 			longPnlPct := sp.LegUnrealizedPnLPct(1, longMarkPrice)
 			if !math.IsNaN(longPnlPct) && longPnlPct >= s.LongProfitPct {
-				ctx.CloseSpreadLeg(sp.ID, 1, longMarkPrice)
+				ctx.CloseSpreadLeg(sp.ID, 1, s.exitPrice(*longLeg, contractMap))
 				continue
 			}
 			// 2. After LongCloseDelay (24h) since short leg close
 			if now.Sub(state.shortCloseTime) >= s.LongCloseDelay {
-				ctx.CloseSpreadLeg(sp.ID, 1, longMarkPrice)
+				ctx.CloseSpreadLeg(sp.ID, 1, s.exitPrice(*longLeg, contractMap))
 			}
 		}
 	}
@@ -303,7 +308,7 @@ func (s *MADeviationSpreadStrategy) tryOpenSpread(ctx *backtest.BarContext, now 
 		return
 	}
 
-	// Step 5: Open the spread (1 contract each)
+	// Step 5: Open the spread (configurable contracts per leg)
 	// Short leg: sell at bid price
 	// Long leg: buy at ask price
 	tag := "bull-put-spread"
@@ -315,27 +320,34 @@ func (s *MADeviationSpreadStrategy) tryOpenSpread(ctx *backtest.BarContext, now 
 		{
 			Contract:   *shortLeg,
 			Side:       backtest.Sell,
-			Qty:        1,
-			EntryPrice: shortLeg.BidPrice,
+			Qty:        s.PositionSize,
+			EntryPrice: s.EntryPriceMode.EntryPrice(backtest.Sell, *shortLeg),
 		},
 		{
 			Contract:   *longLegContract,
 			Side:       backtest.Buy,
-			Qty:        1,
-			EntryPrice: longLegContract.AskPrice,
+			Qty:        s.PositionSize,
+			EntryPrice: s.EntryPriceMode.EntryPrice(backtest.Buy, *longLegContract),
 		},
 	}
 
 	spreadID := ctx.OpenSpread(legs, tag)
 	if spreadID > 0 {
 		s.spreadStates[spreadID] = &spreadState{spreadID: spreadID}
-
-		// Schedule max hold time close as a safety net
-		ctx.ScheduleCloseAfter(s.MaxHoldTime, spreadID)
 	}
 }
 
 func (s *MADeviationSpreadStrategy) applyDefaults() {
+	pricingDefaults := backtest.DefaultSpreadPricingConfig()
+	if s.EntryPriceMode == backtest.OptionPriceModeUnspecified {
+		s.EntryPriceMode = pricingDefaults.EntryMode
+	}
+	if s.ExitPriceMode == backtest.OptionPriceModeUnspecified {
+		s.ExitPriceMode = pricingDefaults.ExitMode
+	}
+	if s.ValuationPriceMode == backtest.OptionPriceModeUnspecified {
+		s.ValuationPriceMode = pricingDefaults.ValuationMode
+	}
 	if s.MAPeriod == 0 {
 		s.MAPeriod = 120
 	}
@@ -363,6 +375,9 @@ func (s *MADeviationSpreadStrategy) applyDefaults() {
 	if s.LongDeltaMax == 0 {
 		s.LongDeltaMax = 0.15
 	}
+	if s.PositionSize == 0 {
+		s.PositionSize = 1
+	}
 	if s.ShortProfitPct == 0 {
 		s.ShortProfitPct = 0.88
 	}
@@ -374,6 +389,32 @@ func (s *MADeviationSpreadStrategy) applyDefaults() {
 	}
 	if s.MaxHoldTime == 0 {
 		s.MaxHoldTime = 48 * time.Hour
+	}
+}
+
+func (s *MADeviationSpreadStrategy) currentContract(contract backtest.OptionContract, contractMap map[string]backtest.OptionContract) backtest.OptionContract {
+	if updated, ok := contractMap[contract.Symbol]; ok {
+		return updated
+	}
+	return contract
+}
+
+func (s *MADeviationSpreadStrategy) exitPrice(leg backtest.SpreadLeg, contractMap map[string]backtest.OptionContract) float64 {
+	contract := s.currentContract(leg.Contract, contractMap)
+	return s.ExitPriceMode.ExitPrice(leg.Side, contract)
+}
+
+func (s *MADeviationSpreadStrategy) valuationPrice(leg backtest.SpreadLeg, contractMap map[string]backtest.OptionContract) float64 {
+	contract := s.currentContract(leg.Contract, contractMap)
+	return s.ValuationPriceMode.ExitPrice(leg.Side, contract)
+}
+
+func (s *MADeviationSpreadStrategy) closeSpread(ctx *backtest.BarContext, sp *backtest.SpreadPosition, contractMap map[string]backtest.OptionContract) {
+	for i := range sp.Legs {
+		if sp.Legs[i].Closed {
+			continue
+		}
+		ctx.CloseSpreadLeg(sp.ID, i, s.exitPrice(sp.Legs[i], contractMap))
 	}
 }
 
