@@ -8,19 +8,16 @@ import (
 	"github.com/Cyvadra/toktik/internal/backtest"
 	"github.com/Cyvadra/toktik/internal/datafeed"
 	"github.com/Cyvadra/toktik/internal/dto"
+	"github.com/Cyvadra/toktik/internal/strategies"
 )
 
 const (
 	defaultBacktestCapital         = 100000.0
-	defaultBacktestStrategy        = "golden-cross"
 	defaultBacktestCommissionValue = 0.001
 	defaultBacktestSlippagePct     = 0.0005
 	defaultBacktestFillMode        = "bidask"
 	defaultBacktestValuationMode   = "exit"
 	defaultBacktestTriggerMode     = "canonical"
-	defaultEntryTWAPBars           = 1
-	defaultFastPeriod              = 10
-	defaultSlowPeriod              = 50
 )
 
 // RunBacktest executes a configured backtest and returns the engine result.
@@ -51,7 +48,7 @@ func (s *CryptoOptionsService) RunBacktest(ctx context.Context, req dto.Backtest
 		return nil, err
 	}
 
-	strategy, err := buildStrategy(req)
+	strategy, err := strategies.Build(req)
 	if err != nil {
 		return nil, err
 	}
@@ -69,114 +66,6 @@ func (s *CryptoOptionsService) RunBacktest(ctx context.Context, req dto.Backtest
 	engine.RegisterDataFeed("crypto-options", datafeed.NewCryptoOptionsDataFeed(s.conn))
 
 	return engine.Run(ctx, "crypto-options", req.Symbol, req.Interval, fromT, toT, strategy, nil)
-}
-
-type goldenCrossStrategy struct {
-	fastPeriod int
-	slowPeriod int
-	entryTWAP  int
-}
-
-func (s *goldenCrossStrategy) Name() string { return "GoldenCross" }
-
-func (s *goldenCrossStrategy) Init(ctx *backtest.SetupContext) error {
-	ctx.SetParam("fast_period", s.fastPeriod)
-	ctx.SetParam("slow_period", s.slowPeriod)
-
-	ctx.Register("sma_fast", backtest.SMA("close", s.fastPeriod))
-	ctx.Register("sma_slow", backtest.SMA("close", s.slowPeriod))
-	ctx.Register("buy_signal", backtest.Crossover("sma_fast", "sma_slow"))
-	ctx.Register("sell_signal", backtest.Crossunder("sma_fast", "sma_slow"))
-	return nil
-}
-
-func (s *goldenCrossStrategy) OnBar(ctx *backtest.BarContext) {
-	primary := ctx.PrimaryRef()
-
-	if ctx.Ind("buy_signal") == 1 && ctx.Position(primary) == 0 {
-		price := ctx.Close()
-		if price > 0 {
-			qty := (ctx.Equity() * 0.95) / price
-			if s.entryTWAP > 1 {
-				ctx.BuyTWAP(primary, qty, s.entryTWAP)
-			} else {
-				ctx.Buy(primary, qty)
-			}
-		}
-	}
-
-	if ctx.Ind("sell_signal") == 1 && ctx.Position(primary) > 0 {
-		ctx.ClosePosition(primary)
-	}
-}
-
-type deltaFilterStrategy struct {
-	entryTWAP int
-}
-
-func (s *deltaFilterStrategy) Name() string { return "DeltaFilter" }
-
-func (s *deltaFilterStrategy) Init(ctx *backtest.SetupContext) error {
-	ctx.Register("ema20", backtest.EMA("close", 20))
-	ctx.Register("rsi14", backtest.RSI("close", 14))
-	ctx.Register("delta_ok", backtest.Custom(
-		[]string{"delta"},
-		func(inputs map[string][]float64) []float64 {
-			deltaSeries := inputs["delta"]
-			out := make([]float64, len(deltaSeries))
-			for i, value := range deltaSeries {
-				if value > 0.3 && value < 0.7 {
-					out[i] = 1
-				}
-			}
-			return out
-		},
-	))
-	return nil
-}
-
-func (s *deltaFilterStrategy) OnBar(ctx *backtest.BarContext) {
-	primary := ctx.PrimaryRef()
-	deltaOK := ctx.Ind("delta_ok")
-	rsi := ctx.Ind("rsi14")
-
-	if deltaOK == 1 && rsi < 30 && ctx.Position(primary) == 0 {
-		price := ctx.Close()
-		if price > 0 {
-			qty := (ctx.Equity() * 0.5) / price
-			if s.entryTWAP > 1 {
-				ctx.BuyTWAP(primary, qty, s.entryTWAP)
-			} else {
-				ctx.Buy(primary, qty)
-			}
-		}
-	}
-
-	if (deltaOK == 0 || rsi > 70) && ctx.Position(primary) > 0 {
-		ctx.ClosePosition(primary)
-	}
-}
-
-func buildStrategy(req dto.BacktestRequest) (backtest.Strategy, error) {
-	strategyName := strings.ToLower(strings.TrimSpace(req.Strategy))
-	if strategyName == "" {
-		strategyName = defaultBacktestStrategy
-	}
-
-	entryTWAPBars := intDefault(req.EntryTWAPBars, defaultEntryTWAPBars)
-
-	switch strategyName {
-	case "golden-cross":
-		return &goldenCrossStrategy{
-			fastPeriod: intDefault(req.FastPeriod, defaultFastPeriod),
-			slowPeriod: intDefault(req.SlowPeriod, defaultSlowPeriod),
-			entryTWAP:  entryTWAPBars,
-		}, nil
-	case "delta-filter":
-		return &deltaFilterStrategy{entryTWAP: entryTWAPBars}, nil
-	default:
-		return nil, fmt.Errorf("unsupported strategy %q", req.Strategy)
-	}
 }
 
 func parseCommissionModel(value string) (backtest.CommissionModel, error) {
