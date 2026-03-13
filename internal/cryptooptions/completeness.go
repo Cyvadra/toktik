@@ -26,22 +26,20 @@ func FindMissingBarDays(ctx context.Context, conn driver.Conn, fromDate, toDate 
 	query := fmt.Sprintf(`WITH
     toDate('%s') AS start_date,
     toDate('%s') AS end_date
-SELECT expected.day
+SELECT day
 FROM
 (
-    SELECT addDays(start_date, number) AS day
-    FROM numbers(dateDiff('day', start_date, end_date) + 1)
-) AS expected
-LEFT JOIN
+	SELECT addDays(start_date, number) AS day
+	FROM numbers(dateDiff('day', start_date, end_date) + 1)
+)
+WHERE day NOT IN
 (
-    SELECT DISTINCT toDate(timestamp) AS day
-    FROM crypto_options_bar_1m
-    WHERE timestamp >= toDateTime('%s')
-      AND timestamp < toDateTime('%s')%s
-) AS actual
-ON expected.day = actual.day
-WHERE actual.day IS NULL
-ORDER BY expected.day`,
+	SELECT DISTINCT toDate(timestamp)
+	FROM crypto_options_bar_1m
+	WHERE timestamp >= toDateTime('%s')
+	  AND timestamp < toDateTime('%s')%s
+)
+ORDER BY day`,
 		startDate.Format(dateLayout),
 		endDate.Format(dateLayout),
 		startDate.Format(dateLayout),
@@ -68,6 +66,6 @@ ORDER BY expected.day`,
 }
 
 func normalizeUTCDate(value time.Time) time.Time {
-	year, month, day := value.UTC().Date()
+	year, month, day := value.Date()
 	return time.Date(year, month, day, 0, 0, 0, 0, time.UTC)
 }
