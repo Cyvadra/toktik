@@ -24,7 +24,7 @@ func main() {
 	interval := flag.String("interval", "1h", "Bar interval for the strategy (e.g. 1h)")
 	fromStr := flag.String("from", "", "Start date YYYY-MM-DD (required)")
 	toStr := flag.String("to", "", "End date YYYY-MM-DD (required)")
-	capital := flag.Float64("capital", 200000, "Initial capital (USD)")
+	capital := flag.Float64("capital", 1.0, "Initial capital in base asset units (e.g. BTC)")
 	stratName := flag.String("strategy", "both",
 		"Strategy: bull-put-spread | bear-call-spread | both")
 	commModel := flag.String("commission-model", "percent",
@@ -32,8 +32,8 @@ func main() {
 	commValue := flag.Float64("commission-value", 0.0003, "Commission value")
 	slippagePct := flag.Float64("slippage-pct", 0.0, "Slippage fraction (0 = none)")
 	outputJSON := flag.String("output", "", "Optional JSON output file path")
-	outputHTML := flag.String("html-output", "", "Optional HTML report output path (defaults to reports/backtests/<strategy>_<period>.html)")
-	positionSize := flag.Float64("position-size", 1, "Contracts per leg when opening a spread")
+	outputHTML := flag.String("html-output", "", "Optional HTML report output path (defaults to reports/backtests/<strategy>_<period>.html; multi-strategy runs emit one combined file)")
+	positionSize := flag.Float64("position-size", 1, "Contracts per leg when opening a spread (1 = 1 coin contract per leg, e.g. 1 BTC + 1 BTC)")
 	maxHoldHours := flag.Float64("max-hold-hours", 48, "Maximum spread holding time in hours")
 	targetExpiryDays := flag.Int("target-expiry-days", 15, "Target days to expiry when selecting contracts")
 	minExpiryDays := flag.Int("min-expiry-days", 7, "Minimum days to expiry when selecting contracts")
@@ -139,6 +139,7 @@ func main() {
 
 	cfg := backtest.Config{
 		InitialCapital:  *capital,
+		AccountUnit:     strings.ToUpper(strings.TrimSpace(*baseAsset)),
 		CommissionModel: parseCommissionModel(*commModel),
 		CommissionValue: *commValue,
 		SlippagePct:     *slippagePct,
@@ -154,17 +155,20 @@ func main() {
 		log.Fatalf("Failed to load options chain: %v", err)
 	}
 
+	results := make([]*backtest.Result, 0, len(strats))
+
 	for i, strat := range strats {
 		log.Printf("--- Running strategy: %s ---", strat.Name())
 		result, runErr := runOne(ctx, conn, cfg, *baseAsset, *interval, from, to, strat, chainProvider)
 		if runErr != nil {
 			log.Fatalf("Backtest failed [%s]: %v", strat.Name(), runErr)
 		}
+		results = append(results, result)
 
 		fmt.Println()
 		fmt.Println(result.Summary())
 		if result.SpreadSummary != nil {
-			printSpreadSummary(result.SpreadSummary)
+			printSpreadSummary(result.SpreadSummary, result.AccountUnit)
 		}
 
 		if *outputJSON != "" {
@@ -175,17 +179,28 @@ func main() {
 				log.Printf("Results written to %s", outPath)
 			}
 		}
+	}
 
-		htmlPath := resolveHTMLOutputPath(*outputHTML, strat.Name(), *baseAsset, *interval, from, to, i, len(strats))
-		if writeErr := report.WriteBacktestHTML(htmlPath, result, report.HTMLMeta{
-			Asset:       *baseAsset,
-			Interval:    *interval,
-			GeneratedAt: time.Now(),
-		}); writeErr != nil {
+	htmlMeta := report.HTMLMeta{
+		Asset:       *baseAsset,
+		Interval:    *interval,
+		GeneratedAt: time.Now(),
+	}
+	if len(results) == 1 {
+		htmlPath := resolveHTMLOutputPath(*outputHTML, results[0].StrategyName, *baseAsset, *interval, from, to, 0, 1)
+		if writeErr := report.WriteBacktestHTML(htmlPath, results[0], htmlMeta); writeErr != nil {
 			log.Printf("Warning: failed to write HTML report to %s: %v", htmlPath, writeErr)
 		} else {
 			log.Printf("HTML report written to %s", htmlPath)
 		}
+		return
+	}
+
+	htmlPath := resolveCombinedHTMLOutputPath(*outputHTML, *stratName, *baseAsset, *interval, from, to)
+	if writeErr := report.WriteCombinedBacktestHTML(htmlPath, results, htmlMeta); writeErr != nil {
+		log.Printf("Warning: failed to write combined HTML report to %s: %v", htmlPath, writeErr)
+	} else {
+		log.Printf("Combined HTML report written to %s", htmlPath)
 	}
 }
 
@@ -287,7 +302,7 @@ func parseCommissionModel(s string) backtest.CommissionModel {
 }
 
 // printSpreadSummary prints a human-readable options spread summary.
-func printSpreadSummary(s *backtest.SpreadSummary) {
+func printSpreadSummary(s *backtest.SpreadSummary, unit string) {
 	fmt.Printf("Spread Summary:\n")
 	fmt.Printf("  Total spreads:    %d\n", s.TotalSpreads)
 	fmt.Printf("  Closed:           %d\n", s.ClosedSpreads)
@@ -295,7 +310,11 @@ func printSpreadSummary(s *backtest.SpreadSummary) {
 	fmt.Printf("  Winning:          %d\n", s.WinningSpreads)
 	fmt.Printf("  Losing:           %d\n", s.LosingSpreads)
 	fmt.Printf("  Win rate:         %.1f%%\n", s.WinRate*100)
-	fmt.Printf("  Total spread PnL: %.4f\n", s.TotalPnL)
+	if strings.TrimSpace(unit) == "" {
+		fmt.Printf("  Total spread PnL: %.4f\n", s.TotalPnL)
+		return
+	}
+	fmt.Printf("  Total spread PnL: %.4f %s\n", s.TotalPnL, unit)
 }
 
 // resolveOutputPath appends an index suffix when multiple strategies share one output flag.
@@ -317,6 +336,25 @@ func resolveHTMLOutputPath(base, strategyName, asset, interval string, from, to 
 	fileName := fmt.Sprintf(
 		"%s_%s_%s_%s_%s.html",
 		slugify(strategyName),
+		strings.ToLower(asset),
+		slugify(interval),
+		from.Format("20060102"),
+		to.Format("20060102"),
+	)
+	return filepath.Join("reports", "backtests", fileName)
+}
+
+func resolveCombinedHTMLOutputPath(base, strategyName, asset, interval string, from, to time.Time) string {
+	if strings.TrimSpace(base) != "" {
+		return base
+	}
+	name := slugify(strategyName)
+	if name == "" {
+		name = "combined"
+	}
+	fileName := fmt.Sprintf(
+		"%s_%s_%s_%s_%s.html",
+		name,
 		strings.ToLower(asset),
 		slugify(interval),
 		from.Format("20060102"),

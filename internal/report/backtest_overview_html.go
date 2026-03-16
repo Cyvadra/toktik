@@ -127,7 +127,7 @@ func buildOverviewView(outputPath string, items []OverviewItem, meta HTMLMeta) o
 		spreads := "0"
 		if result.SpreadSummary != nil {
 			spreadWinRate = pct(result.SpreadSummary.WinRate)
-			spreadPnL = signedCurrency(result.SpreadSummary.TotalPnL)
+			spreadPnL = signedAmount(result.SpreadSummary.TotalPnL, result.AccountUnit)
 			spreads = integer(result.SpreadSummary.TotalSpreads)
 		}
 
@@ -139,8 +139,8 @@ func buildOverviewView(outputPath string, items []OverviewItem, meta HTMLMeta) o
 		view.Strategies = append(view.Strategies, overviewStrategyView{
 			Name:           result.StrategyName,
 			HTMLLink:       link,
-			FinalEquity:    currency(result.FinalEquity),
-			NetPnL:         signedCurrency(result.FinalEquity - result.InitialCapital),
+			FinalEquity:    amount(result.FinalEquity, result.AccountUnit),
+			NetPnL:         signedAmount(result.FinalEquity-result.InitialCapital, result.AccountUnit),
 			TotalReturn:    pct(result.TotalReturn),
 			Annualized:     pct(result.AnnualizedReturn),
 			Sharpe:         decimal(result.SharpeRatio),

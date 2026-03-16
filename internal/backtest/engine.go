@@ -11,6 +11,7 @@ import (
 // Config controls engine behavior.
 type Config struct {
 	InitialCapital  float64
+	AccountUnit     string
 	CommissionModel CommissionModel
 	CommissionValue float64
 	SlippagePct     float64
@@ -296,8 +297,9 @@ func (e *Engine) Run(ctx context.Context, market, symbol, interval string, from,
 		// Call strategy
 		strategy.OnBar(barCtx)
 
-		// Record equity (include spread positions in equity)
-		spreadEquity := 0.0
+		// Record equity. Spread entry and exit cashflows already adjust broker cash,
+		// so open spread contribution must be current market value, not unrealized PnL.
+		spreadMarketValue := 0.0
 		for _, sp := range spreadTracker.OpenSpreads() {
 			for _, leg := range sp.Legs {
 				if leg.Closed {
@@ -305,10 +307,14 @@ func (e *Engine) Run(ctx context.Context, market, symbol, interval string, from,
 				}
 				contract := currentSpreadContract(leg.Contract, contractMap)
 				markPrice := spreadPricing.ValuationMode.ExitPrice(leg.Side, contract)
-				spreadEquity += leg.UnrealizedPnL(markPrice)
+				if leg.Side == Buy {
+					spreadMarketValue += leg.Qty * markPrice
+				} else {
+					spreadMarketValue -= leg.Qty * markPrice
+				}
 			}
 		}
-		equityCurve[i] = broker.Equity() + spreadEquity
+		equityCurve[i] = broker.Equity() + spreadMarketValue
 	}
 
 	// --- Step 6: Compute metrics ---
@@ -318,6 +324,7 @@ func (e *Engine) Run(ctx context.Context, market, symbol, interval string, from,
 		equityCurve,
 		primaryDS.Timestamps,
 		e.config.InitialCapital,
+		e.config.AccountUnit,
 		secColumns[0], // include primary indicator series for visualization
 	)
 

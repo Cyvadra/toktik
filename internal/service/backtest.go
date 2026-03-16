@@ -5,13 +5,14 @@ import (
 	"strings"
 
 	"github.com/Cyvadra/toktik/internal/backtest"
+	"github.com/Cyvadra/toktik/internal/cryptooptions"
 	"github.com/Cyvadra/toktik/internal/datafeed"
 	"github.com/Cyvadra/toktik/internal/dto"
 	"github.com/Cyvadra/toktik/internal/strategies"
 )
 
 const (
-	defaultBacktestCapital         = 100000.0
+	defaultBacktestCapital         = 1.0
 	defaultBacktestCommissionValue = 0.001
 	defaultBacktestSlippagePct     = 0.0005
 	DefaultBacktestFillMode        = "bidask"
@@ -54,6 +55,7 @@ func (s *CryptoOptionsService) RunBacktest(ctx context.Context, req dto.Backtest
 
 	engine := backtest.NewEngine(backtest.Config{
 		InitialCapital:  floatDefault(req.Capital, defaultBacktestCapital),
+		AccountUnit:     resolveBacktestAccountUnit(req.Symbol),
 		CommissionModel: commissionModel,
 		CommissionValue: floatDefault(req.CommissionValue, defaultBacktestCommissionValue),
 		SlippagePct:     floatDefault(req.SlippagePct, defaultBacktestSlippagePct),
@@ -135,4 +137,12 @@ func floatDefault(value *float64, fallback float64) float64 {
 		return fallback
 	}
 	return *value
+}
+
+func resolveBacktestAccountUnit(symbol string) string {
+	base := strings.TrimSpace(cryptooptions.ExtractBaseAsset(symbol))
+	if base == "" {
+		return ""
+	}
+	return strings.ToUpper(base)
 }

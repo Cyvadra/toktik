@@ -2,7 +2,6 @@ package strategies
 
 import (
 	"math"
-	"sort"
 	"time"
 
 	"github.com/Cyvadra/toktik/internal/backtest"
@@ -251,7 +250,7 @@ func (s *MADeviationSpreadStrategy) tryOpenSpread(ctx *backtest.BarContext, now 
 		return
 	}
 
-	expiryFiltered := typeChain.ExpiryMin(s.MinExpiryDays)
+	expiryFiltered := s.selectTargetExpiryChain(typeChain)
 	if expiryFiltered.Len() == 0 {
 		return
 	}
@@ -274,94 +273,63 @@ func (s *MADeviationSpreadStrategy) tryOpenSpread(ctx *backtest.BarContext, now 
 		longDeltaMax = s.LongDeltaMax
 	}
 
-	for _, expiry := range s.orderedExpiries(expiryFiltered.Contracts(), now) {
-		expiryRef := &backtest.OptionContract{Expiration: expiry}
-		expiryChain := expiryFiltered.SameExpiry(expiryRef)
-
-		shortCandidates := expiryChain.DeltaRange(shortDeltaMin, shortDeltaMax).MinPremium(s.MinPremium)
-		if shortCandidates.Len() == 0 {
-			continue
-		}
-
-		shortLeg := shortCandidates.BestSpread()
-		if shortLeg == nil {
-			continue
-		}
-
-		longCandidates := expiryChain.SameExpiry(shortLeg).DeltaRange(longDeltaMin, longDeltaMax)
-		if longCandidates.Len() == 0 {
-			continue
-		}
-
-		longLegContract := longCandidates.BestSpread()
-		if longLegContract == nil {
-			continue
-		}
-
-		tag := "bull-put-spread"
-		if s.Direction == BearSpread {
-			tag = "bear-call-spread"
-		}
-
-		legs := []backtest.SpreadLeg{
-			{
-				Contract:   *shortLeg,
-				Side:       backtest.Sell,
-				Qty:        s.PositionSize,
-				EntryPrice: s.EntryPriceMode.EntryPrice(backtest.Sell, *shortLeg),
-			},
-			{
-				Contract:   *longLegContract,
-				Side:       backtest.Buy,
-				Qty:        s.PositionSize,
-				EntryPrice: s.EntryPriceMode.EntryPrice(backtest.Buy, *longLegContract),
-			},
-		}
-
-		spreadID := ctx.OpenSpread(legs, tag)
-		if spreadID > 0 {
-			s.spreadStates[spreadID] = &spreadState{spreadID: spreadID}
-		}
+	shortCandidates := expiryFiltered.DeltaRange(shortDeltaMin, shortDeltaMax).MinPremium(s.MinPremium)
+	if shortCandidates.Len() == 0 {
 		return
+	}
+
+	shortLeg := shortCandidates.BestSpread()
+	if shortLeg == nil {
+		return
+	}
+
+	longCandidates := expiryFiltered.SameExpiry(shortLeg).DeltaRange(longDeltaMin, longDeltaMax)
+	if longCandidates.Len() == 0 {
+		return
+	}
+
+	longLegContract := longCandidates.BestSpread()
+	if longLegContract == nil {
+		return
+	}
+
+	tag := "bull-put-spread"
+	if s.Direction == BearSpread {
+		tag = "bear-call-spread"
+	}
+
+	legs := []backtest.SpreadLeg{
+		{
+			Contract:   *shortLeg,
+			Side:       backtest.Sell,
+			Qty:        s.PositionSize,
+			EntryPrice: s.EntryPriceMode.EntryPrice(backtest.Sell, *shortLeg),
+		},
+		{
+			Contract:   *longLegContract,
+			Side:       backtest.Buy,
+			Qty:        s.PositionSize,
+			EntryPrice: s.EntryPriceMode.EntryPrice(backtest.Buy, *longLegContract),
+		},
+	}
+
+	spreadID := ctx.OpenSpread(legs, tag)
+	if spreadID > 0 {
+		s.spreadStates[spreadID] = &spreadState{spreadID: spreadID}
 	}
 }
 
-func (s *MADeviationSpreadStrategy) orderedExpiries(contracts []backtest.OptionContract, now time.Time) []time.Time {
-	if len(contracts) == 0 {
-		return nil
+func (s *MADeviationSpreadStrategy) selectTargetExpiryChain(chain *backtest.OptionsChain) *backtest.OptionsChain {
+	if chain == nil || chain.Len() == 0 {
+		return chain
 	}
 
-	targetDays := float64(s.TargetExpiryDays)
-	unique := make(map[int64]time.Time, len(contracts))
-	for _, contract := range contracts {
-		if contract.DaysToExpiry(now) < float64(s.MinExpiryDays) {
-			continue
-		}
-		unique[contract.Expiration.Unix()] = contract.Expiration
+	filtered := chain.ExpiryRange(s.MinExpiryDays, s.TargetExpiryDays)
+	if filtered.Len() == 0 {
+		return filtered
 	}
 
-	later := make([]time.Time, 0, len(unique))
-	earlier := make([]time.Time, 0, len(unique))
-	for _, expiry := range unique {
-		days := expiry.Sub(now).Hours() / 24
-		if days >= targetDays {
-			later = append(later, expiry)
-		} else {
-			earlier = append(earlier, expiry)
-		}
-	}
-
-	sort.Slice(later, func(i, j int) bool {
-		return later[i].Before(later[j])
-	})
-	sort.Slice(earlier, func(i, j int) bool {
-		return earlier[i].After(earlier[j])
-	})
-
-	ordered := make([]time.Time, 0, len(later)+len(earlier))
-	ordered = append(ordered, later...)
-	ordered = append(ordered, earlier...)
-	return ordered
+	return filtered.ExpiryNearest(s.TargetExpiryDays)
 }
 
 func (s *MADeviationSpreadStrategy) applyDefaults() {
@@ -406,7 +374,7 @@ func (s *MADeviationSpreadStrategy) applyDefaults() {
 		s.PositionSize = 1
 	}
 	if s.ShortProfitPct == 0 {
-		s.ShortProfitPct = 0.88
+		s.ShortProfitPct = 0.5 // 0.5; 0.18; 0.88
 	}
 	if s.LongProfitPct == 0 {
 		s.LongProfitPct = 0.50

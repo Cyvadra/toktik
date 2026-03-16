@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"math"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -17,6 +18,7 @@ type Result struct {
 	// Performance
 	InitialCapital   float64 `json:"initial_capital"`
 	FinalEquity      float64 `json:"final_equity"`
+	AccountUnit      string  `json:"account_unit,omitempty"`
 	TotalReturn      float64 `json:"total_return"` // as fraction, e.g. 0.15 = 15%
 	AnnualizedReturn float64 `json:"annualized_return"`
 	SharpeRatio      float64 `json:"sharpe_ratio"`
@@ -132,11 +134,12 @@ func (r *Result) ExportJSON(path string) error {
 
 // Summary returns a compact text summary of the result.
 func (r *Result) Summary() string {
+	unit := strings.TrimSpace(r.AccountUnit)
 	return "Strategy:          " + r.StrategyName + "\n" +
 		"Period:            " + r.StartTime.Format("2006-01-02") + " to " + r.EndTime.Format("2006-01-02") + "\n" +
 		"Bars:              " + itoa(r.BarsCount) + "\n" +
-		"Initial Capital:   " + ftoa(r.InitialCapital) + "\n" +
-		"Final Equity:      " + ftoa(r.FinalEquity) + "\n" +
+		"Initial Capital:   " + formatSummaryAmount(r.InitialCapital, unit) + "\n" +
+		"Final Equity:      " + formatSummaryAmount(r.FinalEquity, unit) + "\n" +
 		"Total Return:      " + pct(r.TotalReturn) + "\n" +
 		"Annualized Return: " + pct(r.AnnualizedReturn) + "\n" +
 		"Sharpe Ratio:      " + ftoa(r.SharpeRatio) + "\n" +
@@ -144,9 +147,9 @@ func (r *Result) Summary() string {
 		"Total Trades:      " + itoa(r.TotalTrades) + "\n" +
 		"Win Rate:          " + pct(r.WinRate) + "\n" +
 		"Profit Factor:     " + ftoa(r.ProfitFactor) + "\n" +
-		"Avg Win:           " + ftoa(r.AvgWin) + "\n" +
-		"Avg Loss:          " + ftoa(r.AvgLoss) + "\n" +
-		"Total Fees:        " + ftoa(r.TotalFees)
+		"Avg Win:           " + formatSummaryAmount(r.AvgWin, unit) + "\n" +
+		"Avg Loss:          " + formatSummaryAmount(r.AvgLoss, unit) + "\n" +
+		"Total Fees:        " + formatSummaryAmount(r.TotalFees, unit)
 }
 
 func computeResult(
@@ -155,6 +158,7 @@ func computeResult(
 	equityCurve []float64,
 	timestamps []time.Time,
 	initialCapital float64,
+	accountUnit string,
 	series map[string][]float64,
 ) *Result {
 	n := len(equityCurve)
@@ -162,6 +166,7 @@ func computeResult(
 		StrategyName:   strategyName,
 		BarsCount:      n,
 		InitialCapital: initialCapital,
+		AccountUnit:    strings.TrimSpace(accountUnit),
 		Trades:         trades,
 		EquityCurve:    equityCurve,
 		Timestamps:     timestamps,
@@ -525,6 +530,49 @@ func ftoa(f float64) string {
 
 func pct(f float64) string {
 	return ftoa(f*100) + "%"
+}
+
+func formatSummaryAmount(value float64, unit string) string {
+	if strings.TrimSpace(unit) == "" {
+		return ftoa(value)
+	}
+	if math.IsInf(value, 0) {
+		return "∞"
+	}
+	if math.IsNaN(value) {
+		return "NaN"
+	}
+	return formatFloat(value, 4) + " " + strings.TrimSpace(unit)
+}
+
+func formatFloat(value float64, decimals int) string {
+	if math.IsInf(value, 0) {
+		return "∞"
+	}
+	if math.IsNaN(value) {
+		return "NaN"
+	}
+	neg := ""
+	if value < 0 {
+		neg = "-"
+		value = -value
+	}
+	pow10 := 1.0
+	for i := 0; i < decimals; i++ {
+		pow10 *= 10
+	}
+	rounded := value*pow10 + 0.5
+	whole := int(rounded / pow10)
+	frac := int(rounded) - whole*int(pow10)
+	fracDigits := make([]byte, decimals)
+	for i := decimals - 1; i >= 0; i-- {
+		fracDigits[i] = byte('0' + frac%10)
+		frac /= 10
+	}
+	if decimals == 0 {
+		return neg + itoa(whole)
+	}
+	return neg + itoa(whole) + "." + string(fracDigits)
 }
 
 func buildSpreadPositionReports(tracker *SpreadTracker, endTime time.Time) []SpreadPositionReport {
