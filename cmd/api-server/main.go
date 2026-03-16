@@ -3,18 +3,28 @@ package main
 import (
 	"context"
 	"flag"
-	"fmt"
 	"log"
+	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"github.com/Cyvadra/toktik/internal/api"
 	"github.com/Cyvadra/toktik/internal/cryptooptions"
 	"github.com/Cyvadra/toktik/internal/service"
 )
 
+func envOrDefault(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
+}
+
 func main() {
-	dsn := flag.String("clickhouse-dsn", "clickhouse://default:@localhost:9000/default", "ClickHouse DSN")
-	addr := flag.String("addr", ":8080", "Listen address")
+	dsn := flag.String("clickhouse-dsn", envOrDefault("CLICKHOUSE_DSN", "clickhouse://default:@localhost:9000/default"), "ClickHouse DSN")
+	addr := flag.String("addr", envOrDefault("LISTEN_ADDR", ":8080"), "Listen address")
 	schemaFile := flag.String("schema", "", "Path to DDL SQL file (auto-detected if empty)")
 	flag.Parse()
 
@@ -54,9 +64,29 @@ func main() {
 	svc := service.NewCryptoOptionsService(conn)
 	router := api.NewRouter(svc)
 
-	log.Printf("Starting API server on %s", *addr)
-	if err := router.Run(*addr); err != nil {
-		fmt.Fprintf(os.Stderr, "server error: %v\n", err)
-		os.Exit(1)
+	srv := &http.Server{
+		Addr:    *addr,
+		Handler: router,
 	}
+
+	// Start server in background
+	go func() {
+		log.Printf("Starting API server on %s", *addr)
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("server error: %v", err)
+		}
+	}()
+
+	// Wait for interrupt signal
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+	log.Println("Shutting down server...")
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		log.Fatalf("server forced to shutdown: %v", err)
+	}
+	log.Println("Server exited")
 }

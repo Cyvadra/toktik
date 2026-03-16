@@ -100,17 +100,22 @@ func (s *MADeviationSpreadStrategy) Init(ctx *backtest.SetupContext) error {
 
 	// M = max(Highest(H,n)-Lowest(C,n), Highest(C,n)-Lowest(L,n))
 	ctx.Register("m_val", backtest.Custom(
-		[]string{"highest_h", "lowest_c", "highest_c", "lowest_l"},
+		[]string{"highest_h", "lowest_c", "highest_c", "lowest_l", "compat_fallback"},
 		func(inputs map[string][]float64) []float64 {
 			hh := inputs["highest_h"]
 			lc := inputs["lowest_c"]
 			hc := inputs["highest_c"]
 			ll := inputs["lowest_l"]
+			fallback := inputs["compat_fallback"]
 			n := len(hh)
 			out := make([]float64, n)
 			for i := 0; i < n; i++ {
-				if math.IsNaN(hh[i]) || math.IsNaN(lc[i]) || math.IsNaN(hc[i]) || math.IsNaN(ll[i]) {
+				if math.IsNaN(hh[i]) || math.IsNaN(lc[i]) || math.IsNaN(hc[i]) || math.IsNaN(ll[i]) || math.IsNaN(fallback[i]) {
 					out[i] = math.NaN()
+					continue
+				}
+				if fallback[i] >= 0.5 {
+					out[i] = hc[i] - lc[i]
 					continue
 				}
 				a := hh[i] - lc[i]

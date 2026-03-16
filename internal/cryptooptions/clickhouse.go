@@ -103,14 +103,14 @@ symbol_id, symbol, base_asset, option_type, strike_price, expiration, underlying
 	return nil
 }
 
-// CountExistingBars returns how many sampled bars already exist in crypto_options_bar_1m.
+// CountExistingBars returns how many sampled option bars already exist in crypto_options_bar_1m.
 func CountExistingBars(ctx context.Context, conn driver.Conn, bars []Bar1m) (int, error) {
 	if len(bars) == 0 {
 		return 0, nil
 	}
 
 	var query strings.Builder
-	query.WriteString(`SELECT count() FROM crypto_options_bar_1m WHERE (toUnixTimestamp(timestamp), symbol_id, base_asset, mark_open, mark_close, last_open, last_close, open_interest, tick_count) IN (`)
+	query.WriteString(`SELECT count() FROM crypto_options_bar_1m WHERE (toUnixTimestamp(timestamp), symbol_id, base_asset, mark_open, mark_close, last_open, last_close, bid_open, bid_close, ask_open, ask_close, open_interest, tick_count) IN (`)
 
 	for i, bar := range bars {
 		if i > 0 {
@@ -118,7 +118,7 @@ func CountExistingBars(ctx context.Context, conn driver.Conn, bars []Bar1m) (int
 		}
 
 		query.WriteString("(")
-		fmt.Fprintf(&query, "%d,%d,'%s',%s,%s,%s,%s,%s,%d",
+		fmt.Fprintf(&query, "%d,%d,'%s',%s,%s,%s,%s,%s,%s,%s,%s,%s,%d",
 			bar.Timestamp.UTC().Unix(),
 			bar.SymbolID,
 			escapeSingleQuote(bar.BaseAsset),
@@ -126,6 +126,10 @@ func CountExistingBars(ctx context.Context, conn driver.Conn, bars []Bar1m) (int
 			float32Literal(bar.MarkClose),
 			float32Literal(bar.LastOpen),
 			float32Literal(bar.LastClose),
+			float32Literal(bar.BidOpen),
+			float32Literal(bar.BidClose),
+			float32Literal(bar.AskOpen),
+			float32Literal(bar.AskClose),
 			float32Literal(bar.OpenInterest),
 			bar.TickCount,
 		)
@@ -160,22 +164,28 @@ func escapeSingleQuote(s string) string {
 	return strings.ReplaceAll(s, "'", "''")
 }
 
-const barInsertSQL = `INSERT INTO crypto_options_bar_1m (
+const optionBarInsertSQL = `INSERT INTO crypto_options_bar_1m (
 timestamp, symbol_id, base_asset,
 mark_open, mark_high, mark_low, mark_close,
 last_open, last_high, last_low, last_close,
-bid_open, bid_close, ask_open, ask_close,
+bid_open, bid_high, bid_low, bid_close,
+ask_open, ask_high, ask_low, ask_close,
 mark_iv_open, mark_iv_close, bid_iv_open, ask_iv_open,
 delta, gamma, vega, theta, rho,
-underlying_price_open, underlying_price_close,
 open_interest, tick_count
+)`
+
+const spotBarInsertSQL = `INSERT INTO crypto_spot_bar_1m (
+timestamp, symbol, price_source,
+open, high, low, close,
+tick_count
 )`
 
 // InsertBars batch-inserts 1-minute bars into crypto_options_bar_1m.
 func InsertBars(ctx context.Context, conn driver.Conn, bars <-chan Bar1m, batchSize int) (int64, error) {
 	var totalRows int64
 
-	batch, err := conn.PrepareBatch(ctx, barInsertSQL)
+	batch, err := conn.PrepareBatch(ctx, optionBarInsertSQL)
 	if err != nil {
 		return 0, fmt.Errorf("prepare bar_1m batch: %w", err)
 	}
@@ -188,10 +198,10 @@ func InsertBars(ctx context.Context, conn driver.Conn, bars <-chan Bar1m, batchS
 			bar.BaseAsset,
 			bar.MarkOpen, bar.MarkHigh, bar.MarkLow, bar.MarkClose,
 			bar.LastOpen, bar.LastHigh, bar.LastLow, bar.LastClose,
-			bar.BidOpen, bar.BidClose, bar.AskOpen, bar.AskClose,
+			bar.BidOpen, bar.BidHigh, bar.BidLow, bar.BidClose,
+			bar.AskOpen, bar.AskHigh, bar.AskLow, bar.AskClose,
 			bar.MarkIVOpen, bar.MarkIVClose, bar.BidIVOpen, bar.AskIVOpen,
 			bar.Delta, bar.Gamma, bar.Vega, bar.Theta, bar.Rho,
-			bar.UnderlyingPriceOpen, bar.UnderlyingPriceClose,
 			bar.OpenInterest, bar.TickCount,
 		); err != nil {
 			return totalRows, fmt.Errorf("append bar row: %w", err)
@@ -207,7 +217,7 @@ func InsertBars(ctx context.Context, conn driver.Conn, bars <-chan Bar1m, batchS
 			log.Printf("[clickhouse] inserted %d rows (total: %d)", batchCount, totalRows)
 			batchCount = 0
 
-			batch, err = conn.PrepareBatch(ctx, barInsertSQL)
+			batch, err = conn.PrepareBatch(ctx, optionBarInsertSQL)
 			if err != nil {
 				return totalRows, fmt.Errorf("prepare next bar_1m batch: %w", err)
 			}
@@ -219,6 +229,102 @@ func InsertBars(ctx context.Context, conn driver.Conn, bars <-chan Bar1m, batchS
 			return totalRows, fmt.Errorf("send final bar_1m batch: %w", err)
 		}
 		log.Printf("[clickhouse] inserted final %d rows (total: %d)", batchCount, totalRows)
+	}
+
+	return totalRows, nil
+}
+
+// CountExistingSpotBars returns how many sampled spot bars already exist in crypto_spot_bar_1m.
+func CountExistingSpotBars(ctx context.Context, conn driver.Conn, bars []SpotBar1m) (int, error) {
+	if len(bars) == 0 {
+		return 0, nil
+	}
+
+	var query strings.Builder
+	query.WriteString(`SELECT count() FROM crypto_spot_bar_1m WHERE (toUnixTimestamp(timestamp), symbol, open, close, tick_count) IN (`)
+
+	for i, bar := range bars {
+		if i > 0 {
+			query.WriteString(",")
+		}
+
+		query.WriteString("(")
+		fmt.Fprintf(&query, "%d,'%s',%s,%s,%d",
+			bar.Timestamp.UTC().Unix(),
+			escapeSingleQuote(bar.Symbol),
+			float32Literal(bar.Open),
+			float32Literal(bar.Close),
+			bar.TickCount,
+		)
+		query.WriteString(")")
+	}
+
+	query.WriteString(")")
+
+	rows, err := conn.Query(ctx, query.String())
+	if err != nil {
+		return 0, fmt.Errorf("query existing sampled spot bars: %w", err)
+	}
+	defer rows.Close()
+
+	if !rows.Next() {
+		return 0, nil
+	}
+
+	var count uint64
+	if err := rows.Scan(&count); err != nil {
+		return 0, fmt.Errorf("scan sampled spot bar count: %w", err)
+	}
+
+	return int(count), nil
+}
+
+// InsertSpotBars batch-inserts 1-minute spot bars into crypto_spot_bar_1m.
+func InsertSpotBars(ctx context.Context, conn driver.Conn, bars <-chan SpotBar1m, batchSize int) (int64, error) {
+	var totalRows int64
+
+	batch, err := conn.PrepareBatch(ctx, spotBarInsertSQL)
+	if err != nil {
+		return 0, fmt.Errorf("prepare spot_bar_1m batch: %w", err)
+	}
+
+	batchCount := 0
+	for bar := range bars {
+		if err := batch.Append(
+			bar.Timestamp,
+			bar.Symbol,
+			bar.PriceSource,
+			bar.Open,
+			bar.High,
+			bar.Low,
+			bar.Close,
+			bar.TickCount,
+		); err != nil {
+			return totalRows, fmt.Errorf("append spot bar row: %w", err)
+		}
+
+		batchCount++
+		totalRows++
+
+		if batchCount >= batchSize {
+			if err := batch.Send(); err != nil {
+				return totalRows, fmt.Errorf("send spot_bar_1m batch: %w", err)
+			}
+			log.Printf("[clickhouse] inserted %d spot rows (total: %d)", batchCount, totalRows)
+			batchCount = 0
+
+			batch, err = conn.PrepareBatch(ctx, spotBarInsertSQL)
+			if err != nil {
+				return totalRows, fmt.Errorf("prepare next spot_bar_1m batch: %w", err)
+			}
+		}
+	}
+
+	if batchCount > 0 {
+		if err := batch.Send(); err != nil {
+			return totalRows, fmt.Errorf("send final spot_bar_1m batch: %w", err)
+		}
+		log.Printf("[clickhouse] inserted final %d spot rows (total: %d)", batchCount, totalRows)
 	}
 
 	return totalRows, nil

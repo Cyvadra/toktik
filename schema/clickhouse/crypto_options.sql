@@ -19,10 +19,10 @@ ENGINE = ReplacingMergeTree()
 ORDER BY symbol_id
 SETTINGS index_granularity = 8192;
 
--- 1-minute aggregated bar table
--- Pre-aggregated from tick data. Each row represents one symbol's
--- 1-minute bar with OHLC on mark/last prices, bid/ask snapshots,
--- implied volatility, greeks (from earliest tick), and open interest.
+-- 1-minute aggregated option bar table
+-- Pre-aggregated from tick data. Each row represents one option symbol's
+-- 1-minute bar with OHLC on mark/last/bid/ask prices, implied volatility,
+-- greeks (from earliest tick), and open interest.
 CREATE TABLE IF NOT EXISTS crypto_options_bar_1m
 (
     -- Key columns
@@ -42,10 +42,16 @@ CREATE TABLE IF NOT EXISTS crypto_options_bar_1m
     last_low               Float32,
     last_close             Float32,
 
-    -- Bid/Ask snapshot (open & close of the minute)
+    -- Bid price OHLC
     bid_open               Float32,
+    bid_high               Float32,
+    bid_low                Float32,
     bid_close              Float32,
+
+    -- Ask price OHLC
     ask_open               Float32,
+    ask_high               Float32,
+    ask_low                Float32,
     ask_close              Float32,
 
     -- Implied volatility
@@ -61,10 +67,6 @@ CREATE TABLE IF NOT EXISTS crypto_options_bar_1m
     theta                  Float32,
     rho                    Float32,
 
-    -- Underlying price
-    underlying_price_open  Float32,
-    underlying_price_close Float32,
-
     -- Open interest & activity
     open_interest          Float32,
     tick_count             UInt16
@@ -72,4 +74,23 @@ CREATE TABLE IF NOT EXISTS crypto_options_bar_1m
 ENGINE = MergeTree()
 PARTITION BY toYYYYMM(timestamp)
 ORDER BY (base_asset, symbol_id, timestamp)
+SETTINGS index_granularity = 8192;
+
+-- 1-minute standalone spot-like bar table for the option underlyings.
+-- This keeps the underlying asset price series normalized and reusable
+-- by non-options consumers.
+CREATE TABLE IF NOT EXISTS crypto_spot_bar_1m
+(
+    timestamp    DateTime,
+    symbol       LowCardinality(String),
+    price_source LowCardinality(String),
+    open         Float32,
+    high         Float32,
+    low          Float32,
+    close        Float32,
+    tick_count   UInt32
+)
+ENGINE = MergeTree()
+PARTITION BY toYYYYMM(timestamp)
+ORDER BY (symbol, timestamp)
 SETTINGS index_granularity = 8192;

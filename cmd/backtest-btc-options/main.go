@@ -45,6 +45,8 @@ func main() {
 	spreadEntryPriceMode := flag.String("spread-entry-price-mode", "mark_close", "Spread entry pricing: mark_close or bidask")
 	spreadExitPriceMode := flag.String("spread-exit-price-mode", "mark_close", "Spread exit pricing: mark_close or bidask")
 	spreadValuationPriceMode := flag.String("spread-valuation-price-mode", "mark_close", "Spread mark-to-market pricing: mark_close or bidask")
+	maPeriod := flag.Int("ma-period", 120, "SMA period for MA deviation signal")
+	pThreshold := flag.Float64("p-threshold", 0.15, "MA deviation ratio threshold for signal entry")
 	flag.Parse()
 
 	if *fromStr == "" || *toStr == "" {
@@ -119,6 +121,8 @@ func main() {
 		EntryPriceMode:   entryPriceMode,
 		ExitPriceMode:    exitPriceMode,
 		ValuationMode:    valuationPriceMode,
+		MAPeriod:         *maPeriod,
+		PThreshold:       *pThreshold,
 	})
 	if len(strats) == 0 {
 		fmt.Fprintf(os.Stderr, "unknown strategy %q; supported: bull-put-spread, bear-call-spread, both\n", *stratName)
@@ -214,6 +218,8 @@ type strategyConfig struct {
 	EntryPriceMode   backtest.OptionPriceMode
 	ExitPriceMode    backtest.OptionPriceMode
 	ValuationMode    backtest.OptionPriceMode
+	MAPeriod         int
+	PThreshold       float64
 }
 
 // resolveStrategies maps a strategy name to the concrete strategy instances.
@@ -248,6 +254,8 @@ func newConfiguredSpreadStrategy(direction strategies.SpreadDirection, cfg strat
 		EntryPriceMode:     cfg.EntryPriceMode,
 		ExitPriceMode:      cfg.ExitPriceMode,
 		ValuationPriceMode: cfg.ValuationMode,
+		MAPeriod:           cfg.MAPeriod,
+		PThreshold:         cfg.PThreshold,
 	}
 }
 

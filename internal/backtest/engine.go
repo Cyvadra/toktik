@@ -155,15 +155,7 @@ func (e *Engine) Run(ctx context.Context, market, symbol, interval string, from,
 	}
 
 	// --- Step 5: Bar replay ---
-	broker := NewBroker(BrokerConfig{
-		InitialCapital:  e.config.InitialCapital,
-		CommissionModel: e.config.CommissionModel,
-		CommissionValue: e.config.CommissionValue,
-		SlippagePct:     e.config.SlippagePct,
-		ExecutionMode:   e.config.ExecutionMode,
-		ValuationMode:   e.config.ValuationMode,
-		TriggerMode:     e.config.TriggerMode,
-	})
+	broker := NewBroker(e.config)
 
 	// Build security accessors (persistent across bars, barIndex is updated each bar)
 	accessors := make([]*SecurityAccessor, len(setupCtx.securities))
@@ -257,17 +249,19 @@ func (e *Engine) Run(ctx context.Context, market, symbol, interval string, from,
 			allTrades = append(allTrades, fills...)
 		}
 
+		// Cache options chain for this bar (used by scheduled actions and equity)
+		var contractMap map[string]OptionContract
+		if e.chainProvider != nil {
+			contracts := e.chainProvider.AvailableContracts(primaryDS.Timestamps[i])
+			contractMap = make(map[string]OptionContract, len(contracts))
+			for _, c := range contracts {
+				contractMap[c.Symbol] = c
+			}
+		}
+
 		// Process scheduled actions (time-based position management)
 		if len(scheduledActions) > 0 {
 			var remaining []ScheduledAction
-			var contractMap map[string]OptionContract
-			if e.chainProvider != nil {
-				contracts := e.chainProvider.AvailableContracts(primaryDS.Timestamps[i])
-				contractMap = make(map[string]OptionContract, len(contracts))
-				for _, c := range contracts {
-					contractMap[c.Symbol] = c
-				}
-			}
 			for _, sa := range scheduledActions {
 				if !primaryDS.Timestamps[i].Before(sa.TriggerTime) {
 					// Action triggered
@@ -304,14 +298,6 @@ func (e *Engine) Run(ctx context.Context, market, symbol, interval string, from,
 
 		// Record equity (include spread positions in equity)
 		spreadEquity := 0.0
-		var contractMap map[string]OptionContract
-		if e.chainProvider != nil {
-			contracts := e.chainProvider.AvailableContracts(primaryDS.Timestamps[i])
-			contractMap = make(map[string]OptionContract, len(contracts))
-			for _, c := range contracts {
-				contractMap[c.Symbol] = c
-			}
-		}
 		for _, sp := range spreadTracker.OpenSpreads() {
 			for _, leg := range sp.Legs {
 				if leg.Closed {

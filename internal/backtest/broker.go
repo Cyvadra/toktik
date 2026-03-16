@@ -52,20 +52,9 @@ const (
 	CommissionPerUnit                 // amount per unit traded
 )
 
-// BrokerConfig configures the simulated broker.
-type BrokerConfig struct {
-	InitialCapital  float64
-	CommissionModel CommissionModel
-	CommissionValue float64 // interpretation depends on CommissionModel
-	SlippagePct     float64 // slippage as fraction of price (e.g. 0.001 = 0.1%)
-	ExecutionMode   ExecutionPriceModel
-	ValuationMode   ValuationPriceModel
-	TriggerMode     TriggerPriceMode
-}
-
 // Broker simulates order execution with realistic fills.
 type Broker struct {
-	config    BrokerConfig
+	config    Config
 	cash      float64
 	positions *PositionTracker
 	pending   []Order
@@ -78,7 +67,7 @@ type Broker struct {
 }
 
 // NewBroker creates a broker with the given config.
-func NewBroker(cfg BrokerConfig) *Broker {
+func NewBroker(cfg Config) *Broker {
 	return &Broker{
 		config:    cfg,
 		cash:      cfg.InitialCapital,
@@ -236,6 +225,12 @@ func (b *Broker) Equity() float64 {
 // Cash returns current cash balance.
 func (b *Broker) Cash() float64 {
 	return b.cash
+}
+
+// AdjustCash modifies the broker's cash balance by the given amount.
+// Positive adds cash; negative removes it.
+func (b *Broker) AdjustCash(amount float64) {
+	b.cash += amount
 }
 
 // Positions returns the position tracker.

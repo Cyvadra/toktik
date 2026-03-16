@@ -2,11 +2,13 @@ package report
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"html/template"
 	"math"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -21,40 +23,44 @@ type HTMLMeta struct {
 }
 
 type htmlReportView struct {
-	Title               string
-	StrategyName        string
-	Asset               string
-	Interval            string
-	Period              string
-	GeneratedAt         string
-	InitialCapital      string
-	FinalEquity         string
-	NetPnL              string
-	TotalReturn         string
-	AnnualizedReturn    string
-	SharpeRatio         string
-	MaxDrawdown         string
-	TotalFees           string
-	BarsCount           int
-	TradesCount         int
-	SpreadsCount        int
-	EquityMin           string
-	EquityMax           string
-	DrawdownMax         string
-	EquityPath          string
-	DrawdownPath        string
-	HasUnderlyingPrice  bool
-	UnderlyingPricePath string
-	UnderlyingPriceMin  string
-	UnderlyingPriceMax  string
-	EquityAnalysis      equityAnalysisView
-	TradeOverview       tradeOverviewView
-	SpreadSummary       *spreadSummaryView
-	Trades              []tradeRowView
-	Spreads             []spreadRowView
-	NoTradeRows         bool
-	NoSpreadRows        bool
-	Notes               []string
+	Title                string
+	StrategyName         string
+	Asset                string
+	Interval             string
+	Period               string
+	GeneratedAt          string
+	InitialCapital       string
+	FinalEquity          string
+	NetPnL               string
+	TotalReturn          string
+	AnnualizedReturn     string
+	SharpeRatio          string
+	MaxDrawdown          string
+	TotalFees            string
+	BarsCount            int
+	TradesCount          int
+	SpreadsCount         int
+	TradeMarkerCount     int
+	SpreadEventCount     int
+	EquityMin            string
+	EquityMax            string
+	DrawdownMax          string
+	HasUnderlyingChart   bool
+	UnderlyingPriceMin   string
+	UnderlyingPriceMax   string
+	UnderlyingChartNote  string
+	UnderlyingCandleData template.JS
+	UnderlyingMarkerData template.JS
+	EquitySeriesData     template.JS
+	DrawdownSeriesData   template.JS
+	EquityAnalysis       equityAnalysisView
+	TradeOverview        tradeOverviewView
+	SpreadSummary        *spreadSummaryView
+	Trades               []tradeRowView
+	Spreads              []spreadRowView
+	NoTradeRows          bool
+	NoSpreadRows         bool
+	Notes                []string
 }
 
 type tradeOverviewView struct {
@@ -133,6 +139,34 @@ type spreadLegRowView struct {
 	SideClass   string
 }
 
+type chartCandlePoint struct {
+	Time  int64   `json:"time"`
+	Open  float64 `json:"open"`
+	High  float64 `json:"high"`
+	Low   float64 `json:"low"`
+	Close float64 `json:"close"`
+}
+
+type chartLinePoint struct {
+	Time  int64   `json:"time"`
+	Value float64 `json:"value"`
+}
+
+type chartMarker struct {
+	Time     int64  `json:"time"`
+	Position string `json:"position"`
+	Color    string `json:"color"`
+	Shape    string `json:"shape"`
+	Text     string `json:"text"`
+}
+
+type markerKey struct {
+	Time     int64
+	Position string
+	Color    string
+	Shape    string
+}
+
 // WriteBacktestHTML renders a self-contained static HTML report for a backtest result.
 func WriteBacktestHTML(path string, result *backtest.Result, meta HTMLMeta) error {
 	view := buildHTMLView(result, meta)
@@ -157,38 +191,43 @@ func buildHTMLView(result *backtest.Result, meta HTMLMeta) htmlReportView {
 	if meta.GeneratedAt.IsZero() {
 		meta.GeneratedAt = time.Now()
 	}
+
+	drawdown := drawdownSeries(result.EquityCurve)
 	view := htmlReportView{
-		Title:            fmt.Sprintf("%s Backtest Report", result.StrategyName),
-		StrategyName:     result.StrategyName,
-		Asset:            meta.Asset,
-		Interval:         meta.Interval,
-		Period:           fmt.Sprintf("%s to %s", formatDate(result.StartTime), formatDate(result.EndTime)),
-		GeneratedAt:      meta.GeneratedAt.Format("2006-01-02 15:04:05"),
-		InitialCapital:   currency(result.InitialCapital),
-		FinalEquity:      currency(result.FinalEquity),
-		NetPnL:           signedCurrency(result.FinalEquity - result.InitialCapital),
-		TotalReturn:      pct(result.TotalReturn),
-		AnnualizedReturn: pct(result.AnnualizedReturn),
-		SharpeRatio:      decimal(result.SharpeRatio),
-		MaxDrawdown:      pct(result.MaxDrawdown),
-		TotalFees:        currency(result.TotalFees),
-		BarsCount:        result.BarsCount,
-		TradesCount:      len(result.Trades),
-		SpreadsCount:     len(result.SpreadPositions),
-		EquityPath:       linePath(result.EquityCurve, 960, 320),
-		DrawdownPath:     linePath(drawdownSeries(result.EquityCurve), 960, 180),
-		NoTradeRows:      len(result.Trades) == 0,
-		NoSpreadRows:     len(result.SpreadPositions) == 0,
+		Title:                fmt.Sprintf("%s Backtest Report", result.StrategyName),
+		StrategyName:         result.StrategyName,
+		Asset:                meta.Asset,
+		Interval:             meta.Interval,
+		Period:               fmt.Sprintf("%s to %s", formatDate(result.StartTime), formatDate(result.EndTime)),
+		GeneratedAt:          meta.GeneratedAt.Format("2006-01-02 15:04:05"),
+		InitialCapital:       currency(result.InitialCapital),
+		FinalEquity:          currency(result.FinalEquity),
+		NetPnL:               signedCurrency(result.FinalEquity - result.InitialCapital),
+		TotalReturn:          pct(result.TotalReturn),
+		AnnualizedReturn:     pct(result.AnnualizedReturn),
+		SharpeRatio:          decimal(result.SharpeRatio),
+		MaxDrawdown:          pct(result.MaxDrawdown),
+		TotalFees:            currency(result.TotalFees),
+		BarsCount:            result.BarsCount,
+		TradesCount:          len(result.Trades),
+		SpreadsCount:         len(result.SpreadPositions),
+		NoTradeRows:          len(result.Trades) == 0,
+		NoSpreadRows:         len(result.SpreadPositions) == 0,
+		UnderlyingCandleData: template.JS("[]"),
+		UnderlyingMarkerData: template.JS("[]"),
+		EquitySeriesData:     marshalJS(buildLineSeries(result.Timestamps, result.EquityCurve)),
+		DrawdownSeriesData:   marshalJS(buildLineSeries(result.Timestamps, drawdown)),
 	}
 
 	minEq, maxEq := minMax(result.EquityCurve)
 	view.EquityMin = currency(minEq)
 	view.EquityMax = currency(maxEq)
-	view.DrawdownMax = pct(maxValue(drawdownSeries(result.EquityCurve)))
+	view.DrawdownMax = pct(maxValue(drawdown))
 	view.TradeOverview = buildTradeOverviewView(result.TradeOverview)
 	view.EquityAnalysis = buildEquityAnalysisView(result.EquityAnalysis)
 	view.Trades = buildTradeRows(result.Trades)
 	view.Spreads = buildSpreadRows(result.SpreadPositions)
+
 	if result.SpreadSummary != nil {
 		s := result.SpreadSummary
 		view.SpreadSummary = &spreadSummaryView{
@@ -201,14 +240,25 @@ func buildHTMLView(result *backtest.Result, meta HTMLMeta) htmlReportView {
 			TotalPnL:       signedCurrency(s.TotalPnL),
 		}
 	}
-	if underlying, ok := result.Series["close"]; ok && len(underlying) > 0 {
-		view.HasUnderlyingPrice = true
-		minU, maxU := minMax(underlying)
-		view.UnderlyingPriceMin = currency(minU)
-		view.UnderlyingPriceMax = currency(maxU)
-		view.UnderlyingPricePath = linePath(underlying, 960, 320)
+
+	candles, candleFallback := buildUnderlyingCandles(result)
+	if len(candles) > 0 {
+		view.HasUnderlyingChart = true
+		view.UnderlyingCandleData = marshalJS(candles)
+		minUnderlying, maxUnderlying := candleRange(candles)
+		view.UnderlyingPriceMin = currency(minUnderlying)
+		view.UnderlyingPriceMax = currency(maxUnderlying)
+		if candleFallback {
+			view.UnderlyingChartNote = "OHLC was not fully available in the result series, so candle bodies were reconstructed from close data for visualization."
+		}
 	}
-	view.Notes = buildNotes(result)
+
+	markers, tradeMarkerCount, spreadEventCount := buildUnderlyingMarkers(result)
+	view.UnderlyingMarkerData = marshalJS(markers)
+	view.TradeMarkerCount = tradeMarkerCount
+	view.SpreadEventCount = spreadEventCount
+	view.Notes = buildNotes(result, candleFallback)
+
 	return view
 }
 
@@ -306,10 +356,10 @@ func buildSpreadRows(spreads []backtest.SpreadPositionReport) []spreadRowView {
 	return rows
 }
 
-func buildNotes(result *backtest.Result) []string {
-	notes := make([]string, 0, 3)
+func buildNotes(result *backtest.Result, candleFallback bool) []string {
+	notes := make([]string, 0, 4)
 	if len(result.Trades) == 0 && len(result.SpreadPositions) > 0 {
-		notes = append(notes, "This strategy executed through spread tracker legs, so the raw broker trade table is empty while spread activity is listed below.")
+		notes = append(notes, "This strategy executed through spread tracker legs, so the raw broker trade table is empty while spread lifecycle events are still marked on the price chart.")
 	}
 	if result.EquityAnalysis != nil && result.EquityAnalysis.MaxDrawdownDurationBars > 0 {
 		notes = append(notes, fmt.Sprintf("Longest drawdown stretch lasted %d bars (%.1f hours).", result.EquityAnalysis.MaxDrawdownDurationBars, result.EquityAnalysis.MaxDrawdownDuration))
@@ -317,7 +367,208 @@ func buildNotes(result *backtest.Result) []string {
 	if result.TradeOverview != nil && result.TradeOverview.RoundTrips == 0 && len(result.SpreadPositions) == 0 {
 		notes = append(notes, "No closed round trips were recorded in this run.")
 	}
+	if candleFallback {
+		notes = append(notes, "Underlying candles were reconstructed from close data because complete OHLC series were unavailable in the exported result.")
+	}
 	return notes
+}
+
+func buildUnderlyingCandles(result *backtest.Result) ([]chartCandlePoint, bool) {
+	if result == nil || len(result.Timestamps) == 0 || result.Series == nil {
+		return nil, false
+	}
+	closeSeries := result.Series["close"]
+	if len(closeSeries) == 0 {
+		return nil, false
+	}
+	openSeries := result.Series["open"]
+	highSeries := result.Series["high"]
+	lowSeries := result.Series["low"]
+	n := minInt(len(result.Timestamps), len(closeSeries))
+	if n == 0 {
+		return nil, false
+	}
+
+	candles := make([]chartCandlePoint, 0, n)
+	usedFallback := false
+	prevClose := closeSeries[0]
+	for i := 0; i < n; i++ {
+		closeValue := closeSeries[i]
+		if !chartValueValid(closeValue) {
+			continue
+		}
+
+		openValue := closeValue
+		if i < len(openSeries) && chartValueValid(openSeries[i]) {
+			openValue = openSeries[i]
+		} else {
+			usedFallback = true
+			if i > 0 && chartValueValid(prevClose) {
+				openValue = prevClose
+			}
+		}
+
+		highValue := math.Max(openValue, closeValue)
+		if i < len(highSeries) && chartValueValid(highSeries[i]) {
+			highValue = math.Max(highValue, highSeries[i])
+		} else {
+			usedFallback = true
+		}
+
+		lowValue := math.Min(openValue, closeValue)
+		if i < len(lowSeries) && chartValueValid(lowSeries[i]) {
+			lowValue = math.Min(lowValue, lowSeries[i])
+		} else {
+			usedFallback = true
+		}
+
+		candles = append(candles, chartCandlePoint{
+			Time:  result.Timestamps[i].Unix(),
+			Open:  openValue,
+			High:  highValue,
+			Low:   lowValue,
+			Close: closeValue,
+		})
+		prevClose = closeValue
+	}
+	return candles, usedFallback
+}
+
+func buildLineSeries(times []time.Time, values []float64) []chartLinePoint {
+	n := minInt(len(times), len(values))
+	if n == 0 {
+		return []chartLinePoint{}
+	}
+	points := make([]chartLinePoint, 0, n)
+	for i := 0; i < n; i++ {
+		if !chartValueValid(values[i]) {
+			continue
+		}
+		points = append(points, chartLinePoint{
+			Time:  times[i].Unix(),
+			Value: values[i],
+		})
+	}
+	return points
+}
+
+func buildUnderlyingMarkers(result *backtest.Result) ([]chartMarker, int, int) {
+	if result == nil {
+		return []chartMarker{}, 0, 0
+	}
+	aggregated := make(map[markerKey]*chartMarker)
+	tradeMarkerCount := 0
+	spreadEventCount := 0
+
+	for _, trade := range result.Trades {
+		tradeMarkerCount++
+		shape := "arrowUp"
+		position := "belowBar"
+		color := "#2dd4bf"
+		label := fmt.Sprintf("BUY %s", decimal(trade.Qty))
+		if trade.Side == backtest.Sell {
+			shape = "arrowDown"
+			position = "aboveBar"
+			color = "#f59e0b"
+			label = fmt.Sprintf("SELL %s", decimal(trade.Qty))
+		}
+		appendMarker(aggregated, chartMarker{
+			Time:     trade.Timestamp.Unix(),
+			Position: position,
+			Color:    color,
+			Shape:    shape,
+			Text:     label,
+		})
+	}
+
+	for _, spread := range result.SpreadPositions {
+		spreadEventCount++
+		appendMarker(aggregated, chartMarker{
+			Time:     spread.OpenTime.Unix(),
+			Position: "belowBar",
+			Color:    "#60a5fa",
+			Shape:    "circle",
+			Text:     fmt.Sprintf("OPEN #%d", spread.ID),
+		})
+		if spread.CloseTime != nil {
+			spreadEventCount++
+			appendMarker(aggregated, chartMarker{
+				Time:     spread.CloseTime.Unix(),
+				Position: "aboveBar",
+				Color:    "#fb7185",
+				Shape:    "square",
+				Text:     fmt.Sprintf("CLOSE #%d", spread.ID),
+			})
+		}
+	}
+
+	markers := make([]chartMarker, 0, len(aggregated))
+	for _, marker := range aggregated {
+		markers = append(markers, *marker)
+	}
+	sort.Slice(markers, func(i, j int) bool {
+		if markers[i].Time != markers[j].Time {
+			return markers[i].Time < markers[j].Time
+		}
+		if markers[i].Position != markers[j].Position {
+			return markers[i].Position < markers[j].Position
+		}
+		return markers[i].Text < markers[j].Text
+	})
+	return markers, tradeMarkerCount, spreadEventCount
+}
+
+func appendMarker(markers map[markerKey]*chartMarker, marker chartMarker) {
+	key := markerKey{
+		Time:     marker.Time,
+		Position: marker.Position,
+		Color:    marker.Color,
+		Shape:    marker.Shape,
+	}
+	if existing, ok := markers[key]; ok {
+		if !strings.Contains(existing.Text, marker.Text) {
+			existing.Text += " · " + marker.Text
+		}
+		return
+	}
+	copyMarker := marker
+	markers[key] = &copyMarker
+}
+
+func candleRange(candles []chartCandlePoint) (float64, float64) {
+	if len(candles) == 0 {
+		return 0, 0
+	}
+	minValue := candles[0].Low
+	maxValue := candles[0].High
+	for _, candle := range candles[1:] {
+		if candle.Low < minValue {
+			minValue = candle.Low
+		}
+		if candle.High > maxValue {
+			maxValue = candle.High
+		}
+	}
+	return minValue, maxValue
+}
+
+func marshalJS(value any) template.JS {
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return template.JS("[]")
+	}
+	return template.JS(encoded)
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func chartValueValid(value float64) bool {
+	return !math.IsNaN(value) && !math.IsInf(value, 0)
 }
 
 func linePath(values []float64, width, height float64) string {
@@ -433,13 +684,6 @@ func pct(value float64) string {
 	return fmt.Sprintf("%.2f%%", value*100)
 }
 
-func nullableCurrency(value float64, ok bool) string {
-	if !ok {
-		return "-"
-	}
-	return currency(value)
-}
-
 func nullableCurrency4(value float64, ok bool) string {
 	if !ok {
 		return "-"
@@ -487,131 +731,177 @@ const htmlTemplate = `<!DOCTYPE html>
       theme: {
         extend: {
           colors: {
-            canvas: '#09121a',
-            ink: '#e6f0ea',
-            accent: '#e59f32',
-            tide: '#4ad0c2',
-            panel: '#10212d'
+            canvas: '#071019',
+            shell: '#0d1823',
+            panel: '#122130',
+            mist: '#dbe8e2',
+            aqua: '#3dd6c6',
+            ember: '#f0a43a',
+            rose: '#fb7185',
+            steel: '#7dd3fc'
           },
           fontFamily: {
-            sans: ['Manrope', 'system-ui', 'sans-serif'],
+            sans: ['Sora', 'system-ui', 'sans-serif'],
             mono: ['IBM Plex Mono', 'monospace']
           },
           boxShadow: {
-            report: '0 24px 80px rgba(0,0,0,.28)'
+            report: '0 30px 90px rgba(0,0,0,.34)'
           }
         }
       }
     }
   </script>
   <script src="https://cdn.tailwindcss.com"></script>
+	<script src="https://unpkg.com/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js"></script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Manrope:wght@500;700;800&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Sora:wght@500;600;700;800&display=swap" rel="stylesheet">
   <style>
+    :root {
+      color-scheme: dark;
+    }
     body {
       background:
-        radial-gradient(circle at top left, rgba(74,208,194,.18), transparent 32%),
-        radial-gradient(circle at top right, rgba(229,159,50,.14), transparent 26%),
-        linear-gradient(180deg, #071018 0%, #0c1820 38%, #13232d 100%);
+        radial-gradient(circle at top left, rgba(61,214,198,.18), transparent 26%),
+        radial-gradient(circle at top right, rgba(240,164,58,.14), transparent 22%),
+        linear-gradient(180deg, #050d14 0%, #09131b 34%, #0d1823 100%);
     }
-    .metric-card {
+    .glass-panel {
       background: linear-gradient(180deg, rgba(255,255,255,.05) 0%, rgba(255,255,255,.02) 100%);
-      backdrop-filter: blur(16px);
+      backdrop-filter: blur(18px);
+    }
+    .chart-shell {
+      background:
+        linear-gradient(180deg, rgba(8,17,26,.94), rgba(8,17,26,.78)),
+        radial-gradient(circle at top, rgba(61,214,198,.08), transparent 40%);
+    }
+    .chart-host {
+      width: 100%;
+      min-height: 18rem;
+    }
+    .chart-host.tall {
+      min-height: 34rem;
     }
   </style>
 </head>
-<body class="min-h-screen text-ink font-sans">
-  <main class="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
-    <section class="overflow-hidden rounded-[2rem] border border-white/10 bg-canvas/80 shadow-report">
-      <div class="border-b border-white/10 px-6 py-8 sm:px-10">
-        <div class="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
-          <div class="max-w-3xl">
-            <p class="font-mono text-xs uppercase tracking-[0.3em] text-tide/80">Backtest Report</p>
-            <h1 class="mt-3 text-3xl font-extrabold tracking-tight text-white sm:text-5xl">{{ .StrategyName }}</h1>
-            <p class="mt-4 max-w-2xl text-sm leading-6 text-slate-300 sm:text-base">{{ .Asset }} · {{ .Interval }} · {{ .Period }}. The page includes equity diagnostics, transaction activity and options spread lifecycle details.</p>
+<body class="min-h-screen font-sans text-mist">
+  <main class="w-full px-3 py-4 sm:px-5 lg:px-8 lg:py-6">
+    <section class="overflow-hidden rounded-[2rem] border border-white/10 bg-canvas/85 shadow-report">
+      <div class="border-b border-white/10 px-5 py-7 sm:px-7 lg:px-10">
+        <div class="flex flex-col gap-6 xl:flex-row xl:items-end xl:justify-between">
+          <div class="max-w-4xl">
+            <p class="font-mono text-xs uppercase tracking-[0.34em] text-aqua/80">Backtest Report</p>
+            <h1 class="mt-3 text-3xl font-extrabold tracking-tight text-white sm:text-4xl lg:text-5xl">{{ .StrategyName }}</h1>
+            <p class="mt-4 max-w-3xl text-sm leading-7 text-slate-300 sm:text-base">{{ .Asset }} · {{ .Interval }} · {{ .Period }}. The dashboard is optimized for full-width review with an interactive underlying candlestick chart, execution markers, equity trajectory, drawdown behavior, and spread lifecycle details.</p>
           </div>
-          <div class="grid gap-3 text-sm text-slate-300 sm:grid-cols-2">
+          <div class="grid gap-3 text-sm text-slate-300 sm:grid-cols-3 xl:min-w-[28rem]">
             <div class="rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
               <div class="font-mono text-[11px] uppercase tracking-[0.24em] text-slate-400">Generated</div>
-              <div class="mt-2 text-base text-white">{{ .GeneratedAt }}</div>
+              <div class="mt-2 text-sm text-white sm:text-base">{{ .GeneratedAt }}</div>
             </div>
             <div class="rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
               <div class="font-mono text-[11px] uppercase tracking-[0.24em] text-slate-400">Bars</div>
               <div class="mt-2 text-base text-white">{{ .BarsCount }}</div>
             </div>
+            <div class="rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
+              <div class="font-mono text-[11px] uppercase tracking-[0.24em] text-slate-400">Initial Capital</div>
+              <div class="mt-2 text-base text-white">{{ .InitialCapital }}</div>
+            </div>
           </div>
         </div>
       </div>
 
-      <div class="grid gap-4 px-6 py-6 sm:grid-cols-2 xl:grid-cols-4 sm:px-10">
-        <article class="metric-card rounded-3xl border border-white/10 p-5">
+      <div class="grid gap-4 px-5 py-5 sm:grid-cols-2 2xl:grid-cols-6 sm:px-7 lg:px-10">
+        <article class="glass-panel rounded-3xl border border-white/10 p-5 2xl:col-span-2">
           <div class="font-mono text-[11px] uppercase tracking-[0.24em] text-slate-400">Final Equity</div>
           <div class="mt-3 text-3xl font-bold text-white">{{ .FinalEquity }}</div>
           <div class="mt-2 text-sm text-slate-300">Net PnL {{ .NetPnL }}</div>
         </article>
-        <article class="metric-card rounded-3xl border border-white/10 p-5">
+        <article class="glass-panel rounded-3xl border border-white/10 p-5">
           <div class="font-mono text-[11px] uppercase tracking-[0.24em] text-slate-400">Total Return</div>
           <div class="mt-3 text-3xl font-bold text-white">{{ .TotalReturn }}</div>
           <div class="mt-2 text-sm text-slate-300">Annualized {{ .AnnualizedReturn }}</div>
         </article>
-        <article class="metric-card rounded-3xl border border-white/10 p-5">
+        <article class="glass-panel rounded-3xl border border-white/10 p-5">
           <div class="font-mono text-[11px] uppercase tracking-[0.24em] text-slate-400">Risk</div>
           <div class="mt-3 text-3xl font-bold text-white">{{ .MaxDrawdown }}</div>
           <div class="mt-2 text-sm text-slate-300">Sharpe {{ .SharpeRatio }}</div>
         </article>
-        <article class="metric-card rounded-3xl border border-white/10 p-5">
+        <article class="glass-panel rounded-3xl border border-white/10 p-5">
+          <div class="font-mono text-[11px] uppercase tracking-[0.24em] text-slate-400">Trade Markers</div>
+          <div class="mt-3 text-3xl font-bold text-white">{{ .TradeMarkerCount }}</div>
+          <div class="mt-2 text-sm text-slate-300">Spread events {{ .SpreadEventCount }}</div>
+        </article>
+        <article class="glass-panel rounded-3xl border border-white/10 p-5">
           <div class="font-mono text-[11px] uppercase tracking-[0.24em] text-slate-400">Activity</div>
           <div class="mt-3 text-3xl font-bold text-white">{{ .TradesCount }}</div>
           <div class="mt-2 text-sm text-slate-300">Spread positions {{ .SpreadsCount }}</div>
         </article>
       </div>
 
-      <div class="grid gap-6 px-6 pb-6 sm:px-10 xl:grid-cols-[1.5fr,1fr]">
-        <section class="rounded-3xl border border-white/10 bg-panel/60 p-5">
-          <div class="flex items-center justify-between gap-4">
+      <div class="space-y-6 px-5 pb-6 sm:px-7 lg:px-10 lg:pb-8">
+        <section class="rounded-[1.75rem] border border-white/10 bg-panel/55 p-5 lg:p-6">
+          <div class="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
             <div>
-              <h2 class="text-xl font-bold text-white">Equity Curve</h2>
-              <p class="mt-1 text-sm text-slate-300">Range {{ .EquityMin }} to {{ .EquityMax }}</p>
+              <div class="flex flex-wrap items-center gap-3">
+                <h2 class="text-2xl font-bold text-white">Underlying Price</h2>
+                <span class="rounded-full border border-steel/30 bg-steel/10 px-3 py-1 font-mono text-[11px] uppercase tracking-[0.2em] text-steel">Candlestick + markers</span>
+              </div>
+              <p class="mt-2 text-sm text-slate-300">Range {{ .UnderlyingPriceMin }} to {{ .UnderlyingPriceMax }}. Buy and sell fills are marked directly on the price bars. Spread open and close events are also annotated when available.</p>
             </div>
-            <div class="rounded-full border border-tide/30 bg-tide/10 px-3 py-1 font-mono text-xs text-tide">Fees {{ .TotalFees }}</div>
+            <div class="flex flex-wrap gap-2 text-xs text-slate-300">
+              <span class="rounded-full border border-emerald-400/20 bg-emerald-400/10 px-3 py-1 font-mono">BUY</span>
+              <span class="rounded-full border border-amber-400/20 bg-amber-400/10 px-3 py-1 font-mono">SELL</span>
+              <span class="rounded-full border border-steel/20 bg-steel/10 px-3 py-1 font-mono">SPREAD OPEN</span>
+              <span class="rounded-full border border-rose/20 bg-rose/10 px-3 py-1 font-mono">SPREAD CLOSE</span>
+            </div>
           </div>
-          <div class="mt-5 overflow-hidden rounded-2xl border border-white/10 bg-[#08131c] p-4">
-            {{ if .HasUnderlyingPrice }}
-            <div class="mb-3 flex items-center gap-4 text-xs text-slate-400">
-              <span class="flex items-center gap-1.5"><span class="inline-block h-0.5 w-5 rounded bg-[#4ad0c2]"></span> Equity</span>
-              <span class="flex items-center gap-1.5"><span class="inline-block h-0.5 w-5 rounded bg-[#e59f32] opacity-70"></span> Underlying Price ({{ .UnderlyingPriceMin }} – {{ .UnderlyingPriceMax }})</span>
-            </div>
+          {{ if .UnderlyingChartNote }}
+          <div class="mt-4 rounded-2xl border border-amber-400/15 bg-amber-400/8 px-4 py-3 text-sm text-amber-100">{{ .UnderlyingChartNote }}</div>
+          {{ end }}
+          <div class="chart-shell mt-5 overflow-hidden rounded-[1.5rem] border border-white/10 px-2 py-2 sm:px-3 sm:py-3">
+            {{ if .HasUnderlyingChart }}
+            <div id="underlying-chart" class="chart-host tall"></div>
+            {{ else }}
+            <div class="flex min-h-[20rem] items-center justify-center rounded-[1.25rem] border border-dashed border-white/10 bg-white/[0.03] px-6 text-center text-sm text-slate-300">Underlying OHLC data was not present in the backtest result, so a candlestick chart could not be rendered.</div>
             {{ end }}
-            <svg viewBox="0 0 960 320" class="h-72 w-full">
-              {{ if .HasUnderlyingPrice }}
-              <path d="{{ .UnderlyingPricePath }}" fill="none" stroke="#e59f32" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="0.7" />
-              {{ end }}
-              <path d="{{ .EquityPath }}" fill="none" stroke="#4ad0c2" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" />
-            </svg>
           </div>
         </section>
 
-        <section class="rounded-3xl border border-white/10 bg-panel/60 p-5">
-          <h2 class="text-xl font-bold text-white">Drawdown Trace</h2>
-          <p class="mt-1 text-sm text-slate-300">Maximum observed drawdown {{ .DrawdownMax }}</p>
-          <div class="mt-5 overflow-hidden rounded-2xl border border-white/10 bg-[#08131c] p-4">
-            <svg viewBox="0 0 960 180" class="h-44 w-full">
-              <path d="{{ .DrawdownPath }}" fill="none" stroke="#e59f32" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round" />
-            </svg>
+        <section class="rounded-[1.75rem] border border-white/10 bg-panel/55 p-5 lg:p-6">
+          <div class="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+            <div>
+              <h2 class="text-2xl font-bold text-white">Equity Curve</h2>
+              <p class="mt-2 text-sm text-slate-300">Portfolio equity path from {{ .EquityMin }} to {{ .EquityMax }}. Fees paid {{ .TotalFees }}.</p>
+            </div>
+          </div>
+          <div class="chart-shell mt-5 overflow-hidden rounded-[1.5rem] border border-white/10 px-2 py-2 sm:px-3 sm:py-3">
+            <div id="equity-chart" class="chart-host"></div>
+          </div>
+        </section>
+
+        <section class="rounded-[1.75rem] border border-white/10 bg-panel/55 p-5 lg:p-6">
+          <div class="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+            <div>
+              <h2 class="text-2xl font-bold text-white">Drawdown Trace</h2>
+              <p class="mt-2 text-sm text-slate-300">Peak-to-trough stress reached {{ .DrawdownMax }} at its deepest point.</p>
+            </div>
+          </div>
+          <div class="chart-shell mt-5 overflow-hidden rounded-[1.5rem] border border-white/10 px-2 py-2 sm:px-3 sm:py-3">
+            <div id="drawdown-chart" class="chart-host"></div>
           </div>
           {{ if .Notes }}
-          <div class="mt-5 space-y-3 text-sm text-slate-300">
+          <div class="mt-5 grid gap-3 xl:grid-cols-{{ if gt (len .Notes) 1 }}2{{ else }}1{{ end }}">
             {{ range .Notes }}
-            <div class="rounded-2xl border border-white/10 bg-white/5 px-4 py-3">{{ . }}</div>
+            <div class="rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 text-sm text-slate-300">{{ . }}</div>
             {{ end }}
           </div>
           {{ end }}
         </section>
       </div>
 
-      <div class="grid gap-6 px-6 pb-6 sm:px-10 xl:grid-cols-3">
-        <section class="rounded-3xl border border-white/10 bg-panel/50 p-5">
+      <div class="grid gap-6 px-5 pb-6 sm:px-7 xl:grid-cols-3 lg:px-10">
+        <section class="rounded-3xl border border-white/10 bg-panel/45 p-5">
           <h2 class="text-lg font-bold text-white">Trade Overview</h2>
           <dl class="mt-4 grid grid-cols-2 gap-3 text-sm">
             <div><dt class="text-slate-400">Raw fills</dt><dd class="mt-1 font-mono text-white">{{ .TradeOverview.RawFills }}</dd></div>
@@ -627,7 +917,7 @@ const htmlTemplate = `<!DOCTYPE html>
           </dl>
         </section>
 
-        <section class="rounded-3xl border border-white/10 bg-panel/50 p-5">
+        <section class="rounded-3xl border border-white/10 bg-panel/45 p-5">
           <h2 class="text-lg font-bold text-white">Equity Analysis</h2>
           <dl class="mt-4 grid grid-cols-2 gap-3 text-sm">
             <div><dt class="text-slate-400">Peak equity</dt><dd class="mt-1 font-mono text-white">{{ .EquityAnalysis.PeakEquity }}</dd></div>
@@ -645,7 +935,7 @@ const htmlTemplate = `<!DOCTYPE html>
           </dl>
         </section>
 
-        <section class="rounded-3xl border border-white/10 bg-panel/50 p-5">
+        <section class="rounded-3xl border border-white/10 bg-panel/45 p-5">
           <h2 class="text-lg font-bold text-white">Spread Summary</h2>
           {{ if .SpreadSummary }}
           <dl class="mt-4 grid grid-cols-2 gap-3 text-sm">
@@ -663,17 +953,17 @@ const htmlTemplate = `<!DOCTYPE html>
         </section>
       </div>
 
-      <div class="grid gap-6 px-6 pb-10 sm:px-10 xl:grid-cols-[1.1fr,1.4fr]">
-        <section class="rounded-3xl border border-white/10 bg-panel/40 p-5">
-          <div class="flex items-center justify-between">
-            <h2 class="text-xl font-bold text-white">Trade Blotter</h2>
+      <div class="space-y-6 px-5 pb-8 sm:px-7 lg:px-10 lg:pb-10">
+        <section class="rounded-[1.75rem] border border-white/10 bg-panel/40 p-5 lg:p-6">
+          <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <h2 class="text-2xl font-bold text-white">Trade Blotter</h2>
             <span class="rounded-full border border-white/10 bg-white/5 px-3 py-1 font-mono text-xs text-slate-300">{{ .TradesCount }} fills</span>
           </div>
           {{ if .NoTradeRows }}
           <div class="mt-5 rounded-2xl border border-dashed border-white/15 bg-white/5 px-4 py-6 text-sm text-slate-300">No raw broker fills were recorded in this run.</div>
           {{ else }}
           <div class="mt-5 overflow-hidden rounded-2xl border border-white/10">
-            <div class="max-h-[32rem] overflow-auto">
+            <div class="max-h-[34rem] overflow-auto">
               <table class="min-w-full divide-y divide-white/10 text-sm">
                 <thead class="sticky top-0 bg-canvas/95 backdrop-blur">
                   <tr class="text-left text-slate-400">
@@ -707,9 +997,9 @@ const htmlTemplate = `<!DOCTYPE html>
           {{ end }}
         </section>
 
-        <section class="rounded-3xl border border-white/10 bg-panel/40 p-5">
-          <div class="flex items-center justify-between">
-            <h2 class="text-xl font-bold text-white">Spread Activity</h2>
+        <section class="rounded-[1.75rem] border border-white/10 bg-panel/40 p-5 lg:p-6">
+          <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <h2 class="text-2xl font-bold text-white">Spread Activity</h2>
             <span class="rounded-full border border-white/10 bg-white/5 px-3 py-1 font-mono text-xs text-slate-300">{{ .SpreadsCount }} positions</span>
           </div>
           {{ if .NoSpreadRows }}
@@ -718,15 +1008,15 @@ const htmlTemplate = `<!DOCTYPE html>
           <div class="mt-5 space-y-4">
             {{ range .Spreads }}
             <article class="overflow-hidden rounded-2xl border border-white/10 bg-white/[0.03]">
-              <div class="flex flex-col gap-3 border-b border-white/10 px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
+              <div class="flex flex-col gap-3 border-b border-white/10 px-4 py-4 lg:flex-row lg:items-center lg:justify-between">
                 <div>
-                  <div class="flex items-center gap-3">
+                  <div class="flex flex-wrap items-center gap-3">
                     <h3 class="text-lg font-bold text-white">#{{ .ID }} {{ .Tag }}</h3>
                     <span class="rounded-full px-2.5 py-1 text-[11px] font-mono ring-1 {{ .StatusClass }}">{{ .Status }}</span>
                   </div>
                   <p class="mt-2 text-sm text-slate-300">Opened {{ .OpenTime }} · Closed {{ .CloseTime }} · Held {{ .DaysHeld }}</p>
                 </div>
-                <div class="grid grid-cols-2 gap-3 text-sm sm:text-right">
+                <div class="grid grid-cols-2 gap-4 text-sm lg:text-right">
                   <div><div class="text-slate-400">Net premium</div><div class="font-mono text-white">{{ .NetPremium }}</div></div>
                   <div><div class="text-slate-400">Realized PnL</div><div class="font-mono text-white">{{ .RealizedPnL }}</div></div>
                 </div>
@@ -771,5 +1061,175 @@ const htmlTemplate = `<!DOCTYPE html>
       </div>
     </section>
   </main>
+
+  <script>
+    const underlyingCandles = {{ .UnderlyingCandleData }};
+    const underlyingMarkers = {{ .UnderlyingMarkerData }};
+    const equitySeries = {{ .EquitySeriesData }};
+    const drawdownSeries = {{ .DrawdownSeriesData }};
+
+    const chartTheme = {
+      layout: {
+        background: { color: '#08111a' },
+        textColor: '#b6c6d2',
+        fontFamily: 'IBM Plex Mono, monospace'
+      },
+      grid: {
+        vertLines: { color: 'rgba(255,255,255,0.05)' },
+        horzLines: { color: 'rgba(255,255,255,0.05)' }
+      },
+      timeScale: {
+        borderColor: 'rgba(255,255,255,0.08)',
+        timeVisible: true,
+        secondsVisible: false
+      },
+      rightPriceScale: {
+        borderColor: 'rgba(255,255,255,0.08)'
+      },
+      crosshair: {
+        vertLine: {
+          color: 'rgba(61,214,198,0.35)',
+          labelBackgroundColor: '#0f766e'
+        },
+        horzLine: {
+          color: 'rgba(240,164,58,0.35)',
+          labelBackgroundColor: '#a16207'
+        }
+      }
+    };
+
+    function createResponsiveChart(containerId, height, extraOptions) {
+      const container = document.getElementById(containerId);
+      if (!container || typeof LightweightCharts === 'undefined') {
+        return null;
+      }
+      const chart = LightweightCharts.createChart(
+        container,
+        Object.assign(
+          {
+            width: container.clientWidth,
+            height: height,
+            handleScroll: true,
+            handleScale: true,
+            localization: {
+              locale: 'en-US'
+            }
+          },
+          chartTheme,
+          extraOptions || {}
+        )
+      );
+
+      const resizeChart = function() {
+        chart.applyOptions({ width: container.clientWidth });
+      };
+
+      if (typeof ResizeObserver !== 'undefined') {
+        const observer = new ResizeObserver(function() {
+          resizeChart();
+        });
+        observer.observe(container);
+      } else {
+        window.addEventListener('resize', resizeChart);
+      }
+
+      return chart;
+    }
+
+    function syncVisibleRanges(charts) {
+      let syncing = false;
+      charts.forEach(function(sourceChart) {
+        sourceChart.timeScale().subscribeVisibleLogicalRangeChange(function(range) {
+          if (!range || syncing) {
+            return;
+          }
+          syncing = true;
+          charts.forEach(function(targetChart) {
+            if (targetChart !== sourceChart) {
+              targetChart.timeScale().setVisibleLogicalRange(range);
+            }
+          });
+          syncing = false;
+        });
+      });
+    }
+
+    const charts = [];
+
+    if (underlyingCandles.length > 0) {
+      const priceChart = createResponsiveChart('underlying-chart', 560, {
+        watermark: {
+          visible: true,
+          text: 'UNDERLYING',
+          fontSize: 42,
+          color: 'rgba(255,255,255,0.04)'
+        }
+      });
+      if (priceChart) {
+        const candleSeries = priceChart.addCandlestickSeries({
+          upColor: '#22c55e',
+          downColor: '#f97316',
+          wickUpColor: '#22c55e',
+          wickDownColor: '#f97316',
+          borderUpColor: '#22c55e',
+          borderDownColor: '#f97316',
+          lastValueVisible: true,
+          priceLineVisible: true
+        });
+        candleSeries.setData(underlyingCandles);
+        candleSeries.setMarkers(underlyingMarkers);
+        priceChart.timeScale().fitContent();
+        charts.push(priceChart);
+      }
+    }
+
+    const equityChart = createResponsiveChart('equity-chart', 320, {
+      watermark: {
+        visible: true,
+        text: 'EQUITY',
+        fontSize: 30,
+        color: 'rgba(255,255,255,0.035)'
+      }
+    });
+    if (equityChart) {
+      const equityLine = equityChart.addAreaSeries({
+        lineColor: '#3dd6c6',
+        topColor: 'rgba(61,214,198,0.34)',
+        bottomColor: 'rgba(61,214,198,0.04)',
+        lineWidth: 3,
+        priceLineVisible: true,
+        lastValueVisible: true
+      });
+      equityLine.setData(equitySeries);
+      equityChart.timeScale().fitContent();
+      charts.push(equityChart);
+    }
+
+    const drawdownChart = createResponsiveChart('drawdown-chart', 260, {
+      watermark: {
+        visible: true,
+        text: 'DRAWDOWN',
+        fontSize: 30,
+        color: 'rgba(255,255,255,0.035)'
+      }
+    });
+    if (drawdownChart) {
+      const drawdownLine = drawdownChart.addAreaSeries({
+        lineColor: '#f0a43a',
+        topColor: 'rgba(240,164,58,0.32)',
+        bottomColor: 'rgba(240,164,58,0.04)',
+        lineWidth: 3,
+        priceLineVisible: true,
+        lastValueVisible: true
+      });
+      drawdownLine.setData(drawdownSeries);
+      drawdownChart.timeScale().fitContent();
+      charts.push(drawdownChart);
+    }
+
+    if (charts.length > 1) {
+      syncVisibleRanges(charts);
+    }
+  </script>
 </body>
 </html>`

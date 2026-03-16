@@ -10,26 +10,26 @@ import (
 
 const parquetRowGroupSize = 100_000
 
-type BarWriter struct {
+type parquetWriter[T any] struct {
 	file   *os.File
-	writer *parquet.GenericWriter[Bar1m]
+	writer *parquet.GenericWriter[T]
 }
 
-func NewBarWriter(path string) (*BarWriter, error) {
+func newParquetWriter[T any](path string) (*parquetWriter[T], error) {
 	f, err := os.Create(path)
 	if err != nil {
 		return nil, fmt.Errorf("create parquet file %s: %w", path, err)
 	}
 
-	writer := parquet.NewGenericWriter[Bar1m](f,
+	writer := parquet.NewGenericWriter[T](f,
 		parquet.Compression(&zstd.Codec{}),
 		parquet.CreatedBy("toktik", "1.0", ""),
 	)
 
-	return &BarWriter{file: f, writer: writer}, nil
+	return &parquetWriter[T]{file: f, writer: writer}, nil
 }
 
-func (w *BarWriter) WriteRows(rows []Bar1m) error {
+func (w *parquetWriter[T]) WriteRows(rows []T) error {
 	for i := 0; i < len(rows); i += parquetRowGroupSize {
 		end := i + parquetRowGroupSize
 		if end > len(rows) {
@@ -42,7 +42,7 @@ func (w *BarWriter) WriteRows(rows []Bar1m) error {
 	return nil
 }
 
-func (w *BarWriter) Close() error {
+func (w *parquetWriter[T]) Close() error {
 	if w == nil {
 		return nil
 	}
@@ -70,10 +70,38 @@ func (w *BarWriter) Close() error {
 	return nil
 }
 
+type BarWriter = parquetWriter[Bar1m]
+
+type SpotBarWriter = parquetWriter[SpotBar1m]
+
+func NewBarWriter(path string) (*BarWriter, error) {
+	return newParquetWriter[Bar1m](path)
+}
+
+func NewSpotBarWriter(path string) (*SpotBarWriter, error) {
+	return newParquetWriter[SpotBar1m](path)
+}
+
 // WriteParquet writes a slice of Bar1m records to a Parquet file with
 // ZSTD compression.
 func WriteParquet(path string, bars []Bar1m) error {
 	writer, err := NewBarWriter(path)
+	if err != nil {
+		return err
+	}
+	defer writer.Close()
+
+	if err := writer.WriteRows(bars); err != nil {
+		return fmt.Errorf("write rows to %s: %w", path, err)
+	}
+
+	return nil
+}
+
+// WriteSpotParquet writes a slice of SpotBar1m records to a Parquet file
+// with ZSTD compression.
+func WriteSpotParquet(path string, bars []SpotBar1m) error {
+	writer, err := NewSpotBarWriter(path)
 	if err != nil {
 		return err
 	}
@@ -112,6 +140,38 @@ func ReadParquet(path string) (<-chan Bar1m, func(), error) {
 	go func() {
 		defer close(ch)
 		buf := make([]Bar1m, 1024)
+		for {
+			n, err := reader.Read(buf)
+			for i := 0; i < n; i++ {
+				ch <- buf[i]
+			}
+			if err != nil {
+				break
+			}
+		}
+	}()
+
+	return ch, closeFn, nil
+}
+
+// ReadSpotParquet opens a SpotBar1m Parquet file and returns a channel of rows.
+func ReadSpotParquet(path string) (<-chan SpotBar1m, func(), error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, nil, fmt.Errorf("open parquet file %s: %w", path, err)
+	}
+
+	reader := parquet.NewGenericReader[SpotBar1m](f)
+
+	ch := make(chan SpotBar1m, 4096)
+	closeFn := func() {
+		reader.Close()
+		f.Close()
+	}
+
+	go func() {
+		defer close(ch)
+		buf := make([]SpotBar1m, 1024)
 		for {
 			n, err := reader.Read(buf)
 			for i := 0; i < n; i++ {

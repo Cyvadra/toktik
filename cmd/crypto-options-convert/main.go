@@ -110,6 +110,7 @@ func processFile(inputDir, zstPath, outputDir string) error {
 	}
 	stem := strings.TrimSuffix(relPath, filepath.Ext(relPath))
 	outPath := filepath.Join(outputDir, stem+".parquet")
+	spotOutPath := filepath.Join(outputDir, "spot", stem+".parquet")
 
 	log.Printf("[START] %s", baseName)
 	fileStart := time.Now()
@@ -126,16 +127,17 @@ func processFile(inputDir, zstPath, outputDir string) error {
 		agg.Add(tick)
 		tickCount++
 		if tickCount%10_000_000 == 0 {
-			log.Printf("[PROGRESS] %s: %dM ticks processed, %d active bars",
-				baseName, tickCount/1_000_000, agg.Count())
+			log.Printf("[PROGRESS] %s: %dM ticks processed, %d active option bars, %d active spot bars",
+				baseName, tickCount/1_000_000, agg.OptionCount(), agg.SpotCount())
 		}
 	}
 
-	barCount := agg.Count()
-	log.Printf("[AGGREGATE] %s: %d ticks -> %d bars in %s",
-		baseName, tickCount, barCount, time.Since(fileStart).Round(time.Second))
+	barCount := agg.OptionCount()
+	spotBarCount := agg.SpotCount()
+	log.Printf("[AGGREGATE] %s: %d ticks -> %d option bars, %d spot bars in %s",
+		baseName, tickCount, barCount, spotBarCount, time.Since(fileStart).Round(time.Second))
 
-	if barCount == 0 {
+	if barCount == 0 && spotBarCount == 0 {
 		log.Printf("[SKIP] %s: no bars produced", baseName)
 		return nil
 	}
@@ -151,22 +153,44 @@ func processFile(inputDir, zstPath, outputDir string) error {
 	defer func() {
 		_ = writer.Close()
 	}()
+	if err := os.MkdirAll(filepath.Dir(spotOutPath), 0755); err != nil {
+		return fmt.Errorf("create spot output subdir: %w", err)
+	}
+	spotWriter, err := cryptooptions.NewSpotBarWriter(spotOutPath)
+	if err != nil {
+		return fmt.Errorf("open spot parquet writer: %w", err)
+	}
+	defer func() {
+		_ = spotWriter.Close()
+	}()
 
-	if _, err := agg.FlushSortedBatches(100_000, writer.WriteRows); err != nil {
+	if _, err := agg.FlushSortedOptionBatches(100_000, writer.WriteRows); err != nil {
 		return fmt.Errorf("write parquet: %w", err)
+	}
+	if _, err := agg.FlushSortedSpotBatches(100_000, spotWriter.WriteRows); err != nil {
+		return fmt.Errorf("write spot parquet: %w", err)
 	}
 	if err := writer.Close(); err != nil {
 		return fmt.Errorf("close parquet writer: %w", err)
 	}
+	if err := spotWriter.Close(); err != nil {
+		return fmt.Errorf("close spot parquet writer: %w", err)
+	}
 
 	info, _ := os.Stat(outPath)
+	spotInfo, _ := os.Stat(spotOutPath)
 	var sizeMB float64
 	if info != nil {
 		sizeMB = float64(info.Size()) / (1024 * 1024)
 	}
+	var spotSizeMB float64
+	if spotInfo != nil {
+		spotSizeMB = float64(spotInfo.Size()) / (1024 * 1024)
+	}
 
-	log.Printf("[WRITE] %s -> %s (%.1f MB, %d bars, write took %s)",
+	log.Printf("[WRITE] %s -> %s (%.1f MB, %d option bars); %s (%.1f MB, %d spot bars); write took %s",
 		baseName, filepath.Base(outPath), sizeMB, barCount,
+		filepath.Join("spot", filepath.Base(spotOutPath)), spotSizeMB, spotBarCount,
 		time.Since(writeStart).Round(time.Millisecond))
 
 	return nil

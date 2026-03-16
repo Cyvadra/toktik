@@ -60,10 +60,14 @@ type Bar1m struct {
 	LastLow   float32 `parquet:"last_low"`
 	LastClose float32 `parquet:"last_close"`
 
-	// Bid/Ask snapshots
+	// Bid/Ask OHLC
 	BidOpen  float32 `parquet:"bid_open"`
+	BidHigh  float32 `parquet:"bid_high"`
+	BidLow   float32 `parquet:"bid_low"`
 	BidClose float32 `parquet:"bid_close"`
 	AskOpen  float32 `parquet:"ask_open"`
+	AskHigh  float32 `parquet:"ask_high"`
+	AskLow   float32 `parquet:"ask_low"`
 	AskClose float32 `parquet:"ask_close"`
 
 	// Implied volatility
@@ -79,13 +83,23 @@ type Bar1m struct {
 	Theta float32 `parquet:"theta"`
 	Rho   float32 `parquet:"rho"`
 
-	// Underlying price
-	UnderlyingPriceOpen  float32 `parquet:"underlying_price_open"`
-	UnderlyingPriceClose float32 `parquet:"underlying_price_close"`
-
 	// Open interest and activity
 	OpenInterest float32 `parquet:"open_interest"`
 	TickCount    uint16  `parquet:"tick_count"`
+}
+
+// SpotBar1m is a 1-minute OHLC bar for the underlying crypto asset price.
+// It stores the underlying as a standalone market series rather than
+// duplicating it on every option contract row.
+type SpotBar1m struct {
+	Timestamp   time.Time `parquet:"timestamp,timestamp(millisecond)"`
+	Symbol      string    `parquet:"symbol"`
+	PriceSource string    `parquet:"price_source"`
+	Open        float32   `parquet:"open"`
+	High        float32   `parquet:"high"`
+	Low         float32   `parquet:"low"`
+	Close       float32   `parquet:"close"`
+	TickCount   uint32    `parquet:"tick_count"`
 }
 
 // SymbolMeta holds parsed option contract metadata extracted from

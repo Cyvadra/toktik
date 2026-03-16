@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"fmt"
 	"strings"
 
 	"github.com/Cyvadra/toktik/internal/backtest"
@@ -48,7 +47,7 @@ func (s *CryptoOptionsService) RunBacktest(ctx context.Context, req dto.Backtest
 		return nil, err
 	}
 
-	strategy, err := strategies.Build(req)
+	strategy, err := strategies.Build(req.Strategy, req.Params)
 	if err != nil {
 		return nil, err
 	}
@@ -79,7 +78,7 @@ func parseCommissionModel(value string) (backtest.CommissionModel, error) {
 	case "per-unit":
 		return backtest.CommissionPerUnit, nil
 	default:
-		return backtest.CommissionPercent, fmt.Errorf("unsupported commission_model %q", value)
+		return backtest.CommissionPercent, dto.NewValidationError("unsupported commission_model %q", value)
 	}
 }
 
@@ -90,7 +89,7 @@ func parseExecutionMode(value string) (backtest.ExecutionPriceModel, error) {
 	case "canonical":
 		return backtest.ExecutionPriceCanonical, nil
 	default:
-		return backtest.ExecutionPriceBidAsk, fmt.Errorf("unsupported fill_mode %q", value)
+		return backtest.ExecutionPriceBidAsk, dto.NewValidationError("unsupported fill_mode %q", value)
 	}
 }
 
@@ -103,7 +102,7 @@ func parseValuationMode(value string) (backtest.ValuationPriceModel, error) {
 	case "mid":
 		return backtest.ValuationPriceMid, nil
 	default:
-		return backtest.ValuationPriceExit, fmt.Errorf("unsupported valuation_mode %q", value)
+		return backtest.ValuationPriceExit, dto.NewValidationError("unsupported valuation_mode %q", value)
 	}
 }
 
@@ -114,79 +113,24 @@ func parseTriggerMode(value string) (backtest.TriggerPriceMode, error) {
 	case "bidask-envelope":
 		return backtest.TriggerPriceBidAskEnvelope, nil
 	default:
-		return backtest.TriggerPriceCanonical, fmt.Errorf("unsupported trigger_mode %q", value)
+		return backtest.TriggerPriceCanonical, dto.NewValidationError("unsupported trigger_mode %q", value)
 	}
 }
 
 func validateBacktestRequest(req dto.BacktestRequest) error {
 	if req.Capital != nil && *req.Capital <= 0 {
-		return fmt.Errorf("capital must be > 0")
+		return dto.NewValidationError("capital must be > 0")
 	}
 	if req.CommissionValue != nil && *req.CommissionValue < 0 {
-		return fmt.Errorf("commission_value must be >= 0")
+		return dto.NewValidationError("commission_value must be >= 0")
 	}
 	if req.SlippagePct != nil && *req.SlippagePct < 0 {
-		return fmt.Errorf("slippage_pct must be >= 0")
-	}
-	if req.EntryTWAPBars != nil && *req.EntryTWAPBars <= 0 {
-		return fmt.Errorf("entry_twap_bars must be >= 1")
-	}
-	if req.FastPeriod != nil && *req.FastPeriod <= 0 {
-		return fmt.Errorf("fast_period must be >= 1")
-	}
-	if req.SlowPeriod != nil && *req.SlowPeriod <= 0 {
-		return fmt.Errorf("slow_period must be >= 1")
-	}
-	if req.FastPeriod != nil && req.SlowPeriod != nil && *req.FastPeriod >= *req.SlowPeriod {
-		return fmt.Errorf("fast_period must be < slow_period")
-	}
-	if req.PositionSize != nil && *req.PositionSize <= 0 {
-		return fmt.Errorf("position_size must be > 0")
-	}
-	if req.MaxHoldHours != nil && *req.MaxHoldHours <= 0 {
-		return fmt.Errorf("max_hold_hours must be > 0")
-	}
-	if req.TargetExpiryDays != nil && *req.TargetExpiryDays <= 0 {
-		return fmt.Errorf("target_expiry_days must be >= 1")
-	}
-	if req.MinExpiryDays != nil && *req.MinExpiryDays <= 0 {
-		return fmt.Errorf("min_expiry_days must be >= 1")
-	}
-	if req.TargetExpiryDays != nil && req.MinExpiryDays != nil && *req.TargetExpiryDays < *req.MinExpiryDays {
-		return fmt.Errorf("target_expiry_days must be >= min_expiry_days")
-	}
-	if req.MinPremium != nil && *req.MinPremium < 0 {
-		return fmt.Errorf("min_premium must be >= 0")
-	}
-	if req.ShortDeltaMin != nil && *req.ShortDeltaMin < 0 {
-		return fmt.Errorf("short_delta_min must be >= 0")
-	}
-	if req.ShortDeltaMax != nil && *req.ShortDeltaMax < 0 {
-		return fmt.Errorf("short_delta_max must be >= 0")
-	}
-	if req.LongDeltaMin != nil && *req.LongDeltaMin < 0 {
-		return fmt.Errorf("long_delta_min must be >= 0")
-	}
-	if req.LongDeltaMax != nil && *req.LongDeltaMax < 0 {
-		return fmt.Errorf("long_delta_max must be >= 0")
-	}
-	if req.ShortDeltaMin != nil && req.ShortDeltaMax != nil && *req.ShortDeltaMin > *req.ShortDeltaMax {
-		return fmt.Errorf("short_delta_min must be <= short_delta_max")
-	}
-	if req.LongDeltaMin != nil && req.LongDeltaMax != nil && *req.LongDeltaMin > *req.LongDeltaMax {
-		return fmt.Errorf("long_delta_min must be <= long_delta_max")
+		return dto.NewValidationError("slippage_pct must be >= 0")
 	}
 	return nil
 }
 
 func floatDefault(value *float64, fallback float64) float64 {
-	if value == nil {
-		return fallback
-	}
-	return *value
-}
-
-func intDefault(value *int, fallback int) int {
 	if value == nil {
 		return fallback
 	}

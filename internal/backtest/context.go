@@ -428,9 +428,9 @@ func (bc *BarContext) OpenSpread(legs []SpreadLeg, tag string) int {
 	for i := range legs {
 		amount := legs[i].Qty * legs[i].EntryPrice
 		if legs[i].Side == Sell {
-			bc.broker.cash += amount
+			bc.broker.AdjustCash(amount)
 		} else {
-			bc.broker.cash -= amount
+			bc.broker.AdjustCash(-amount)
 		}
 	}
 	return bc.spreadTracker.Open(legs, bc.barTime, bc.barIndex, tag)
@@ -453,10 +453,10 @@ func (bc *BarContext) CloseSpreadLeg(spreadID, legIndex int, closePrice float64)
 	amount := leg.Qty * closePrice
 	if leg.Side == Sell {
 		// Closing a short: buy to close = cash outflow
-		bc.broker.cash -= amount
+		bc.broker.AdjustCash(-amount)
 	} else {
 		// Closing a long: sell to close = cash inflow
-		bc.broker.cash += amount
+		bc.broker.AdjustCash(amount)
 	}
 	return bc.spreadTracker.CloseLeg(spreadID, legIndex, closePrice, bc.barTime)
 }

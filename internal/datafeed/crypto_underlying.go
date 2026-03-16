@@ -3,23 +3,15 @@ package datafeed
 import (
 	"context"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/Cyvadra/toktik/internal/backtest"
-	"github.com/Cyvadra/toktik/internal/cryptooptions"
 )
 
-// CryptoUnderlyingDataFeed implements backtest.DataFeed by extracting the
-// underlying asset's OHLC price series from crypto-options bar data.
-//
-// Since options bars store underlying_price_open and underlying_price_close,
-// we aggregate across all option symbols for a base asset to reconstruct
-// the underlying's OHLC per bar interval:
-//   - open  = first underlying_price_open in the interval
-//   - close = last underlying_price_close in the interval
-//   - high  = max of all underlying_price_open and underlying_price_close
-//   - low   = min of all underlying_price_open and underlying_price_close
+// CryptoUnderlyingDataFeed implements backtest.DataFeed using the dedicated
+// standalone spot-like bar table for option underlyings.
 type CryptoUnderlyingDataFeed struct {
 	conn driver.Conn
 }
@@ -31,7 +23,7 @@ func NewCryptoUnderlyingDataFeed(conn driver.Conn) *CryptoUnderlyingDataFeed {
 
 // Fields returns the list of available fields.
 func (f *CryptoUnderlyingDataFeed) Fields() []string {
-	return []string{"open", "high", "low", "close"}
+	return []string{"open", "high", "low", "close", "compat_fallback"}
 }
 
 // Load fetches the underlying asset's OHLC from options data.
@@ -40,44 +32,23 @@ func (f *CryptoUnderlyingDataFeed) Load(ctx context.Context, req backtest.DataRe
 	baseAsset := req.Symbol
 	interval := req.Interval
 
-	// Build aggregation SQL depending on interval.
-	// We group 1m option bars by interval bucket and extract underlying OHLC.
-	var sourceTable string
-	if interval == "1m" {
-		sourceTable = "crypto_options_bar_1m"
-	} else if name, ok := cryptooptions.PrecomputedIntervals[interval]; ok {
-		sourceTable = name
-	} else {
-		sourceTable = "crypto_options_bar_1m"
+	query, degraded, err := buildSpotSourceSQLWithFallback(ctx, f.conn, interval, baseAsset, req.From, req.To)
+	if err != nil {
+		return nil, fmt.Errorf("resolve underlying source for %s: %w", baseAsset, err)
+	}
+	if query == "" {
+		query, degraded, err = buildLegacyUnderlyingSeriesSQL(ctx, f.conn, interval, baseAsset, req.From, req.To)
+		if err != nil {
+			return nil, fmt.Errorf("resolve legacy underlying source for %s: %w", baseAsset, err)
+		}
+		if query == "" {
+			return nil, fmt.Errorf("load underlying for %s: no compatible spot or legacy underlying source found", baseAsset)
+		}
 	}
 
-	// For precomputed interval tables, timestamps are already bucketed.
-	// For 1m, we query directly. For anything else using 1m source, we'd need
-	// ad-hoc grouping. Since the strategy uses 1h and that's precomputed, this is fine.
-	query := fmt.Sprintf(`SELECT
-    timestamp,
-    argMin(underlying_price_open, symbol_id)  AS uopen,
-    argMax(underlying_price_close, symbol_id) AS uclose,
-    greatest(
-        max(underlying_price_open),
-        max(underlying_price_close)
-    ) AS uhigh,
-    least(
-        min(if(underlying_price_open > 0, underlying_price_open, underlying_price_close)),
-        min(if(underlying_price_close > 0, underlying_price_close, underlying_price_open))
-    ) AS ulow
-FROM %s
-WHERE base_asset = '%s'
-  AND timestamp >= '%s'
-  AND timestamp < '%s'
-  AND underlying_price_close > 0
-GROUP BY timestamp
-ORDER BY timestamp`,
-		sourceTable,
-		escapeString(baseAsset),
-		req.From.Format("2006-01-02 15:04:05"),
-		req.To.Format("2006-01-02 15:04:05"),
-	)
+	if degraded {
+		log.Printf("[compat] underlying feed for %s/%s is using a compatibility fallback source", baseAsset, interval)
+	}
 
 	rows, err := f.conn.Query(ctx, query)
 	if err != nil {
@@ -90,6 +61,11 @@ ORDER BY timestamp`,
 	highs := make([]float64, 0, 4096)
 	lows := make([]float64, 0, 4096)
 	closes := make([]float64, 0, 4096)
+	fallbackMode := make([]float64, 0, 4096)
+	fallbackValue := 0.0
+	if degraded {
+		fallbackValue = 1.0
+	}
 
 	for rows.Next() {
 		var (
@@ -104,6 +80,7 @@ ORDER BY timestamp`,
 		highs = append(highs, float64(uhigh))
 		lows = append(lows, float64(ulow))
 		closes = append(closes, float64(uclose))
+		fallbackMode = append(fallbackMode, fallbackValue)
 	}
 
 	ds := backtest.NewDataSet(len(timestamps))
@@ -112,6 +89,7 @@ ORDER BY timestamp`,
 	ds.AddColumn("high", highs)
 	ds.AddColumn("low", lows)
 	ds.AddColumn("close", closes)
+	ds.AddColumn("compat_fallback", fallbackMode)
 
 	return ds, nil
 }

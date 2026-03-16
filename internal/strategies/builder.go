@@ -1,12 +1,12 @@
 package strategies
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/Cyvadra/toktik/internal/backtest"
-	"github.com/Cyvadra/toktik/internal/dto"
 )
 
 const (
@@ -16,49 +16,96 @@ const (
 	defaultSlowPeriod    = 50
 )
 
-// Build returns a configured backtest strategy from the request payload.
-func Build(req dto.BacktestRequest) (backtest.Strategy, error) {
-	strategyName := strings.ToLower(strings.TrimSpace(req.Strategy))
-	if strategyName == "" {
-		strategyName = defaultStrategyName
+// GoldenCrossParams holds tuning knobs for the golden-cross strategy.
+type GoldenCrossParams struct {
+	FastPeriod    *int `json:"fast_period,omitempty"`
+	SlowPeriod    *int `json:"slow_period,omitempty"`
+	EntryTWAPBars *int `json:"entry_twap_bars,omitempty"`
+}
+
+// DeltaFilterParams holds tuning knobs for the delta-filter strategy.
+type DeltaFilterParams struct {
+	EntryTWAPBars *int `json:"entry_twap_bars,omitempty"`
+}
+
+// MADeviationParams holds tuning knobs for MA-deviation spread strategies.
+type MADeviationParams struct {
+	PositionSize     *float64 `json:"position_size,omitempty"`
+	MaxHoldHours     *float64 `json:"max_hold_hours,omitempty"`
+	TargetExpiryDays *int     `json:"target_expiry_days,omitempty"`
+	MinExpiryDays    *int     `json:"min_expiry_days,omitempty"`
+	MinPremium       *float64 `json:"min_premium,omitempty"`
+	ShortDeltaMin    *float64 `json:"short_delta_min,omitempty"`
+	ShortDeltaMax    *float64 `json:"short_delta_max,omitempty"`
+	LongDeltaMin     *float64 `json:"long_delta_min,omitempty"`
+	LongDeltaMax     *float64 `json:"long_delta_max,omitempty"`
+	EntryTWAPBars    *int     `json:"entry_twap_bars,omitempty"`
+}
+
+// Build returns a configured backtest strategy from the strategy name and
+// optional JSON parameters blob.
+func Build(strategyName string, params json.RawMessage) (backtest.Strategy, error) {
+	name := strings.ToLower(strings.TrimSpace(strategyName))
+	if name == "" {
+		name = defaultStrategyName
 	}
 
-	entryTWAPBars := intDefault(req.EntryTWAPBars, defaultEntryTWAPBars)
-
-	switch strategyName {
+	switch name {
 	case "golden-cross":
+		var p GoldenCrossParams
+		if len(params) > 0 {
+			if err := json.Unmarshal(params, &p); err != nil {
+				return nil, fmt.Errorf("invalid golden-cross params: %w", err)
+			}
+		}
 		return &goldenCrossStrategy{
-			fastPeriod: intDefault(req.FastPeriod, defaultFastPeriod),
-			slowPeriod: intDefault(req.SlowPeriod, defaultSlowPeriod),
-			entryTWAP:  entryTWAPBars,
+			fastPeriod: intDefault(p.FastPeriod, defaultFastPeriod),
+			slowPeriod: intDefault(p.SlowPeriod, defaultSlowPeriod),
+			entryTWAP:  intDefault(p.EntryTWAPBars, defaultEntryTWAPBars),
 		}, nil
+
 	case "delta-filter":
-		return &deltaFilterStrategy{entryTWAP: entryTWAPBars}, nil
+		var p DeltaFilterParams
+		if len(params) > 0 {
+			if err := json.Unmarshal(params, &p); err != nil {
+				return nil, fmt.Errorf("invalid delta-filter params: %w", err)
+			}
+		}
+		return &deltaFilterStrategy{entryTWAP: intDefault(p.EntryTWAPBars, defaultEntryTWAPBars)}, nil
+
 	case "ma-deviation-bull", "bull-put-spread":
-		return buildMADeviationSpreadStrategy(BullSpread, req), nil
+		return buildMADeviationFromParams(BullSpread, params)
+
 	case "ma-deviation-bear", "bear-call-spread":
-		return buildMADeviationSpreadStrategy(BearSpread, req), nil
+		return buildMADeviationFromParams(BearSpread, params)
+
 	default:
-		return nil, fmt.Errorf("unsupported strategy %q", req.Strategy)
+		return nil, fmt.Errorf("unsupported strategy %q", strategyName)
 	}
 }
 
-func buildMADeviationSpreadStrategy(direction SpreadDirection, req dto.BacktestRequest) *MADeviationSpreadStrategy {
+func buildMADeviationFromParams(direction SpreadDirection, raw json.RawMessage) (*MADeviationSpreadStrategy, error) {
+	var p MADeviationParams
+	if len(raw) > 0 {
+		if err := json.Unmarshal(raw, &p); err != nil {
+			return nil, fmt.Errorf("invalid ma-deviation params: %w", err)
+		}
+	}
 	strategy := &MADeviationSpreadStrategy{
 		Direction:        direction,
-		PositionSize:     floatDefault(req.PositionSize, 1),
-		TargetExpiryDays: intDefault(req.TargetExpiryDays, 15),
-		MinExpiryDays:    intDefault(req.MinExpiryDays, 7),
-		MinPremium:       floatDefault(req.MinPremium, 0.025),
-		ShortDeltaMin:    floatDefault(req.ShortDeltaMin, 0.4),
-		ShortDeltaMax:    floatDefault(req.ShortDeltaMax, 0.5),
-		LongDeltaMin:     floatDefault(req.LongDeltaMin, 0.1),
-		LongDeltaMax:     floatDefault(req.LongDeltaMax, 0.15),
+		PositionSize:     floatDefault(p.PositionSize, 1),
+		TargetExpiryDays: intDefault(p.TargetExpiryDays, 15),
+		MinExpiryDays:    intDefault(p.MinExpiryDays, 7),
+		MinPremium:       floatDefault(p.MinPremium, 0.025),
+		ShortDeltaMin:    floatDefault(p.ShortDeltaMin, 0.4),
+		ShortDeltaMax:    floatDefault(p.ShortDeltaMax, 0.5),
+		LongDeltaMin:     floatDefault(p.LongDeltaMin, 0.1),
+		LongDeltaMax:     floatDefault(p.LongDeltaMax, 0.15),
 	}
-	if req.MaxHoldHours != nil {
-		strategy.MaxHoldTime = time.Duration(*req.MaxHoldHours * float64(time.Hour))
+	if p.MaxHoldHours != nil {
+		strategy.MaxHoldTime = time.Duration(*p.MaxHoldHours * float64(time.Hour))
 	}
-	return strategy
+	return strategy, nil
 }
 
 func intDefault(value *int, fallback int) int {

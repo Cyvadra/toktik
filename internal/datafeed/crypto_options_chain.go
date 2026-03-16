@@ -3,12 +3,12 @@ package datafeed
 import (
 	"context"
 	"fmt"
+	"log"
 	"sort"
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/Cyvadra/toktik/internal/backtest"
-	"github.com/Cyvadra/toktik/internal/cryptooptions"
 )
 
 // CryptoOptionsChainProvider implements backtest.OptionsChainProvider by
@@ -30,17 +30,28 @@ func NewCryptoOptionsChainProvider(ctx context.Context, conn driver.Conn, baseAs
 		return nil, err
 	}
 
-	// Choose the right source table/view
-	var tableName string
-	if interval == "1m" {
-		tableName = "crypto_options_bar_1m"
-	} else if name, ok := cryptooptions.PrecomputedIntervals[interval]; ok {
-		tableName = name
+	optionTableName := resolveOptionTableName(interval)
+	underlyingCloseExpr := "toFloat32(0)"
+	joinClause := ""
+
+	spotSourceSQL, degraded, err := buildSpotSourceSQLWithFallback(ctx, conn, interval, baseAsset, from, to)
+	if err != nil {
+		return nil, fmt.Errorf("resolve spot source for options chain: %w", err)
+	}
+	if spotSourceSQL != "" {
+		joinClause = fmt.Sprintf("LEFT JOIN (%s) AS u\n    ON u.symbol = b.base_asset AND u.timestamp = b.timestamp", spotSourceSQL)
+		underlyingCloseExpr = "ifNull(u.close, toFloat32(0))"
+		if degraded {
+			log.Printf("[compat] options chain for %s/%s is using slower spot aggregation fallback", baseAsset, interval)
+		}
+	} else if legacyExpr, ok, err := legacyUnderlyingCloseExpr(ctx, conn, interval); err != nil {
+		return nil, fmt.Errorf("resolve legacy underlying source for options chain: %w", err)
+	} else if ok {
+		underlyingCloseExpr = legacyExpr
 	} else {
-		tableName = "crypto_options_bar_1m"
+		log.Printf("[compat] no spot source or legacy underlying columns found for %s/%s; using zero underlying prices in options chain", baseAsset, interval)
 	}
 
-	// Load bars and symbol metadata in a single query using a JOIN
 	query := fmt.Sprintf(`SELECT
     b.timestamp,
     b.symbol_id,
@@ -60,17 +71,20 @@ func NewCryptoOptionsChainProvider(ctx context.Context, conn driver.Conn, baseAs
     b.mark_open,
     b.mark_close,
     b.mark_iv_close,
-    b.underlying_price_close,
+		%s AS underlying_close,
     b.tick_count,
     b.open_interest
 FROM %s AS b
 INNER JOIN crypto_options_symbol_meta AS m
     ON b.symbol_id = m.symbol_id
+%s
 WHERE b.base_asset = '%s'
   AND b.timestamp >= '%s'
   AND b.timestamp < '%s'
 ORDER BY b.timestamp`,
-		tableName,
+		underlyingCloseExpr,
+		optionTableName,
+		joinClause,
 		escapeString(baseAsset),
 		from.Format("2006-01-02 15:04:05"),
 		to.Format("2006-01-02 15:04:05"),

@@ -1,6 +1,9 @@
 package api
 
 import (
+	"context"
+	"errors"
+	"log"
 	"net/http"
 
 	"github.com/Cyvadra/toktik/internal/dto"
@@ -17,6 +20,21 @@ func NewHandler(cos *service.CryptoOptionsService) *Handler {
 	return &Handler{cryptoOptions: cos}
 }
 
+// handleServiceError maps service-level errors to appropriate HTTP responses.
+func handleServiceError(c *gin.Context, err error) {
+	var ve *dto.ValidationError
+	if errors.As(err, &ve) {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: err.Error()})
+		return
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		c.JSON(http.StatusGatewayTimeout, dto.ErrorResponse{Error: "request timeout"})
+		return
+	}
+	log.Printf("internal error: %v", err)
+	c.JSON(http.StatusInternalServerError, dto.ErrorResponse{Error: "internal server error"})
+}
+
 // GetBars handles GET /api/v1/crypto-options/bars
 func (h *Handler) GetBars(c *gin.Context) {
 	var req dto.BarRequest
@@ -27,7 +45,7 @@ func (h *Handler) GetBars(c *gin.Context) {
 
 	resp, err := h.cryptoOptions.QueryBars(c.Request.Context(), req)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: err.Error()})
+		handleServiceError(c, err)
 		return
 	}
 
@@ -44,7 +62,7 @@ func (h *Handler) GetSymbols(c *gin.Context) {
 
 	resp, err := h.cryptoOptions.QuerySymbols(c.Request.Context(), req)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: err.Error()})
+		handleServiceError(c, err)
 		return
 	}
 
@@ -61,7 +79,7 @@ func (h *Handler) GetGreeks(c *gin.Context) {
 
 	resp, err := h.cryptoOptions.QueryGreeks(c.Request.Context(), req)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: err.Error()})
+		handleServiceError(c, err)
 		return
 	}
 
@@ -78,7 +96,7 @@ func (h *Handler) RunBacktest(c *gin.Context) {
 
 	resp, err := h.cryptoOptions.RunBacktest(c.Request.Context(), req)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: err.Error()})
+		handleServiceError(c, err)
 		return
 	}
 

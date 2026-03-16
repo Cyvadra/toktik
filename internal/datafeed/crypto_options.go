@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	clickhouse "github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/Cyvadra/toktik/internal/backtest"
 	"github.com/Cyvadra/toktik/internal/cryptooptions"
@@ -24,10 +25,11 @@ var CryptoOptionsFieldAliases = map[string]string{
 var allBarColumns = []string{
 	"mark_open", "mark_high", "mark_low", "mark_close",
 	"last_open", "last_high", "last_low", "last_close",
-	"bid_open", "bid_close", "ask_open", "ask_close",
+	"bid_open", "bid_high", "bid_low", "bid_close",
+	"ask_open", "ask_high", "ask_low", "ask_close",
 	"mark_iv_open", "mark_iv_close", "bid_iv_open", "ask_iv_open",
 	"delta", "gamma", "vega", "theta", "rho",
-	"underlying_price_open", "underlying_price_close",
+	"underlying_price_open", "underlying_price_high", "underlying_price_low", "underlying_price_close",
 	"open_interest", "tick_count",
 }
 
@@ -55,52 +57,42 @@ func (f *CryptoOptionsDataFeed) Fields() []string {
 // Load fetches bar data from ClickHouse into a columnar DataSet.
 func (f *CryptoOptionsDataFeed) Load(ctx context.Context, req backtest.DataRequest) (*backtest.DataSet, error) {
 	symbolID := cryptooptions.SymbolID(req.Symbol)
+	baseAsset := cryptooptions.ExtractBaseAsset(req.Symbol)
 	interval := req.Interval
 
-	selectCols := `timestamp, symbol_id, base_asset,
-    mark_open, mark_high, mark_low, mark_close,
-    last_open, last_high, last_low, last_close,
-    bid_open, bid_close, ask_open, ask_close,
-    mark_iv_open, mark_iv_close, bid_iv_open, ask_iv_open,
-    delta, gamma, vega, theta, rho,
-    underlying_price_open, underlying_price_close,
-    open_interest, tick_count`
-
-	var query string
-
-	if interval == "1m" {
-		query = fmt.Sprintf(`SELECT %s
-FROM crypto_options_bar_1m
-WHERE symbol_id = %d
-  AND timestamp >= '%s'
-  AND timestamp < '%s'
-ORDER BY timestamp`,
-			selectCols,
-			symbolID,
-			req.From.Format("2006-01-02 15:04:05"),
-			req.To.Format("2006-01-02 15:04:05"),
-		)
-	} else if viewName, ok := cryptooptions.PrecomputedIntervals[interval]; ok {
-		query = fmt.Sprintf(`SELECT %s
-FROM %s
-WHERE symbol_id = %d
-  AND timestamp >= '%s'
-  AND timestamp < '%s'
-ORDER BY timestamp`,
-			selectCols, viewName,
-			symbolID,
-			req.From.Format("2006-01-02 15:04:05"),
-			req.To.Format("2006-01-02 15:04:05"),
-		)
-	} else {
-		adhocSQL, err := cryptooptions.QueryTimeAggregationSQL(interval)
-		if err != nil {
-			return nil, fmt.Errorf("unsupported interval %q: %w", interval, err)
-		}
-		query = replaceNamedParams(adhocSQL, symbolID, req.From, req.To)
+	barSourceSQL, err := cryptooptions.BuildOptionBarSubquery(interval)
+	if err != nil {
+		return nil, fmt.Errorf("unsupported interval %q: %w", interval, err)
+	}
+	spotSourceSQL, err := cryptooptions.BuildSpotBarSubquery(interval)
+	if err != nil {
+		return nil, fmt.Errorf("unsupported spot interval %q: %w", interval, err)
 	}
 
-	rows, err := f.conn.Query(ctx, query)
+	query := fmt.Sprintf(`SELECT
+    b.timestamp, b.symbol_id, b.base_asset,
+    b.mark_open, b.mark_high, b.mark_low, b.mark_close,
+    b.last_open, b.last_high, b.last_low, b.last_close,
+    b.bid_open, b.bid_high, b.bid_low, b.bid_close,
+    b.ask_open, b.ask_high, b.ask_low, b.ask_close,
+    b.mark_iv_open, b.mark_iv_close, b.bid_iv_open, b.ask_iv_open,
+    b.delta, b.gamma, b.vega, b.theta, b.rho,
+    ifNull(u.open, toFloat32(0))  AS underlying_price_open,
+    ifNull(u.high, toFloat32(0))  AS underlying_price_high,
+    ifNull(u.low, toFloat32(0))   AS underlying_price_low,
+    ifNull(u.close, toFloat32(0)) AS underlying_price_close,
+    b.open_interest, b.tick_count
+FROM (%s) AS b
+LEFT JOIN (%s) AS u
+    ON u.timestamp = b.timestamp AND u.symbol = b.base_asset
+ORDER BY b.timestamp`, barSourceSQL, spotSourceSQL)
+
+	rows, err := f.conn.Query(ctx, query,
+		clickhouse.Named("symbol_id", symbolID),
+		clickhouse.Named("symbol", baseAsset),
+		clickhouse.Named("from", req.From),
+		clickhouse.Named("to", req.To),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("query bars for %s/%s: %w", req.Symbol, interval, err)
 	}
@@ -119,25 +111,28 @@ ORDER BY timestamp`,
 			symbolID  uint32
 			baseAsset string
 			// Precomputed/ad-hoc views expose tick_count as UInt64 via sumMerge.
-			markOpen, markHigh, markLow, markClose    float32
-			lastOpen, lastHigh, lastLow, lastClose    float32
-			bidOpen, bidClose, askOpen, askClose      float32
-			markIVOpen, markIVClose                   float32
-			bidIVOpen, askIVOpen                      float32
-			delta, gamma, vega, theta, rho            float32
-			underlyingPriceOpen, underlyingPriceClose float32
-			openInterest                              float32
-			tickCount                                 uint64
+			markOpen, markHigh, markLow, markClose   float32
+			lastOpen, lastHigh, lastLow, lastClose   float32
+			bidOpen, bidHigh, bidLow, bidClose       float32
+			askOpen, askHigh, askLow, askClose       float32
+			markIVOpen, markIVClose                  float32
+			bidIVOpen, askIVOpen                     float32
+			delta, gamma, vega, theta, rho           float32
+			underlyingPriceOpen, underlyingPriceHigh float32
+			underlyingPriceLow, underlyingPriceClose float32
+			openInterest                             float32
+			tickCount                                uint64
 		)
 
 		if err := rows.Scan(
 			&ts, &symbolID, &baseAsset,
 			&markOpen, &markHigh, &markLow, &markClose,
 			&lastOpen, &lastHigh, &lastLow, &lastClose,
-			&bidOpen, &bidClose, &askOpen, &askClose,
+			&bidOpen, &bidHigh, &bidLow, &bidClose,
+			&askOpen, &askHigh, &askLow, &askClose,
 			&markIVOpen, &markIVClose, &bidIVOpen, &askIVOpen,
 			&delta, &gamma, &vega, &theta, &rho,
-			&underlyingPriceOpen, &underlyingPriceClose,
+			&underlyingPriceOpen, &underlyingPriceHigh, &underlyingPriceLow, &underlyingPriceClose,
 			&openInterest, &tickCount,
 		); err != nil {
 			return nil, fmt.Errorf("scan bar: %w", err)
@@ -148,10 +143,11 @@ ORDER BY timestamp`,
 		vals := []float64{
 			float64(markOpen), float64(markHigh), float64(markLow), float64(markClose),
 			float64(lastOpen), float64(lastHigh), float64(lastLow), float64(lastClose),
-			float64(bidOpen), float64(bidClose), float64(askOpen), float64(askClose),
+			float64(bidOpen), float64(bidHigh), float64(bidLow), float64(bidClose),
+			float64(askOpen), float64(askHigh), float64(askLow), float64(askClose),
 			float64(markIVOpen), float64(markIVClose), float64(bidIVOpen), float64(askIVOpen),
 			float64(delta), float64(gamma), float64(vega), float64(theta), float64(rho),
-			float64(underlyingPriceOpen), float64(underlyingPriceClose),
+			float64(underlyingPriceOpen), float64(underlyingPriceHigh), float64(underlyingPriceLow), float64(underlyingPriceClose),
 			float64(openInterest), float64(tickCount),
 		}
 		for i, v := range vals {
@@ -174,33 +170,4 @@ ORDER BY timestamp`,
 	}
 
 	return ds, nil
-}
-
-// replaceNamedParams replaces ClickHouse named parameters in ad-hoc aggregation SQL.
-func replaceNamedParams(sql string, symbolID uint32, from, to time.Time) string {
-	result := sql
-	// Replace named parameters with literal values
-	result = replaceParam(result, "{symbol_id:UInt32}", fmt.Sprintf("%d", symbolID))
-	result = replaceParam(result, "{from:DateTime}", "'"+from.Format("2006-01-02 15:04:05")+"'")
-	result = replaceParam(result, "{to:DateTime}", "'"+to.Format("2006-01-02 15:04:05")+"'")
-	return result
-}
-
-func replaceParam(s, old, new string) string {
-	for {
-		idx := indexOf(s, old)
-		if idx < 0 {
-			return s
-		}
-		s = s[:idx] + new + s[idx+len(old):]
-	}
-}
-
-func indexOf(s, substr string) int {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return i
-		}
-	}
-	return -1
 }

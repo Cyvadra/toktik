@@ -73,29 +73,36 @@ func main() {
 	}
 	log.Printf("K-line materialized views initialized")
 
-	parquetFiles, err := collectParquetFiles(*inputDir)
+	if err := cryptooptions.InitSpotKlineSchema(ctx, conn); err != nil {
+		log.Fatalf("init spot kline schema: %v", err)
+	}
+	log.Printf("Spot K-line materialized views initialized")
+
+	optionFiles, spotFiles, err := collectParquetFiles(*inputDir)
 	if err != nil {
 		log.Fatalf("scan input dir: %v", err)
 	}
 
-	if len(parquetFiles) == 0 {
+	if len(optionFiles) == 0 && len(spotFiles) == 0 {
 		log.Fatalf("no .parquet files found in %s", *inputDir)
 	}
 
-	log.Printf("Found %d .parquet files, importing with %d workers", len(parquetFiles), *workers)
+	totalFiles := len(optionFiles) + len(spotFiles)
+	log.Printf("Found %d option parquet files and %d spot parquet files, importing with %d workers", len(optionFiles), len(spotFiles), *workers)
 
 	var (
-		wg        sync.WaitGroup
-		sem       = make(chan struct{}, *workers)
-		completed int64
-		skipped   int64
-		failed    int64
-		totalRows int64
+		wg         sync.WaitGroup
+		sem        = make(chan struct{}, *workers)
+		completed  int64
+		skipped    int64
+		failed     int64
+		optionRows int64
+		spotRows   int64
 	)
 
 	startTime := time.Now()
 
-	for _, pqPath := range parquetFiles {
+	for _, pqPath := range optionFiles {
 		wg.Add(1)
 		sem <- struct{}{}
 
@@ -103,17 +110,40 @@ func main() {
 			defer wg.Done()
 			defer func() { <-sem }()
 
-			rows, skippedFile, err := importFile(ctx, *dsn, path, *batchSize)
+			rows, skippedFile, err := importOptionFile(ctx, *dsn, path, *batchSize)
 			if err != nil {
 				log.Printf("[ERROR] %s: %v", filepath.Base(path), err)
 				atomic.AddInt64(&failed, 1)
 			} else if skippedFile {
 				n := atomic.AddInt64(&skipped, 1)
-				log.Printf("[SKIPPED] %d/%d files skipped", n, len(parquetFiles))
+				log.Printf("[SKIPPED] %d/%d files skipped", n, totalFiles)
 			} else {
-				atomic.AddInt64(&totalRows, rows)
+				atomic.AddInt64(&optionRows, rows)
 				n := atomic.AddInt64(&completed, 1)
-				log.Printf("[DONE] %d/%d files imported (%d rows)", n, len(parquetFiles), rows)
+				log.Printf("[DONE] %d/%d files imported (%d option rows)", n, totalFiles, rows)
+			}
+		}(pqPath)
+	}
+
+	for _, pqPath := range spotFiles {
+		wg.Add(1)
+		sem <- struct{}{}
+
+		go func(path string) {
+			defer wg.Done()
+			defer func() { <-sem }()
+
+			rows, skippedFile, err := importSpotFile(ctx, *dsn, path, *batchSize)
+			if err != nil {
+				log.Printf("[ERROR] %s: %v", filepath.Base(path), err)
+				atomic.AddInt64(&failed, 1)
+			} else if skippedFile {
+				n := atomic.AddInt64(&skipped, 1)
+				log.Printf("[SKIPPED] %d/%d files skipped", n, totalFiles)
+			} else {
+				atomic.AddInt64(&spotRows, rows)
+				n := atomic.AddInt64(&completed, 1)
+				log.Printf("[DONE] %d/%d files imported (%d spot rows)", n, totalFiles, rows)
 			}
 		}(pqPath)
 	}
@@ -121,12 +151,13 @@ func main() {
 	wg.Wait()
 
 	elapsed := time.Since(startTime)
-	log.Printf("Import complete: %d files succeeded, %d skipped, %d failed, %d total rows, elapsed %s",
-		completed, skipped, failed, totalRows, elapsed.Round(time.Second))
+	log.Printf("Import complete: %d files succeeded, %d skipped, %d failed, %d option rows, %d spot rows, elapsed %s",
+		completed, skipped, failed, optionRows, spotRows, elapsed.Round(time.Second))
 }
 
-func collectParquetFiles(root string) ([]string, error) {
-	var parquetFiles []string
+func collectParquetFiles(root string) ([]string, []string, error) {
+	var optionFiles []string
+	var spotFiles []string
 
 	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
 		if err != nil {
@@ -136,19 +167,29 @@ func collectParquetFiles(root string) ([]string, error) {
 			return nil
 		}
 		if strings.HasSuffix(strings.ToLower(entry.Name()), ".parquet") {
-			parquetFiles = append(parquetFiles, path)
+			relPath, relErr := filepath.Rel(root, path)
+			if relErr != nil {
+				return relErr
+			}
+			spotPrefix := "spot" + string(os.PathSeparator)
+			if relPath == "spot" || strings.HasPrefix(relPath, spotPrefix) {
+				spotFiles = append(spotFiles, path)
+			} else {
+				optionFiles = append(optionFiles, path)
+			}
 		}
 		return nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
-	sort.Strings(parquetFiles)
-	return parquetFiles, nil
+	sort.Strings(optionFiles)
+	sort.Strings(spotFiles)
+	return optionFiles, spotFiles, nil
 }
 
-func importFile(ctx context.Context, dsn, pqPath string, batchSize int) (int64, bool, error) {
+func importOptionFile(ctx context.Context, dsn, pqPath string, batchSize int) (int64, bool, error) {
 	baseName := filepath.Base(pqPath)
 	log.Printf("[START] importing %s", baseName)
 	fileStart := time.Now()
@@ -230,6 +271,66 @@ func importFile(ctx context.Context, dsn, pqPath string, batchSize int) (int64, 
 	return rowCount, false, nil
 }
 
+func importSpotFile(ctx context.Context, dsn, pqPath string, batchSize int) (int64, bool, error) {
+	baseName := filepath.Base(pqPath)
+	log.Printf("[START] importing spot %s", baseName)
+	fileStart := time.Now()
+
+	conn, err := cryptooptions.ConnectClickHouse(ctx, dsn)
+	if err != nil {
+		return 0, false, fmt.Errorf("connect: %w", err)
+	}
+
+	barCh, closer, err := cryptooptions.ReadSpotParquet(pqPath)
+	if err != nil {
+		return 0, false, fmt.Errorf("read spot parquet: %w", err)
+	}
+	defer closer()
+
+	var bars []cryptooptions.SpotBar1m
+	for bar := range barCh {
+		bars = append(bars, bar)
+	}
+
+	if len(bars) == 0 {
+		log.Printf("[SKIP] %s: no spot bars found in parquet file", baseName)
+		return 0, true, nil
+	}
+
+	samples := selectSpotExistenceSamples(bars)
+	existingSamples, err := cryptooptions.CountExistingSpotBars(ctx, conn, samples)
+	if err != nil {
+		return 0, false, fmt.Errorf("check existing spot bars: %w", err)
+	}
+	if existingSamples > 0 {
+		status := "partially"
+		if existingSamples == len(samples) {
+			status = "fully"
+		}
+		log.Printf("[SKIP] %s: %d/%d sampled spot bars already exist, file appears %s imported",
+			baseName, existingSamples, len(samples), status)
+		return 0, true, nil
+	}
+
+	barSendCh := make(chan cryptooptions.SpotBar1m, 4096)
+	go func() {
+		defer close(barSendCh)
+		for i := range bars {
+			barSendCh <- bars[i]
+		}
+	}()
+
+	rowCount, err := cryptooptions.InsertSpotBars(ctx, conn, barSendCh, batchSize)
+	if err != nil {
+		return rowCount, false, fmt.Errorf("insert spot bars: %w", err)
+	}
+
+	log.Printf("[IMPORT] %s: %d spot bars in %s",
+		baseName, rowCount, time.Since(fileStart).Round(time.Second))
+
+	return rowCount, false, nil
+}
+
 func selectExistenceSamples(bars []cryptooptions.Bar1m) []cryptooptions.Bar1m {
 	if len(bars) == 0 {
 		return nil
@@ -247,6 +348,30 @@ func selectExistenceSamples(bars []cryptooptions.Bar1m) []cryptooptions.Bar1m {
 	}
 
 	samples := make([]cryptooptions.Bar1m, 0, len(indices))
+	for _, idx := range indices {
+		samples = append(samples, bars[idx])
+	}
+
+	return samples
+}
+
+func selectSpotExistenceSamples(bars []cryptooptions.SpotBar1m) []cryptooptions.SpotBar1m {
+	if len(bars) == 0 {
+		return nil
+	}
+
+	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
+	selected := make(map[int]struct{}, sampleCountPerRegion*2)
+	indices := make([]int, 0, sampleCountPerRegion*2)
+
+	indices = append(indices, randomIndices(rng, 0, min(len(bars), sampleWindowSize), sampleCountPerRegion, selected)...)
+	indices = append(indices, randomIndices(rng, max(0, len(bars)-sampleWindowSize), len(bars), sampleCountPerRegion, selected)...)
+
+	if len(indices) == 0 {
+		indices = append(indices, 0)
+	}
+
+	samples := make([]cryptooptions.SpotBar1m, 0, len(indices))
 	for _, idx := range indices {
 		samples = append(samples, bars[idx])
 	}
