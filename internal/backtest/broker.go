@@ -149,8 +149,7 @@ func (b *Broker) ProcessPending(barIndex int, barTime time.Time) []Trade {
 			}
 
 		case StopOrder:
-			_, high := prices.triggerRange(o.Side, b.config.TriggerMode)
-			low, _ := prices.triggerRange(o.Side, b.config.TriggerMode)
+			low, high := prices.triggerRange(o.Side, b.config.TriggerMode)
 			if o.Side == Buy && isValidPrice(high) && high >= o.StopPrice {
 				fillPrice = b.applySlippage(maxFloat(open, o.StopPrice), o.Side)
 				filled = true

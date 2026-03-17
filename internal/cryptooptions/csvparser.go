@@ -223,7 +223,9 @@ func ParseCSVFromZST(path string) (<-chan TickRow, func(), error) {
 	}
 
 	ch := make(chan TickRow, 4096)
+	done := make(chan struct{})
 	closeFn := func() {
+		close(done)
 		decoder.Close()
 		f.Close()
 	}
@@ -253,7 +255,11 @@ func ParseCSVFromZST(path string) (<-chan TickRow, func(), error) {
 				}
 				continue
 			}
-			ch <- tick
+			select {
+			case ch <- tick:
+			case <-done:
+				return
+			}
 		}
 		if badLines > 10 {
 			log.Printf("[csvparser] %s: %d total bad lines (only first 10 logged)", path, badLines)

@@ -89,6 +89,13 @@ func resolveIndicators(registered map[string]Indicator, data map[string][]float6
 			wg.Add(1)
 			go func(n string, indicator Indicator) {
 				defer wg.Done()
+				defer func() {
+					if r := recover(); r != nil {
+						mu.Lock()
+						computeErr = fmt.Errorf("indicator %q panicked: %v", n, r)
+						mu.Unlock()
+					}
+				}()
 
 				// Gather inputs
 				inputs := make(map[string][]float64)

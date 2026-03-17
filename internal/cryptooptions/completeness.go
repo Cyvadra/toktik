@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
@@ -18,14 +19,14 @@ func FindMissingBarDays(ctx context.Context, conn driver.Conn, fromDate, toDate 
 	}
 
 	endExclusive := endDate.AddDate(0, 0, 1)
-	baseAssetFilter := ""
-	if baseAsset != "" {
-		baseAssetFilter = fmt.Sprintf("\n      AND base_asset = '%s'", escapeSingleQuote(baseAsset))
-	}
 
-	query := fmt.Sprintf(`WITH
-    toDate('%s') AS start_date,
-    toDate('%s') AS end_date
+	var query string
+	var args []interface{}
+
+	if baseAsset != "" {
+		query = `WITH
+    toDate(@startDate) AS start_date,
+    toDate(@endDate) AS end_date
 SELECT day
 FROM
 (
@@ -36,18 +37,43 @@ WHERE day NOT IN
 (
 	SELECT DISTINCT toDate(timestamp)
 	FROM crypto_options_bar_1m
-	WHERE timestamp >= toDateTime('%s')
-	  AND timestamp < toDateTime('%s')%s
+	WHERE timestamp >= toDateTime(@startDate)
+	  AND timestamp < toDateTime(@endExclusive)
+	  AND base_asset = @baseAsset
 )
-ORDER BY day`,
-		startDate.Format(dateLayout),
-		endDate.Format(dateLayout),
-		startDate.Format(dateLayout),
-		endExclusive.Format(dateLayout),
-		baseAssetFilter,
-	)
+ORDER BY day`
+		args = []interface{}{
+			clickhouse.Named("startDate", startDate.Format(dateLayout)),
+			clickhouse.Named("endDate", endDate.Format(dateLayout)),
+			clickhouse.Named("endExclusive", endExclusive.Format(dateLayout)),
+			clickhouse.Named("baseAsset", baseAsset),
+		}
+	} else {
+		query = `WITH
+    toDate(@startDate) AS start_date,
+    toDate(@endDate) AS end_date
+SELECT day
+FROM
+(
+	SELECT addDays(start_date, number) AS day
+	FROM numbers(dateDiff('day', start_date, end_date) + 1)
+)
+WHERE day NOT IN
+(
+	SELECT DISTINCT toDate(timestamp)
+	FROM crypto_options_bar_1m
+	WHERE timestamp >= toDateTime(@startDate)
+	  AND timestamp < toDateTime(@endExclusive)
+)
+ORDER BY day`
+		args = []interface{}{
+			clickhouse.Named("startDate", startDate.Format(dateLayout)),
+			clickhouse.Named("endDate", endDate.Format(dateLayout)),
+			clickhouse.Named("endExclusive", endExclusive.Format(dateLayout)),
+		}
+	}
 
-	rows, err := conn.Query(ctx, query)
+	rows, err := conn.Query(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query missing bar days: %w", err)
 	}

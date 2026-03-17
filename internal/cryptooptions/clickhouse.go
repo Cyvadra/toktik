@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"strconv"
 	"strings"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
@@ -109,36 +108,37 @@ func CountExistingBars(ctx context.Context, conn driver.Conn, bars []Bar1m) (int
 		return 0, nil
 	}
 
+	const tuplePlaceholder = "(?,?,?,toFloat32(?),toFloat32(?),toFloat32(?),toFloat32(?),toFloat32(?),toFloat32(?),toFloat32(?),toFloat32(?),toFloat32(?),?)"
+
 	var query strings.Builder
 	query.WriteString(`SELECT count() FROM crypto_options_bar_1m WHERE (toUnixTimestamp(timestamp), symbol_id, base_asset, mark_open, mark_close, last_open, last_close, bid_open, bid_close, ask_open, ask_close, open_interest, tick_count) IN (`)
 
+	args := make([]interface{}, 0, len(bars)*13)
 	for i, bar := range bars {
 		if i > 0 {
 			query.WriteString(",")
 		}
-
-		query.WriteString("(")
-		fmt.Fprintf(&query, "%d,%d,'%s',%s,%s,%s,%s,%s,%s,%s,%s,%s,%d",
+		query.WriteString(tuplePlaceholder)
+		args = append(args,
 			bar.Timestamp.UTC().Unix(),
 			bar.SymbolID,
-			escapeSingleQuote(bar.BaseAsset),
-			float32Literal(bar.MarkOpen),
-			float32Literal(bar.MarkClose),
-			float32Literal(bar.LastOpen),
-			float32Literal(bar.LastClose),
-			float32Literal(bar.BidOpen),
-			float32Literal(bar.BidClose),
-			float32Literal(bar.AskOpen),
-			float32Literal(bar.AskClose),
-			float32Literal(bar.OpenInterest),
+			bar.BaseAsset,
+			float64(bar.MarkOpen),
+			float64(bar.MarkClose),
+			float64(bar.LastOpen),
+			float64(bar.LastClose),
+			float64(bar.BidOpen),
+			float64(bar.BidClose),
+			float64(bar.AskOpen),
+			float64(bar.AskClose),
+			float64(bar.OpenInterest),
 			bar.TickCount,
 		)
-		query.WriteString(")")
 	}
 
 	query.WriteString(")")
 
-	rows, err := conn.Query(ctx, query.String())
+	rows, err := conn.Query(ctx, query.String(), args...)
 	if err != nil {
 		return 0, fmt.Errorf("query existing sampled bars: %w", err)
 	}
@@ -154,14 +154,6 @@ func CountExistingBars(ctx context.Context, conn driver.Conn, bars []Bar1m) (int
 	}
 
 	return int(count), nil
-}
-
-func float32Literal(value float32) string {
-	return "toFloat32(" + strconv.FormatFloat(float64(value), 'g', -1, 32) + ")"
-}
-
-func escapeSingleQuote(s string) string {
-	return strings.ReplaceAll(s, "'", "''")
 }
 
 const optionBarInsertSQL = `INSERT INTO crypto_options_bar_1m (
@@ -240,28 +232,29 @@ func CountExistingSpotBars(ctx context.Context, conn driver.Conn, bars []SpotBar
 		return 0, nil
 	}
 
+	const tuplePlaceholder = "(?,?,toFloat32(?),toFloat32(?),?)"
+
 	var query strings.Builder
 	query.WriteString(`SELECT count() FROM crypto_spot_bar_1m WHERE (toUnixTimestamp(timestamp), symbol, open, close, tick_count) IN (`)
 
+	args := make([]interface{}, 0, len(bars)*5)
 	for i, bar := range bars {
 		if i > 0 {
 			query.WriteString(",")
 		}
-
-		query.WriteString("(")
-		fmt.Fprintf(&query, "%d,'%s',%s,%s,%d",
+		query.WriteString(tuplePlaceholder)
+		args = append(args,
 			bar.Timestamp.UTC().Unix(),
-			escapeSingleQuote(bar.Symbol),
-			float32Literal(bar.Open),
-			float32Literal(bar.Close),
+			bar.Symbol,
+			float64(bar.Open),
+			float64(bar.Close),
 			bar.TickCount,
 		)
-		query.WriteString(")")
 	}
 
 	query.WriteString(")")
 
-	rows, err := conn.Query(ctx, query.String())
+	rows, err := conn.Query(ctx, query.String(), args...)
 	if err != nil {
 		return 0, fmt.Errorf("query existing sampled spot bars: %w", err)
 	}
