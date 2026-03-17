@@ -6,6 +6,7 @@ import (
 	"log"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -34,7 +35,38 @@ func SelectActiveRoots(ctx context.Context, cfg SyncConfig) ([]string, []RootAct
 		mu         sync.Mutex
 		activities []RootActivity
 		errCh      = make(chan error, workers)
+		processed  atomic.Int64
+		kept       atomic.Int64
+		failed     atomic.Int64
 	)
+
+	startedAt := time.Now()
+	log.Printf("[root-filter] scoring %d roots with %d workers", len(cfg.Roots), workers)
+	doneCh := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(15 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				processedCount := int(processed.Load())
+				keptCount := int(kept.Load())
+				failedCount := int(failed.Load())
+				percent := float64(processedCount) * 100 / float64(len(cfg.Roots))
+				elapsed := time.Since(startedAt).Round(time.Second)
+				eta := "n/a"
+				if processedCount > 0 && processedCount < len(cfg.Roots) {
+					remaining := len(cfg.Roots) - processedCount
+					etaDuration := time.Duration(float64(time.Since(startedAt)) * float64(remaining) / float64(processedCount))
+					eta = etaDuration.Round(time.Second).String()
+				}
+				log.Printf("[root-filter] progress: %d/%d roots (%.1f%%, kept=%d, failed=%d, elapsed=%s, eta=%s)",
+					processedCount, len(cfg.Roots), percent, keptCount, failedCount, elapsed, eta)
+			case <-doneCh:
+				return
+			}
+		}
+	}()
 
 	for workerID := 0; workerID < workers; workerID++ {
 		wg.Add(1)
@@ -54,19 +86,33 @@ func SelectActiveRoots(ctx context.Context, cfg SyncConfig) ([]string, []RootAct
 				activity, ok, err := scoreRoot(ctx, client, root, cfg.EndDate, cfg.RootMinExpirations, cfg.RootRecentLookbackDays, cfg.RootSampleExpirations)
 				if err != nil {
 					log.Printf("[root-filter] %s: %v", root, err)
+					failed.Add(1)
+					processed.Add(1)
 					continue
 				}
 				if !ok {
+					processed.Add(1)
 					continue
 				}
 				mu.Lock()
 				activities = append(activities, activity)
 				mu.Unlock()
+				kept.Add(1)
+				processed.Add(1)
 			}
 		}(workerID)
 	}
 
 	wg.Wait()
+	close(doneCh)
+
+	processedCount := int(processed.Load())
+	keptCount := int(kept.Load())
+	failedCount := int(failed.Load())
+	elapsed := time.Since(startedAt).Round(time.Second)
+	log.Printf("[root-filter] complete: %d/%d roots (kept=%d, failed=%d, elapsed=%s)",
+		processedCount, len(cfg.Roots), keptCount, failedCount, elapsed)
+
 	close(errCh)
 	for err := range errCh {
 		if err != nil {
