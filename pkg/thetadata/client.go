@@ -350,6 +350,64 @@ func (c *Client) GetOHLC1m(ctx context.Context, contract Contract, date time.Tim
 	return parseOHLCBars(raw, date)
 }
 
+// GetQuotes1mRange returns 1-minute NBBO quote bars for a contract over a date range.
+// One API call returns bars for all trading days in [startDate, endDate].
+func (c *Client) GetQuotes1mRange(ctx context.Context, contract Contract, startDate, endDate time.Time) ([]QuoteBar, error) {
+	raw, err := c.callTool(ctx, "option_history_quote", map[string]any{
+		"symbol":     contract.Root,
+		"expiration": contract.Expiration.Format("2006-01-02"),
+		"strike":     contract.Strike,
+		"right":      contract.Right,
+		"start_date": startDate.Format("2006-01-02"),
+		"end_date":   endDate.Format("2006-01-02"),
+		"start_time": "09:30",
+		"end_time":   "16:00",
+		"interval":   "1m",
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get quotes 1m range for %s (%s to %s): %w",
+			contract.Symbol(), startDate.Format("2006-01-02"), endDate.Format("2006-01-02"), err)
+	}
+
+	return parseQuoteBars(raw, startDate)
+}
+
+// GetOHLC1mRange returns 1-minute trade-based OHLC bars for a contract over a date range.
+// One API call returns bars for all trading days in [startDate, endDate].
+func (c *Client) GetOHLC1mRange(ctx context.Context, contract Contract, startDate, endDate time.Time) ([]OHLCBar, error) {
+	raw, err := c.callTool(ctx, "option_history_ohlc", map[string]any{
+		"symbol":     contract.Root,
+		"expiration": contract.Expiration.Format("2006-01-02"),
+		"strike":     contract.Strike,
+		"right":      contract.Right,
+		"start_date": startDate.Format("2006-01-02"),
+		"end_date":   endDate.Format("2006-01-02"),
+		"start_time": "09:30",
+		"end_time":   "16:00",
+		"interval":   "1m",
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get ohlc 1m range for %s (%s to %s): %w",
+			contract.Symbol(), startDate.Format("2006-01-02"), endDate.Format("2006-01-02"), err)
+	}
+
+	return parseOHLCBars(raw, startDate)
+}
+
+// GetStockEOD returns end-of-day OHLC data for a stock symbol over a date range.
+func (c *Client) GetStockEOD(ctx context.Context, symbol string, startDate, endDate time.Time) ([]OHLCBar, error) {
+	raw, err := c.callTool(ctx, "stock_history_eod", map[string]any{
+		"symbol":     symbol,
+		"start_date": startDate.Format("2006-01-02"),
+		"end_date":   endDate.Format("2006-01-02"),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get stock eod for %s: %w", symbol, err)
+	}
+
+	return parseOHLCBars(raw, startDate)
+}
+
 // GetGreeksEOD returns end-of-day Greeks for a contract over a date range.
 // This is a bulk call — one request covers many dates.
 func (c *Client) GetGreeksEOD(ctx context.Context, contract Contract, startDate, endDate time.Time) ([]GreeksEOD, error) {

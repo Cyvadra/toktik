@@ -12,11 +12,22 @@ import (
 
 // Store handles ClickHouse operations for persisting downloaded option data.
 type Store struct {
-	conn driver.Conn
+	conn            driver.Conn
+	optBarTable     string // e.g. "equity_options_bar_1m"
+	symbolMetaTable string // e.g. "equity_options_symbol_meta"
+	spotBarTable    string // e.g. "equity_spot_bar_1m"
+	optionsPrefix   string // e.g. "equity_options"
+	spotPrefix      string // e.g. "equity_spot"
 }
 
-// NewStore creates a new Store with the given ClickHouse DSN.
+// NewStore creates a new Store with equity options table names.
 func NewStore(ctx context.Context, dsn string) (*Store, error) {
+	return NewStoreWithPrefix(ctx, dsn, "equity_options", "equity_spot")
+}
+
+// NewStoreWithPrefix creates a Store targeting tables with the given prefixes.
+// For crypto: ("crypto_options", "crypto_spot"). For equity: ("equity_options", "equity_spot").
+func NewStoreWithPrefix(ctx context.Context, dsn, optionsPrefix, spotPrefix string) (*Store, error) {
 	opts, err := clickhouse.ParseDSN(dsn)
 	if err != nil {
 		return nil, fmt.Errorf("parse ClickHouse DSN: %w", err)
@@ -28,30 +39,33 @@ func NewStore(ctx context.Context, dsn string) (*Store, error) {
 	if err := conn.Ping(ctx); err != nil {
 		return nil, fmt.Errorf("ping ClickHouse: %w", err)
 	}
-	return &Store{conn: conn}, nil
+	return &Store{
+		conn:            conn,
+		optBarTable:     optionsPrefix + "_bar_1m",
+		symbolMetaTable: optionsPrefix + "_symbol_meta",
+		spotBarTable:    spotPrefix + "_bar_1m",
+		optionsPrefix:   optionsPrefix,
+		spotPrefix:      spotPrefix,
+	}, nil
 }
 
-// InitSchema ensures the required tables exist. Reuses the existing
-// crypto_options schema (same field structure).
+// InitSchema ensures the required tables exist.
 func (s *Store) InitSchema(ctx context.Context, schemaFile string) error {
 	if schemaFile != "" {
 		if err := cryptooptions.InitSchema(ctx, s.conn, schemaFile); err != nil {
 			return err
 		}
 	}
-	if err := cryptooptions.InitKlineSchema(ctx, s.conn); err != nil {
-		return err
-	}
-	return cryptooptions.InitSpotKlineSchema(ctx, s.conn)
+	return cryptooptions.InitKlineSchemaForPrefix(ctx, s.conn, s.optionsPrefix, s.spotPrefix)
 }
 
-// InsertBars batch-inserts 1m option bars into crypto_options_bar_1m.
+// InsertBars batch-inserts 1m option bars.
 func (s *Store) InsertBars(ctx context.Context, bars []cryptooptions.Bar1m) error {
 	if len(bars) == 0 {
 		return nil
 	}
 
-	batch, err := s.conn.PrepareBatch(ctx, `INSERT INTO crypto_options_bar_1m (
+	batch, err := s.conn.PrepareBatch(ctx, fmt.Sprintf(`INSERT INTO %s (
 		timestamp, symbol_id, base_asset,
 		mark_open, mark_high, mark_low, mark_close,
 		last_open, last_high, last_low, last_close,
@@ -60,7 +74,7 @@ func (s *Store) InsertBars(ctx context.Context, bars []cryptooptions.Bar1m) erro
 		mark_iv_open, mark_iv_close, bid_iv_open, ask_iv_open,
 		delta, gamma, vega, theta, rho,
 		open_interest, tick_count
-	)`)
+	)`, s.optBarTable))
 	if err != nil {
 		return fmt.Errorf("prepare bar batch: %w", err)
 	}
@@ -87,20 +101,37 @@ func (s *Store) InsertBars(ctx context.Context, bars []cryptooptions.Bar1m) erro
 
 // InsertSymbols batch-inserts symbol metadata.
 func (s *Store) InsertSymbols(ctx context.Context, symbols []cryptooptions.SymbolMeta) error {
-	return cryptooptions.InsertSymbols(ctx, s.conn, symbols)
+	if len(symbols) == 0 {
+		return nil
+	}
+	batch, err := s.conn.PrepareBatch(ctx, fmt.Sprintf(`INSERT INTO %s (
+		symbol_id, symbol, base_asset, option_type, strike_price, expiration, underlying_index
+	)`, s.symbolMetaTable))
+	if err != nil {
+		return fmt.Errorf("prepare symbol_meta batch: %w", err)
+	}
+	for _, sym := range symbols {
+		if err := batch.Append(
+			sym.SymbolID, sym.Symbol, sym.BaseAsset, sym.OptionType,
+			sym.StrikePrice, sym.Expiration, sym.UnderlyingIndex,
+		); err != nil {
+			return fmt.Errorf("append symbol %s: %w", sym.Symbol, err)
+		}
+	}
+	return batch.Send()
 }
 
-// InsertSpotBars batch-inserts underlying price bars into crypto_spot_bar_1m.
+// InsertSpotBars batch-inserts underlying price bars.
 func (s *Store) InsertSpotBars(ctx context.Context, bars []cryptooptions.SpotBar1m) error {
 	if len(bars) == 0 {
 		return nil
 	}
 
-	batch, err := s.conn.PrepareBatch(ctx, `INSERT INTO crypto_spot_bar_1m (
+	batch, err := s.conn.PrepareBatch(ctx, fmt.Sprintf(`INSERT INTO %s (
 		timestamp, symbol, price_source,
 		open, high, low, close,
 		tick_count
-	)`)
+	)`, s.spotBarTable))
 	if err != nil {
 		return fmt.Errorf("prepare spot bar batch: %w", err)
 	}
@@ -126,11 +157,11 @@ func (s *Store) HasDateData(ctx context.Context, root string, date time.Time) (b
 	endOfDay := startOfDay.Add(24 * time.Hour)
 
 	rows, err := s.conn.Query(ctx,
-		`SELECT count() FROM crypto_options_bar_1m
+		fmt.Sprintf(`SELECT count() FROM %s
 		 WHERE base_asset = ?
 		   AND timestamp >= ?
 		   AND timestamp < ?
-		 LIMIT 1`,
+		 LIMIT 1`, s.optBarTable),
 		root, startOfDay, endOfDay,
 	)
 	if err != nil {
@@ -171,10 +202,10 @@ func (s *Store) CountDateData(ctx context.Context, root string, date time.Time) 
 	}
 
 	optionCount, err := countRows(
-		`SELECT count() FROM crypto_options_bar_1m
+		fmt.Sprintf(`SELECT count() FROM %s
 		 WHERE base_asset = ?
 		   AND timestamp >= ?
-		   AND timestamp < ?`,
+		   AND timestamp < ?`, s.optBarTable),
 		root, startOfDay, endOfDay,
 	)
 	if err != nil {
@@ -182,11 +213,11 @@ func (s *Store) CountDateData(ctx context.Context, root string, date time.Time) 
 	}
 
 	spotCount, err := countRows(
-		`SELECT count() FROM crypto_spot_bar_1m
+		fmt.Sprintf(`SELECT count() FROM %s
 		 WHERE symbol = ?
 		   AND price_source = 'parity_forward'
 		   AND timestamp >= ?
-		   AND timestamp < ?`,
+		   AND timestamp < ?`, s.spotBarTable),
 		root, startOfDay, endOfDay,
 	)
 	if err != nil {
@@ -207,20 +238,20 @@ func (s *Store) DeleteDateData(ctx context.Context, root string, date time.Time)
 		args      []any
 	}{
 		{
-			statement: `ALTER TABLE crypto_options_bar_1m DELETE
+			statement: fmt.Sprintf(`ALTER TABLE %s DELETE
 				WHERE base_asset = ?
 				  AND timestamp >= ?
 				  AND timestamp < ?
-				SETTINGS mutations_sync = 1`,
+				SETTINGS mutations_sync = 1`, s.optBarTable),
 			args: []any{root, startOfDay, endOfDay},
 		},
 		{
-			statement: `ALTER TABLE crypto_spot_bar_1m DELETE
+			statement: fmt.Sprintf(`ALTER TABLE %s DELETE
 				WHERE symbol = ?
 				  AND price_source = 'parity_forward'
 				  AND timestamp >= ?
 				  AND timestamp < ?
-				SETTINGS mutations_sync = 1`,
+				SETTINGS mutations_sync = 1`, s.spotBarTable),
 			args: []any{root, startOfDay, endOfDay},
 		},
 	}

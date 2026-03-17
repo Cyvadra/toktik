@@ -36,7 +36,10 @@ func (f *CryptoUnderlyingDataFeed) Load(ctx context.Context, req backtest.DataRe
 	if err != nil {
 		return nil, fmt.Errorf("resolve underlying source for %s: %w", baseAsset, err)
 	}
-	if query == "" {
+	if query != "" {
+		// Spot source returns 8 columns; project down to the 5 the scan expects.
+		query = fmt.Sprintf(`SELECT timestamp, open, close, high, low FROM (%s) ORDER BY timestamp`, query)
+	} else {
 		query, degraded, err = buildLegacyUnderlyingSeriesSQL(ctx, f.conn, interval, baseAsset, req.From, req.To)
 		if err != nil {
 			return nil, fmt.Errorf("resolve legacy underlying source for %s: %w", baseAsset, err)

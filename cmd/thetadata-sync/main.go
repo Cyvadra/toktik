@@ -46,9 +46,9 @@ func main() {
 
 	if *schemaFile == "" {
 		for _, c := range []string{
-			"schema/clickhouse/crypto_options.sql",
-			"../schema/clickhouse/crypto_options.sql",
-			"../../schema/clickhouse/crypto_options.sql",
+			"schema/clickhouse/equity_options.sql",
+			"../schema/clickhouse/equity_options.sql",
+			"../../schema/clickhouse/equity_options.sql",
 		} {
 			if _, err := os.Stat(c); err == nil {
 				*schemaFile = c

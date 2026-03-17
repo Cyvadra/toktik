@@ -57,11 +57,17 @@ func InitSpotKlineSchema(ctx context.Context, conn driver.Conn) error {
 }
 
 // optionKlineDDL returns the three DDL statements (agg table, materialized view,
-// query view) for a single option K-line interval.
+// query view) for a single option K-line interval using crypto_options prefix.
 func optionKlineDDL(iv KlineInterval) []string {
-	agg := "crypto_options_bar_" + iv.Suffix + "_agg"
-	mv := "crypto_options_bar_" + iv.Suffix + "_mv"
-	view := "crypto_options_bar_" + iv.Suffix
+	return optionKlineDDLWithPrefix("crypto_options", iv)
+}
+
+// optionKlineDDLWithPrefix returns option K-line DDL for the given table prefix.
+func optionKlineDDLWithPrefix(prefix string, iv KlineInterval) []string {
+	base := prefix + "_bar_1m"
+	agg := prefix + "_bar_" + iv.Suffix + "_agg"
+	mv := prefix + "_bar_" + iv.Suffix + "_mv"
+	view := prefix + "_bar_" + iv.Suffix
 
 	createAgg := fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s
 (
@@ -134,8 +140,8 @@ AS SELECT
     argMinState(rho, timestamp)                    AS rho_state,
     argMaxState(open_interest, timestamp)          AS open_interest_state,
     sumState(tick_count)                           AS tick_count_state
-FROM crypto_options_bar_1m
-GROUP BY ts, symbol_id, base_asset`, mv, agg, iv.TimeFunc)
+FROM %s
+GROUP BY ts, symbol_id, base_asset`, mv, agg, iv.TimeFunc, base)
 
 	createView := fmt.Sprintf(`CREATE OR REPLACE VIEW %s AS
 SELECT
@@ -175,11 +181,17 @@ GROUP BY ts, symbol_id, base_asset`, view, agg)
 	return []string{createAgg, createMV, createView}
 }
 
-// spotKlineDDL returns the three DDL statements for a single spot K-line interval.
+// spotKlineDDL returns the three DDL statements for a single spot K-line interval using crypto_spot prefix.
 func spotKlineDDL(iv KlineInterval) []string {
-	agg := "crypto_spot_bar_" + iv.Suffix + "_agg"
-	mv := "crypto_spot_bar_" + iv.Suffix + "_mv"
-	view := "crypto_spot_bar_" + iv.Suffix
+	return spotKlineDDLWithPrefix("crypto_spot", iv)
+}
+
+// spotKlineDDLWithPrefix returns spot K-line DDL for the given table prefix.
+func spotKlineDDLWithPrefix(prefix string, iv KlineInterval) []string {
+	base := prefix + "_bar_1m"
+	agg := prefix + "_bar_" + iv.Suffix + "_agg"
+	mv := prefix + "_bar_" + iv.Suffix + "_mv"
+	view := prefix + "_bar_" + iv.Suffix
 
 	createAgg := fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s
 (
@@ -208,8 +220,8 @@ AS SELECT
     minState(low)                                AS low_state,
     argMaxState(close, timestamp)                AS close_state,
     sumState(tick_count)                         AS tick_count_state
-FROM crypto_spot_bar_1m
-GROUP BY ts, symbol`, mv, agg, iv.TimeFunc)
+FROM %s
+GROUP BY ts, symbol`, mv, agg, iv.TimeFunc, base)
 
 	createView := fmt.Sprintf(`CREATE OR REPLACE VIEW %s AS
 SELECT
@@ -225,6 +237,30 @@ FROM %s
 GROUP BY ts, symbol`, view, agg)
 
 	return []string{createAgg, createMV, createView}
+}
+
+// InitKlineSchemaForPrefix creates kline aggregation tables and views
+// for both option and spot bars using the specified table prefixes.
+// Example: ("equity_options", "equity_spot") creates equity_options_bar_5m, etc.
+func InitKlineSchemaForPrefix(ctx context.Context, conn driver.Conn, optionsPrefix, spotPrefix string) error {
+	for _, iv := range KlineIntervals {
+		stmts := optionKlineDDLWithPrefix(optionsPrefix, iv)
+		for _, stmt := range stmts {
+			if err := conn.Exec(ctx, stmt); err != nil {
+				return fmt.Errorf("kline schema [%s/%s]: %w", optionsPrefix, iv.Suffix, err)
+			}
+		}
+		log.Printf("[kline] initialized %s schema for %s interval", optionsPrefix, iv.Suffix)
+
+		stmts = spotKlineDDLWithPrefix(spotPrefix, iv)
+		for _, stmt := range stmts {
+			if err := conn.Exec(ctx, stmt); err != nil {
+				return fmt.Errorf("spot kline schema [%s/%s]: %w", spotPrefix, iv.Suffix, err)
+			}
+		}
+		log.Printf("[kline] initialized %s schema for %s interval", spotPrefix, iv.Suffix)
+	}
+	return nil
 }
 
 // validAdHocIntervals maps user-facing interval strings to ClickHouse INTERVAL
