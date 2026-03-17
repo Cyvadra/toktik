@@ -233,6 +233,12 @@ func (c *MCPClient) sendRPC(ctx context.Context, method string, params any) (jso
 	// Read SSE events until we get a matching response
 	deadline := time.Now().Add(10 * time.Minute)
 	for time.Now().Before(deadline) {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+		}
+
 		event, data, err := c.readSSEEvent()
 		if err != nil {
 			return nil, fmt.Errorf("read SSE response: %w", err)

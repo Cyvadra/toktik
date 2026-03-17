@@ -49,6 +49,7 @@ func SelectActiveRoots(ctx context.Context, cfg SyncConfig) ([]string, []RootAct
 			defer mcp.Close()
 
 			client := NewClient(mcp, cfg.RateLimit)
+			defer client.Close()
 			for root := range rootCh {
 				activity, ok, err := scoreRoot(ctx, client, root, cfg.EndDate, cfg.RootMinExpirations, cfg.RootRecentLookbackDays, cfg.RootSampleExpirations)
 				if err != nil {

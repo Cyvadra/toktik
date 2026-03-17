@@ -18,6 +18,7 @@ import (
 type Client struct {
 	mcp       *MCPClient
 	rateLimit <-chan time.Time // rate limiter ticker
+	ticker    *time.Ticker     // kept for cleanup
 }
 
 // NewClient creates a new Theta Data API client with the given MCP transport
@@ -27,9 +28,17 @@ func NewClient(mcp *MCPClient, reqPerSec float64) *Client {
 	if reqPerSec > 0 {
 		interval := time.Duration(float64(time.Second) / reqPerSec)
 		ticker := time.NewTicker(interval)
+		c.ticker = ticker
 		c.rateLimit = ticker.C
 	}
 	return c
+}
+
+// Close releases resources held by the client.
+func (c *Client) Close() {
+	if c.ticker != nil {
+		c.ticker.Stop()
+	}
 }
 
 func (c *Client) throttle() {
@@ -60,10 +69,7 @@ func unmarshalThetaJSON(raw string, target any) error {
 		return nil
 	}
 
-	var firstErr error
-	if err := json.Unmarshal([]byte(trimmed), target); err != nil {
-		firstErr = err
-	}
+	firstErr := json.Unmarshal([]byte(trimmed), target)
 
 	for _, candidate := range []string{unwrapJSONString(trimmed)} {
 		candidate = strings.TrimSpace(candidate)

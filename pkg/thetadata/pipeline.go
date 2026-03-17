@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"math"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -125,6 +125,7 @@ func (p *Pipeline) syncRoot(ctx context.Context, root string) error {
 	if err != nil {
 		return fmt.Errorf("create meta client: %w", err)
 	}
+	defer metaClient.Close()
 	defer metaClient.mcp.Close()
 
 	// Phase 1: Enumerate the contract universe
@@ -683,6 +684,7 @@ func (p *Pipeline) parallelWork(ctx context.Context, contracts []Contract, worke
 				errCh <- fmt.Errorf("worker %d: create client: %w", workerID, err)
 				return
 			}
+			defer client.Close()
 			defer client.mcp.Close()
 
 			for c := range ch {
@@ -761,7 +763,7 @@ func symbolToContract(root, sym string) *Contract {
 func splitFromRight(s, sep string, n int) []string {
 	var result []string
 	for i := 0; i < n; i++ {
-		idx := lastIndex(s, sep)
+		idx := strings.LastIndex(s, sep)
 		if idx < 0 {
 			return nil
 		}
@@ -770,58 +772,4 @@ func splitFromRight(s, sep string, n int) []string {
 	}
 	result = append([]string{s}, result...)
 	return result
-}
-
-func lastIndex(s, substr string) int {
-	for i := len(s) - len(substr); i >= 0; i-- {
-		if s[i:i+len(substr)] == substr {
-			return i
-		}
-	}
-	return -1
-}
-
-// tradingDays generates all weekday dates within [start, end].
-func tradingDays(start, end time.Time) []time.Time {
-	var days []time.Time
-	for d := start; !d.After(end); d = d.AddDate(0, 0, 1) {
-		wd := d.Weekday()
-		if wd != time.Saturday && wd != time.Sunday {
-			days = append(days, d)
-		}
-	}
-	return days
-}
-
-// nearATMStrikes returns strikes near the ATM level from a sorted strike list.
-func nearATMStrikes(strikes []float64, underlying float64, count int) []float64 {
-	if len(strikes) <= count {
-		return strikes
-	}
-
-	// Find the closest strike to underlying
-	closest := 0
-	minDist := math.Abs(strikes[0] - underlying)
-	for i, s := range strikes {
-		d := math.Abs(s - underlying)
-		if d < minDist {
-			minDist = d
-			closest = i
-		}
-	}
-
-	lo := closest - count/2
-	if lo < 0 {
-		lo = 0
-	}
-	hi := lo + count
-	if hi > len(strikes) {
-		hi = len(strikes)
-		lo = hi - count
-		if lo < 0 {
-			lo = 0
-		}
-	}
-
-	return strikes[lo:hi]
 }

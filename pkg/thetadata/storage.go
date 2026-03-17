@@ -127,9 +127,9 @@ func (s *Store) HasDateData(ctx context.Context, root string, date time.Time) (b
 
 	rows, err := s.conn.Query(ctx,
 		`SELECT count() FROM crypto_options_bar_1m
-		 WHERE base_asset = $1
-		   AND timestamp >= $2
-		   AND timestamp < $3
+		 WHERE base_asset = ?
+		   AND timestamp >= ?
+		   AND timestamp < ?
 		 LIMIT 1`,
 		root, startOfDay, endOfDay,
 	)
@@ -172,9 +172,9 @@ func (s *Store) CountDateData(ctx context.Context, root string, date time.Time) 
 
 	optionCount, err := countRows(
 		`SELECT count() FROM crypto_options_bar_1m
-		 WHERE base_asset = $1
-		   AND timestamp >= $2
-		   AND timestamp < $3`,
+		 WHERE base_asset = ?
+		   AND timestamp >= ?
+		   AND timestamp < ?`,
 		root, startOfDay, endOfDay,
 	)
 	if err != nil {
@@ -183,10 +183,10 @@ func (s *Store) CountDateData(ctx context.Context, root string, date time.Time) 
 
 	spotCount, err := countRows(
 		`SELECT count() FROM crypto_spot_bar_1m
-		 WHERE symbol = $1
+		 WHERE symbol = ?
 		   AND price_source = 'parity_forward'
-		   AND timestamp >= $2
-		   AND timestamp < $3`,
+		   AND timestamp >= ?
+		   AND timestamp < ?`,
 		root, startOfDay, endOfDay,
 	)
 	if err != nil {
