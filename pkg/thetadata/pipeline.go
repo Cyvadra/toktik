@@ -188,16 +188,40 @@ func (p *Pipeline) syncRoot(ctx context.Context, root string) error {
 			continue
 		}
 
+		wasInFlight := p.progress.IsInFlight(root, date)
+
+		hasExistingData, err := p.store.HasDateData(ctx, root, date)
+		if err != nil {
+			return fmt.Errorf("check existing data for %s %s: %w", root, dateStr, err)
+		}
+
+		if err := p.progress.MarkStarted(root, date, len(dateIndex[dateStr].Contracts)); err != nil {
+			return fmt.Errorf("mark started for %s %s: %w", root, dateStr, err)
+		}
+
+		if hasExistingData {
+			log.Printf("[%s] %s: found existing unfinished data, deleting before retry", root, dateStr)
+			if err := p.store.DeleteDateData(ctx, root, date); err != nil {
+				return fmt.Errorf("cleanup existing data for %s %s: %w", root, dateStr, err)
+			}
+		}
+
+		if wasInFlight && !hasExistingData {
+			log.Printf("[%s] %s: resuming previously interrupted date", root, dateStr)
+		}
+
 		dc := dateIndex[dateStr]
 		log.Printf("[%s] [%d/%d] %s: %d contracts",
 			root, i+1, len(dates), dateStr, len(dc.Contracts))
 
-		if err := p.processDate(ctx, root, date, dc.Contracts, dc.UnderlyingPrice, eodMap); err != nil {
+		stats, err := p.processDate(ctx, root, date, dc.Contracts, dc.UnderlyingPrice, eodMap)
+		if err != nil {
+			_ = p.progress.MarkFailed(root, date, "process_date", err, stats)
 			log.Printf("[%s] Error processing %s: %v (skipping)", root, dateStr, err)
 			continue
 		}
 
-		if err := p.progress.MarkCompleted(root, date); err != nil {
+		if err := p.progress.MarkCompleted(root, date, stats); err != nil {
 			log.Printf("[%s] Warning: failed to mark progress for %s: %v", root, dateStr, err)
 		}
 	}
@@ -208,23 +232,8 @@ func (p *Pipeline) syncRoot(ctx context.Context, root string) error {
 
 // processDate downloads and processes all 1m data for a single date.
 func (p *Pipeline) processDate(ctx context.Context, root string, date time.Time,
-	contracts []Contract, eodUnderlyingPrice float64, eodMap map[string][]GreeksEOD) error {
-
-	// Group contracts by expiration (needed for put-call parity)
-	type expGroup struct {
-		Expiration time.Time
-		Contracts  []Contract
-	}
-	expGroups := make(map[string]*expGroup)
-	for _, c := range contracts {
-		key := c.Expiration.Format("2006-01-02")
-		eg, ok := expGroups[key]
-		if !ok {
-			eg = &expGroup{Expiration: c.Expiration}
-			expGroups[key] = eg
-		}
-		eg.Contracts = append(eg.Contracts, c)
-	}
+	contracts []Contract, eodUnderlyingPrice float64, eodMap map[string][]GreeksEOD) (DateSyncStats, error) {
+	stats := DateSyncStats{ExpectedContracts: len(contracts)}
 
 	// Download 1m quotes and OHLC for all contracts
 	type contractData struct {
@@ -252,12 +261,13 @@ func (p *Pipeline) processDate(ctx context.Context, root string, date time.Time,
 		return nil
 	})
 	if err != nil {
-		return err
+		return stats, err
 	}
 
 	if len(allData) == 0 {
-		return nil
+		return stats, fmt.Errorf("no intraday data downloaded")
 	}
+	stats.DownloadedContracts = len(allData)
 
 	// Build minute-level index: timestamp → contracts with quotes at that minute
 	type minuteQuote struct {
@@ -474,6 +484,10 @@ func (p *Pipeline) processDate(ctx context.Context, root string, date time.Time,
 			bars = append(bars, bar)
 		}
 	}
+	stats.ExpectedBars = len(bars)
+	if err := p.progress.MarkDownloadProgress(root, date, stats.DownloadedContracts, stats.ExpectedBars); err != nil {
+		log.Printf("[%s] Warning: mark download progress for %s: %v", root, date.Format("2006-01-02"), err)
+	}
 
 	// Insert into ClickHouse
 	if len(symbols) > 0 {
@@ -490,7 +504,7 @@ func (p *Pipeline) processDate(ctx context.Context, root string, date time.Time,
 				end = len(bars)
 			}
 			if err := p.store.InsertBars(ctx, bars[i:end]); err != nil {
-				return fmt.Errorf("insert bars batch: %w", err)
+				return stats, fmt.Errorf("insert bars batch: %w", err)
 			}
 		}
 	}
@@ -509,16 +523,30 @@ func (p *Pipeline) processDate(ctx context.Context, root string, date time.Time,
 			TickCount:   1,
 		})
 	}
+	stats.ExpectedSpotBars = len(spotBars)
 	if len(spotBars) > 0 {
 		if err := p.store.InsertSpotBars(ctx, spotBars); err != nil {
 			log.Printf("[%s] Warning: insert spot bars: %v", root, err)
 		}
 	}
 
+	storedBars, storedSpotBars, err := p.store.CountDateData(ctx, root, date)
+	if err != nil {
+		return stats, fmt.Errorf("count stored date data: %w", err)
+	}
+	stats.StoredBars = storedBars
+	stats.StoredSpotBars = storedSpotBars
+	if stats.StoredBars != stats.ExpectedBars {
+		return stats, fmt.Errorf("stored option bars mismatch: expected=%d actual=%d", stats.ExpectedBars, stats.StoredBars)
+	}
+	if stats.StoredSpotBars != stats.ExpectedSpotBars {
+		return stats, fmt.Errorf("stored spot bars mismatch: expected=%d actual=%d", stats.ExpectedSpotBars, stats.StoredSpotBars)
+	}
+
 	log.Printf("[%s] %s: inserted %d bars, %d symbols, %d spot bars",
 		root, date.Format("2006-01-02"), len(bars), len(symbols), len(spotBars))
 
-	return nil
+	return stats, nil
 }
 
 // parallelWork processes items concurrently with worker pool.

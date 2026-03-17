@@ -50,6 +50,47 @@ type thetaContractResponse struct {
 	Data     json.RawMessage `json:"data"`
 }
 
+// ListRoots returns all available option root symbols in Theta Data.
+func (c *Client) ListRoots(ctx context.Context) ([]string, error) {
+	raw, err := c.callTool(ctx, "option_list_symbols", map[string]any{})
+	if err != nil {
+		return nil, fmt.Errorf("list option roots: %w", err)
+	}
+
+	var resp thetaResponse
+	if err := json.Unmarshal([]byte(raw), &resp); err != nil {
+		return nil, fmt.Errorf("parse option roots response: %w", err)
+	}
+
+	var roots []string
+	if err := json.Unmarshal(resp.Response, &roots); err == nil {
+		for i := range roots {
+			roots[i] = strings.TrimSpace(roots[i])
+		}
+		roots = compactStrings(roots)
+		sort.Strings(roots)
+		return roots, nil
+	}
+
+	var items []map[string]any
+	if err := json.Unmarshal(resp.Response, &items); err != nil {
+		return nil, fmt.Errorf("parse option roots data: %w", err)
+	}
+
+	for _, item := range items {
+		for _, key := range []string{"symbol", "root"} {
+			if value, ok := item[key]; ok {
+				roots = append(roots, strings.TrimSpace(fmt.Sprint(value)))
+				break
+			}
+		}
+	}
+
+	roots = compactStrings(roots)
+	sort.Strings(roots)
+	return roots, nil
+}
+
 // ListExpirations returns all available option expirations for a root symbol.
 func (c *Client) ListExpirations(ctx context.Context, root string) ([]time.Time, error) {
 	raw, err := c.callTool(ctx, "option_list_expirations", map[string]any{
@@ -476,4 +517,20 @@ func parseGreeksEOD(raw string) ([]GreeksEOD, error) {
 	}
 
 	return results, nil
+}
+
+func compactStrings(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	return result
 }

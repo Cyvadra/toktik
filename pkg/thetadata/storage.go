@@ -148,6 +148,92 @@ func (s *Store) HasDateData(ctx context.Context, root string, date time.Time) (b
 	return false, nil
 }
 
+// CountDateData returns the stored option and spot row counts for a root/date.
+func (s *Store) CountDateData(ctx context.Context, root string, date time.Time) (int, int, error) {
+	startOfDay := time.Date(date.Year(), date.Month(), date.Day(), 0, 0, 0, 0, time.UTC)
+	endOfDay := startOfDay.Add(24 * time.Hour)
+
+	countRows := func(query string, args ...any) (int, error) {
+		rows, err := s.conn.Query(ctx, query, args...)
+		if err != nil {
+			return 0, err
+		}
+		defer rows.Close()
+
+		if !rows.Next() {
+			return 0, nil
+		}
+		var count uint64
+		if err := rows.Scan(&count); err != nil {
+			return 0, err
+		}
+		return int(count), nil
+	}
+
+	optionCount, err := countRows(
+		`SELECT count() FROM crypto_options_bar_1m
+		 WHERE base_asset = $1
+		   AND timestamp >= $2
+		   AND timestamp < $3`,
+		root, startOfDay, endOfDay,
+	)
+	if err != nil {
+		return 0, 0, fmt.Errorf("count option rows: %w", err)
+	}
+
+	spotCount, err := countRows(
+		`SELECT count() FROM crypto_spot_bar_1m
+		 WHERE symbol = $1
+		   AND price_source = 'parity_forward'
+		   AND timestamp >= $2
+		   AND timestamp < $3`,
+		root, startOfDay, endOfDay,
+	)
+	if err != nil {
+		return 0, 0, fmt.Errorf("count spot rows: %w", err)
+	}
+
+	return optionCount, spotCount, nil
+}
+
+// DeleteDateData removes existing rows for the given root/date so an interrupted
+// sync can be safely retried without duplicating data.
+func (s *Store) DeleteDateData(ctx context.Context, root string, date time.Time) error {
+	startOfDay := time.Date(date.Year(), date.Month(), date.Day(), 0, 0, 0, 0, time.UTC)
+	endOfDay := startOfDay.Add(24 * time.Hour)
+
+	queries := []struct {
+		statement string
+		args      []any
+	}{
+		{
+			statement: `ALTER TABLE crypto_options_bar_1m DELETE
+				WHERE base_asset = ?
+				  AND timestamp >= ?
+				  AND timestamp < ?
+				SETTINGS mutations_sync = 1`,
+			args: []any{root, startOfDay, endOfDay},
+		},
+		{
+			statement: `ALTER TABLE crypto_spot_bar_1m DELETE
+				WHERE symbol = ?
+				  AND price_source = 'parity_forward'
+				  AND timestamp >= ?
+				  AND timestamp < ?
+				SETTINGS mutations_sync = 1`,
+			args: []any{root, startOfDay, endOfDay},
+		},
+	}
+
+	for _, query := range queries {
+		if err := s.conn.Exec(ctx, query.statement, query.args...); err != nil {
+			return fmt.Errorf("delete existing date data: %w", err)
+		}
+	}
+
+	return nil
+}
+
 // Close closes the ClickHouse connection.
 func (s *Store) Close() error {
 	return s.conn.Close()

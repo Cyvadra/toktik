@@ -81,15 +81,37 @@ type DateTask struct {
 	Date time.Time
 }
 
+type DateSyncStats struct {
+	ExpectedContracts   int
+	DownloadedContracts int
+	ExpectedBars        int
+	StoredBars          int
+	ExpectedSpotBars    int
+	StoredSpotBars      int
+}
+
+type RootActivity struct {
+	Root              string
+	TotalExpirations  int
+	RecentExpirations int
+	SampledStrikes    int
+	Score             int
+}
+
 type SyncConfig struct {
-	Roots       []string
-	StartDate   time.Time
-	EndDate     time.Time
-	MCPURL      string
-	CHDSN       string
-	Workers     int
-	ProgressDir string
-	MinVolume   int
-	RateLimit   float64
-	SchemaFile  string
+	Roots                  []string
+	StartDate              time.Time
+	EndDate                time.Time
+	MCPURL                 string
+	CHDSN                  string
+	Workers                int
+	ProgressDir            string
+	MinVolume              int
+	RateLimit              float64
+	SchemaFile             string
+	PrefilterRoots         bool
+	RootMinExpirations     int
+	RootRecentLookbackDays int
+	RootSampleExpirations  int
+	RootTopN               int
 }
