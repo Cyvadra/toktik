@@ -53,8 +53,9 @@ type mcpToolCallParams struct {
 }
 
 type mcpToolResult struct {
-	Content []mcpContent `json:"content"`
-	IsError bool         `json:"isError"`
+	Content           []mcpContent    `json:"content"`
+	StructuredContent json.RawMessage `json:"structuredContent"`
+	IsError           bool            `json:"isError"`
 }
 
 type mcpContent struct {
@@ -178,10 +179,27 @@ func (c *MCPClient) CallTool(ctx context.Context, name string, args map[string]a
 	}
 
 	if len(toolResult.Content) == 0 {
-		return "", fmt.Errorf("tool returned empty content")
+		if len(toolResult.StructuredContent) == 0 {
+			return "", fmt.Errorf("tool returned empty content")
+		}
 	}
 
-	return toolResult.Content[0].Text, nil
+	if len(toolResult.StructuredContent) > 0 {
+		return string(toolResult.StructuredContent), nil
+	}
+
+	var text strings.Builder
+	for _, item := range toolResult.Content {
+		if item.Type != "text" {
+			continue
+		}
+		text.WriteString(item.Text)
+	}
+	if text.Len() == 0 {
+		return "", fmt.Errorf("tool returned no text content")
+	}
+
+	return text.String(), nil
 }
 
 // sendRPC sends a JSON-RPC request and reads the response from the SSE stream.

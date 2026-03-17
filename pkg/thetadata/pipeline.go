@@ -7,6 +7,7 @@ import (
 	"math"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Cyvadra/toktik/internal/cryptooptions"
@@ -20,6 +21,18 @@ type Pipeline struct {
 	progress *Progress
 }
 
+type phaseProgress struct {
+	root      string
+	phase     string
+	unit      string
+	total     int
+	startedAt time.Time
+	processed atomic.Int64
+	succeeded atomic.Int64
+	stopCh    chan struct{}
+	stopped   atomic.Bool
+}
+
 // NewPipeline creates a new download pipeline.
 func NewPipeline(cfg SyncConfig, store *Store, progress *Progress) *Pipeline {
 	return &Pipeline{
@@ -27,6 +40,69 @@ func NewPipeline(cfg SyncConfig, store *Store, progress *Progress) *Pipeline {
 		store:    store,
 		progress: progress,
 	}
+}
+
+func newPhaseProgress(root, phase, unit string, total int) *phaseProgress {
+	return &phaseProgress{
+		root:      root,
+		phase:     phase,
+		unit:      unit,
+		total:     total,
+		startedAt: time.Now(),
+		stopCh:    make(chan struct{}),
+	}
+}
+
+func (p *phaseProgress) Start() {
+	if p.total <= 0 {
+		return
+	}
+
+	go func() {
+		ticker := time.NewTicker(15 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				p.logStatus("in progress")
+			case <-p.stopCh:
+				return
+			}
+		}
+	}()
+}
+
+func (p *phaseProgress) Add(processedDelta int, succeeded bool) {
+	if processedDelta > 0 {
+		p.processed.Add(int64(processedDelta))
+	}
+	if succeeded {
+		p.succeeded.Add(1)
+	}
+}
+
+func (p *phaseProgress) Finish(summary string) {
+	if p.stopped.CompareAndSwap(false, true) {
+		close(p.stopCh)
+	}
+	p.logStatus(summary)
+}
+
+func (p *phaseProgress) logStatus(summary string) {
+	processed := int(p.processed.Load())
+	succeeded := int(p.succeeded.Load())
+	percent := 100.0
+	if p.total > 0 {
+		percent = float64(processed) * 100 / float64(p.total)
+	}
+	elapsed := time.Since(p.startedAt).Round(time.Second)
+	remaining := "eta=n/a"
+	if processed > 0 && p.total > 0 && processed < p.total {
+		eta := time.Duration(float64(time.Since(p.startedAt)) * float64(p.total-processed) / float64(processed))
+		remaining = fmt.Sprintf("eta=%s", eta.Round(time.Second))
+	}
+	log.Printf("[%s] %s progress: %d/%d %s (%.1f%%, kept=%d, elapsed=%s, %s) [%s]",
+		p.root, p.phase, processed, p.total, p.unit, percent, succeeded, elapsed, remaining, summary)
 }
 
 // Run executes the full download pipeline for all configured root symbols.
@@ -75,17 +151,24 @@ func (p *Pipeline) syncRoot(ctx context.Context, root string) error {
 		Strikes []float64
 	}
 	var universe []expStrikes
+	phase1Progress := newPhaseProgress(root, "Phase 1", "expirations", len(relevantExps))
+	phase1Progress.Start()
 	for _, exp := range relevantExps {
 		strikes, err := metaClient.ListStrikes(ctx, root, exp)
 		if err != nil {
 			log.Printf("[%s] Warning: failed to list strikes for exp %s: %v",
 				root, exp.Format("2006-01-02"), err)
+			phase1Progress.Add(1, false)
 			continue
 		}
 		if len(strikes) > 0 {
 			universe = append(universe, expStrikes{Exp: exp, Strikes: strikes})
+			phase1Progress.Add(1, true)
+		} else {
+			phase1Progress.Add(1, false)
 		}
 	}
+	phase1Progress.Finish("complete")
 	log.Printf("[%s] Contract universe: %d expirations with strikes", root, len(universe))
 
 	// Phase 2: Fetch EOD Greeks for all contracts (bulk date range)
@@ -111,6 +194,8 @@ func (p *Pipeline) syncRoot(ctx context.Context, root string) error {
 		}
 	}
 	log.Printf("[%s] Total contracts: %d", root, len(allContracts))
+	phase2Progress := newPhaseProgress(root, "Phase 2", "contracts", len(allContracts))
+	phase2Progress.Start()
 
 	// Fetch EOD data concurrently
 	eodMap := make(map[string][]GreeksEOD) // key: contract.Symbol()
@@ -120,18 +205,24 @@ func (p *Pipeline) syncRoot(ctx context.Context, root string) error {
 		eod, err := client.GetGreeksEOD(ctx, c, p.cfg.StartDate, p.cfg.EndDate)
 		if err != nil {
 			// Non-fatal: contract may not have data in this range
+			phase2Progress.Add(1, false)
 			return nil
 		}
 		if len(eod) > 0 {
 			eodMu.Lock()
 			eodMap[c.Symbol()] = eod
 			eodMu.Unlock()
+			phase2Progress.Add(1, true)
+			return nil
 		}
+		phase2Progress.Add(1, false)
 		return nil
 	})
 	if err != nil {
+		phase2Progress.Finish("aborted")
 		return fmt.Errorf("fetch EOD data: %w", err)
 	}
+	phase2Progress.Finish("complete")
 	log.Printf("[%s] EOD data fetched for %d contracts", root, len(eodMap))
 
 	// Build daily volume index: date → set of contracts with volume >= minVolume
@@ -234,6 +325,8 @@ func (p *Pipeline) syncRoot(ctx context.Context, root string) error {
 func (p *Pipeline) processDate(ctx context.Context, root string, date time.Time,
 	contracts []Contract, eodUnderlyingPrice float64, eodMap map[string][]GreeksEOD) (DateSyncStats, error) {
 	stats := DateSyncStats{ExpectedContracts: len(contracts)}
+	dateLabel := date.Format("2006-01-02")
+	log.Printf("[%s] [%s] Intraday download: %d contracts queued", root, dateLabel, len(contracts))
 
 	// Download 1m quotes and OHLC for all contracts
 	type contractData struct {
@@ -243,10 +336,13 @@ func (p *Pipeline) processDate(ctx context.Context, root string, date time.Time,
 	}
 	var allData []contractData
 	var dataMu sync.Mutex
+	phase3Progress := newPhaseProgress(root, "Phase 3", "contracts", len(contracts))
+	phase3Progress.Start()
 
 	err := p.parallelWork(ctx, contracts, p.cfg.Workers, func(ctx context.Context, client *Client, c Contract) error {
 		quotes, err := client.GetQuotes1m(ctx, c, date)
 		if err != nil {
+			phase3Progress.Add(1, false)
 			return nil // Non-fatal
 		}
 		ohlc, err := client.GetOHLC1m(ctx, c, date)
@@ -257,12 +353,17 @@ func (p *Pipeline) processDate(ctx context.Context, root string, date time.Time,
 			dataMu.Lock()
 			allData = append(allData, contractData{Contract: c, Quotes: quotes, OHLC: ohlc})
 			dataMu.Unlock()
+			phase3Progress.Add(1, true)
+			return nil
 		}
+		phase3Progress.Add(1, false)
 		return nil
 	})
 	if err != nil {
+		phase3Progress.Finish("aborted")
 		return stats, err
 	}
+	phase3Progress.Finish("download complete")
 
 	if len(allData) == 0 {
 		return stats, fmt.Errorf("no intraday data downloaded")
@@ -543,6 +644,8 @@ func (p *Pipeline) processDate(ctx context.Context, root string, date time.Time,
 		return stats, fmt.Errorf("stored spot bars mismatch: expected=%d actual=%d", stats.ExpectedSpotBars, stats.StoredSpotBars)
 	}
 
+	log.Printf("[%s] [%s] Storage verification: option bars %d/%d, spot bars %d/%d",
+		root, dateLabel, stats.StoredBars, stats.ExpectedBars, stats.StoredSpotBars, stats.ExpectedSpotBars)
 	log.Printf("[%s] %s: inserted %d bars, %d symbols, %d spot bars",
 		root, date.Format("2006-01-02"), len(bars), len(symbols), len(spotBars))
 

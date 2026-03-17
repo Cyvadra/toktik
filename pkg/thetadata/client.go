@@ -4,7 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
+	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -50,20 +54,115 @@ type thetaContractResponse struct {
 	Data     json.RawMessage `json:"data"`
 }
 
-// ListRoots returns all available option root symbols in Theta Data.
-func (c *Client) ListRoots(ctx context.Context) ([]string, error) {
-	raw, err := c.callTool(ctx, "option_list_symbols", map[string]any{})
-	if err != nil {
-		return nil, fmt.Errorf("list option roots: %w", err)
+func unmarshalThetaJSON(raw string, target any) error {
+	trimmed := strings.TrimSpace(raw)
+	if err := json.Unmarshal([]byte(trimmed), target); err == nil {
+		return nil
 	}
 
-	var resp thetaResponse
-	if err := json.Unmarshal([]byte(raw), &resp); err != nil {
-		return nil, fmt.Errorf("parse option roots response: %w", err)
+	var firstErr error
+	if err := json.Unmarshal([]byte(trimmed), target); err != nil {
+		firstErr = err
+	}
+
+	for _, candidate := range []string{unwrapJSONString(trimmed)} {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" || candidate == trimmed {
+			continue
+		}
+		if err := json.Unmarshal([]byte(candidate), target); err == nil {
+			return nil
+		}
+		inner := unwrapJSONString(candidate)
+		if inner != "" && inner != candidate {
+			if err := json.Unmarshal([]byte(inner), target); err == nil {
+				return nil
+			}
+		}
+	}
+
+	return firstErr
+}
+
+func unwrapJSONString(raw string) string {
+	var unwrapped string
+	if err := json.Unmarshal([]byte(raw), &unwrapped); err != nil {
+		return ""
+	}
+	return unwrapped
+}
+
+func (c *Client) getREST(ctx context.Context, path string) (string, error) {
+	c.throttle()
+
+	const maxAttempts = 4
+	var lastErr error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.mcp.baseURL+path, nil)
+		if err != nil {
+			return "", fmt.Errorf("create REST request: %w", err)
+		}
+
+		resp, err := c.mcp.httpClient.Do(req)
+		if err != nil {
+			lastErr = fmt.Errorf("REST request: %w", err)
+		} else {
+			body, readErr := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			if readErr != nil {
+				return "", fmt.Errorf("read REST response: %w", readErr)
+			}
+
+			if resp.StatusCode == http.StatusOK {
+				var payload thetaResponse
+				if err := json.Unmarshal(body, &payload); err != nil {
+					return "", fmt.Errorf("decode REST response: %w", err)
+				}
+				return string(payload.Response), nil
+			}
+
+			bodyText := strings.TrimSpace(string(body))
+			if len(bodyText) > 300 {
+				bodyText = bodyText[:300]
+			}
+			lastErr = fmt.Errorf("REST request returned status %d: %s", resp.StatusCode, bodyText)
+
+			if resp.StatusCode != http.StatusTooManyRequests && resp.StatusCode < http.StatusInternalServerError {
+				return "", lastErr
+			}
+		}
+
+		if attempt == maxAttempts {
+			break
+		}
+
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-time.After(time.Duration(attempt*attempt) * 250 * time.Millisecond):
+		}
+	}
+
+	return "", lastErr
+}
+
+func (c *Client) getRESTJSON(ctx context.Context, path string, query url.Values) (string, error) {
+	if query == nil {
+		query = url.Values{}
+	}
+	query.Set("format", "json")
+	return c.getREST(ctx, path+"?"+query.Encode())
+}
+
+// ListRoots returns all available option root symbols in Theta Data.
+func (c *Client) ListRoots(ctx context.Context) ([]string, error) {
+	raw, err := c.getREST(ctx, "/v3/option/list/symbols?format=json")
+	if err != nil {
+		return nil, fmt.Errorf("list option roots via REST: %w", err)
 	}
 
 	var roots []string
-	if err := json.Unmarshal(resp.Response, &roots); err == nil {
+	if err := json.Unmarshal([]byte(raw), &roots); err == nil {
 		for i := range roots {
 			roots[i] = strings.TrimSpace(roots[i])
 		}
@@ -73,7 +172,7 @@ func (c *Client) ListRoots(ctx context.Context) ([]string, error) {
 	}
 
 	var items []map[string]any
-	if err := json.Unmarshal(resp.Response, &items); err != nil {
+	if err := json.Unmarshal([]byte(raw), &items); err != nil {
 		return nil, fmt.Errorf("parse option roots data: %w", err)
 	}
 
@@ -93,24 +192,17 @@ func (c *Client) ListRoots(ctx context.Context) ([]string, error) {
 
 // ListExpirations returns all available option expirations for a root symbol.
 func (c *Client) ListExpirations(ctx context.Context, root string) ([]time.Time, error) {
-	raw, err := c.callTool(ctx, "option_list_expirations", map[string]any{
-		"symbol": root,
+	raw, err := c.getRESTJSON(ctx, "/v3/option/list/expirations", url.Values{
+		"symbol": {root},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("list expirations for %s: %w", root, err)
-	}
-
-	// Response format: {"response": [{"expiration": "2025-01-17"}, ...]}
-	// or: {"response": ["2025-01-17", ...]}
-	var resp thetaResponse
-	if err := json.Unmarshal([]byte(raw), &resp); err != nil {
-		return nil, fmt.Errorf("parse expirations response: %w", err)
+		return nil, fmt.Errorf("list expirations for %s via REST: %w", root, err)
 	}
 
 	// Try array of objects with "expiration" field
 	var expirations []time.Time
 	var items []map[string]any
-	if err := json.Unmarshal(resp.Response, &items); err == nil {
+	if err := unmarshalThetaJSON(raw, &items); err == nil {
 		for _, item := range items {
 			if exp, ok := item["expiration"]; ok {
 				if t, err := parseDate(fmt.Sprint(exp)); err == nil {
@@ -130,7 +222,7 @@ func (c *Client) ListExpirations(ctx context.Context, root string) ([]time.Time,
 
 	// Try flat array of strings
 	var dateStrs []string
-	if err := json.Unmarshal(resp.Response, &dateStrs); err == nil {
+	if err := unmarshalThetaJSON(raw, &dateStrs); err == nil {
 		for _, s := range dateStrs {
 			if t, err := parseDate(s); err == nil {
 				expirations = append(expirations, t)
@@ -144,25 +236,20 @@ func (c *Client) ListExpirations(ctx context.Context, root string) ([]time.Time,
 
 // ListStrikes returns all available strikes for a root symbol and expiration.
 func (c *Client) ListStrikes(ctx context.Context, root string, exp time.Time) ([]float64, error) {
-	raw, err := c.callTool(ctx, "option_list_strikes", map[string]any{
-		"symbol":     root,
-		"expiration": exp.Format("2006-01-02"),
+	raw, err := c.getRESTJSON(ctx, "/v3/option/list/strikes", url.Values{
+		"symbol":     {root},
+		"expiration": {exp.Format("2006-01-02")},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("list strikes for %s exp %s: %w", root, exp.Format("2006-01-02"), err)
-	}
-
-	var resp thetaResponse
-	if err := json.Unmarshal([]byte(raw), &resp); err != nil {
-		return nil, fmt.Errorf("parse strikes response: %w", err)
+		return nil, fmt.Errorf("list strikes for %s exp %s via REST: %w", root, exp.Format("2006-01-02"), err)
 	}
 
 	// Try array of numbers
 	var strikes []float64
-	if err := json.Unmarshal(resp.Response, &strikes); err != nil {
+	if err := unmarshalThetaJSON(raw, &strikes); err != nil {
 		// Try array of objects with "strike" field
 		var items []map[string]any
-		if err := json.Unmarshal(resp.Response, &items); err != nil {
+		if err := unmarshalThetaJSON(raw, &items); err != nil {
 			return nil, fmt.Errorf("parse strikes data: %w", err)
 		}
 		for _, item := range items {
@@ -180,24 +267,19 @@ func (c *Client) ListStrikes(ctx context.Context, root string, exp time.Time) ([
 
 // ListDates returns all trading dates with data for a specific contract.
 func (c *Client) ListDates(ctx context.Context, contract Contract) ([]time.Time, error) {
-	raw, err := c.callTool(ctx, "option_list_dates", map[string]any{
-		"symbol":     contract.Root,
-		"expiration": contract.Expiration.Format("2006-01-02"),
-		"strike":     contract.Strike,
-		"right":      contract.Right,
+	raw, err := c.getRESTJSON(ctx, "/v3/option/list/dates/quote", url.Values{
+		"symbol":     {contract.Root},
+		"expiration": {contract.Expiration.Format("2006-01-02")},
+		"strike":     {strconv.FormatFloat(contract.Strike, 'f', -1, 64)},
+		"right":      {contract.Right},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("list dates for %s: %w", contract.Symbol(), err)
-	}
-
-	var resp thetaResponse
-	if err := json.Unmarshal([]byte(raw), &resp); err != nil {
-		return nil, fmt.Errorf("parse dates response: %w", err)
+		return nil, fmt.Errorf("list dates for %s via REST: %w", contract.Symbol(), err)
 	}
 
 	var dates []time.Time
 	var items []map[string]any
-	if err := json.Unmarshal(resp.Response, &items); err == nil {
+	if err := unmarshalThetaJSON(raw, &items); err == nil {
 		for _, item := range items {
 			for _, key := range []string{"date", "timestamp"} {
 				if d, ok := item[key]; ok {
@@ -209,7 +291,7 @@ func (c *Client) ListDates(ctx context.Context, contract Contract) ([]time.Time,
 		}
 	} else {
 		var dateStrs []string
-		if err := json.Unmarshal(resp.Response, &dateStrs); err == nil {
+		if err := unmarshalThetaJSON(raw, &dateStrs); err == nil {
 			for _, s := range dateStrs {
 				if t, err := parseDate(s); err == nil {
 					dates = append(dates, t)
@@ -295,7 +377,7 @@ func (c *Client) GetOpenInterest(ctx context.Context, contract Contract, date ti
 	}
 
 	var resp thetaResponse
-	if err := json.Unmarshal([]byte(raw), &resp); err != nil {
+	if err := unmarshalThetaJSON(raw, &resp); err != nil {
 		return 0, err
 	}
 
@@ -389,7 +471,7 @@ func getString(m map[string]any, key string) string {
 
 func parseQuoteBars(raw string, refDate time.Time) ([]QuoteBar, error) {
 	var resp thetaResponse
-	if err := json.Unmarshal([]byte(raw), &resp); err != nil {
+	if err := unmarshalThetaJSON(raw, &resp); err != nil {
 		return nil, fmt.Errorf("parse quote response: %w", err)
 	}
 
@@ -430,7 +512,7 @@ func parseQuoteBars(raw string, refDate time.Time) ([]QuoteBar, error) {
 
 func parseOHLCBars(raw string, refDate time.Time) ([]OHLCBar, error) {
 	var resp thetaResponse
-	if err := json.Unmarshal([]byte(raw), &resp); err != nil {
+	if err := unmarshalThetaJSON(raw, &resp); err != nil {
 		return nil, fmt.Errorf("parse ohlc response: %w", err)
 	}
 
@@ -473,7 +555,7 @@ func parseOHLCBars(raw string, refDate time.Time) ([]OHLCBar, error) {
 
 func parseGreeksEOD(raw string) ([]GreeksEOD, error) {
 	var resp thetaResponse
-	if err := json.Unmarshal([]byte(raw), &resp); err != nil {
+	if err := unmarshalThetaJSON(raw, &resp); err != nil {
 		return nil, fmt.Errorf("parse greeks eod response: %w", err)
 	}
 
