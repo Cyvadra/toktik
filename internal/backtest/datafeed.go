@@ -64,3 +64,24 @@ func (ds *DataSet) SetTimestamps(ts []time.Time) {
 	ds.Timestamps = ts
 	ds.Len = len(ts)
 }
+
+// Slice returns a new DataSet containing bars in [startBar, endBar).
+// Panics if the range is out of bounds.
+func (ds *DataSet) Slice(startBar, endBar int) *DataSet {
+	if startBar < 0 || endBar > ds.Len || startBar >= endBar {
+		panic(fmt.Sprintf("backtest.DataSet.Slice(%d, %d): out of bounds (Len=%d)", startBar, endBar, ds.Len))
+	}
+	n := endBar - startBar
+	out := &DataSet{
+		Timestamps: make([]time.Time, n),
+		Columns:    make(map[string][]float64, len(ds.Columns)),
+		Len:        n,
+	}
+	copy(out.Timestamps, ds.Timestamps[startBar:endBar])
+	for name, col := range ds.Columns {
+		sliced := make([]float64, n)
+		copy(sliced, col[startBar:endBar])
+		out.Columns[name] = sliced
+	}
+	return out
+}

@@ -175,17 +175,23 @@ func (s *smaIndicator) Compute(inputs map[string][]float64) []float64 {
 	n := len(src)
 	out := make([]float64, n)
 	sum := 0.0
+	nanCount := 0 // track NaN values inside the window
 
 	for i := 0; i < n; i++ {
-		if math.IsNaN(src[i]) {
-			out[i] = math.NaN()
-			continue
+		isNaN := math.IsNaN(src[i])
+		if isNaN {
+			nanCount++
+		} else {
+			sum += src[i]
 		}
-		sum += src[i]
 		if i >= s.period {
-			sum -= src[i-s.period]
+			if math.IsNaN(src[i-s.period]) {
+				nanCount--
+			} else {
+				sum -= src[i-s.period]
+			}
 		}
-		if i < s.period-1 {
+		if i < s.period-1 || nanCount > 0 {
 			out[i] = math.NaN()
 		} else {
 			out[i] = sum / float64(s.period)

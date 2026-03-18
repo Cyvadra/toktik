@@ -47,15 +47,21 @@ func (e *Engine) SetOptionsChainProvider(p OptionsChainProvider) {
 	e.chainProvider = p
 }
 
-// Run executes a full backtest. Steps:
-// 1. Strategy.Init — collects indicator registrations and security requests.
-// 2. Load primary + secondary DataSets (secondaries in parallel).
-// 3. Align secondary timestamps to primary.
-// 4. Preflight: resolve indicator DAG, compute all indicators vectorized.
-// 5. Bar replay: broker fills → OnBar → mark-to-market.
-// 6. Compute metrics and return Result.
-func (e *Engine) Run(ctx context.Context, market, symbol, interval string, from, to time.Time, strategy Strategy, params map[string]interface{}) (*Result, error) {
-	// --- Step 1: Init ---
+// PreparedData holds pre-loaded and aligned data that can be reused across
+// multiple strategy runs. Created by Engine.Prepare, consumed by Engine.replay
+// and Engine.RunBatch.
+type PreparedData struct {
+	PrimaryDS   *DataSet
+	SecDataSets []*DataSet
+	AlignMaps   [][]int
+	Securities  []securityRegistration
+	PrimaryRef  SecurityRef
+}
+
+// Prepare loads data and computes base indicators for a strategy, returning a
+// PreparedData that can be replayed many times with different parameters.
+// The strategy is Init'd once to discover security and indicator registrations.
+func (e *Engine) Prepare(ctx context.Context, market, symbol, interval string, from, to time.Time, strategy Strategy, params map[string]interface{}) (*PreparedData, error) {
 	setupCtx := NewSetupContext(market, symbol, interval)
 	for k, v := range params {
 		setupCtx.params[k] = v
@@ -64,9 +70,6 @@ func (e *Engine) Run(ctx context.Context, market, symbol, interval string, from,
 		return nil, fmt.Errorf("strategy init: %w", err)
 	}
 
-	primaryRef := setupCtx.primaryRef
-
-	// --- Step 2: Load data ---
 	primaryFeed, ok := e.feeds[market]
 	if !ok {
 		return nil, fmt.Errorf("no DataFeed registered for market %q", market)
@@ -89,7 +92,7 @@ func (e *Engine) Run(ctx context.Context, market, symbol, interval string, from,
 		err   error
 	}
 
-	secCount := len(setupCtx.securities) - 1 // exclude primary at index 0
+	secCount := len(setupCtx.securities) - 1
 	secDataSets := make([]*DataSet, len(setupCtx.securities))
 	secDataSets[0] = primaryDS
 
@@ -125,47 +128,66 @@ func (e *Engine) Run(ctx context.Context, market, symbol, interval string, from,
 		}
 	}
 
-	// --- Step 3: Align secondary data ---
+	// Align secondary data
 	alignMaps := make([][]int, len(setupCtx.securities))
-	alignMaps[0] = nil // primary doesn't need alignment
+	alignMaps[0] = nil
 	for i := 1; i < len(secDataSets); i++ {
 		alignMaps[i] = alignSeries(primaryDS, secDataSets[i])
 	}
 
-	// --- Step 4: Preflight indicator computation ---
-	// Build per-security column maps and compute indicators
-	secColumns := make([]map[string][]float64, len(setupCtx.securities))
-
+	// Compute indicators
 	for i, sec := range setupCtx.securities {
 		ds := secDataSets[i]
+		if len(sec.inds) > 0 {
+			if err := resolveIndicators(sec.inds, ds.Columns); err != nil {
+				return nil, fmt.Errorf("indicators for security[%d] %s: %w", i, sec.ref.Symbol, err)
+			}
+		}
+	}
+
+	return &PreparedData{
+		PrimaryDS:   primaryDS,
+		SecDataSets: secDataSets,
+		AlignMaps:   alignMaps,
+		Securities:  setupCtx.securities,
+		PrimaryRef:  setupCtx.primaryRef,
+	}, nil
+}
+
+// replay runs a strategy against pre-loaded data with the given parameters.
+// This is the core bar-replay loop shared by Run and RunBatch.
+func (e *Engine) replay(prepared *PreparedData, strategy Strategy, params map[string]interface{}) (*Result, error) {
+	// Init strategy with params to pick up parameter-specific setup
+	setupCtx := NewSetupContext(prepared.PrimaryRef.Market, prepared.PrimaryRef.Symbol, prepared.PrimaryRef.Interval)
+	for k, v := range params {
+		setupCtx.params[k] = v
+	}
+	if err := strategy.Init(setupCtx); err != nil {
+		return nil, fmt.Errorf("strategy init: %w", err)
+	}
+
+	// Build per-security column maps (shallow copy — shares underlying arrays)
+	secColumns := make([]map[string][]float64, len(prepared.Securities))
+	for i := range prepared.Securities {
+		ds := prepared.SecDataSets[i]
 		cols := make(map[string][]float64, len(ds.Columns))
 		for name, data := range ds.Columns {
 			cols[name] = data
 		}
-
-		// Resolve indicators for this security
-		if len(sec.inds) > 0 {
-			if err := resolveIndicators(sec.inds, cols); err != nil {
-				return nil, fmt.Errorf("indicators for security[%d] %s: %w", i, sec.ref.Symbol, err)
-			}
-		}
-
 		secColumns[i] = cols
 	}
 
-	// --- Step 5: Bar replay ---
+	// Bar replay
 	broker := NewBroker(e.config)
 
-	// Build security accessors (persistent across bars, barIndex is updated each bar)
-	accessors := make([]*SecurityAccessor, len(setupCtx.securities))
-	for i := range setupCtx.securities {
+	accessors := make([]*SecurityAccessor, len(prepared.Securities))
+	for i := range prepared.Securities {
 		accessors[i] = &SecurityAccessor{
 			data:     secColumns[i],
-			alignMap: alignMaps[i],
+			alignMap: prepared.AlignMaps[i],
 		}
 	}
 
-	// Price function for broker: resolves OHLC from the correct security's columns
 	broker.SetPriceFunc(func(ref SecurityRef) BarPrices {
 		idx := ref.Index
 		if idx < 0 || idx >= len(accessors) {
@@ -198,7 +220,7 @@ func (e *Engine) Run(ctx context.Context, market, symbol, interval string, from,
 		}
 	})
 
-	nBars := primaryDS.Len
+	nBars := prepared.PrimaryDS.Len
 	equityCurve := make([]float64, nBars)
 	allTrades := make([]Trade, 0)
 
@@ -214,14 +236,14 @@ func (e *Engine) Run(ctx context.Context, market, symbol, interval string, from,
 		securities:       accessors,
 		broker:           broker,
 		params:           setupCtx.params,
-		primaryRef:       primaryRef,
+		primaryRef:       prepared.PrimaryRef,
 		chainProvider:    e.chainProvider,
 		spreadTracker:    spreadTracker,
 		scheduledActions: &scheduledActions,
 	}
 
-	secRefList := make([]SecurityRef, len(setupCtx.securities))
-	for i, sec := range setupCtx.securities {
+	secRefList := make([]SecurityRef, len(prepared.Securities))
+	for i, sec := range prepared.Securities {
 		secRefList[i] = sec.ref
 	}
 	barCtx.secRefs = secRefList
@@ -235,35 +257,30 @@ func (e *Engine) Run(ctx context.Context, market, symbol, interval string, from,
 
 	for i := 0; i < nBars; i++ {
 		barCtx.barIndex = i
-		barCtx.barTime = primaryDS.Timestamps[i]
+		barCtx.barTime = prepared.PrimaryDS.Timestamps[i]
 
-		// Update all accessor bar indices
 		for _, acc := range accessors {
 			acc.barIndex = i
 		}
 
-		// Process pending orders from previous bar
 		if i > 0 {
-			fills := broker.ProcessPending(i, primaryDS.Timestamps[i])
+			fills := broker.ProcessPending(i, prepared.PrimaryDS.Timestamps[i])
 			allTrades = append(allTrades, fills...)
 		}
 
-		// Cache options chain for this bar (used by scheduled actions and equity)
 		var contractMap map[string]OptionContract
 		if e.chainProvider != nil {
-			contracts := e.chainProvider.AvailableContracts(primaryDS.Timestamps[i])
+			contracts := e.chainProvider.AvailableContracts(prepared.PrimaryDS.Timestamps[i])
 			contractMap = make(map[string]OptionContract, len(contracts))
 			for _, c := range contracts {
 				contractMap[c.Symbol] = c
 			}
 		}
 
-		// Process scheduled actions (time-based position management)
 		if len(scheduledActions) > 0 {
 			var remaining []ScheduledAction
 			for _, sa := range scheduledActions {
-				if !primaryDS.Timestamps[i].Before(sa.TriggerTime) {
-					// Action triggered
+				if !prepared.PrimaryDS.Timestamps[i].Before(sa.TriggerTime) {
 					switch sa.ActionType {
 					case ScheduleCloseLeg:
 						sp := spreadTracker.Get(sa.SpreadID)
@@ -292,11 +309,8 @@ func (e *Engine) Run(ctx context.Context, market, symbol, interval string, from,
 			scheduledActions = remaining
 		}
 
-		// Call strategy
 		strategy.OnBar(barCtx)
 
-		// Record equity. Spread entry and exit cashflows already adjust broker cash,
-		// so open spread contribution must be current market value, not unrealized PnL.
 		spreadMarketValue := 0.0
 		for _, sp := range spreadTracker.OpenSpreads() {
 			for _, leg := range sp.Legs {
@@ -315,20 +329,86 @@ func (e *Engine) Run(ctx context.Context, market, symbol, interval string, from,
 		equityCurve[i] = broker.Equity() + spreadMarketValue
 	}
 
-	// --- Step 6: Compute metrics ---
 	result := computeResult(
 		strategy.Name(),
 		allTrades,
 		equityCurve,
-		primaryDS.Timestamps,
+		prepared.PrimaryDS.Timestamps,
 		e.config.InitialCapital,
 		e.config.AccountUnit,
-		secColumns[0], // include primary indicator series for visualization
+		secColumns[0],
 	)
 
-	// Attach spread summary to result
 	result.SpreadSummary = computeSpreadSummary(spreadTracker)
 	result.SpreadPositions = buildSpreadPositionReports(spreadTracker, result.EndTime)
 
 	return result, nil
+}
+
+// Run executes a full backtest. Steps:
+// 1. Strategy.Init — collects indicator registrations and security requests.
+// 2. Load primary + secondary DataSets (secondaries in parallel).
+// 3. Align secondary timestamps to primary.
+// 4. Preflight: resolve indicator DAG, compute all indicators vectorized.
+// 5. Bar replay: broker fills → OnBar → mark-to-market.
+// 6. Compute metrics and return Result.
+func (e *Engine) Run(ctx context.Context, market, symbol, interval string, from, to time.Time, strategy Strategy, params map[string]interface{}) (*Result, error) {
+	prepared, err := e.Prepare(ctx, market, symbol, interval, from, to, strategy, params)
+	if err != nil {
+		return nil, err
+	}
+	return e.replay(prepared, strategy, params)
+}
+
+// StrategyFactory creates a fresh Strategy instance for each parameter set.
+// This is necessary because strategies are stateful (they accumulate positions,
+// spread state, etc.) and cannot be safely reused across runs.
+type StrategyFactory func() Strategy
+
+// BatchResult pairs a parameter set with its backtest result.
+type BatchResult struct {
+	Params map[string]interface{}
+	Result *Result
+	Err    error
+}
+
+// RunBatch loads data once and replays a strategy with multiple parameter sets
+// in parallel. The factory function must return a fresh Strategy for each run.
+// nWorkers controls parallelism; if <= 0 it defaults to 1.
+func (e *Engine) RunBatch(ctx context.Context, market, symbol, interval string, from, to time.Time, factory StrategyFactory, paramSets []map[string]interface{}, nWorkers int) ([]BatchResult, error) {
+	if nWorkers <= 0 {
+		nWorkers = 1
+	}
+
+	// Load data once using a throwaway strategy for Init
+	probe := factory()
+	var initParams map[string]interface{}
+	if len(paramSets) > 0 {
+		initParams = paramSets[0]
+	}
+	prepared, err := e.Prepare(ctx, market, symbol, interval, from, to, probe, initParams)
+	if err != nil {
+		return nil, err
+	}
+
+	// Run each parameter set, limited by nWorkers
+	results := make([]BatchResult, len(paramSets))
+	sem := make(chan struct{}, nWorkers)
+	var wg sync.WaitGroup
+
+	for i, ps := range paramSets {
+		wg.Add(1)
+		go func(idx int, params map[string]interface{}) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			s := factory()
+			res, err := e.replay(prepared, s, params)
+			results[idx] = BatchResult{Params: params, Result: res, Err: err}
+		}(i, ps)
+	}
+
+	wg.Wait()
+	return results, nil
 }

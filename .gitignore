@@ -14,7 +14,7 @@ dist/
 *.dylib
 *.test
 *.out
-*_test.go
+# *_test.go
 
 # Vendor and dependency directories
 vendor/

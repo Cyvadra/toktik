@@ -59,14 +59,21 @@ func main() {
 	if err := cryptooptions.InitKlineSchema(ctx, conn); err != nil {
 		log.Fatalf("init kline schema: %v", err)
 	}
+	if err := cryptooptions.InitSpotKlineSchema(ctx, conn); err != nil {
+		log.Fatalf("init spot kline schema: %v", err)
+	}
 	log.Printf("Schema initialized")
 
 	svc := service.NewCryptoOptionsService(conn)
 	router := api.NewRouter(svc)
 
 	srv := &http.Server{
-		Addr:    *addr,
-		Handler: router,
+		Addr:              *addr,
+		Handler:           router,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      60 * time.Second,
+		IdleTimeout:       120 * time.Second,
 	}
 
 	// Start server in background

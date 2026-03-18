@@ -154,6 +154,9 @@ ORDER BY b.timestamp`, barSourceSQL, spotSourceSQL)
 			colData[i] = append(colData[i], v)
 		}
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate bar rows: %w", err)
+	}
 
 	ds := backtest.NewDataSet(len(timestamps))
 	ds.SetTimestamps(timestamps)

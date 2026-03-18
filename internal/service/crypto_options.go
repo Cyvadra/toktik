@@ -97,6 +97,9 @@ LIMIT %d`, barSourceSQL, spotSourceSQL, limit+1)
 	if err != nil {
 		return nil, err
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate bar rows: %w", err)
+	}
 
 	resp := &dto.BarResponse{}
 	if len(bars) > limit {
@@ -163,6 +166,9 @@ FROM crypto_options_symbol_meta FINAL`
 			return nil, fmt.Errorf("scan symbol row: %w", err)
 		}
 		symbols = append(symbols, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate symbol rows: %w", err)
 	}
 
 	resp := &dto.SymbolResponse{}
@@ -249,6 +255,9 @@ LIMIT %d`, barSourceSQL, spotSourceSQL, limit+1)
 		}
 		greeks = append(greeks, r)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate greeks rows: %w", err)
+	}
 
 	resp := &dto.GreeksResponse{}
 	if len(greeks) > limit {
@@ -280,6 +289,9 @@ func scanBarRows(rows driver.Rows) ([]dto.BarRow, error) {
 			return nil, fmt.Errorf("scan bar row: %w", err)
 		}
 		bars = append(bars, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate bar rows: %w", err)
 	}
 	return bars, nil
 }
