@@ -57,10 +57,8 @@ func (e *Engine) SetOptionsChainProvider(p OptionsChainProvider) {
 func (e *Engine) Run(ctx context.Context, market, symbol, interval string, from, to time.Time, strategy Strategy, params map[string]interface{}) (*Result, error) {
 	// --- Step 1: Init ---
 	setupCtx := NewSetupContext(market, symbol, interval)
-	if params != nil {
-		for k, v := range params {
-			setupCtx.params[k] = v
-		}
+	for k, v := range params {
+		setupCtx.params[k] = v
 	}
 	if err := strategy.Init(setupCtx); err != nil {
 		return nil, fmt.Errorf("strategy init: %w", err)
