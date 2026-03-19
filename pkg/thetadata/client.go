@@ -526,6 +526,15 @@ func getInt(m map[string]any, key string) int {
 	return 0
 }
 
+func getFirstInt(m map[string]any, keys ...string) int {
+	for _, key := range keys {
+		if value := getInt(m, key); value != 0 {
+			return value
+		}
+	}
+	return 0
+}
+
 func getString(m map[string]any, key string) string {
 	if v, ok := m[key]; ok {
 		return fmt.Sprint(v)
@@ -608,8 +617,8 @@ func parseOHLCBars(raw string, refDate time.Time) ([]OHLCBar, error) {
 			High:      getFloat(rec, "high"),
 			Low:       getFloat(rec, "low"),
 			Close:     getFloat(rec, "close"),
-			Volume:    getInt(rec, "volume"),
-			Count:     getInt(rec, "count"),
+			Volume:    getFirstInt(rec, "volume", "size", "total_volume"),
+			Count:     getFirstInt(rec, "count", "trade_count", "ticks"),
 		}
 		bars = append(bars, bar)
 	}

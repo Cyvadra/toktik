@@ -298,6 +298,7 @@ func (p *Pipeline) syncRoot(ctx context.Context, root string) error {
 
 			ohlcByDate := make(map[string][]OHLCBar)
 			volumeByDate := make(map[string]int)
+			countByDate := make(map[string]int)
 			for _, bar := range ohlcBars {
 				dateStr := bar.Timestamp.Format("2006-01-02")
 				if _, ok := pendingDateSet[dateStr]; !ok {
@@ -305,6 +306,7 @@ func (p *Pipeline) syncRoot(ctx context.Context, root string) error {
 				}
 				ohlcByDate[dateStr] = append(ohlcByDate[dateStr], bar)
 				volumeByDate[dateStr] += bar.Volume
+				countByDate[dateStr] += bar.Count
 			}
 			if len(ohlcByDate) == 0 {
 				phase2Progress.Add(1, false)
@@ -313,8 +315,12 @@ func (p *Pipeline) syncRoot(ctx context.Context, root string) error {
 
 			kept := false
 			selectionMu.Lock()
-			for dateStr, volume := range volumeByDate {
-				if volume < p.cfg.MinVolume {
+			for dateStr := range ohlcByDate {
+				activity := volumeByDate[dateStr]
+				if activity == 0 {
+					activity = countByDate[dateStr]
+				}
+				if activity < p.cfg.MinVolume {
 					continue
 				}
 				selectedByDate[dateStr] = append(selectedByDate[dateStr], c)
