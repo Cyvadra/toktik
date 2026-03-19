@@ -2,6 +2,16 @@ package strategies
 
 import "github.com/Cyvadra/toktik/internal/backtest"
 
+func init() {
+	Register(Registration{
+		Name:   "delta-filter",
+		Groups: []string{"signal"},
+		Factory: func(cfg Config) (backtest.Strategy, error) {
+			return &deltaFilterStrategy{entryTWAP: intOrDefault(cfg.EntryTWAPBars, defaultEntryTWAPBars)}, nil
+		},
+	})
+}
+
 type deltaFilterStrategy struct {
 	entryTWAP int
 }

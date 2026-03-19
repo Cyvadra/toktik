@@ -2,6 +2,21 @@ package strategies
 
 import "github.com/Cyvadra/toktik/internal/backtest"
 
+func init() {
+	Register(Registration{
+		Name:    "golden-cross",
+		Aliases: []string{"golden_cross"},
+		Groups:  []string{"trend"},
+		Factory: func(cfg Config) (backtest.Strategy, error) {
+			return &goldenCrossStrategy{
+				fastPeriod: intOrDefault(cfg.FastPeriod, defaultFastPeriod),
+				slowPeriod: intOrDefault(cfg.SlowPeriod, defaultSlowPeriod),
+				entryTWAP:  intOrDefault(cfg.EntryTWAPBars, defaultEntryTWAPBars),
+			}, nil
+		},
+	})
+}
+
 type goldenCrossStrategy struct {
 	fastPeriod int
 	slowPeriod int
@@ -39,4 +54,11 @@ func (s *goldenCrossStrategy) OnBar(ctx *backtest.BarContext) {
 	if ctx.Ind("sell_signal") == 1 && ctx.Position(primary) > 0 {
 		ctx.ClosePosition(primary)
 	}
+}
+
+func intOrDefault(value, fallback int) int {
+	if value == 0 {
+		return fallback
+	}
+	return value
 }

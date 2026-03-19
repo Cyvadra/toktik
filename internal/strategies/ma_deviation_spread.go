@@ -7,6 +7,58 @@ import (
 	"github.com/Cyvadra/toktik/internal/backtest"
 )
 
+func init() {
+	Register(Registration{
+		Name:    "ma-deviation-bull",
+		Aliases: []string{"bull-put-spread", "bull"},
+		Groups:  []string{"spread"},
+		Factory: func(cfg Config) (backtest.Strategy, error) {
+			return &MADeviationSpreadStrategy{
+				Direction:          BullSpread,
+				PositionSize:       cfg.PositionSize,
+				MaxHoldTime:        cfg.MaxHoldTime,
+				TargetExpiryDays:   cfg.TargetExpiryDays,
+				MinExpiryDays:      cfg.MinExpiryDays,
+				MinPremium:         cfg.MinPremium,
+				ShortDeltaMin:      cfg.ShortDeltaMin,
+				ShortDeltaMax:      cfg.ShortDeltaMax,
+				LongDeltaMin:       cfg.LongDeltaMin,
+				LongDeltaMax:       cfg.LongDeltaMax,
+				EntryPriceMode:     cfg.EntryPriceMode,
+				ExitPriceMode:      cfg.ExitPriceMode,
+				ValuationPriceMode: cfg.ValuationPriceMode,
+				MAPeriod:           cfg.MAPeriod,
+				PThreshold:         cfg.PThreshold,
+			}, nil
+		},
+	})
+
+	Register(Registration{
+		Name:    "ma-deviation-bear",
+		Aliases: []string{"bear-call-spread", "bear"},
+		Groups:  []string{"spread"},
+		Factory: func(cfg Config) (backtest.Strategy, error) {
+			return &MADeviationSpreadStrategy{
+				Direction:          BearSpread,
+				PositionSize:       cfg.PositionSize,
+				MaxHoldTime:        cfg.MaxHoldTime,
+				TargetExpiryDays:   cfg.TargetExpiryDays,
+				MinExpiryDays:      cfg.MinExpiryDays,
+				MinPremium:         cfg.MinPremium,
+				ShortDeltaMin:      cfg.ShortDeltaMin,
+				ShortDeltaMax:      cfg.ShortDeltaMax,
+				LongDeltaMin:       cfg.LongDeltaMin,
+				LongDeltaMax:       cfg.LongDeltaMax,
+				EntryPriceMode:     cfg.EntryPriceMode,
+				ExitPriceMode:      cfg.ExitPriceMode,
+				ValuationPriceMode: cfg.ValuationPriceMode,
+				MAPeriod:           cfg.MAPeriod,
+				PThreshold:         cfg.PThreshold,
+			}, nil
+		},
+	})
+}
+
 // SpreadDirection determines whether the strategy trades bull or bear spreads.
 type SpreadDirection int
 

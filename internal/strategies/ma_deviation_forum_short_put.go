@@ -7,6 +7,28 @@ import (
 	"github.com/Cyvadra/toktik/internal/backtest"
 )
 
+func init() {
+	Register(Registration{
+		Name:    "forum-short-put",
+		Aliases: []string{"ma-deviation-forum", "forum"},
+		Groups:  []string{"single-leg"},
+		Factory: func(cfg Config) (backtest.Strategy, error) {
+			return &MADeviationForumShortPutStrategy{
+				PositionSize:       cfg.PositionSize,
+				HoldTime:           cfg.ForumHoldTime,
+				TargetExpiryDays:   cfg.ForumTargetDays,
+				StrikeOffset:       cfg.ForumStrikeOffset,
+				MinPremium:         cfg.ForumMinPremium,
+				EntryPriceMode:     cfg.EntryPriceMode,
+				ExitPriceMode:      cfg.ExitPriceMode,
+				ValuationPriceMode: cfg.ValuationPriceMode,
+				MAPeriod:           cfg.MAPeriod,
+				PThreshold:         cfg.PThreshold,
+			}, nil
+		},
+	})
+}
+
 // MADeviationForumShortPutStrategy implements the single-leg short put strategy
 // described in the forum research note.
 type MADeviationForumShortPutStrategy struct {

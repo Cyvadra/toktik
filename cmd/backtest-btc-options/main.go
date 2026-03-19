@@ -25,8 +25,12 @@ func main() {
 	fromStr := flag.String("from", "", "Start date YYYY-MM-DD (required)")
 	toStr := flag.String("to", "", "End date YYYY-MM-DD (required)")
 	capital := flag.Float64("capital", 1.0, "Initial capital in base asset units (e.g. BTC)")
+	strategyHelp := fmt.Sprintf(
+		"Strategy selector: name, alias, group, or comma list. Available names: %s. Group aliases: both=spread, all=all",
+		strings.Join(strategies.Available(), " | "),
+	)
 	stratName := flag.String("strategy", "both",
-		"Strategy: bull-put-spread | bear-call-spread | both")
+		strategyHelp)
 	commModel := flag.String("commission-model", "percent",
 		"Commission model: none | flat | percent | per-unit")
 	commValue := flag.Float64("commission-value", 0.0003, "Commission value")
@@ -122,28 +126,29 @@ func main() {
 	exitPriceMode := mustParseOptionPriceMode(*spreadExitPriceMode, "--spread-exit-price-mode")
 	valuationPriceMode := mustParseOptionPriceMode(*spreadValuationPriceMode, "--spread-valuation-price-mode")
 
-	strats := resolveStrategies(*stratName, strategyConfig{
-		PositionSize:      *positionSize,
-		MaxHoldTime:       time.Duration(*maxHoldHours * float64(time.Hour)),
-		TargetExpiryDays:  *targetExpiryDays,
-		MinExpiryDays:     *minExpiryDays,
-		MinPremium:        *minPremium,
-		ShortDeltaMin:     *shortDeltaMin,
-		ShortDeltaMax:     *shortDeltaMax,
-		LongDeltaMin:      *longDeltaMin,
-		LongDeltaMax:      *longDeltaMax,
-		EntryPriceMode:    entryPriceMode,
-		ExitPriceMode:     exitPriceMode,
-		ValuationMode:     valuationPriceMode,
-		MAPeriod:          *maPeriod,
-		PThreshold:        *pThreshold,
-		ForumHoldTime:     time.Duration(*forumHoldHours * float64(time.Hour)),
-		ForumTargetDays:   *forumTargetExpiryDays,
-		ForumStrikeOffset: *forumStrikeOffset,
-		ForumMinPremium:   *forumMinPremium,
-	})
-	if len(strats) == 0 {
-		fmt.Fprintf(os.Stderr, "unknown strategy %q; supported: bull-put-spread, bear-call-spread, forum-short-put, both\n", *stratName)
+	strategyCfg := strategies.DefaultConfig()
+	strategyCfg.PositionSize = *positionSize
+	strategyCfg.MaxHoldTime = time.Duration(*maxHoldHours * float64(time.Hour))
+	strategyCfg.TargetExpiryDays = *targetExpiryDays
+	strategyCfg.MinExpiryDays = *minExpiryDays
+	strategyCfg.MinPremium = *minPremium
+	strategyCfg.ShortDeltaMin = *shortDeltaMin
+	strategyCfg.ShortDeltaMax = *shortDeltaMax
+	strategyCfg.LongDeltaMin = *longDeltaMin
+	strategyCfg.LongDeltaMax = *longDeltaMax
+	strategyCfg.EntryPriceMode = entryPriceMode
+	strategyCfg.ExitPriceMode = exitPriceMode
+	strategyCfg.ValuationPriceMode = valuationPriceMode
+	strategyCfg.MAPeriod = *maPeriod
+	strategyCfg.PThreshold = *pThreshold
+	strategyCfg.ForumHoldTime = time.Duration(*forumHoldHours * float64(time.Hour))
+	strategyCfg.ForumTargetDays = *forumTargetExpiryDays
+	strategyCfg.ForumStrikeOffset = *forumStrikeOffset
+	strategyCfg.ForumMinPremium = *forumMinPremium
+
+	strats, err := strategies.Resolve(*stratName, strategyCfg)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "strategy resolve failed: %v\n", err)
 		os.Exit(1)
 	}
 
@@ -238,92 +243,14 @@ func runOne(
 	return engine.Run(ctx, "crypto-underlying", baseAsset, interval, from, to, strat, nil)
 }
 
-type strategyConfig struct {
-	PositionSize      float64
-	MaxHoldTime       time.Duration
-	TargetExpiryDays  int
-	MinExpiryDays     int
-	MinPremium        float64
-	ShortDeltaMin     float64
-	ShortDeltaMax     float64
-	LongDeltaMin      float64
-	LongDeltaMax      float64
-	EntryPriceMode    backtest.OptionPriceMode
-	ExitPriceMode     backtest.OptionPriceMode
-	ValuationMode     backtest.OptionPriceMode
-	MAPeriod          int
-	PThreshold        float64
-	ForumHoldTime     time.Duration
-	ForumTargetDays   int
-	ForumStrikeOffset float64
-	ForumMinPremium   float64
-}
-
-// resolveStrategies maps a strategy name to the concrete strategy instances.
-func resolveStrategies(name string, cfg strategyConfig) []backtest.Strategy {
-	switch strings.ToLower(strings.TrimSpace(name)) {
-	case "bull-put-spread", "ma-deviation-bull", "bull":
-		return []backtest.Strategy{newConfiguredSpreadStrategy(strategies.BullSpread, cfg)}
-	case "bear-call-spread", "ma-deviation-bear", "bear":
-		return []backtest.Strategy{newConfiguredSpreadStrategy(strategies.BearSpread, cfg)}
-	case "forum-short-put", "ma-deviation-forum", "forum":
-		return []backtest.Strategy{newConfiguredForumShortPutStrategy(cfg)}
-	case "both", "all":
-		return []backtest.Strategy{
-			newConfiguredSpreadStrategy(strategies.BullSpread, cfg),
-			newConfiguredSpreadStrategy(strategies.BearSpread, cfg),
-		}
-	default:
-		return nil
-	}
-}
-
-func newConfiguredForumShortPutStrategy(cfg strategyConfig) backtest.Strategy {
-	return &strategies.MADeviationForumShortPutStrategy{
-		PositionSize:       cfg.PositionSize,
-		HoldTime:           cfg.ForumHoldTime,
-		TargetExpiryDays:   cfg.ForumTargetDays,
-		StrikeOffset:       cfg.ForumStrikeOffset,
-		MinPremium:         cfg.ForumMinPremium,
-		EntryPriceMode:     cfg.EntryPriceMode,
-		ExitPriceMode:      cfg.ExitPriceMode,
-		ValuationPriceMode: cfg.ValuationMode,
-		MAPeriod:           cfg.MAPeriod,
-		PThreshold:         cfg.PThreshold,
-	}
-}
-
-func newConfiguredSpreadStrategy(direction strategies.SpreadDirection, cfg strategyConfig) backtest.Strategy {
-	return &strategies.MADeviationSpreadStrategy{
-		Direction:          direction,
-		PositionSize:       cfg.PositionSize,
-		MaxHoldTime:        cfg.MaxHoldTime,
-		TargetExpiryDays:   cfg.TargetExpiryDays,
-		MinExpiryDays:      cfg.MinExpiryDays,
-		MinPremium:         cfg.MinPremium,
-		ShortDeltaMin:      cfg.ShortDeltaMin,
-		ShortDeltaMax:      cfg.ShortDeltaMax,
-		LongDeltaMin:       cfg.LongDeltaMin,
-		LongDeltaMax:       cfg.LongDeltaMax,
-		EntryPriceMode:     cfg.EntryPriceMode,
-		ExitPriceMode:      cfg.ExitPriceMode,
-		ValuationPriceMode: cfg.ValuationMode,
-		MAPeriod:           cfg.MAPeriod,
-		PThreshold:         cfg.PThreshold,
-	}
-}
-
 func mustParseOptionPriceMode(value, flagName string) backtest.OptionPriceMode {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "mark_close", "mark-close", "mark":
-		return backtest.OptionPriceMarkClose
-	case "bidask", "bid-ask":
-		return backtest.OptionPriceBidAsk
-	default:
-		fmt.Fprintf(os.Stderr, "unsupported %s: %q (supported: mark_close, bidask)\n", flagName, value)
+	mode, err := strategies.ParseOptionPriceMode(value)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "unsupported %s: %v\n", flagName, err)
 		os.Exit(1)
 		return backtest.OptionPriceModeUnspecified
 	}
+	return mode
 }
 
 // parseCommissionModel converts a string flag to the CommissionModel enum.
