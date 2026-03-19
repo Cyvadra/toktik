@@ -427,16 +427,58 @@ func (c *Client) GetOHLC1mRange(ctx context.Context, contract Contract, startDat
 
 // GetStockEOD returns end-of-day OHLC data for a stock symbol over a date range.
 func (c *Client) GetStockEOD(ctx context.Context, symbol string, startDate, endDate time.Time) ([]OHLCBar, error) {
-	raw, err := c.callTool(ctx, "stock_history_eod", map[string]any{
-		"symbol":     symbol,
-		"start_date": startDate.Format("2006-01-02"),
-		"end_date":   endDate.Format("2006-01-02"),
-	})
-	if err != nil {
-		return nil, fmt.Errorf("get stock eod for %s: %w", symbol, err)
+	if endDate.Before(startDate) {
+		return nil, nil
 	}
 
-	return parseOHLCBars(raw, startDate)
+	const maxDaysPerRequest = 365
+	const maxSpanDaysInclusive = maxDaysPerRequest - 1
+
+	start := time.Date(startDate.Year(), startDate.Month(), startDate.Day(), 0, 0, 0, 0, time.UTC)
+	end := time.Date(endDate.Year(), endDate.Month(), endDate.Day(), 0, 0, 0, 0, time.UTC)
+
+	merged := make([]OHLCBar, 0)
+	for chunkStart := start; !chunkStart.After(end); {
+		chunkEnd := chunkStart.AddDate(0, 0, maxSpanDaysInclusive)
+		if chunkEnd.After(end) {
+			chunkEnd = end
+		}
+
+		raw, err := c.callTool(ctx, "stock_history_eod", map[string]any{
+			"symbol":     symbol,
+			"start_date": chunkStart.Format("2006-01-02"),
+			"end_date":   chunkEnd.Format("2006-01-02"),
+		})
+		if err != nil {
+			return nil, fmt.Errorf("get stock eod for %s (%s to %s): %w",
+				symbol, chunkStart.Format("2006-01-02"), chunkEnd.Format("2006-01-02"), err)
+		}
+
+		bars, err := parseOHLCBars(raw, chunkStart)
+		if err != nil {
+			return nil, err
+		}
+		merged = append(merged, bars...)
+
+		chunkStart = chunkEnd.AddDate(0, 0, 1)
+	}
+
+	if len(merged) <= 1 {
+		return merged, nil
+	}
+
+	// De-duplicate by trading date and return in ascending order.
+	byDate := make(map[string]OHLCBar, len(merged))
+	for _, bar := range merged {
+		byDate[bar.Timestamp.Format("2006-01-02")] = bar
+	}
+
+	result := make([]OHLCBar, 0, len(byDate))
+	for _, bar := range byDate {
+		result = append(result, bar)
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].Timestamp.Before(result[j].Timestamp) })
+	return result, nil
 }
 
 // GetGreeksEOD returns end-of-day Greeks for a contract over a date range.
