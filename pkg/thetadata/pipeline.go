@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -120,7 +119,6 @@ func (p *Pipeline) syncRoot(ctx context.Context, root string) error {
 	log.Printf("[%s] Starting sync from %s to %s",
 		root, p.cfg.EndDate.Format("2006-01-02"), p.cfg.StartDate.Format("2006-01-02"))
 
-	// Create one MCP client for metadata queries
 	metaClient, err := p.newClient(ctx)
 	if err != nil {
 		return fmt.Errorf("create meta client: %w", err)
@@ -128,17 +126,14 @@ func (p *Pipeline) syncRoot(ctx context.Context, root string) error {
 	defer metaClient.Close()
 	defer metaClient.mcp.Close()
 
-	// Phase 1: Enumerate the contract universe
 	log.Printf("[%s] Phase 1: Enumerating contracts...", root)
 	expirations, err := metaClient.ListExpirations(ctx, root)
 	if err != nil {
 		return fmt.Errorf("list expirations: %w", err)
 	}
 
-	// Filter expirations to those relevant for our date range
 	var relevantExps []time.Time
 	for _, exp := range expirations {
-		// An expiration is relevant if it hasn't expired before our start date
 		if !exp.Before(p.cfg.StartDate) {
 			relevantExps = append(relevantExps, exp)
 		}
@@ -146,7 +141,6 @@ func (p *Pipeline) syncRoot(ctx context.Context, root string) error {
 	log.Printf("[%s] Found %d total expirations, %d relevant for date range",
 		root, len(expirations), len(relevantExps))
 
-	// Build contract universe: exp → strikes
 	type expStrikes struct {
 		Exp     time.Time
 		Strikes []float64
@@ -162,21 +156,18 @@ func (p *Pipeline) syncRoot(ctx context.Context, root string) error {
 			phase1Progress.Add(1, false)
 			continue
 		}
-		if len(strikes) > 0 {
-			universe = append(universe, expStrikes{Exp: exp, Strikes: strikes})
-			phase1Progress.Add(1, true)
-		} else {
+		if len(strikes) == 0 {
 			phase1Progress.Add(1, false)
+			continue
 		}
+		universe = append(universe, expStrikes{Exp: exp, Strikes: strikes})
+		phase1Progress.Add(1, true)
 	}
 	phase1Progress.Finish("complete")
 	log.Printf("[%s] Contract universe: %d expirations with strikes", root, len(universe))
 
-	// Phase 1.5: Estimate underlying price and filter strikes to a reasonable range.
-	// This avoids wasting Phase 2 API calls on deep OTM contracts with no volume.
 	var estimatedPrice float64
 	if len(universe) > 0 {
-		// Sample a mid-expiration, middle strike for quick price estimation
 		sampleExp := universe[len(universe)/2]
 		midStrike := sampleExp.Strikes[len(sampleExp.Strikes)/2]
 		sampleContract := Contract{
@@ -186,7 +177,6 @@ func (p *Pipeline) syncRoot(ctx context.Context, root string) error {
 			Right:      "C",
 		}
 		if sampleEOD, err := metaClient.GetGreeksEOD(ctx, sampleContract, p.cfg.StartDate, p.cfg.EndDate); err == nil && len(sampleEOD) > 0 {
-			// Use the most recent underlying price
 			for i := len(sampleEOD) - 1; i >= 0; i-- {
 				if sampleEOD[i].UnderlyingPrice > 0 {
 					estimatedPrice = sampleEOD[i].UnderlyingPrice
@@ -195,7 +185,6 @@ func (p *Pipeline) syncRoot(ctx context.Context, root string) error {
 			}
 		}
 		if estimatedPrice == 0 {
-			// Fallback: try one more sample from beginning
 			sampleExp = universe[0]
 			midStrike = sampleExp.Strikes[len(sampleExp.Strikes)/2]
 			sampleContract = Contract{Root: root, Expiration: sampleExp.Exp, Strike: midStrike, Right: "P"}
@@ -210,24 +199,14 @@ func (p *Pipeline) syncRoot(ctx context.Context, root string) error {
 		}
 	}
 
-	// Phase 2: Fetch EOD Greeks for all contracts (bulk date range)
-	// This gives us daily volume, underlying price, and Greeks for validation.
-	log.Printf("[%s] Phase 2: Fetching EOD Greeks for volume filtering...", root)
-	type contractEOD struct {
-		Contract Contract
-		EOD      []GreeksEOD
-	}
-
-	// Collect all contracts, optionally filtering by strike range
 	var allContracts []Contract
 	var skippedByStrike int
 	for _, es := range universe {
 		for _, strike := range es.Strikes {
-			// Filter strikes to ±50% of estimated underlying price
 			if estimatedPrice > 0 {
 				ratio := strike / estimatedPrice
 				if ratio < 0.5 || ratio > 1.5 {
-					skippedByStrike += 2 // C + P
+					skippedByStrike += 2
 					continue
 				}
 			}
@@ -246,84 +225,12 @@ func (p *Pipeline) syncRoot(ctx context.Context, root string) error {
 			root, estimatedPrice, len(allContracts), skippedByStrike)
 	}
 	log.Printf("[%s] Total contracts: %d", root, len(allContracts))
-	phase2Progress := newPhaseProgress(root, "Phase 2", "contracts", len(allContracts))
-	phase2Progress.Start()
 
-	// Fetch EOD data concurrently
-	eodMap := make(map[string][]GreeksEOD) // key: contract.Symbol()
-	var eodMu sync.Mutex
-
-	err = p.parallelWork(ctx, allContracts, p.cfg.Workers, func(ctx context.Context, client *Client, c Contract) error {
-		eod, err := client.GetGreeksEOD(ctx, c, p.cfg.StartDate, p.cfg.EndDate)
-		if err != nil {
-			// Non-fatal: contract may not have data in this range
-			phase2Progress.Add(1, false)
-			return nil
-		}
-		if len(eod) > 0 {
-			eodMu.Lock()
-			eodMap[c.Symbol()] = eod
-			eodMu.Unlock()
-			phase2Progress.Add(1, true)
-			return nil
-		}
-		phase2Progress.Add(1, false)
-		return nil
-	})
-	if err != nil {
-		phase2Progress.Finish("aborted")
-		return fmt.Errorf("fetch EOD data: %w", err)
-	}
-	phase2Progress.Finish("complete")
-	log.Printf("[%s] EOD data fetched for %d contracts", root, len(eodMap))
-
-	// Build daily volume index: date → set of contracts with volume >= minVolume
-	type dateContracts struct {
-		Date            time.Time
-		Contracts       []Contract
-		UnderlyingPrice float64 // from EOD
-	}
-	dateIndex := make(map[string]*dateContracts) // key: "YYYY-MM-DD"
-
-	for sym, eods := range eodMap {
-		for _, eod := range eods {
-			if eod.Volume < p.cfg.MinVolume {
-				continue
-			}
-			dateStr := eod.Date.Format("2006-01-02")
-			dc, ok := dateIndex[dateStr]
-			if !ok {
-				dc = &dateContracts{Date: eod.Date}
-				dateIndex[dateStr] = dc
-			}
-			// Recover contract from symbol
-			c := symbolToContract(root, sym)
-			if c != nil {
-				dc.Contracts = append(dc.Contracts, *c)
-			}
-			if eod.UnderlyingPrice > 0 && dc.UnderlyingPrice == 0 {
-				dc.UnderlyingPrice = eod.UnderlyingPrice
-			}
-		}
-	}
-
-	// Phase 3: Download 1m data using weekly batch strategy.
-	// Instead of fetching per-contract per-date (N_contracts × N_dates × 2 calls),
-	// group dates into weekly windows and fetch per-contract with date ranges.
-	// This reduces API calls by ~5× (one range call vs five single-date calls).
-	log.Printf("[%s] Phase 3: Downloading 1m data for %d dates with active contracts...",
-		root, len(dateIndex))
-
-	// Sort dates in reverse chronological order
-	var dates []string
-	for d := range dateIndex {
-		dates = append(dates, d)
-	}
-	sort.Sort(sort.Reverse(sort.StringSlice(dates)))
-
-	// Group dates into weekly windows (up to 5 trading days each)
-	weeks := groupDatesIntoWeeks(dates, 5)
-	log.Printf("[%s] Phase 3: %d dates grouped into %d weekly batches", root, len(dates), len(weeks))
+	underlyingFallback := p.buildUnderlyingFallback(ctx, metaClient, root)
+	weeks := buildWeekdayBatches(p.cfg.StartDate, p.cfg.EndDate, 5)
+	totalDates := countWeekBatchDates(weeks)
+	log.Printf("[%s] Phase 2/3: OHLC-first weekly discovery across %d trading days in %d batches",
+		root, totalDates, len(weeks))
 
 	weekOffset := 0
 	for wi, weekDates := range weeks {
@@ -333,12 +240,12 @@ func (p *Pipeline) syncRoot(ctx context.Context, root string) error {
 		default:
 		}
 
-		// Check if all dates in this week are already completed
-		pendingDates := make([]string, 0, len(weekDates))
-		for _, dateStr := range weekDates {
-			date, _ := time.Parse("2006-01-02", dateStr)
+		pendingDates := make([]time.Time, 0, len(weekDates))
+		pendingDateSet := make(map[string]struct{}, len(weekDates))
+		for _, date := range weekDates {
 			if !p.progress.IsCompleted(root, date) {
-				pendingDates = append(pendingDates, dateStr)
+				pendingDates = append(pendingDates, date)
+				pendingDateSet[date.Format("2006-01-02")] = struct{}{}
 			}
 		}
 		if len(pendingDates) == 0 {
@@ -346,80 +253,143 @@ func (p *Pipeline) syncRoot(ctx context.Context, root string) error {
 			continue
 		}
 
-		// Identify unique contracts active in this week
-		uniqueContractsMap := make(map[string]Contract)
-		for _, dateStr := range pendingDates {
-			if dc, ok := dateIndex[dateStr]; ok {
-				for _, c := range dc.Contracts {
-					uniqueContractsMap[c.Symbol()] = c
-				}
+		weekEnd := weekDates[0]
+		weekStart := weekDates[len(weekDates)-1]
+		var weekContracts []Contract
+		for _, c := range allContracts {
+			if !c.Expiration.Before(weekStart) {
+				weekContracts = append(weekContracts, c)
 			}
 		}
-		var uniqueContracts []Contract
-		for _, c := range uniqueContractsMap {
-			uniqueContracts = append(uniqueContracts, c)
+
+		if len(weekContracts) == 0 {
+			for _, date := range pendingDates {
+				weekOffset++
+				if err := p.progress.MarkCompleted(root, date, DateSyncStats{}); err != nil {
+					log.Printf("[%s] Warning: failed to mark empty week date %s complete: %v", root, date.Format("2006-01-02"), err)
+				}
+			}
+			continue
 		}
 
-		// Determine week time range (dates are reverse chronological)
-		weekEnd, _ := time.Parse("2006-01-02", weekDates[0])
-		weekStart, _ := time.Parse("2006-01-02", weekDates[len(weekDates)-1])
-
-		log.Printf("[%s] Phase 3 batch %d/%d: %s to %s, %d pending dates, %d unique contracts",
+		log.Printf("[%s] Phase 2 batch %d/%d: %s to %s, %d pending dates, %d candidate contracts",
 			root, wi+1, len(weeks),
 			weekStart.Format("2006-01-02"), weekEnd.Format("2006-01-02"),
-			len(pendingDates), len(uniqueContracts))
+			len(pendingDates), len(weekContracts))
 
-		// Batch download: fetch each contract's data for the full weekly range
-		weekCache := &sync.Map{} // sym → *contractWeekData
+		selectedByDate := make(map[string][]Contract, len(pendingDates))
+		selectedContractsMap := make(map[string]Contract)
+		ohlcCache := &sync.Map{}
+		var selectionMu sync.Mutex
 
-		batchProgress := newPhaseProgress(root, fmt.Sprintf("Phase 3 batch %d/%d", wi+1, len(weeks)),
-			"contracts", len(uniqueContracts))
-		batchProgress.Start()
-
-		err = p.parallelWork(ctx, uniqueContracts, p.cfg.Workers, func(ctx context.Context, client *Client, c Contract) error {
-			quotes, err := client.GetQuotes1mRange(ctx, c, weekStart, weekEnd)
+		phase2Progress := newPhaseProgress(root, fmt.Sprintf("Phase 2 batch %d/%d", wi+1, len(weeks)),
+			"contracts", len(weekContracts))
+		phase2Progress.Start()
+		err = p.parallelWork(ctx, weekContracts, p.cfg.Workers, func(ctx context.Context, client *Client, c Contract) error {
+			ohlcBars, err := client.GetOHLC1mRange(ctx, c, weekStart, weekEnd)
 			if err != nil {
-				batchProgress.Add(1, false)
+				phase2Progress.Add(1, false)
 				return nil
 			}
-			var ohlcBars []OHLCBar
-			if len(quotes) > 0 {
-				ohlcBars, _ = client.GetOHLC1mRange(ctx, c, weekStart, weekEnd)
+			if len(ohlcBars) == 0 {
+				phase2Progress.Add(1, false)
+				return nil
 			}
 
-			if len(quotes) > 0 {
-				// Index by date
-				quotesByDate := make(map[string][]QuoteBar)
-				for _, q := range quotes {
-					d := q.Timestamp.Format("2006-01-02")
-					quotesByDate[d] = append(quotesByDate[d], q)
+			ohlcByDate := make(map[string][]OHLCBar)
+			volumeByDate := make(map[string]int)
+			for _, bar := range ohlcBars {
+				dateStr := bar.Timestamp.Format("2006-01-02")
+				if _, ok := pendingDateSet[dateStr]; !ok {
+					continue
 				}
-				ohlcByDate := make(map[string][]OHLCBar)
-				for _, o := range ohlcBars {
-					d := o.Timestamp.Format("2006-01-02")
-					ohlcByDate[d] = append(ohlcByDate[d], o)
-				}
-
-				weekCache.Store(c.Symbol(), &contractWeekData{
-					Contract: c,
-					Quotes:   quotesByDate,
-					OHLC:     ohlcByDate,
-				})
-				batchProgress.Add(1, true)
-			} else {
-				batchProgress.Add(1, false)
+				ohlcByDate[dateStr] = append(ohlcByDate[dateStr], bar)
+				volumeByDate[dateStr] += bar.Volume
 			}
+			if len(ohlcByDate) == 0 {
+				phase2Progress.Add(1, false)
+				return nil
+			}
+
+			kept := false
+			selectionMu.Lock()
+			for dateStr, volume := range volumeByDate {
+				if volume < p.cfg.MinVolume {
+					continue
+				}
+				selectedByDate[dateStr] = append(selectedByDate[dateStr], c)
+				selectedContractsMap[c.Symbol()] = c
+				kept = true
+			}
+			if kept {
+				ohlcCache.Store(c.Symbol(), &contractWeekData{Contract: c, OHLC: ohlcByDate})
+			}
+			selectionMu.Unlock()
+			phase2Progress.Add(1, kept)
 			return nil
 		})
 		if err != nil {
-			batchProgress.Finish("aborted")
-			return fmt.Errorf("batch download week %d: %w", wi+1, err)
+			phase2Progress.Finish("aborted")
+			return fmt.Errorf("discover active week %d: %w", wi+1, err)
 		}
-		batchProgress.Finish("complete")
+		phase2Progress.Finish("complete")
 
-		// Process each date within the week using cached data
-		for _, dateStr := range pendingDates {
-			date, _ := time.Parse("2006-01-02", dateStr)
+		var selectedContracts []Contract
+		for _, c := range selectedContractsMap {
+			selectedContracts = append(selectedContracts, c)
+		}
+
+		weekCache := &sync.Map{}
+		for _, c := range selectedContracts {
+			if cached, ok := ohlcCache.Load(c.Symbol()); ok {
+				weekCache.Store(c.Symbol(), cached)
+			}
+		}
+
+		phase3Progress := newPhaseProgress(root, fmt.Sprintf("Phase 3 batch %d/%d", wi+1, len(weeks)),
+			"contracts", len(selectedContracts))
+		phase3Progress.Start()
+		err = p.parallelWork(ctx, selectedContracts, p.cfg.Workers, func(ctx context.Context, client *Client, c Contract) error {
+			quotes, err := client.GetQuotes1mRange(ctx, c, weekStart, weekEnd)
+			if err != nil {
+				phase3Progress.Add(1, false)
+				return nil
+			}
+			if len(quotes) == 0 {
+				phase3Progress.Add(1, false)
+				return nil
+			}
+
+			quotesByDate := make(map[string][]QuoteBar)
+			for _, q := range quotes {
+				dateStr := q.Timestamp.Format("2006-01-02")
+				if _, ok := pendingDateSet[dateStr]; !ok {
+					continue
+				}
+				quotesByDate[dateStr] = append(quotesByDate[dateStr], q)
+			}
+			cached, ok := weekCache.Load(c.Symbol())
+			if !ok {
+				phase3Progress.Add(1, false)
+				return nil
+			}
+			cwd := cached.(*contractWeekData)
+			weekCache.Store(c.Symbol(), &contractWeekData{
+				Contract: c,
+				Quotes:   quotesByDate,
+				OHLC:     cwd.OHLC,
+			})
+			phase3Progress.Add(1, true)
+			return nil
+		})
+		if err != nil {
+			phase3Progress.Finish("aborted")
+			return fmt.Errorf("download quotes for week %d: %w", wi+1, err)
+		}
+		phase3Progress.Finish("complete")
+
+		for _, date := range pendingDates {
+			dateStr := date.Format("2006-01-02")
 			weekOffset++
 
 			wasInFlight := p.progress.IsInFlight(root, date)
@@ -428,7 +398,8 @@ func (p *Pipeline) syncRoot(ctx context.Context, root string) error {
 				return fmt.Errorf("check existing data for %s %s: %w", root, dateStr, err)
 			}
 
-			if err := p.progress.MarkStarted(root, date, len(dateIndex[dateStr].Contracts)); err != nil {
+			contractsForDate := selectedByDate[dateStr]
+			if err := p.progress.MarkStarted(root, date, len(contractsForDate)); err != nil {
 				return fmt.Errorf("mark started for %s %s: %w", root, dateStr, err)
 			}
 
@@ -443,11 +414,17 @@ func (p *Pipeline) syncRoot(ctx context.Context, root string) error {
 				log.Printf("[%s] %s: resuming previously interrupted date", root, dateStr)
 			}
 
-			dc := dateIndex[dateStr]
 			log.Printf("[%s] [%d/%d] %s: %d contracts",
-				root, weekOffset, len(dates), dateStr, len(dc.Contracts))
+				root, weekOffset, totalDates, dateStr, len(contractsForDate))
 
-			stats, err := p.processDateFromCache(ctx, root, date, dc.Contracts, dc.UnderlyingPrice, eodMap, weekCache)
+			if len(contractsForDate) == 0 {
+				if err := p.progress.MarkCompleted(root, date, DateSyncStats{}); err != nil {
+					log.Printf("[%s] Warning: failed to mark empty date %s complete: %v", root, dateStr, err)
+				}
+				continue
+			}
+
+			stats, err := p.processDateFromCache(ctx, root, date, contractsForDate, underlyingFallback[dateStr], weekCache)
 			if err != nil {
 				_ = p.progress.MarkFailed(root, date, "process_date", err, stats)
 				log.Printf("[%s] Error processing %s: %v (skipping)", root, dateStr, err)
@@ -465,11 +442,19 @@ func (p *Pipeline) syncRoot(ctx context.Context, root string) error {
 }
 
 // groupDatesIntoWeeks splits a sorted list of date strings into batches of up to batchSize.
-func groupDatesIntoWeeks(dates []string, batchSize int) [][]string {
+func buildWeekdayBatches(startDate, endDate time.Time, batchSize int) [][]time.Time {
 	if batchSize <= 0 {
 		batchSize = 5
 	}
-	var result [][]string
+	var dates []time.Time
+	for date := normalizeDate(endDate); !date.Before(normalizeDate(startDate)); date = date.AddDate(0, 0, -1) {
+		if date.Weekday() == time.Saturday || date.Weekday() == time.Sunday {
+			continue
+		}
+		dates = append(dates, date)
+	}
+
+	result := make([][]time.Time, 0, (len(dates)+batchSize-1)/batchSize)
 	for i := 0; i < len(dates); i += batchSize {
 		end := i + batchSize
 		if end > len(dates) {
@@ -480,9 +465,40 @@ func groupDatesIntoWeeks(dates []string, batchSize int) [][]string {
 	return result
 }
 
+func countWeekBatchDates(weeks [][]time.Time) int {
+	total := 0
+	for _, week := range weeks {
+		total += len(week)
+	}
+	return total
+}
+
+func normalizeDate(value time.Time) time.Time {
+	return time.Date(value.Year(), value.Month(), value.Day(), 0, 0, 0, 0, time.UTC)
+}
+
+func (p *Pipeline) buildUnderlyingFallback(ctx context.Context, client *Client, root string) map[string]float64 {
+	underlyingByDate := make(map[string]float64)
+	stockEOD, err := client.GetStockEOD(ctx, root, p.cfg.StartDate, p.cfg.EndDate)
+	if err != nil {
+		log.Printf("[%s] Underlying fallback unavailable: %v", root, err)
+		return underlyingByDate
+	}
+	for _, bar := range stockEOD {
+		if bar.Close <= 0 {
+			continue
+		}
+		underlyingByDate[bar.Timestamp.Format("2006-01-02")] = bar.Close
+	}
+	if len(underlyingByDate) > 0 {
+		log.Printf("[%s] Loaded underlying fallback for %d dates", root, len(underlyingByDate))
+	}
+	return underlyingByDate
+}
+
 // processDateFromCache processes a single date using pre-downloaded data from the weekly cache.
 func (p *Pipeline) processDateFromCache(ctx context.Context, root string, date time.Time,
-	contracts []Contract, eodUnderlyingPrice float64, eodMap map[string][]GreeksEOD,
+	contracts []Contract, underlyingPrice float64,
 	weekCache *sync.Map) (DateSyncStats, error) {
 
 	stats := DateSyncStats{ExpectedContracts: len(contracts)}
@@ -507,12 +523,12 @@ func (p *Pipeline) processDateFromCache(ctx context.Context, root string, date t
 	}
 	stats.DownloadedContracts = len(allData)
 
-	return p.assembleAndStore(ctx, root, date, allData, eodUnderlyingPrice, eodMap, stats)
+	return p.assembleAndStore(ctx, root, date, allData, underlyingPrice, stats)
 }
 
 // processDate downloads and processes all 1m data for a single date (legacy single-date path).
 func (p *Pipeline) processDate(ctx context.Context, root string, date time.Time,
-	contracts []Contract, eodUnderlyingPrice float64, eodMap map[string][]GreeksEOD) (DateSyncStats, error) {
+	contracts []Contract, underlyingPrice float64) (DateSyncStats, error) {
 	stats := DateSyncStats{ExpectedContracts: len(contracts)}
 	dateLabel := date.Format("2006-01-02")
 	log.Printf("[%s] [%s] Intraday download: %d contracts queued", root, dateLabel, len(contracts))
@@ -554,7 +570,7 @@ func (p *Pipeline) processDate(ctx context.Context, root string, date time.Time,
 	}
 	stats.DownloadedContracts = len(allData)
 
-	return p.assembleAndStore(ctx, root, date, allData, eodUnderlyingPrice, eodMap, stats)
+	return p.assembleAndStore(ctx, root, date, allData, underlyingPrice, stats)
 }
 
 // contractDataItem holds quotes and OHLC for a single contract (used by both processDate and processDateFromCache).
@@ -573,7 +589,7 @@ type contractWeekData struct {
 
 // assembleAndStore computes Greeks, assembles Bar1m records, and stores to ClickHouse.
 func (p *Pipeline) assembleAndStore(ctx context.Context, root string, date time.Time,
-	allData []contractDataItem, eodUnderlyingPrice float64, eodMap map[string][]GreeksEOD,
+	allData []contractDataItem, underlyingPrice float64,
 	stats DateSyncStats) (DateSyncStats, error) {
 
 	dateLabel := date.Format("2006-01-02")
@@ -658,10 +674,10 @@ func (p *Pipeline) assembleAndStore(ctx context.Context, root string, date time.
 
 			fwd, err := ForwardFromParity(callMids, putMids, T)
 			if err != nil {
-				// Fallback to EOD underlying price
-				if eodUnderlyingPrice > 0 {
+				// Fallback to root-level underlying EOD when parity is unavailable.
+				if underlyingPrice > 0 {
 					fwd = ForwardInfo{
-						Forward:        eodUnderlyingPrice,
+						Forward:        underlyingPrice,
 						DiscountFactor: 1.0,
 						Rate:           0.05,
 					}
@@ -698,17 +714,6 @@ func (p *Pipeline) assembleAndStore(ctx context.Context, root string, date time.
 				Expiration:      c.Expiration,
 				UnderlyingIndex: c.Root,
 			})
-		}
-
-		// Get OI from EOD
-		var dailyOI float32
-		if eods, ok := eodMap[sym]; ok {
-			for _, eod := range eods {
-				if eod.Date.Format("2006-01-02") == date.Format("2006-01-02") {
-					dailyOI = float32(eod.OpenInterest)
-					break
-				}
-			}
 		}
 
 		for _, q := range cd.Quotes {
@@ -787,7 +792,7 @@ func (p *Pipeline) assembleAndStore(ctx context.Context, root string, date time.
 
 				Delta: delta, Gamma: gamma, Vega: vega, Theta: theta, Rho: rho,
 
-				OpenInterest: dailyOI,
+				OpenInterest: 0,
 				TickCount:    tickCount,
 			}
 			bars = append(bars, bar)
