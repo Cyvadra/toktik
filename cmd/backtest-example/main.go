@@ -138,8 +138,8 @@ func main() {
 
 	engine := backtest.NewEngine(backtest.Config{
 		InitialCapital:  *capital,
-		CommissionModel: backtest.CommissionPercent,
-		CommissionValue: 0.001,
+		CommissionModel: backtest.CommissionNone,
+		CommissionValue: 0,
 		SlippagePct:     0.0005,
 		ExecutionMode:   mustParseExecutionMode(*fillMode),
 		ValuationMode:   mustParseValuationMode(*valuationMode),

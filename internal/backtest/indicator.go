@@ -278,15 +278,27 @@ func (r *rsiIndicator) Compute(inputs map[string][]float64) []float64 {
 	avgGain := 0.0
 	avgLoss := 0.0
 
-	// Initial average over first `period` changes
+	// Initial average over first `period` changes, NaN-safe
+	validChanges := 0
 	for i := 1; i <= r.period; i++ {
 		out[i-1] = math.NaN()
+		if math.IsNaN(src[i]) || math.IsNaN(src[i-1]) {
+			continue
+		}
 		change := src[i] - src[i-1]
 		if change > 0 {
 			avgGain += change
 		} else {
 			avgLoss -= change
 		}
+		validChanges++
+	}
+	if validChanges < r.period {
+		// Not enough valid data in seed window — mark all NaN
+		for i := range out {
+			out[i] = math.NaN()
+		}
+		return out
 	}
 	avgGain /= float64(r.period)
 	avgLoss /= float64(r.period)
@@ -299,6 +311,10 @@ func (r *rsiIndicator) Compute(inputs map[string][]float64) []float64 {
 	}
 
 	for i := r.period + 1; i < n; i++ {
+		if math.IsNaN(src[i]) || math.IsNaN(src[i-1]) {
+			out[i] = out[i-1] // carry forward through NaN gaps
+			continue
+		}
 		change := src[i] - src[i-1]
 		gain, loss := 0.0, 0.0
 		if change > 0 {
@@ -517,27 +533,7 @@ type highestIndicator struct {
 func (h *highestIndicator) Deps() []string { return []string{h.source} }
 
 func (h *highestIndicator) Compute(inputs map[string][]float64) []float64 {
-	src := inputs[h.source]
-	n := len(src)
-	out := make([]float64, n)
-	for i := 0; i < n; i++ {
-		if i < h.period-1 {
-			out[i] = math.NaN()
-			continue
-		}
-		best := math.Inf(-1)
-		for j := i - h.period + 1; j <= i; j++ {
-			if !math.IsNaN(src[j]) && src[j] > best {
-				best = src[j]
-			}
-		}
-		if math.IsInf(best, -1) {
-			out[i] = math.NaN()
-		} else {
-			out[i] = best
-		}
-	}
-	return out
+	return rollingMax(inputs[h.source], h.period)
 }
 
 // Lowest creates a rolling lowest-value indicator over the given period.
@@ -553,27 +549,7 @@ type lowestIndicator struct {
 func (l *lowestIndicator) Deps() []string { return []string{l.source} }
 
 func (l *lowestIndicator) Compute(inputs map[string][]float64) []float64 {
-	src := inputs[l.source]
-	n := len(src)
-	out := make([]float64, n)
-	for i := 0; i < n; i++ {
-		if i < l.period-1 {
-			out[i] = math.NaN()
-			continue
-		}
-		best := math.Inf(1)
-		for j := i - l.period + 1; j <= i; j++ {
-			if !math.IsNaN(src[j]) && src[j] < best {
-				best = src[j]
-			}
-		}
-		if math.IsInf(best, 1) {
-			out[i] = math.NaN()
-		} else {
-			out[i] = best
-		}
-	}
-	return out
+	return rollingMin(inputs[l.source], l.period)
 }
 
 // WMA creates a linearly weighted moving average indicator.
@@ -793,35 +769,18 @@ func (s *stochasticIndicator) ComputeMulti(baseName string, inputs map[string][]
 		}
 	}
 
+	hh := rollingMax(high, s.kPeriod)
+	ll := rollingMin(low, s.kPeriod)
 	for i := 0; i < n; i++ {
-		if i < s.kPeriod-1 {
+		if math.IsNaN(hh[i]) || math.IsNaN(ll[i]) || math.IsNaN(close[i]) {
 			raw[i] = math.NaN()
 			continue
 		}
-		h := math.Inf(-1)
-		l := math.Inf(1)
-		valid := true
-		for j := i - s.kPeriod + 1; j <= i; j++ {
-			if math.IsNaN(high[j]) || math.IsNaN(low[j]) || math.IsNaN(close[j]) {
-				valid = false
-				break
-			}
-			if high[j] > h {
-				h = high[j]
-			}
-			if low[j] < l {
-				l = low[j]
-			}
-		}
-		if !valid {
-			raw[i] = math.NaN()
-			continue
-		}
-		rng := h - l
+		rng := hh[i] - ll[i]
 		if rng == 0 {
 			raw[i] = 0
 		} else {
-			raw[i] = 100 * (close[i] - l) / rng
+			raw[i] = 100 * (close[i] - ll[i]) / rng
 		}
 	}
 
@@ -1391,48 +1350,17 @@ func (d *donchianIndicator) Compute(inputs map[string][]float64) []float64 {
 }
 
 func (d *donchianIndicator) ComputeMulti(baseName string, inputs map[string][]float64) map[string][]float64 {
-	high := inputs[d.highSource]
-	low := inputs[d.lowSource]
-	n := len(high)
+	upper := rollingMax(inputs[d.highSource], d.period)
+	lower := rollingMin(inputs[d.lowSource], d.period)
+	n := len(upper)
 	mid := make([]float64, n)
-	upper := make([]float64, n)
-	lower := make([]float64, n)
-
 	for i := 0; i < n; i++ {
-		if i < d.period-1 {
+		if math.IsNaN(upper[i]) || math.IsNaN(lower[i]) {
 			mid[i] = math.NaN()
-			upper[i] = math.NaN()
-			lower[i] = math.NaN()
-			continue
+		} else {
+			mid[i] = (upper[i] + lower[i]) / 2
 		}
-
-		h := math.Inf(-1)
-		l := math.Inf(1)
-		valid := true
-		for j := i - d.period + 1; j <= i; j++ {
-			if math.IsNaN(high[j]) || math.IsNaN(low[j]) {
-				valid = false
-				break
-			}
-			if high[j] > h {
-				h = high[j]
-			}
-			if low[j] < l {
-				l = low[j]
-			}
-		}
-		if !valid {
-			mid[i] = math.NaN()
-			upper[i] = math.NaN()
-			lower[i] = math.NaN()
-			continue
-		}
-
-		upper[i] = h
-		lower[i] = l
-		mid[i] = (h + l) / 2
 	}
-
 	names := d.OutputNames(baseName)
 	return map[string][]float64{
 		names[0]: mid,
@@ -1547,5 +1475,81 @@ func computeRMA(src []float64, period int) []float64 {
 		}
 	}
 
+	return out
+}
+
+// rollingMax computes the rolling maximum over a window of size `period` using
+// a monotonic decreasing deque — O(n) total.
+func rollingMax(src []float64, period int) []float64 {
+	n := len(src)
+	out := make([]float64, n)
+	// deque stores indices; front has the index of the current window max.
+	deque := make([]int, 0, period)
+	nanCount := 0
+
+	for i := 0; i < n; i++ {
+		// Track NaN entering the window
+		if math.IsNaN(src[i]) {
+			nanCount++
+		}
+		// Evict index that fell out of window
+		if i >= period {
+			if len(deque) > 0 && deque[0] <= i-period {
+				deque = deque[1:]
+			}
+			if math.IsNaN(src[i-period]) {
+				nanCount--
+			}
+		}
+		// Remove smaller elements from the back
+		for len(deque) > 0 && !math.IsNaN(src[i]) && src[deque[len(deque)-1]] <= src[i] {
+			deque = deque[:len(deque)-1]
+		}
+		if !math.IsNaN(src[i]) {
+			deque = append(deque, i)
+		}
+
+		if i < period-1 || nanCount > 0 || len(deque) == 0 {
+			out[i] = math.NaN()
+		} else {
+			out[i] = src[deque[0]]
+		}
+	}
+	return out
+}
+
+// rollingMin computes the rolling minimum over a window of size `period` using
+// a monotonic increasing deque — O(n) total.
+func rollingMin(src []float64, period int) []float64 {
+	n := len(src)
+	out := make([]float64, n)
+	deque := make([]int, 0, period)
+	nanCount := 0
+
+	for i := 0; i < n; i++ {
+		if math.IsNaN(src[i]) {
+			nanCount++
+		}
+		if i >= period {
+			if len(deque) > 0 && deque[0] <= i-period {
+				deque = deque[1:]
+			}
+			if math.IsNaN(src[i-period]) {
+				nanCount--
+			}
+		}
+		for len(deque) > 0 && !math.IsNaN(src[i]) && src[deque[len(deque)-1]] >= src[i] {
+			deque = deque[:len(deque)-1]
+		}
+		if !math.IsNaN(src[i]) {
+			deque = append(deque, i)
+		}
+
+		if i < period-1 || nanCount > 0 || len(deque) == 0 {
+			out[i] = math.NaN()
+		} else {
+			out[i] = src[deque[0]]
+		}
+	}
 	return out
 }

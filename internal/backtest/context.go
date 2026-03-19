@@ -410,6 +410,21 @@ func (bc *BarContext) PrimaryRef() SecurityRef {
 	return bc.primaryRef
 }
 
+// SecurityRefs returns all registered security references (primary first).
+func (bc *BarContext) SecurityRefs() []SecurityRef {
+	out := make([]SecurityRef, len(bc.secRefs))
+	copy(out, bc.secRefs)
+	return out
+}
+
+// PendingOrders returns a snapshot of all unfilled pending orders.
+func (bc *BarContext) PendingOrders() []Order {
+	pending := bc.broker.pending
+	out := make([]Order, len(pending))
+	copy(out, pending)
+	return out
+}
+
 // --- Options chain access ---
 
 // OptionsChain returns the current bar's options chain, filtered and queryable.

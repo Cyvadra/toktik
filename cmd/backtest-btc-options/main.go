@@ -31,9 +31,9 @@ func main() {
 	)
 	stratName := flag.String("strategy", "both",
 		strategyHelp)
-	commModel := flag.String("commission-model", "percent",
+	commModel := flag.String("commission-model", "none",
 		"Commission model: none | flat | percent | per-unit")
-	commValue := flag.Float64("commission-value", 0.0003, "Commission value")
+	commValue := flag.Float64("commission-value", 0, "Commission value")
 	slippagePct := flag.Float64("slippage-pct", 0.0, "Slippage fraction (0 = none)")
 	outputJSON := flag.String("output", "", "Optional JSON output file path")
 	outputHTML := flag.String("html-output", "", "Optional HTML report output path (defaults to reports/backtests/<strategy>_<period>.html; multi-strategy runs emit one combined file)")
