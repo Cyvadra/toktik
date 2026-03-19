@@ -1,6 +1,9 @@
 package cryptooptions
 
-import "fmt"
+import (
+	"fmt"
+	"time"
+)
 
 // OptionBarColumns is the standard column list for option bar queries.
 const OptionBarColumns = `timestamp, symbol_id, base_asset,
@@ -15,16 +18,21 @@ const OptionBarColumns = `timestamp, symbol_id, base_asset,
 // SpotBarColumns is the standard column list for spot bar queries.
 const SpotBarColumns = `timestamp, symbol, price_source, open, high, low, close, tick_count`
 
+// ClickHouseTimeParam formats a timestamp for string-bound query parameters.
+func ClickHouseTimeParam(t time.Time) string {
+	return t.UTC().Format("2006-01-02 15:04:05")
+}
+
 // BuildOptionBarSubquery returns a SQL subquery for option bars using
-// ClickHouse named parameters: {symbol_id:UInt32}, {from:DateTime}, {to:DateTime}.
+// ClickHouse named parameters: {symbol_id:UInt32}, {from:String}, {to:String}.
 func BuildOptionBarSubquery(interval string) (string, error) {
 	if interval == "1m" {
 		return fmt.Sprintf(`SELECT
     %s
 FROM crypto_options_bar_1m
 WHERE symbol_id = {symbol_id:UInt32}
-  AND timestamp >= {from:DateTime}
-  AND timestamp < {to:DateTime}`, OptionBarColumns), nil
+  AND timestamp >= parseDateTimeBestEffort({from:String})
+  AND timestamp < parseDateTimeBestEffort({to:String})`, OptionBarColumns), nil
 	}
 
 	if viewName, ok := PrecomputedIntervals[interval]; ok {
@@ -32,23 +40,23 @@ WHERE symbol_id = {symbol_id:UInt32}
     %s
 FROM %s
 WHERE symbol_id = {symbol_id:UInt32}
-  AND timestamp >= {from:DateTime}
-  AND timestamp < {to:DateTime}`, OptionBarColumns, viewName), nil
+  AND timestamp >= parseDateTimeBestEffort({from:String})
+  AND timestamp < parseDateTimeBestEffort({to:String})`, OptionBarColumns, viewName), nil
 	}
 
 	return QueryTimeAggregationSQL(interval)
 }
 
 // BuildSpotBarSubquery returns a SQL subquery for spot bars using
-// ClickHouse named parameters: {symbol:String}, {from:DateTime}, {to:DateTime}.
+// ClickHouse named parameters: {symbol:String}, {from:String}, {to:String}.
 func BuildSpotBarSubquery(interval string) (string, error) {
 	if interval == "1m" {
 		return fmt.Sprintf(`SELECT
     %s
 FROM crypto_spot_bar_1m
 WHERE symbol = {symbol:String}
-  AND timestamp >= {from:DateTime}
-  AND timestamp < {to:DateTime}`, SpotBarColumns), nil
+  AND timestamp >= parseDateTimeBestEffort({from:String})
+  AND timestamp < parseDateTimeBestEffort({to:String})`, SpotBarColumns), nil
 	}
 
 	if viewName, ok := SpotPrecomputedIntervals[interval]; ok {
@@ -56,8 +64,8 @@ WHERE symbol = {symbol:String}
     %s
 FROM %s
 WHERE symbol = {symbol:String}
-  AND timestamp >= {from:DateTime}
-  AND timestamp < {to:DateTime}`, SpotBarColumns, viewName), nil
+  AND timestamp >= parseDateTimeBestEffort({from:String})
+  AND timestamp < parseDateTimeBestEffort({to:String})`, SpotBarColumns, viewName), nil
 	}
 
 	return QuerySpotAggregationSQL(interval)

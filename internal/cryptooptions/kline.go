@@ -312,7 +312,7 @@ var SpotPrecomputedIntervals = map[string]string{
 //
 // The returned query expects ClickHouse named parameters:
 //
-//	{symbol_id:UInt32}, {from:DateTime}, {to:DateTime}
+//	{symbol_id:UInt32}, {from:String}, {to:String}
 func QueryTimeAggregationSQL(interval string) (string, error) {
 	chInterval, ok := validAdHocIntervals[interval]
 	if !ok {
@@ -352,8 +352,8 @@ func QueryTimeAggregationSQL(interval string) (string, error) {
         sum(tick_count)                           AS tick_count
 FROM crypto_options_bar_1m
 WHERE symbol_id = {symbol_id:UInt32}
-  AND timestamp >= {from:DateTime}
-  AND timestamp < {to:DateTime}
+    AND timestamp >= parseDateTimeBestEffort({from:String})
+    AND timestamp < parseDateTimeBestEffort({to:String})
 GROUP BY
     toStartOfInterval(timestamp, INTERVAL %s),
     symbol_id,
@@ -380,8 +380,8 @@ func QuerySpotAggregationSQL(interval string) (string, error) {
     sum(tick_count)                           AS tick_count
 FROM crypto_spot_bar_1m
 WHERE symbol = {symbol:String}
-  AND timestamp >= {from:DateTime}
-  AND timestamp < {to:DateTime}
+    AND timestamp >= parseDateTimeBestEffort({from:String})
+    AND timestamp < parseDateTimeBestEffort({to:String})
 GROUP BY
     toStartOfInterval(timestamp, INTERVAL %s),
     symbol

@@ -106,8 +106,8 @@ func buildSpotSourceSQLWithFallback(ctx context.Context, conn driver.Conn, inter
     timestamp, symbol, price_source, open, high, low, close, tick_count
 FROM %s
 WHERE symbol = {symbol:String}
-  AND timestamp >= {from:DateTime}
-  AND timestamp < {to:DateTime}`, tableName), false, nil
+	AND timestamp >= parseDateTimeBestEffort({from:String})
+	AND timestamp < parseDateTimeBestEffort({to:String})`, tableName), false, nil
 		}
 	}
 
@@ -124,8 +124,8 @@ WHERE symbol = {symbol:String}
     timestamp, symbol, price_source, open, high, low, close, tick_count
 FROM crypto_spot_bar_1m
 WHERE symbol = {symbol:String}
-  AND timestamp >= {from:DateTime}
-  AND timestamp < {to:DateTime}`, false, nil
+	AND timestamp >= parseDateTimeBestEffort({from:String})
+	AND timestamp < parseDateTimeBestEffort({to:String})`, false, nil
 	}
 
 	adhocSQL, err := cryptooptions.QuerySpotAggregationSQL(interval)
@@ -176,8 +176,8 @@ func buildLegacyUnderlyingSeriesSQL(ctx context.Context, conn driver.Conn, inter
     ) AS low
 FROM %s
 WHERE base_asset = {base_asset:String}
-  AND timestamp >= {from:DateTime}
-  AND timestamp < {to:DateTime}
+	AND timestamp >= parseDateTimeBestEffort({from:String})
+	AND timestamp < parseDateTimeBestEffort({to:String})
   AND underlying_price_close > 0
 GROUP BY timestamp
 ORDER BY timestamp`, tableName), true, nil

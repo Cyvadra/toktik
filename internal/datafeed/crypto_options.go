@@ -90,8 +90,8 @@ ORDER BY b.timestamp`, barSourceSQL, spotSourceSQL)
 	rows, err := f.conn.Query(ctx, query,
 		clickhouse.Named("symbol_id", symbolID),
 		clickhouse.Named("symbol", baseAsset),
-		clickhouse.Named("from", req.From),
-		clickhouse.Named("to", req.To),
+		clickhouse.Named("from", cryptooptions.ClickHouseTimeParam(req.From)),
+		clickhouse.Named("to", cryptooptions.ClickHouseTimeParam(req.To)),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("query bars for %s/%s: %w", req.Symbol, interval, err)

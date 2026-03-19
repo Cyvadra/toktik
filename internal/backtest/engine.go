@@ -24,20 +24,27 @@ type Config struct {
 type Engine struct {
 	config        Config
 	feeds         map[string]DataFeed // market → DataFeed
+	factorFeeds   map[string]FactorFeed
 	chainProvider OptionsChainProvider
 }
 
 // NewEngine creates a backtest engine with the given configuration.
 func NewEngine(cfg Config) *Engine {
 	return &Engine{
-		config: cfg,
-		feeds:  make(map[string]DataFeed),
+		config:      cfg,
+		feeds:       make(map[string]DataFeed),
+		factorFeeds: make(map[string]FactorFeed),
 	}
 }
 
 // RegisterDataFeed associates a DataFeed with a market name.
 func (e *Engine) RegisterDataFeed(market string, feed DataFeed) {
 	e.feeds[market] = feed
+}
+
+// RegisterFactorFeed associates an external factor feed with a factor name.
+func (e *Engine) RegisterFactorFeed(name string, feed FactorFeed) {
+	e.factorFeeds[name] = feed
 }
 
 // SetOptionsChainProvider sets the provider that supplies option chain data
@@ -51,11 +58,14 @@ func (e *Engine) SetOptionsChainProvider(p OptionsChainProvider) {
 // multiple strategy runs. Created by Engine.Prepare, consumed by Engine.replay
 // and Engine.RunBatch.
 type PreparedData struct {
-	PrimaryDS   *DataSet
-	SecDataSets []*DataSet
-	AlignMaps   [][]int
-	Securities  []securityRegistration
-	PrimaryRef  SecurityRef
+	PrimaryDS       *DataSet
+	SecDataSets     []*DataSet
+	AlignMaps       [][]int
+	Securities      []securityRegistration
+	FactorDataSets  []*DataSet
+	FactorAlignMaps [][]int
+	Factors         []factorRegistration
+	PrimaryRef      SecurityRef
 }
 
 // Prepare loads data and computes base indicators for a strategy, returning a
@@ -135,6 +145,52 @@ func (e *Engine) Prepare(ctx context.Context, market, symbol, interval string, f
 		alignMaps[i] = alignSeries(primaryDS, secDataSets[i])
 	}
 
+	// Load external factor datasets in parallel
+	type factorResult struct {
+		index int
+		ds    *DataSet
+		err   error
+	}
+
+	factorDataSets := make([]*DataSet, len(setupCtx.factors))
+	factorAlignMaps := make([][]int, len(setupCtx.factors))
+
+	if len(setupCtx.factors) > 0 {
+		results := make(chan factorResult, len(setupCtx.factors))
+		var wg sync.WaitGroup
+
+		for i := range setupCtx.factors {
+			factor := setupCtx.factors[i]
+			feed, ok := e.factorFeeds[factor.ref.Name]
+			if !ok {
+				return nil, fmt.Errorf("no FactorFeed registered for factor %q", factor.ref.Name)
+			}
+
+			wg.Add(1)
+			go func(idx int, f FactorFeed, r FactorRef) {
+				defer wg.Done()
+				ds, err := f.Load(ctx, FactorRequest{
+					Name: r.Name, Interval: r.Interval, From: from, To: to,
+				})
+				results <- factorResult{index: idx, ds: ds, err: err}
+			}(i, feed, factor.ref)
+		}
+
+		go func() { wg.Wait(); close(results) }()
+
+		for r := range results {
+			if r.err != nil {
+				factor := setupCtx.factors[r.index]
+				return nil, fmt.Errorf("load factor %s/%s: %w", factor.ref.Name, factor.ref.Interval, r.err)
+			}
+			factorDataSets[r.index] = r.ds
+		}
+
+		for i := range factorDataSets {
+			factorAlignMaps[i] = alignSeries(primaryDS, factorDataSets[i])
+		}
+	}
+
 	// Compute indicators
 	for i, sec := range setupCtx.securities {
 		ds := secDataSets[i]
@@ -145,19 +201,40 @@ func (e *Engine) Prepare(ctx context.Context, market, symbol, interval string, f
 		}
 	}
 
+	for i, factor := range setupCtx.factors {
+		ds := factorDataSets[i]
+		if len(factor.inds) > 0 {
+			if err := resolveIndicators(factor.inds, ds.Columns); err != nil {
+				return nil, fmt.Errorf("indicators for factor[%d] %s: %w", i, factor.ref.Name, err)
+			}
+		}
+	}
+
 	if preloader, ok := strategy.(StrategyPreloader); ok {
-		preloadCtx := newPreloadContext(setupCtx.primaryRef, setupCtx.securities, secDataSets, alignMaps, setupCtx.params)
+		preloadCtx := newPreloadContext(
+			setupCtx.primaryRef,
+			setupCtx.securities,
+			secDataSets,
+			alignMaps,
+			setupCtx.factors,
+			factorDataSets,
+			factorAlignMaps,
+			setupCtx.params,
+		)
 		if err := preloader.Preload(preloadCtx); err != nil {
 			return nil, fmt.Errorf("strategy preload: %w", err)
 		}
 	}
 
 	return &PreparedData{
-		PrimaryDS:   primaryDS,
-		SecDataSets: secDataSets,
-		AlignMaps:   alignMaps,
-		Securities:  setupCtx.securities,
-		PrimaryRef:  setupCtx.primaryRef,
+		PrimaryDS:       primaryDS,
+		SecDataSets:     secDataSets,
+		AlignMaps:       alignMaps,
+		Securities:      setupCtx.securities,
+		FactorDataSets:  factorDataSets,
+		FactorAlignMaps: factorAlignMaps,
+		Factors:         setupCtx.factors,
+		PrimaryRef:      setupCtx.primaryRef,
 	}, nil
 }
 
@@ -184,6 +261,16 @@ func (e *Engine) replay(prepared *PreparedData, strategy Strategy, params map[st
 		secColumns[i] = cols
 	}
 
+	factorColumns := make([]map[string][]float64, len(prepared.Factors))
+	for i := range prepared.Factors {
+		ds := prepared.FactorDataSets[i]
+		cols := make(map[string][]float64, len(ds.Columns))
+		for name, data := range ds.Columns {
+			cols[name] = data
+		}
+		factorColumns[i] = cols
+	}
+
 	// Bar replay
 	broker := NewBroker(e.config)
 
@@ -192,6 +279,14 @@ func (e *Engine) replay(prepared *PreparedData, strategy Strategy, params map[st
 		accessors[i] = &SecurityAccessor{
 			data:     secColumns[i],
 			alignMap: prepared.AlignMaps[i],
+		}
+	}
+
+	factorAccessors := make([]*SecurityAccessor, len(prepared.Factors))
+	for i := range prepared.Factors {
+		factorAccessors[i] = &SecurityAccessor{
+			data:     factorColumns[i],
+			alignMap: prepared.FactorAlignMaps[i],
 		}
 	}
 
@@ -241,6 +336,7 @@ func (e *Engine) replay(prepared *PreparedData, strategy Strategy, params map[st
 	barCtx := &BarContext{
 		primary:          secColumns[0],
 		securities:       accessors,
+		factors:          factorAccessors,
 		broker:           broker,
 		params:           setupCtx.params,
 		primaryRef:       prepared.PrimaryRef,
@@ -254,6 +350,12 @@ func (e *Engine) replay(prepared *PreparedData, strategy Strategy, params map[st
 		secRefList[i] = sec.ref
 	}
 	barCtx.secRefs = secRefList
+
+	factorRefList := make([]FactorRef, len(prepared.Factors))
+	for i, factor := range prepared.Factors {
+		factorRefList[i] = factor.ref
+	}
+	barCtx.factorRefs = factorRefList
 
 	currentSpreadContract := func(contract OptionContract, contractMap map[string]OptionContract) OptionContract {
 		if updated, ok := contractMap[contract.Symbol]; ok {

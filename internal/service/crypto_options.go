@@ -85,8 +85,8 @@ LIMIT %d`, barSourceSQL, spotSourceSQL, limit+1)
 	rows, err := s.conn.Query(ctx, query,
 		clickhouse.Named("symbol_id", symbolID),
 		clickhouse.Named("symbol", baseAsset),
-		clickhouse.Named("from", fromT),
-		clickhouse.Named("to", toT),
+		clickhouse.Named("from", cryptooptions.ClickHouseTimeParam(fromT)),
+		clickhouse.Named("to", cryptooptions.ClickHouseTimeParam(toT)),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("query bars: %w", err)
@@ -233,8 +233,8 @@ LIMIT %d`, barSourceSQL, spotSourceSQL, limit+1)
 	rows, err := s.conn.Query(ctx, query,
 		clickhouse.Named("symbol_id", symbolID),
 		clickhouse.Named("symbol", baseAsset),
-		clickhouse.Named("from", fromT),
-		clickhouse.Named("to", toT),
+		clickhouse.Named("from", cryptooptions.ClickHouseTimeParam(fromT)),
+		clickhouse.Named("to", cryptooptions.ClickHouseTimeParam(toT)),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("query greeks: %w", err)

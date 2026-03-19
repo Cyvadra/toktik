@@ -2,6 +2,7 @@ package backtest
 
 import (
 	"context"
+	"math"
 	"testing"
 	"time"
 )
@@ -149,5 +150,90 @@ func TestRunBatchConsistency(t *testing.T) {
 	if batchResults[0].Result.TotalTrades != directResult.TotalTrades {
 		t.Errorf("TotalTrades mismatch: batch=%d direct=%d",
 			batchResults[0].Result.TotalTrades, directResult.TotalTrades)
+	}
+}
+
+type stubFactorFeed struct{}
+
+func (f *stubFactorFeed) Fields() []string { return []string{"activity"} }
+
+func (f *stubFactorFeed) Load(_ context.Context, req FactorRequest) (*DataSet, error) {
+	nBars := 10
+	ds := NewDataSet(nBars)
+	ts := make([]time.Time, nBars)
+	activity := make([]float64, nBars)
+
+	base := req.From
+	for i := 0; i < nBars; i++ {
+		ts[i] = base.Add(time.Duration(i) * 24 * time.Hour)
+		if i%2 == 0 {
+			activity[i] = 100
+		} else {
+			activity[i] = 200
+		}
+	}
+
+	ds.SetTimestamps(ts)
+	ds.AddColumn("activity", activity)
+	return ds, nil
+}
+
+type factorDrivenStrategy struct {
+	factorRef FactorRef
+	seen23    float64
+	seen24    float64
+}
+
+func (s *factorDrivenStrategy) Name() string { return "factor-driven" }
+
+func (s *factorDrivenStrategy) Init(ctx *SetupContext) error {
+	s.factorRef = ctx.AddFactor("market_activity", "1d")
+	ctx.RegisterFactor(s.factorRef, "activity_sma2", SMA("activity", 2))
+	return nil
+}
+
+func (s *factorDrivenStrategy) OnBar(ctx *BarContext) {
+	activity := ctx.Factor(s.factorRef).Field("activity")
+	if ctx.BarIndex() == 23 {
+		s.seen23 = activity
+	}
+	if ctx.BarIndex() == 24 {
+		s.seen24 = activity
+	}
+
+	primary := ctx.PrimaryRef()
+	if activity > 150 && ctx.Position(primary) == 0 {
+		ctx.Buy(primary, 1)
+	}
+	if activity <= 150 && ctx.Position(primary) > 0 {
+		ctx.Sell(primary, 1)
+	}
+}
+
+func TestRunWithExternalFactorFeed(t *testing.T) {
+	engine := NewEngine(Config{InitialCapital: 10000})
+	engine.RegisterDataFeed("test", &stubDataFeed{
+		fields: []string{"open", "high", "low", "close", "volume"},
+	})
+	engine.RegisterFactorFeed("market_activity", &stubFactorFeed{})
+
+	strategy := &factorDrivenStrategy{seen23: math.NaN(), seen24: math.NaN()}
+	from := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2024, 1, 10, 0, 0, 0, 0, time.UTC)
+
+	result, err := engine.Run(context.Background(), "test", "TEST", "1h", from, to, strategy, nil)
+	if err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+
+	if result.TotalTrades == 0 {
+		t.Fatalf("expected trades driven by external factor, got 0")
+	}
+
+	if strategy.seen23 != 100 {
+		t.Fatalf("unexpected aligned factor value at bar 23: got %v want 100", strategy.seen23)
+	}
+	if strategy.seen24 != 200 {
+		t.Fatalf("unexpected aligned factor value at bar 24: got %v want 200", strategy.seen24)
 	}
 }

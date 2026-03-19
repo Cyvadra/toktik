@@ -12,7 +12,9 @@ import (
 type PreloadContext struct {
 	primaryRef SecurityRef
 	securities []SecurityRef
+	factors    []FactorRef
 	byRef      map[SecurityRef]*PreloadSecurity
+	byFactor   map[FactorRef]*PreloadSecurity
 	params     map[string]interface{}
 }
 
@@ -23,14 +25,38 @@ type PreloadSecurity struct {
 	alignMap []int
 }
 
-func newPreloadContext(primaryRef SecurityRef, regs []securityRegistration, sets []*DataSet, alignMaps [][]int, params map[string]interface{}) *PreloadContext {
+func newPreloadContext(
+	primaryRef SecurityRef,
+	regs []securityRegistration,
+	sets []*DataSet,
+	alignMaps [][]int,
+	factorRegs []factorRegistration,
+	factorSets []*DataSet,
+	factorAlignMaps [][]int,
+	params map[string]interface{},
+) *PreloadContext {
 	refs := make([]SecurityRef, len(regs))
 	byRef := make(map[SecurityRef]*PreloadSecurity, len(regs))
 	for i, reg := range regs {
 		refs[i] = reg.ref
 		byRef[reg.ref] = &PreloadSecurity{ref: reg.ref, ds: sets[i], alignMap: alignMaps[i]}
 	}
-	return &PreloadContext{primaryRef: primaryRef, securities: refs, byRef: byRef, params: params}
+
+	factorRefs := make([]FactorRef, len(factorRegs))
+	byFactor := make(map[FactorRef]*PreloadSecurity, len(factorRegs))
+	for i, reg := range factorRegs {
+		factorRefs[i] = reg.ref
+		byFactor[reg.ref] = &PreloadSecurity{ds: factorSets[i], alignMap: factorAlignMaps[i]}
+	}
+
+	return &PreloadContext{
+		primaryRef: primaryRef,
+		securities: refs,
+		factors:    factorRefs,
+		byRef:      byRef,
+		byFactor:   byFactor,
+		params:     params,
+	}
 }
 
 // PrimaryRef returns the primary security reference.
@@ -51,6 +77,18 @@ func (pc *PreloadContext) Primary() *PreloadSecurity {
 // Security returns preload access for a specific security, or nil if missing.
 func (pc *PreloadContext) Security(ref SecurityRef) *PreloadSecurity {
 	return pc.byRef[ref]
+}
+
+// FactorRefs returns all registered external factor references in stable order.
+func (pc *PreloadContext) FactorRefs() []FactorRef {
+	out := make([]FactorRef, len(pc.factors))
+	copy(out, pc.factors)
+	return out
+}
+
+// Factor returns preload access for a specific external factor, or nil if missing.
+func (pc *PreloadContext) Factor(ref FactorRef) *PreloadSecurity {
+	return pc.byFactor[ref]
 }
 
 // Param returns a named parameter value.
@@ -83,11 +121,41 @@ func (pc *PreloadContext) ColumnAlignedToPrimary(ref SecurityRef, column string)
 		return out, nil
 	}
 
-	out := make([]float64, primary.ds.Len)
-	for i := 0; i < primary.ds.Len; i++ {
+	return alignColumn(col, sec.alignMap, primary.ds.Len), nil
+}
+
+// ColumnAlignedFactorToPrimary returns an external factor column aligned onto primary timestamps.
+func (pc *PreloadContext) ColumnAlignedFactorToPrimary(ref FactorRef, column string) ([]float64, error) {
+	primary := pc.byRef[pc.primaryRef]
+	if primary == nil || primary.ds == nil {
+		return nil, fmt.Errorf("primary dataset unavailable")
+	}
+
+	factor := pc.byFactor[ref]
+	if factor == nil {
+		return nil, fmt.Errorf("factor %s/%s not registered", ref.Name, ref.Interval)
+	}
+
+	col, err := factor.RequireColumn(column)
+	if err != nil {
+		return nil, err
+	}
+
+	if factor.alignMap == nil {
+		out := make([]float64, len(col))
+		copy(out, col)
+		return out, nil
+	}
+
+	return alignColumn(col, factor.alignMap, primary.ds.Len), nil
+}
+
+func alignColumn(col []float64, alignMap []int, outLen int) []float64 {
+	out := make([]float64, outLen)
+	for i := 0; i < outLen; i++ {
 		mapped := -1
-		if i < len(sec.alignMap) {
-			mapped = sec.alignMap[i]
+		if i < len(alignMap) {
+			mapped = alignMap[i]
 		}
 		if mapped < 0 || mapped >= len(col) {
 			out[i] = math.NaN()
@@ -95,7 +163,7 @@ func (pc *PreloadContext) ColumnAlignedToPrimary(ref SecurityRef, column string)
 		}
 		out[i] = col[mapped]
 	}
-	return out, nil
+	return out
 }
 
 // Ref returns the security reference.

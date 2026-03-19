@@ -3,6 +3,7 @@ package cryptooptions
 import (
 	"math"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -58,6 +59,10 @@ func minf32NonZero(current, new float32) float32 {
 
 func shouldReplaceClose(lastTimestamp, tickTimestamp time.Time) bool {
 	return lastTimestamp.IsZero() || !tickTimestamp.Before(lastTimestamp)
+}
+
+func isCanonicalUnderlyingIndex(value string) bool {
+	return strings.EqualFold(strings.TrimSpace(value), "index_price")
 }
 
 func (a *Aggregator) Add(tick TickRow) {
@@ -152,6 +157,10 @@ func (a *Aggregator) Add(tick TickRow) {
 	}
 
 	acc.bar.TickCount++
+
+	if tick.UnderlyingPrice <= 0 || !isCanonicalUnderlyingIndex(tick.UnderlyingIndex) {
+		return
+	}
 
 	spotKey := aggregatorKey{
 		Symbol:   acc.bar.BaseAsset,

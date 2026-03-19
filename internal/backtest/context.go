@@ -24,8 +24,10 @@ type securityRegistration struct {
 type SetupContext struct {
 	primaryRef SecurityRef
 	securities []securityRegistration
+	factors    []factorRegistration
 	params     map[string]interface{}
 	nextSecIdx int
+	nextFacIdx int
 }
 
 // NewSetupContext creates a setup context with the given primary security.
@@ -36,8 +38,10 @@ func NewSetupContext(market, symbol, interval string) *SetupContext {
 		securities: []securityRegistration{
 			{ref: primary, inds: make(map[string]Indicator)},
 		},
+		factors:    make([]factorRegistration, 0),
 		params:     make(map[string]interface{}),
 		nextSecIdx: 1,
+		nextFacIdx: 0,
 	}
 }
 
@@ -63,6 +67,27 @@ func (sc *SetupContext) RegisterOn(ref SecurityRef, name string, ind Indicator) 
 	for i := range sc.securities {
 		if sc.securities[i].ref == ref {
 			sc.securities[i].inds[name] = ind
+			return
+		}
+	}
+}
+
+// AddFactor requests an external factor series, independent of market symbol/asset.
+func (sc *SetupContext) AddFactor(name, interval string) FactorRef {
+	ref := FactorRef{Name: name, Interval: interval, Index: sc.nextFacIdx}
+	sc.nextFacIdx++
+	sc.factors = append(sc.factors, factorRegistration{
+		ref:  ref,
+		inds: make(map[string]Indicator),
+	})
+	return ref
+}
+
+// RegisterFactor adds an indicator on a specific external factor series.
+func (sc *SetupContext) RegisterFactor(ref FactorRef, name string, ind Indicator) {
+	for i := range sc.factors {
+		if sc.factors[i].ref == ref {
+			sc.factors[i].inds[name] = ind
 			return
 		}
 	}
@@ -142,10 +167,12 @@ type BarContext struct {
 	barTime    time.Time
 	primary    map[string][]float64 // primary columns + indicators
 	securities []*SecurityAccessor  // index 0 = primary, 1+ = additional
+	factors    []*SecurityAccessor  // external factors, independent of security universe
 	broker     *Broker
 	params     map[string]interface{}
 	primaryRef SecurityRef
 	secRefs    []SecurityRef
+	factorRefs []FactorRef
 
 	// Options trading extensions
 	chainProvider    OptionsChainProvider
@@ -209,6 +236,16 @@ func (bc *BarContext) fieldAt(name string, barsAgo int) float64 {
 func (bc *BarContext) Security(ref SecurityRef) *SecurityAccessor {
 	if ref.Index >= 0 && ref.Index < len(bc.securities) {
 		acc := bc.securities[ref.Index]
+		acc.barIndex = bc.barIndex
+		return acc
+	}
+	return &SecurityAccessor{data: nil, barIndex: bc.barIndex}
+}
+
+// Factor returns an accessor for reading data from an external factor series.
+func (bc *BarContext) Factor(ref FactorRef) *SecurityAccessor {
+	if ref.Index >= 0 && ref.Index < len(bc.factors) {
+		acc := bc.factors[ref.Index]
 		acc.barIndex = bc.barIndex
 		return acc
 	}
@@ -414,6 +451,13 @@ func (bc *BarContext) PrimaryRef() SecurityRef {
 func (bc *BarContext) SecurityRefs() []SecurityRef {
 	out := make([]SecurityRef, len(bc.secRefs))
 	copy(out, bc.secRefs)
+	return out
+}
+
+// FactorRefs returns all registered external factor references.
+func (bc *BarContext) FactorRefs() []FactorRef {
+	out := make([]FactorRef, len(bc.factorRefs))
+	copy(out, bc.factorRefs)
 	return out
 }
 

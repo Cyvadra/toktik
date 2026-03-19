@@ -31,6 +31,9 @@ func NewCryptoOptionsChainProvider(ctx context.Context, conn driver.Conn, baseAs
 		return nil, err
 	}
 
+	fromParam := backtestTimeParam(from)
+	toParam := backtestTimeParam(to)
+
 	optionTableName := resolveOptionTableName(interval)
 	underlyingCloseExpr := "toFloat32(0)"
 	joinClause := ""
@@ -56,10 +59,10 @@ func NewCryptoOptionsChainProvider(ctx context.Context, conn driver.Conn, baseAs
 	query := fmt.Sprintf(`SELECT
     b.timestamp,
     b.symbol_id,
-    m.symbol,
-    m.option_type,
-    m.strike_price,
-    m.expiration,
+		crypto_options_symbol_meta.symbol,
+		crypto_options_symbol_meta.option_type,
+		crypto_options_symbol_meta.strike_price,
+		crypto_options_symbol_meta.expiration,
     b.delta,
     b.gamma,
     b.vega,
@@ -76,12 +79,12 @@ func NewCryptoOptionsChainProvider(ctx context.Context, conn driver.Conn, baseAs
     b.tick_count,
     b.open_interest
 FROM %s AS b
-LEFT JOIN crypto_options_symbol_meta FINAL AS m
-    ON b.symbol_id = m.symbol_id
+LEFT JOIN crypto_options_symbol_meta FINAL
+		ON b.symbol_id = crypto_options_symbol_meta.symbol_id
 %s
 WHERE b.base_asset = {base_asset:String}
-  AND b.timestamp >= {from:DateTime}
-  AND b.timestamp < {to:DateTime}
+	AND b.timestamp >= parseDateTimeBestEffort({from:String})
+	AND b.timestamp < parseDateTimeBestEffort({to:String})
 ORDER BY b.timestamp`,
 		underlyingCloseExpr,
 		optionTableName,
@@ -91,8 +94,8 @@ ORDER BY b.timestamp`,
 	rows, err := conn.Query(ctx, query,
 		clickhouse.Named("base_asset", baseAsset),
 		clickhouse.Named("symbol", baseAsset),
-		clickhouse.Named("from", from),
-		clickhouse.Named("to", to),
+		clickhouse.Named("from", fromParam),
+		clickhouse.Named("to", toParam),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("load options chain for %s: %w", baseAsset, err)

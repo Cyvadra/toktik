@@ -57,8 +57,8 @@ func (f *CryptoUnderlyingDataFeed) Load(ctx context.Context, req backtest.DataRe
 	rows, err := f.conn.Query(ctx, query,
 		clickhouse.Named("symbol", baseAsset),
 		clickhouse.Named("base_asset", baseAsset),
-		clickhouse.Named("from", req.From),
-		clickhouse.Named("to", req.To),
+		clickhouse.Named("from", backtestTimeParam(req.From)),
+		clickhouse.Named("to", backtestTimeParam(req.To)),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("load underlying for %s: %w", baseAsset, err)
@@ -101,4 +101,8 @@ func (f *CryptoUnderlyingDataFeed) Load(ctx context.Context, req backtest.DataRe
 	ds.AddColumn("compat_fallback", fallbackMode)
 
 	return ds, nil
+}
+
+func backtestTimeParam(t time.Time) string {
+	return t.UTC().Format("2006-01-02 15:04:05")
 }
