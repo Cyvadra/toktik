@@ -15,25 +15,16 @@ import (
 )
 
 func main() {
-	roots := flag.String("roots", "AAPL,SPY", "Comma-separated root symbols")
-	allRoots := flag.Bool("all-roots", false, "Sync all option root symbols available from Theta Data")
+	roots := flag.String("roots", "AAPL,SPY", "Comma-separated root symbols (or * for all)")
 	startDate := flag.String("start-date", "2019-01-01", "Start date (YYYY-MM-DD)")
 	endDate := flag.String("end-date", "2026-02-28", "End date (YYYY-MM-DD)")
-	mcpURL := flag.String("mcp-url", "http://127.0.0.1:25503", "Theta Data MCP server URL")
+	baseURL := flag.String("base-url", "http://127.0.0.1:25503", "Theta Data terminal base URL")
 	chDSN := flag.String("clickhouse-dsn", "clickhouse://default:@localhost:9000/default", "ClickHouse DSN")
-	workers := flag.Int("workers", 4, "Concurrent download workers")
-	batchDays := flag.Int("batch-days", 5, "Trading days per OHLC/quote batch")
-	debug := flag.Bool("debug", true, "Enable verbose debug diagnostics")
-	debugSampleContracts := flag.Int("debug-sample-contracts", 8, "Max sample contracts per batch in debug logs")
+	workers := flag.Int("workers", 4, "Concurrent workers")
+	rateLimit := flag.Float64("rate-limit", 10.0, "Max total requests/sec")
 	progressDir := flag.String("progress-dir", ".thetadata-progress", "Progress tracking directory")
-	minVolume := flag.Int("min-volume", 1, "Min daily volume for 1m download")
-	rateLimit := flag.Float64("rate-limit", 5.0, "Max requests/sec per worker")
 	schemaFile := flag.String("schema", "", "ClickHouse DDL SQL file path")
-	prefilterRoots := flag.Bool("prefilter-roots", false, "Score and keep only active roots before full sync")
-	rootMinExpirations := flag.Int("root-min-expirations", 4, "Minimum expiration count for a root to survive prefilter")
-	rootRecentLookbackDays := flag.Int("root-recent-lookback-days", 180, "Lookback window in days for root activity scoring")
-	rootSampleExpirations := flag.Int("root-sample-expirations", 3, "Number of recent expirations sampled per root for strike-density scoring")
-	rootTopN := flag.Int("root-top-n", 0, "Keep only the top N scored roots after prefilter (0 = keep all passing roots)")
+	debug := flag.Bool("debug", false, "Enable verbose logging")
 	flag.Parse()
 
 	sd, err := time.Parse("2006-01-02", *startDate)
@@ -47,6 +38,7 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Auto-detect schema file.
 	if *schemaFile == "" {
 		for _, c := range []string{
 			"schema/clickhouse/equity_options.sql",
@@ -60,18 +52,16 @@ func main() {
 		}
 	}
 
+	client := thetadata.NewClient(*baseURL)
+
+	// Resolve root list.
 	rootList := parseRoots(*roots)
-	if *allRoots || wantsAllRoots(rootList) {
-		discoveryCtx := context.Background()
-		mcp := thetadata.NewMCPClient(*mcpURL)
-		if err := mcp.Connect(discoveryCtx); err != nil {
-			log.Fatalf("Connect to Theta Data MCP: %v", err)
-		}
-		client := thetadata.NewClient(mcp, 0)
-		rootList, err = client.ListRoots(discoveryCtx)
-		mcp.Close()
-		if err != nil {
-			log.Fatalf("List all option roots: %v", err)
+	if len(rootList) == 1 && (rootList[0] == "*" || strings.EqualFold(rootList[0], "all")) {
+		ctx := context.Background()
+		var discoverErr error
+		rootList, discoverErr = client.ListSymbols(ctx)
+		if discoverErr != nil {
+			log.Fatalf("Discover all roots: %v", discoverErr)
 		}
 		log.Printf("Discovered %d option roots from Theta Data", len(rootList))
 	}
@@ -81,60 +71,24 @@ func main() {
 	}
 
 	cfg := thetadata.SyncConfig{
-		Roots:                  rootList,
-		StartDate:              sd,
-		EndDate:                ed,
-		MCPURL:                 *mcpURL,
-		CHDSN:                  *chDSN,
-		Workers:                *workers,
-		BatchDays:              *batchDays,
-		Debug:                  *debug,
-		DebugSampleContracts:   *debugSampleContracts,
-		ProgressDir:            *progressDir,
-		MinVolume:              *minVolume,
-		RateLimit:              *rateLimit,
-		SchemaFile:             *schemaFile,
-		PrefilterRoots:         *prefilterRoots,
-		RootMinExpirations:     *rootMinExpirations,
-		RootRecentLookbackDays: *rootRecentLookbackDays,
-		RootSampleExpirations:  *rootSampleExpirations,
-		RootTopN:               *rootTopN,
+		Roots:       rootList,
+		StartDate:   sd,
+		EndDate:     ed,
+		BaseURL:     *baseURL,
+		CHDSN:       *chDSN,
+		Workers:     *workers,
+		RateLimit:   *rateLimit,
+		ProgressDir: *progressDir,
+		SchemaFile:  *schemaFile,
+		Debug:       *debug,
 	}
 
-	if cfg.PrefilterRoots {
-		selectedRoots, activities, err := thetadata.SelectActiveRoots(context.Background(), cfg)
-		if err != nil {
-			log.Fatalf("Prefilter roots: %v", err)
-		}
-		cfg.Roots = selectedRoots
-		log.Printf("Root prefilter kept %d/%d roots", len(cfg.Roots), len(rootList))
-		if len(activities) > 0 {
-			limit := len(activities)
-			if limit > 10 {
-				limit = 10
-			}
-			for i := 0; i < limit; i++ {
-				activity := activities[i]
-				log.Printf("  root[%d] %s score=%d total_exp=%d recent_exp=%d sampled_strikes=%d",
-					i+1, activity.Root, activity.Score, activity.TotalExpirations,
-					activity.RecentExpirations, activity.SampledStrikes)
-			}
-		}
-	}
-
-	if len(cfg.Roots) == 0 {
-		log.Fatalf("No roots remain after filtering")
-	}
-
-	log.Printf("Theta Data Sync")
+	log.Printf("Theta Data Sync v2")
 	log.Printf("  Roots:      %v", cfg.Roots)
-	log.Printf("  Date range: %s to %s",
-		cfg.StartDate.Format("2006-01-02"), cfg.EndDate.Format("2006-01-02"))
-	log.Printf("  MCP URL:    %s", cfg.MCPURL)
+	log.Printf("  Date range: %s to %s", cfg.StartDate.Format("2006-01-02"), cfg.EndDate.Format("2006-01-02"))
+	log.Printf("  Base URL:   %s", cfg.BaseURL)
 	log.Printf("  Workers:    %d", cfg.Workers)
-	log.Printf("  Batch days: %d", cfg.BatchDays)
-	log.Printf("  Debug:      %t (samples=%d)", cfg.Debug, cfg.DebugSampleContracts)
-	log.Printf("  Rate limit: %.1f req/s/worker", cfg.RateLimit)
+	log.Printf("  Rate limit: %.1f req/s", cfg.RateLimit)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -167,7 +121,7 @@ func main() {
 	}
 	log.Printf("Progress: %d dates completed", progress.CompletedCount())
 
-	pipeline := thetadata.NewPipeline(cfg, store, progress)
+	pipeline := thetadata.NewPipeline(cfg, client, store, progress)
 	if err := pipeline.Run(ctx); err != nil {
 		if ctx.Err() != nil {
 			log.Printf("Interrupted. Progress saved. Re-run to resume.")
@@ -176,7 +130,7 @@ func main() {
 		log.Fatalf("Pipeline: %v", err)
 	}
 
-	log.Printf("Done! Total: %d dates", progress.CompletedCount())
+	log.Printf("Done! Total: %d dates completed", progress.CompletedCount())
 }
 
 func parseRoots(input string) []string {
@@ -195,12 +149,4 @@ func parseRoots(input string) []string {
 		result = append(result, root)
 	}
 	return result
-}
-
-func wantsAllRoots(roots []string) bool {
-	if len(roots) != 1 {
-		return false
-	}
-	value := strings.ToLower(strings.TrimSpace(roots[0]))
-	return value == "*" || value == "all"
 }

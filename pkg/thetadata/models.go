@@ -1,120 +1,126 @@
 package thetadata
 
-import (
-	"fmt"
-	"hash/crc32"
-	"time"
-)
+import "time"
 
+// SyncConfig holds all configuration for the sync pipeline.
+type SyncConfig struct {
+	Roots       []string
+	StartDate   time.Time
+	EndDate     time.Time
+	BaseURL     string
+	CHDSN       string
+	Workers     int
+	RateLimit   float64
+	ProgressDir string
+	SchemaFile  string
+	Intraday    bool
+	Debug       bool
+}
+
+// Contract identifies an option contract.
 type Contract struct {
-	Root       string
-	Expiration time.Time
-	Strike     float64
-	Right      string
+	Symbol     string  `json:"symbol"`
+	Expiration string  `json:"expiration"` // YYYY-MM-DD
+	Strike     float64 `json:"strike"`
+	Right      string  `json:"right"` // "call" or "put"
 }
 
-func (c Contract) Symbol() string {
-	return fmt.Sprintf("%s-%s-%.2f-%s",
-		c.Root, c.Expiration.Format("20060102"), c.Strike, c.Right)
+// EODRow represents a single row from the /option/history/eod endpoint.
+type EODRow struct {
+	Symbol     string  `json:"symbol"`
+	Expiration string  `json:"expiration"`
+	Strike     float64 `json:"strike"`
+	Right      string  `json:"right"`
+	Created    string  `json:"created"`
+	LastTrade  string  `json:"last_trade"`
+	Open       float64 `json:"open"`
+	High       float64 `json:"high"`
+	Low        float64 `json:"low"`
+	Close      float64 `json:"close"`
+	Volume     int     `json:"volume"`
+	Count      int     `json:"count"`
+	BidSize    int     `json:"bid_size"`
+	Bid        float64 `json:"bid"`
+	AskSize    int     `json:"ask_size"`
+	Ask        float64 `json:"ask"`
 }
 
-func (c Contract) SymbolID() uint32 {
-	return crc32.ChecksumIEEE([]byte(c.Symbol()))
+// GreeksEODRow represents a single row from /option/history/greeks/eod.
+type GreeksEODRow struct {
+	Symbol          string  `json:"symbol"`
+	Expiration      string  `json:"expiration"`
+	Strike          float64 `json:"strike"`
+	Right           string  `json:"right"`
+	Timestamp       string  `json:"timestamp"`
+	Open            float64 `json:"open"`
+	High            float64 `json:"high"`
+	Low             float64 `json:"low"`
+	Close           float64 `json:"close"`
+	Volume          int     `json:"volume"`
+	Count           int     `json:"count"`
+	Bid             float64 `json:"bid"`
+	Ask             float64 `json:"ask"`
+	Delta           float64 `json:"delta"`
+	Theta           float64 `json:"theta"`
+	Vega            float64 `json:"vega"`
+	Rho             float64 `json:"rho"`
+	Gamma           float64 `json:"gamma"`
+	ImpliedVol      float64 `json:"implied_vol"`
+	UnderlyingPrice float64 `json:"underlying_price"`
 }
 
-type QuoteBar struct {
-	Timestamp time.Time
-	Bid       float64
-	BidSize   int
-	Ask       float64
-	AskSize   int
+// OpenInterestRow from /option/history/open_interest.
+type OpenInterestRow struct {
+	Symbol     string  `json:"symbol"`
+	Expiration string  `json:"expiration"`
+	Strike     float64 `json:"strike"`
+	Right      string  `json:"right"`
+	Timestamp  string  `json:"timestamp"`
+	OI         int     `json:"open_interest"`
 }
 
-type OHLCBar struct {
-	Timestamp time.Time
-	Open      float64
-	High      float64
-	Low       float64
-	Close     float64
-	Volume    int
-	Count     int
+// QuoteRow from /option/history/quote.
+type QuoteRow struct {
+	Symbol     string  `json:"symbol"`
+	Expiration string  `json:"expiration"`
+	Strike     float64 `json:"strike"`
+	Right      string  `json:"right"`
+	Timestamp  string  `json:"timestamp"`
+	BidSize    int     `json:"bid_size"`
+	Bid        float64 `json:"bid"`
+	AskSize    int     `json:"ask_size"`
+	Ask        float64 `json:"ask"`
 }
 
-type GreeksEOD struct {
-	Date            time.Time
-	UnderlyingPrice float64
-	ImpliedVol      float64
-	Delta           float64
-	Gamma           float64
-	Vega            float64
-	Theta           float64
-	Rho             float64
-	Close           float64
-	Bid             float64
-	Ask             float64
-	Volume          int
-	OpenInterest    int
+// OHLCRow from /option/history/ohlc.
+type OHLCRow struct {
+	Symbol     string  `json:"symbol"`
+	Expiration string  `json:"expiration"`
+	Strike     float64 `json:"strike"`
+	Right      string  `json:"right"`
+	Timestamp  string  `json:"timestamp"`
+	Open       float64 `json:"open"`
+	High       float64 `json:"high"`
+	Low        float64 `json:"low"`
+	Close      float64 `json:"close"`
+	Volume     int     `json:"volume"`
+	Count      int     `json:"count"`
 }
 
-type OpenInterestData struct {
-	Date         time.Time
-	OpenInterest float64
+// SyncState persists the status of a (root, date) processing unit.
+type SyncState struct {
+	Root        string `json:"root"`
+	Date        string `json:"date"`
+	Status      string `json:"status"` // "started", "completed", "failed"
+	Attempt     int    `json:"attempt"`
+	Bars        int    `json:"bars"`
+	Error       string `json:"error,omitempty"`
+	StartedAt   string `json:"started_at,omitempty"`
+	CompletedAt string `json:"completed_at,omitempty"`
 }
 
-type GreeksResult struct {
-	IV    float64
-	Delta float64
-	Gamma float64
-	Vega  float64
-	Theta float64
-	Rho   float64
-}
-
-type ForwardInfo struct {
-	Forward        float64
-	DiscountFactor float64
-	Rate           float64
-}
-
+// DateTask is a unit of work for the pipeline worker pool.
 type DateTask struct {
 	Root string
 	Date time.Time
-}
-
-type DateSyncStats struct {
-	ExpectedContracts   int
-	DownloadedContracts int
-	ExpectedBars        int
-	StoredBars          int
-	ExpectedSpotBars    int
-	StoredSpotBars      int
-}
-
-type RootActivity struct {
-	Root              string
-	TotalExpirations  int
-	RecentExpirations int
-	SampledStrikes    int
-	Score             int
-}
-
-type SyncConfig struct {
-	Roots                  []string
-	StartDate              time.Time
-	EndDate                time.Time
-	MCPURL                 string
-	CHDSN                  string
-	Workers                int
-	BatchDays              int
-	Debug                  bool
-	DebugSampleContracts   int
-	ProgressDir            string
-	MinVolume              int
-	RateLimit              float64
-	SchemaFile             string
-	PrefilterRoots         bool
-	RootMinExpirations     int
-	RootRecentLookbackDays int
-	RootSampleExpirations  int
-	RootTopN               int
 }
