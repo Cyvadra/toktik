@@ -105,6 +105,7 @@ type SyncConfig struct {
 	MCPURL                 string
 	CHDSN                  string
 	Workers                int
+	BatchDays              int
 	ProgressDir            string
 	MinVolume              int
 	RateLimit              float64

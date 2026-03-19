@@ -22,6 +22,7 @@ func main() {
 	mcpURL := flag.String("mcp-url", "http://127.0.0.1:25503", "Theta Data MCP server URL")
 	chDSN := flag.String("clickhouse-dsn", "clickhouse://default:@localhost:9000/default", "ClickHouse DSN")
 	workers := flag.Int("workers", 4, "Concurrent download workers")
+	batchDays := flag.Int("batch-days", 5, "Trading days per OHLC/quote batch")
 	progressDir := flag.String("progress-dir", ".thetadata-progress", "Progress tracking directory")
 	minVolume := flag.Int("min-volume", 1, "Min daily volume for 1m download")
 	rateLimit := flag.Float64("rate-limit", 5.0, "Max requests/sec per worker")
@@ -84,6 +85,7 @@ func main() {
 		MCPURL:                 *mcpURL,
 		CHDSN:                  *chDSN,
 		Workers:                *workers,
+		BatchDays:              *batchDays,
 		ProgressDir:            *progressDir,
 		MinVolume:              *minVolume,
 		RateLimit:              *rateLimit,
@@ -126,6 +128,7 @@ func main() {
 		cfg.StartDate.Format("2006-01-02"), cfg.EndDate.Format("2006-01-02"))
 	log.Printf("  MCP URL:    %s", cfg.MCPURL)
 	log.Printf("  Workers:    %d", cfg.Workers)
+	log.Printf("  Batch days: %d", cfg.BatchDays)
 	log.Printf("  Rate limit: %.1f req/s/worker", cfg.RateLimit)
 
 	ctx, cancel := context.WithCancel(context.Background())

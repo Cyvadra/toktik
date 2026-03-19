@@ -227,7 +227,7 @@ func (p *Pipeline) syncRoot(ctx context.Context, root string) error {
 	log.Printf("[%s] Total contracts: %d", root, len(allContracts))
 
 	underlyingFallback := p.buildUnderlyingFallback(ctx, metaClient, root)
-	weeks := buildWeekdayBatches(p.cfg.StartDate, p.cfg.EndDate, 5)
+	weeks := buildWeekdayBatches(p.cfg.StartDate, p.cfg.EndDate, p.cfg.BatchDays)
 	totalDates := countWeekBatchDates(weeks)
 	log.Printf("[%s] Phase 2/3: OHLC-first weekly discovery across %d trading days in %d batches",
 		root, totalDates, len(weeks))
