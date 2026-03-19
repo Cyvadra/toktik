@@ -237,6 +237,50 @@ func (b *Broker) Positions() *PositionTracker {
 	return b.positions
 }
 
+// InitialCapital returns the broker's configured initial capital.
+func (b *Broker) InitialCapital() float64 {
+	return b.config.InitialCapital
+}
+
+// PositionUnrealizedPnL returns unrealized PnL for a single security position.
+func (b *Broker) PositionUnrealizedPnL(ref SecurityRef) float64 {
+	pos := b.positions.Get(ref)
+	if pos.Qty == 0 || b.priceFunc == nil {
+		return 0
+	}
+	mark := b.markPriceForPosition(pos.Qty, b.priceFunc(ref))
+	if !isValidPrice(mark) {
+		return 0
+	}
+	return pos.UnrealizedPnL(mark)
+}
+
+// UnrealizedPnL returns unrealized PnL across all open positions.
+func (b *Broker) UnrealizedPnL() float64 {
+	total := 0.0
+	for _, pos := range b.positions.All() {
+		if b.priceFunc == nil {
+			continue
+		}
+		mark := b.markPriceForPosition(pos.Qty, b.priceFunc(pos.Security))
+		if !isValidPrice(mark) {
+			continue
+		}
+		total += pos.UnrealizedPnL(mark)
+	}
+	return total
+}
+
+// RealizedPnL returns realized PnL across all positions.
+func (b *Broker) RealizedPnL() float64 {
+	return b.positions.TotalRealizedPnL()
+}
+
+// TotalPnL returns current total PnL relative to initial capital.
+func (b *Broker) TotalPnL() float64 {
+	return b.Equity() - b.config.InitialCapital
+}
+
 // Trades returns all filled trades.
 func (b *Broker) Trades() []Trade {
 	return b.trades

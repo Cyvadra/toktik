@@ -14,3 +14,12 @@ type Strategy interface {
 	// All indicators and cross-symbol data are already computed and aligned.
 	OnBar(ctx *BarContext)
 }
+
+// StrategyPreloader is an optional extension point for one-time precomputation.
+//
+// If implemented, Preload is called during Engine.Prepare after indicators are
+// resolved and before replay starts. Strategies can use this hook to create
+// additional derived columns once (instead of recomputing during OnBar).
+type StrategyPreloader interface {
+	Preload(ctx *PreloadContext) error
+}

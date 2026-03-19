@@ -369,6 +369,17 @@ func (bc *BarContext) Cash() float64 {
 	return bc.broker.Cash()
 }
 
+// PositionUnrealizedPnL returns current unrealized PnL for a specific security position.
+func (bc *BarContext) PositionUnrealizedPnL(ref SecurityRef) float64 {
+	return bc.broker.PositionUnrealizedPnL(ref)
+}
+
+// TotalPnL returns current strategy PnL relative to initial capital.
+// For options spreads, this includes mark-to-market value of open legs.
+func (bc *BarContext) TotalPnL() float64 {
+	return bc.broker.TotalPnL() + bc.spreadUnrealizedEquity()
+}
+
 // Param returns a named strategy parameter.
 func (bc *BarContext) Param(name string) interface{} {
 	return bc.params[name]
@@ -519,4 +530,44 @@ func (bc *BarContext) ScheduleCloseAfter(d time.Duration, spreadID int) {
 // ScheduleCloseLegAfter schedules closing a specific leg after a duration from now.
 func (bc *BarContext) ScheduleCloseLegAfter(d time.Duration, spreadID, legIndex int) {
 	bc.ScheduleCloseLeg(bc.barTime.Add(d), spreadID, legIndex)
+}
+
+func (bc *BarContext) spreadUnrealizedEquity() float64 {
+	if bc.spreadTracker == nil {
+		return 0
+	}
+
+	contractMap := map[string]OptionContract{}
+	if bc.chainProvider != nil {
+		for _, c := range bc.chainProvider.AvailableContracts(bc.barTime) {
+			contractMap[c.Symbol] = c
+		}
+	}
+
+	spreadMarketValue := 0.0
+	for _, sp := range bc.spreadTracker.OpenSpreads() {
+		for _, leg := range sp.Legs {
+			if leg.Closed {
+				continue
+			}
+
+			contract := leg.Contract
+			if updated, ok := contractMap[contract.Symbol]; ok {
+				contract = updated
+			}
+
+			markPrice := optionPriceFallback(contract.MarkPrice, optionMidPrice(contract), contract.BidPrice, contract.AskPrice)
+			if !optionPriceValid(markPrice) {
+				continue
+			}
+
+			if leg.Side == Buy {
+				spreadMarketValue += leg.Qty * markPrice
+			} else {
+				spreadMarketValue -= leg.Qty * markPrice
+			}
+		}
+	}
+
+	return spreadMarketValue
 }

@@ -3,6 +3,7 @@ package backtest
 import (
 	"fmt"
 	"math"
+	"sort"
 	"sync"
 )
 
@@ -575,6 +576,871 @@ func (l *lowestIndicator) Compute(inputs map[string][]float64) []float64 {
 	return out
 }
 
+// WMA creates a linearly weighted moving average indicator.
+func WMA(source string, period int) Indicator {
+	return &wmaIndicator{source: source, period: period}
+}
+
+type wmaIndicator struct {
+	source string
+	period int
+}
+
+func (w *wmaIndicator) Deps() []string { return []string{w.source} }
+
+func (w *wmaIndicator) Compute(inputs map[string][]float64) []float64 {
+	src := inputs[w.source]
+	n := len(src)
+	out := make([]float64, n)
+	if w.period <= 0 {
+		for i := range out {
+			out[i] = math.NaN()
+		}
+		return out
+	}
+
+	denom := float64(w.period*(w.period+1)) / 2
+	for i := 0; i < n; i++ {
+		if i < w.period-1 {
+			out[i] = math.NaN()
+			continue
+		}
+		weighted := 0.0
+		valid := true
+		for j := 0; j < w.period; j++ {
+			v := src[i-w.period+1+j]
+			if math.IsNaN(v) {
+				valid = false
+				break
+			}
+			weighted += float64(j+1) * v
+		}
+		if !valid {
+			out[i] = math.NaN()
+			continue
+		}
+		out[i] = weighted / denom
+	}
+	return out
+}
+
+// VWMA creates a volume-weighted moving average over a rolling window.
+func VWMA(priceSource, volumeSource string, period int) Indicator {
+	return &vwmaIndicator{priceSource: priceSource, volumeSource: volumeSource, period: period}
+}
+
+type vwmaIndicator struct {
+	priceSource  string
+	volumeSource string
+	period       int
+}
+
+func (v *vwmaIndicator) Deps() []string { return []string{v.priceSource, v.volumeSource} }
+
+func (v *vwmaIndicator) Compute(inputs map[string][]float64) []float64 {
+	price := inputs[v.priceSource]
+	vol := inputs[v.volumeSource]
+	n := len(price)
+	out := make([]float64, n)
+	if v.period <= 0 {
+		for i := range out {
+			out[i] = math.NaN()
+		}
+		return out
+	}
+
+	pvSum := 0.0
+	volSum := 0.0
+	nanCount := 0
+	windowCount := 0
+
+	for i := 0; i < n; i++ {
+		p := price[i]
+		vv := vol[i]
+		if math.IsNaN(p) || math.IsNaN(vv) {
+			nanCount++
+		} else {
+			pvSum += p * vv
+			volSum += vv
+		}
+		windowCount++
+
+		if windowCount > v.period {
+			op := price[i-v.period]
+			ov := vol[i-v.period]
+			if math.IsNaN(op) || math.IsNaN(ov) {
+				nanCount--
+			} else {
+				pvSum -= op * ov
+				volSum -= ov
+			}
+			windowCount--
+		}
+
+		if windowCount < v.period || nanCount > 0 || volSum == 0 {
+			out[i] = math.NaN()
+			continue
+		}
+		out[i] = pvSum / volSum
+	}
+
+	return out
+}
+
+// RMA creates Wilder's moving average (TradingView ta.rma).
+func RMA(source string, period int) Indicator {
+	return &rmaIndicator{source: source, period: period}
+}
+
+type rmaIndicator struct {
+	source string
+	period int
+}
+
+func (r *rmaIndicator) Deps() []string { return []string{r.source} }
+
+func (r *rmaIndicator) Compute(inputs map[string][]float64) []float64 {
+	return computeRMA(inputs[r.source], r.period)
+}
+
+// ATR creates Average True Range using Wilder's smoothing.
+func ATR(period int) Indicator {
+	return &atrIndicator{period: period}
+}
+
+type atrIndicator struct {
+	period int
+}
+
+func (a *atrIndicator) Deps() []string { return []string{"high", "low", "close"} }
+
+func (a *atrIndicator) Compute(inputs map[string][]float64) []float64 {
+	high := inputs["high"]
+	low := inputs["low"]
+	close := inputs["close"]
+	n := len(high)
+	tr := make([]float64, n)
+
+	for i := 0; i < n; i++ {
+		if math.IsNaN(high[i]) || math.IsNaN(low[i]) || math.IsNaN(close[i]) {
+			tr[i] = math.NaN()
+			continue
+		}
+		if i == 0 || math.IsNaN(close[i-1]) {
+			tr[i] = high[i] - low[i]
+			continue
+		}
+		a1 := high[i] - low[i]
+		a2 := math.Abs(high[i] - close[i-1])
+		a3 := math.Abs(low[i] - close[i-1])
+		tr[i] = math.Max(a1, math.Max(a2, a3))
+	}
+
+	return computeRMA(tr, a.period)
+}
+
+// Stochastic creates a classic stochastic oscillator.
+// Outputs are: "{name}" (smoothed %K), "{name}_d" (%D), "{name}_raw" (raw %K).
+func Stochastic(highSource, lowSource, closeSource string, kPeriod, kSmooth, dPeriod int) MultiIndicator {
+	return &stochasticIndicator{
+		highSource:  highSource,
+		lowSource:   lowSource,
+		closeSource: closeSource,
+		kPeriod:     kPeriod,
+		kSmooth:     kSmooth,
+		dPeriod:     dPeriod,
+	}
+}
+
+type stochasticIndicator struct {
+	highSource  string
+	lowSource   string
+	closeSource string
+	kPeriod     int
+	kSmooth     int
+	dPeriod     int
+}
+
+func (s *stochasticIndicator) Deps() []string {
+	return []string{s.highSource, s.lowSource, s.closeSource}
+}
+
+func (s *stochasticIndicator) OutputNames(baseName string) []string {
+	return []string{baseName, baseName + "_d", baseName + "_raw"}
+}
+
+func (s *stochasticIndicator) Compute(inputs map[string][]float64) []float64 {
+	out := s.ComputeMulti("stoch", inputs)
+	return out["stoch"]
+}
+
+func (s *stochasticIndicator) ComputeMulti(baseName string, inputs map[string][]float64) map[string][]float64 {
+	high := inputs[s.highSource]
+	low := inputs[s.lowSource]
+	close := inputs[s.closeSource]
+	n := len(high)
+	raw := make([]float64, n)
+
+	if s.kPeriod <= 0 || s.kSmooth <= 0 || s.dPeriod <= 0 {
+		for i := 0; i < n; i++ {
+			raw[i] = math.NaN()
+		}
+		names := s.OutputNames(baseName)
+		return map[string][]float64{
+			names[0]: raw,
+			names[1]: append([]float64(nil), raw...),
+			names[2]: raw,
+		}
+	}
+
+	for i := 0; i < n; i++ {
+		if i < s.kPeriod-1 {
+			raw[i] = math.NaN()
+			continue
+		}
+		h := math.Inf(-1)
+		l := math.Inf(1)
+		valid := true
+		for j := i - s.kPeriod + 1; j <= i; j++ {
+			if math.IsNaN(high[j]) || math.IsNaN(low[j]) || math.IsNaN(close[j]) {
+				valid = false
+				break
+			}
+			if high[j] > h {
+				h = high[j]
+			}
+			if low[j] < l {
+				l = low[j]
+			}
+		}
+		if !valid {
+			raw[i] = math.NaN()
+			continue
+		}
+		rng := h - l
+		if rng == 0 {
+			raw[i] = 0
+		} else {
+			raw[i] = 100 * (close[i] - l) / rng
+		}
+	}
+
+	k := computeSMA(raw, s.kSmooth)
+	d := computeSMA(k, s.dPeriod)
+	names := s.OutputNames(baseName)
+	return map[string][]float64{
+		names[0]: k,
+		names[1]: d,
+		names[2]: raw,
+	}
+}
+
+// CCI creates Commodity Channel Index.
+func CCI(highSource, lowSource, closeSource string, period int) Indicator {
+	return &cciIndicator{highSource: highSource, lowSource: lowSource, closeSource: closeSource, period: period}
+}
+
+type cciIndicator struct {
+	highSource  string
+	lowSource   string
+	closeSource string
+	period      int
+}
+
+func (c *cciIndicator) Deps() []string { return []string{c.highSource, c.lowSource, c.closeSource} }
+
+func (c *cciIndicator) Compute(inputs map[string][]float64) []float64 {
+	high := inputs[c.highSource]
+	low := inputs[c.lowSource]
+	close := inputs[c.closeSource]
+	n := len(high)
+	out := make([]float64, n)
+
+	if c.period <= 0 {
+		for i := range out {
+			out[i] = math.NaN()
+		}
+		return out
+	}
+
+	tp := make([]float64, n)
+	for i := 0; i < n; i++ {
+		if math.IsNaN(high[i]) || math.IsNaN(low[i]) || math.IsNaN(close[i]) {
+			tp[i] = math.NaN()
+			continue
+		}
+		tp[i] = (high[i] + low[i] + close[i]) / 3
+	}
+	smaTP := computeSMA(tp, c.period)
+
+	for i := 0; i < n; i++ {
+		if i < c.period-1 || math.IsNaN(tp[i]) || math.IsNaN(smaTP[i]) {
+			out[i] = math.NaN()
+			continue
+		}
+		meanDev := 0.0
+		valid := true
+		for j := i - c.period + 1; j <= i; j++ {
+			if math.IsNaN(tp[j]) {
+				valid = false
+				break
+			}
+			meanDev += math.Abs(tp[j] - smaTP[i])
+		}
+		if !valid {
+			out[i] = math.NaN()
+			continue
+		}
+		meanDev /= float64(c.period)
+		if meanDev == 0 {
+			out[i] = 0
+		} else {
+			out[i] = (tp[i] - smaTP[i]) / (0.015 * meanDev)
+		}
+	}
+
+	return out
+}
+
+// ADX creates Average Directional Index with Wilder smoothing.
+// Outputs are: "{name}" (ADX), "{name}_plus_di", "{name}_minus_di".
+func ADX(period int) MultiIndicator {
+	return &adxIndicator{period: period}
+}
+
+type adxIndicator struct {
+	period int
+}
+
+func (a *adxIndicator) Deps() []string { return []string{"high", "low", "close"} }
+
+func (a *adxIndicator) OutputNames(baseName string) []string {
+	return []string{baseName, baseName + "_plus_di", baseName + "_minus_di"}
+}
+
+func (a *adxIndicator) Compute(inputs map[string][]float64) []float64 {
+	out := a.ComputeMulti("adx", inputs)
+	return out["adx"]
+}
+
+func (a *adxIndicator) ComputeMulti(baseName string, inputs map[string][]float64) map[string][]float64 {
+	high := inputs["high"]
+	low := inputs["low"]
+	close := inputs["close"]
+	n := len(high)
+
+	tr := make([]float64, n)
+	plusDM := make([]float64, n)
+	minusDM := make([]float64, n)
+	plusDI := make([]float64, n)
+	minusDI := make([]float64, n)
+	dx := make([]float64, n)
+
+	if a.period <= 0 {
+		for i := 0; i < n; i++ {
+			plusDI[i] = math.NaN()
+			minusDI[i] = math.NaN()
+			dx[i] = math.NaN()
+		}
+		names := a.OutputNames(baseName)
+		return map[string][]float64{
+			names[0]: dx,
+			names[1]: plusDI,
+			names[2]: minusDI,
+		}
+	}
+
+	for i := 0; i < n; i++ {
+		plusDM[i] = 0
+		minusDM[i] = 0
+		if math.IsNaN(high[i]) || math.IsNaN(low[i]) || math.IsNaN(close[i]) {
+			tr[i] = math.NaN()
+			continue
+		}
+		if i == 0 || math.IsNaN(high[i-1]) || math.IsNaN(low[i-1]) || math.IsNaN(close[i-1]) {
+			tr[i] = high[i] - low[i]
+			continue
+		}
+
+		upMove := high[i] - high[i-1]
+		downMove := low[i-1] - low[i]
+		if upMove > downMove && upMove > 0 {
+			plusDM[i] = upMove
+		}
+		if downMove > upMove && downMove > 0 {
+			minusDM[i] = downMove
+		}
+
+		a1 := high[i] - low[i]
+		a2 := math.Abs(high[i] - close[i-1])
+		a3 := math.Abs(low[i] - close[i-1])
+		tr[i] = math.Max(a1, math.Max(a2, a3))
+	}
+
+	atr := computeRMA(tr, a.period)
+	plusRMA := computeRMA(plusDM, a.period)
+	minusRMA := computeRMA(minusDM, a.period)
+
+	for i := 0; i < n; i++ {
+		if math.IsNaN(atr[i]) || atr[i] == 0 {
+			plusDI[i] = math.NaN()
+			minusDI[i] = math.NaN()
+			dx[i] = math.NaN()
+			continue
+		}
+
+		plusDI[i] = 100 * plusRMA[i] / atr[i]
+		minusDI[i] = 100 * minusRMA[i] / atr[i]
+		sum := plusDI[i] + minusDI[i]
+		if sum == 0 {
+			dx[i] = 0
+		} else {
+			dx[i] = 100 * math.Abs(plusDI[i]-minusDI[i]) / sum
+		}
+	}
+
+	adx := computeRMA(dx, a.period)
+	names := a.OutputNames(baseName)
+	return map[string][]float64{
+		names[0]: adx,
+		names[1]: plusDI,
+		names[2]: minusDI,
+	}
+}
+
+// OBV creates On-Balance Volume.
+func OBV(closeSource, volumeSource string) Indicator {
+	return &obvIndicator{closeSource: closeSource, volumeSource: volumeSource}
+}
+
+type obvIndicator struct {
+	closeSource  string
+	volumeSource string
+}
+
+func (o *obvIndicator) Deps() []string { return []string{o.closeSource, o.volumeSource} }
+
+func (o *obvIndicator) Compute(inputs map[string][]float64) []float64 {
+	close := inputs[o.closeSource]
+	volume := inputs[o.volumeSource]
+	n := len(close)
+	out := make([]float64, n)
+	if n == 0 {
+		return out
+	}
+
+	if math.IsNaN(volume[0]) {
+		out[0] = math.NaN()
+	} else {
+		out[0] = volume[0]
+	}
+
+	for i := 1; i < n; i++ {
+		if math.IsNaN(close[i]) || math.IsNaN(close[i-1]) || math.IsNaN(volume[i]) || math.IsNaN(out[i-1]) {
+			out[i] = math.NaN()
+			continue
+		}
+		switch {
+		case close[i] > close[i-1]:
+			out[i] = out[i-1] + volume[i]
+		case close[i] < close[i-1]:
+			out[i] = out[i-1] - volume[i]
+		default:
+			out[i] = out[i-1]
+		}
+	}
+
+	return out
+}
+
+// Quantile creates a rolling quantile indicator over the given period.
+// q must be in [0,1], where 0 = min and 1 = max.
+func Quantile(source string, period int, q float64) Indicator {
+	if q < 0 {
+		q = 0
+	}
+	if q > 1 {
+		q = 1
+	}
+	return &quantileIndicator{source: source, period: period, q: q}
+}
+
+type quantileIndicator struct {
+	source string
+	period int
+	q      float64
+}
+
+func (q *quantileIndicator) Deps() []string { return []string{q.source} }
+
+func (q *quantileIndicator) Compute(inputs map[string][]float64) []float64 {
+	src := inputs[q.source]
+	series := computeRollingQuantiles(src, q.period, []float64{q.q})
+	return series[0]
+}
+
+func computeRollingQuantiles(src []float64, period int, quantiles []float64) [][]float64 {
+	n := len(src)
+	out := make([][]float64, len(quantiles))
+	for i := range out {
+		out[i] = make([]float64, n)
+		for j := 0; j < n; j++ {
+			out[i][j] = math.NaN()
+		}
+	}
+
+	if len(quantiles) == 0 {
+		return out
+	}
+	if period <= 0 {
+		return out
+	}
+
+	qvals := make([]float64, len(quantiles))
+	copy(qvals, quantiles)
+	for i := range qvals {
+		if qvals[i] < 0 {
+			qvals[i] = 0
+		}
+		if qvals[i] > 1 {
+			qvals[i] = 1
+		}
+	}
+
+	if period == 1 {
+		for i := 0; i < n; i++ {
+			if math.IsNaN(src[i]) {
+				continue
+			}
+			for j := range out {
+				out[j][i] = src[i]
+			}
+		}
+		return out
+	}
+
+	values := make([]float64, 0, n)
+	for i := 0; i < n; i++ {
+		if !math.IsNaN(src[i]) {
+			values = append(values, src[i])
+		}
+	}
+	if len(values) == 0 {
+		return out
+	}
+
+	sort.Float64s(values)
+	uniq := values[:1]
+	for i := 1; i < len(values); i++ {
+		if values[i] != values[i-1] {
+			uniq = append(uniq, values[i])
+		}
+	}
+
+	compressed := make([]int, n)
+	for i := 0; i < n; i++ {
+		if math.IsNaN(src[i]) {
+			compressed[i] = -1
+			continue
+		}
+		compressed[i] = sort.SearchFloat64s(uniq, src[i])
+	}
+
+	type qReq struct {
+		lo     int
+		hi     int
+		weight float64
+	}
+	requests := make([]qReq, len(qvals))
+	for i, q := range qvals {
+		idx := q * float64(period-1)
+		lo := int(math.Floor(idx))
+		hi := int(math.Ceil(idx))
+		requests[i] = qReq{lo: lo, hi: hi, weight: idx - float64(lo)}
+	}
+
+	bit := newFenwick(len(uniq))
+	nanCount := 0
+	windowCount := 0
+
+	for i := 0; i < n; i++ {
+		inIdx := compressed[i]
+		if inIdx < 0 {
+			nanCount++
+		} else {
+			bit.add(inIdx+1, 1)
+		}
+		windowCount++
+
+		if windowCount > period {
+			outIdx := compressed[i-period]
+			if outIdx < 0 {
+				nanCount--
+			} else {
+				bit.add(outIdx+1, -1)
+			}
+			windowCount--
+		}
+
+		if windowCount < period || nanCount > 0 {
+			continue
+		}
+
+		for qi, req := range requests {
+			loVal := uniq[bit.findByOrder(req.lo+1)-1]
+			if req.lo == req.hi {
+				out[qi][i] = loVal
+				continue
+			}
+			hiVal := uniq[bit.findByOrder(req.hi+1)-1]
+			out[qi][i] = loVal*(1-req.weight) + hiVal*req.weight
+		}
+	}
+
+	return out
+}
+
+type fenwickTree struct {
+	tree []int
+}
+
+func newFenwick(n int) *fenwickTree {
+	return &fenwickTree{tree: make([]int, n+1)}
+}
+
+func (f *fenwickTree) add(index int, delta int) {
+	for i := index; i < len(f.tree); i += i & -i {
+		f.tree[i] += delta
+	}
+}
+
+// findByOrder returns smallest index i such that prefixSum(i) >= order.
+// order is 1-based.
+func (f *fenwickTree) findByOrder(order int) int {
+	idx := 0
+	bitMask := 1
+	for bitMask < len(f.tree) {
+		bitMask <<= 1
+	}
+	for step := bitMask >> 1; step > 0; step >>= 1 {
+		next := idx + step
+		if next < len(f.tree) && f.tree[next] < order {
+			idx = next
+			order -= f.tree[next]
+		}
+	}
+	return idx + 1
+}
+
+// Bollinger creates Bollinger Bands as a multi-output indicator.
+// Outputs are: "{name}" (middle/SMA), "{name}_upper", "{name}_lower".
+func Bollinger(source string, period int, k float64) MultiIndicator {
+	return &bollingerIndicator{source: source, period: period, k: k}
+}
+
+type bollingerIndicator struct {
+	source string
+	period int
+	k      float64
+}
+
+func (b *bollingerIndicator) Deps() []string { return []string{b.source} }
+
+func (b *bollingerIndicator) OutputNames(baseName string) []string {
+	return []string{baseName, baseName + "_upper", baseName + "_lower"}
+}
+
+func (b *bollingerIndicator) Compute(inputs map[string][]float64) []float64 {
+	src := inputs[b.source]
+	n := len(src)
+	mid := make([]float64, n)
+	if b.period <= 0 {
+		for i := range mid {
+			mid[i] = math.NaN()
+		}
+		return mid
+	}
+
+	sum := 0.0
+	nanCount := 0
+	windowCount := 0
+	for i := 0; i < n; i++ {
+		v := src[i]
+		if math.IsNaN(v) {
+			nanCount++
+		} else {
+			sum += v
+		}
+		windowCount++
+
+		if windowCount > b.period {
+			old := src[i-b.period]
+			if math.IsNaN(old) {
+				nanCount--
+			} else {
+				sum -= old
+			}
+			windowCount--
+		}
+
+		if windowCount < b.period || nanCount > 0 {
+			mid[i] = math.NaN()
+			continue
+		}
+		mid[i] = sum / float64(b.period)
+	}
+
+	return mid
+}
+
+func (b *bollingerIndicator) ComputeMulti(baseName string, inputs map[string][]float64) map[string][]float64 {
+	src := inputs[b.source]
+	n := len(src)
+	mid := make([]float64, n)
+	upper := make([]float64, n)
+	lower := make([]float64, n)
+	if b.period <= 0 {
+		for i := 0; i < n; i++ {
+			mid[i] = math.NaN()
+			upper[i] = math.NaN()
+			lower[i] = math.NaN()
+		}
+		names := b.OutputNames(baseName)
+		return map[string][]float64{
+			names[0]: mid,
+			names[1]: upper,
+			names[2]: lower,
+		}
+	}
+
+	sum := 0.0
+	sumSq := 0.0
+	nanCount := 0
+	windowCount := 0
+
+	for i := 0; i < n; i++ {
+		v := src[i]
+		if math.IsNaN(v) {
+			nanCount++
+		} else {
+			sum += v
+			sumSq += v * v
+		}
+		windowCount++
+
+		if windowCount > b.period {
+			old := src[i-b.period]
+			if math.IsNaN(old) {
+				nanCount--
+			} else {
+				sum -= old
+				sumSq -= old * old
+			}
+			windowCount--
+		}
+
+		if windowCount < b.period || nanCount > 0 {
+			mid[i] = math.NaN()
+			upper[i] = math.NaN()
+			lower[i] = math.NaN()
+			continue
+		}
+
+		mean := sum / float64(b.period)
+		variance := sumSq/float64(b.period) - mean*mean
+		if variance < 0 {
+			// Clamp tiny negatives caused by floating-point cancellation.
+			variance = 0
+		}
+		std := math.Sqrt(variance)
+
+		mid[i] = mean
+		upper[i] = mean + b.k*std
+		lower[i] = mean - b.k*std
+	}
+
+	names := b.OutputNames(baseName)
+	return map[string][]float64{
+		names[0]: mid,
+		names[1]: upper,
+		names[2]: lower,
+	}
+}
+
+// Donchian creates Donchian Channel as a multi-output indicator.
+// Outputs are: "{name}" (middle), "{name}_upper", "{name}_lower".
+func Donchian(highSource, lowSource string, period int) MultiIndicator {
+	return &donchianIndicator{highSource: highSource, lowSource: lowSource, period: period}
+}
+
+type donchianIndicator struct {
+	highSource string
+	lowSource  string
+	period     int
+}
+
+func (d *donchianIndicator) Deps() []string { return []string{d.highSource, d.lowSource} }
+
+func (d *donchianIndicator) OutputNames(baseName string) []string {
+	return []string{baseName, baseName + "_upper", baseName + "_lower"}
+}
+
+func (d *donchianIndicator) Compute(inputs map[string][]float64) []float64 {
+	outs := d.ComputeMulti("donchian", inputs)
+	return outs["donchian"]
+}
+
+func (d *donchianIndicator) ComputeMulti(baseName string, inputs map[string][]float64) map[string][]float64 {
+	high := inputs[d.highSource]
+	low := inputs[d.lowSource]
+	n := len(high)
+	mid := make([]float64, n)
+	upper := make([]float64, n)
+	lower := make([]float64, n)
+
+	for i := 0; i < n; i++ {
+		if i < d.period-1 {
+			mid[i] = math.NaN()
+			upper[i] = math.NaN()
+			lower[i] = math.NaN()
+			continue
+		}
+
+		h := math.Inf(-1)
+		l := math.Inf(1)
+		valid := true
+		for j := i - d.period + 1; j <= i; j++ {
+			if math.IsNaN(high[j]) || math.IsNaN(low[j]) {
+				valid = false
+				break
+			}
+			if high[j] > h {
+				h = high[j]
+			}
+			if low[j] < l {
+				l = low[j]
+			}
+		}
+		if !valid {
+			mid[i] = math.NaN()
+			upper[i] = math.NaN()
+			lower[i] = math.NaN()
+			continue
+		}
+
+		upper[i] = h
+		lower[i] = l
+		mid[i] = (h + l) / 2
+	}
+
+	names := d.OutputNames(baseName)
+	return map[string][]float64{
+		names[0]: mid,
+		names[1]: upper,
+		names[2]: lower,
+	}
+}
+
 // Custom creates an indicator from an arbitrary function.
 func Custom(deps []string, fn func(inputs map[string][]float64) []float64) Indicator {
 	return &customIndicator{deps: deps, fn: fn}
@@ -589,4 +1455,97 @@ func (c *customIndicator) Deps() []string { return c.deps }
 
 func (c *customIndicator) Compute(inputs map[string][]float64) []float64 {
 	return c.fn(inputs)
+}
+
+func computeSMA(src []float64, period int) []float64 {
+	n := len(src)
+	out := make([]float64, n)
+	if period <= 0 {
+		for i := range out {
+			out[i] = math.NaN()
+		}
+		return out
+	}
+
+	sum := 0.0
+	nanCount := 0
+	windowCount := 0
+	for i := 0; i < n; i++ {
+		v := src[i]
+		if math.IsNaN(v) {
+			nanCount++
+		} else {
+			sum += v
+		}
+		windowCount++
+
+		if windowCount > period {
+			old := src[i-period]
+			if math.IsNaN(old) {
+				nanCount--
+			} else {
+				sum -= old
+			}
+			windowCount--
+		}
+
+		if windowCount < period || nanCount > 0 {
+			out[i] = math.NaN()
+			continue
+		}
+		out[i] = sum / float64(period)
+	}
+
+	return out
+}
+
+func computeRMA(src []float64, period int) []float64 {
+	n := len(src)
+	out := make([]float64, n)
+	for i := range out {
+		out[i] = math.NaN()
+	}
+	if period <= 0 {
+		return out
+	}
+
+	sum := 0.0
+	nanCount := 0
+	windowCount := 0
+	for i := 0; i < n; i++ {
+		v := src[i]
+		if math.IsNaN(v) {
+			nanCount++
+		} else {
+			sum += v
+		}
+		windowCount++
+
+		if windowCount > period {
+			old := src[i-period]
+			if math.IsNaN(old) {
+				nanCount--
+			} else {
+				sum -= old
+			}
+			windowCount--
+		}
+
+		if windowCount < period || nanCount > 0 {
+			continue
+		}
+
+		if i == period-1 || math.IsNaN(out[i-1]) {
+			out[i] = sum / float64(period)
+			continue
+		}
+
+		if math.IsNaN(v) {
+			out[i] = out[i-1]
+		} else {
+			out[i] = (out[i-1]*float64(period-1) + v) / float64(period)
+		}
+	}
+
+	return out
 }

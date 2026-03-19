@@ -145,6 +145,13 @@ func (e *Engine) Prepare(ctx context.Context, market, symbol, interval string, f
 		}
 	}
 
+	if preloader, ok := strategy.(StrategyPreloader); ok {
+		preloadCtx := newPreloadContext(setupCtx.primaryRef, setupCtx.securities, secDataSets, alignMaps, setupCtx.params)
+		if err := preloader.Preload(preloadCtx); err != nil {
+			return nil, fmt.Errorf("strategy preload: %w", err)
+		}
+	}
+
 	return &PreparedData{
 		PrimaryDS:   primaryDS,
 		SecDataSets: secDataSets,
