@@ -106,6 +106,8 @@ type SyncConfig struct {
 	CHDSN                  string
 	Workers                int
 	BatchDays              int
+	Debug                  bool
+	DebugSampleContracts   int
 	ProgressDir            string
 	MinVolume              int
 	RateLimit              float64

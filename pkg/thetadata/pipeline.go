@@ -281,6 +281,33 @@ func (p *Pipeline) syncRoot(ctx context.Context, root string) error {
 		selectedContractsMap := make(map[string]Contract)
 		ohlcCache := &sync.Map{}
 		var selectionMu sync.Mutex
+		type phase2Diagnostics struct {
+			ohlcNonEmpty  atomic.Int64
+			withVolume    atomic.Int64
+			withCount     atomic.Int64
+			barsOnly      atomic.Int64
+			keptByVolume  atomic.Int64
+			keptByCount   atomic.Int64
+			keptByBars    atomic.Int64
+			sampleMu      sync.Mutex
+			sampleEntries []string
+		}
+		diagnostics := &phase2Diagnostics{}
+		maxSamples := p.cfg.DebugSampleContracts
+		if maxSamples <= 0 {
+			maxSamples = 8
+		}
+		appendSample := func(entry string) {
+			if !p.cfg.Debug {
+				return
+			}
+			diagnostics.sampleMu.Lock()
+			defer diagnostics.sampleMu.Unlock()
+			if len(diagnostics.sampleEntries) >= maxSamples {
+				return
+			}
+			diagnostics.sampleEntries = append(diagnostics.sampleEntries, entry)
+		}
 
 		phase2Progress := newPhaseProgress(root, fmt.Sprintf("Phase 2 batch %d/%d", wi+1, len(weeks)),
 			"contracts", len(weekContracts))
@@ -288,10 +315,16 @@ func (p *Pipeline) syncRoot(ctx context.Context, root string) error {
 		err = p.parallelWork(ctx, weekContracts, p.cfg.Workers, func(ctx context.Context, client *Client, c Contract) error {
 			ohlcBars, err := client.GetOHLC1mRange(ctx, c, weekStart, weekEnd)
 			if err != nil {
+				if p.cfg.Debug {
+					appendSample(fmt.Sprintf("%s ohlc_error=%v", c.Symbol(), err))
+				}
 				phase2Progress.Add(1, false)
 				return nil
 			}
 			if len(ohlcBars) == 0 {
+				if p.cfg.Debug {
+					appendSample(fmt.Sprintf("%s empty_ohlc", c.Symbol()))
+				}
 				phase2Progress.Add(1, false)
 				return nil
 			}
@@ -299,6 +332,7 @@ func (p *Pipeline) syncRoot(ctx context.Context, root string) error {
 			ohlcByDate := make(map[string][]OHLCBar)
 			volumeByDate := make(map[string]int)
 			countByDate := make(map[string]int)
+			barsByDate := make(map[string]int)
 			for _, bar := range ohlcBars {
 				dateStr := bar.Timestamp.Format("2006-01-02")
 				if _, ok := pendingDateSet[dateStr]; !ok {
@@ -307,21 +341,77 @@ func (p *Pipeline) syncRoot(ctx context.Context, root string) error {
 				ohlcByDate[dateStr] = append(ohlcByDate[dateStr], bar)
 				volumeByDate[dateStr] += bar.Volume
 				countByDate[dateStr] += bar.Count
+				barsByDate[dateStr]++
 			}
 			if len(ohlcByDate) == 0 {
+				if p.cfg.Debug {
+					appendSample(fmt.Sprintf("%s ohlc_outside_pending bars=%d", c.Symbol(), len(ohlcBars)))
+				}
 				phase2Progress.Add(1, false)
 				return nil
 			}
+			diagnostics.ohlcNonEmpty.Add(1)
+
+			hasVolume := false
+			hasCount := false
+			hasBarsOnly := false
+			for dateStr := range ohlcByDate {
+				switch {
+				case volumeByDate[dateStr] > 0:
+					hasVolume = true
+				case countByDate[dateStr] > 0:
+					hasCount = true
+				case barsByDate[dateStr] > 0:
+					hasBarsOnly = true
+				}
+			}
+			if hasVolume {
+				diagnostics.withVolume.Add(1)
+			}
+			if hasCount {
+				diagnostics.withCount.Add(1)
+			}
+			if hasBarsOnly {
+				diagnostics.barsOnly.Add(1)
+			}
 
 			kept := false
+			firstReason := "none"
+			firstDate := ""
+			firstActivity := 0
+			firstVolume := 0
+			firstCount := 0
+			firstBars := 0
 			selectionMu.Lock()
 			for dateStr := range ohlcByDate {
 				activity := volumeByDate[dateStr]
+				reason := "volume"
 				if activity == 0 {
 					activity = countByDate[dateStr]
+					reason = "count"
+				}
+				if activity == 0 {
+					activity = barsByDate[dateStr]
+					reason = "bars"
+				}
+				if firstDate == "" {
+					firstDate = dateStr
+					firstReason = reason
+					firstActivity = activity
+					firstVolume = volumeByDate[dateStr]
+					firstCount = countByDate[dateStr]
+					firstBars = barsByDate[dateStr]
 				}
 				if activity < p.cfg.MinVolume {
 					continue
+				}
+				switch reason {
+				case "volume":
+					diagnostics.keptByVolume.Add(1)
+				case "count":
+					diagnostics.keptByCount.Add(1)
+				case "bars":
+					diagnostics.keptByBars.Add(1)
 				}
 				selectedByDate[dateStr] = append(selectedByDate[dateStr], c)
 				selectedContractsMap[c.Symbol()] = c
@@ -331,6 +421,11 @@ func (p *Pipeline) syncRoot(ctx context.Context, root string) error {
 				ohlcCache.Store(c.Symbol(), &contractWeekData{Contract: c, OHLC: ohlcByDate})
 			}
 			selectionMu.Unlock()
+
+			if p.cfg.Debug {
+				appendSample(fmt.Sprintf("%s first_date=%s volume=%d count=%d bars=%d activity=%d reason=%s kept=%t",
+					c.Symbol(), firstDate, firstVolume, firstCount, firstBars, firstActivity, firstReason, kept))
+			}
 			phase2Progress.Add(1, kept)
 			return nil
 		})
@@ -339,6 +434,18 @@ func (p *Pipeline) syncRoot(ctx context.Context, root string) error {
 			return fmt.Errorf("discover active week %d: %w", wi+1, err)
 		}
 		phase2Progress.Finish("complete")
+		if p.cfg.Debug {
+			log.Printf("[%s] DEBUG phase2 batch %d/%d summary: ohlc_nonempty=%d with_volume=%d with_count=%d bars_only=%d kept_contracts=%d kept_by_volume=%d kept_by_count=%d kept_by_bars=%d",
+				root, wi+1, len(weeks),
+				diagnostics.ohlcNonEmpty.Load(), diagnostics.withVolume.Load(), diagnostics.withCount.Load(), diagnostics.barsOnly.Load(),
+				len(selectedContractsMap), diagnostics.keptByVolume.Load(), diagnostics.keptByCount.Load(), diagnostics.keptByBars.Load())
+			diagnostics.sampleMu.Lock()
+			sampleEntries := append([]string(nil), diagnostics.sampleEntries...)
+			diagnostics.sampleMu.Unlock()
+			for i, sample := range sampleEntries {
+				log.Printf("[%s] DEBUG phase2 sample[%d]: %s", root, i+1, sample)
+			}
+		}
 
 		var selectedContracts []Contract
 		for _, c := range selectedContractsMap {

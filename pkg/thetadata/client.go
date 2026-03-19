@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"sort"
@@ -510,8 +511,33 @@ func parseTimestamp(s string, refDate time.Time) time.Time {
 
 func getFloat(m map[string]any, key string) float64 {
 	if v, ok := m[key]; ok {
-		if f, ok := v.(float64); ok {
-			return f
+		switch n := v.(type) {
+		case float64:
+			return n
+		case float32:
+			return float64(n)
+		case int:
+			return float64(n)
+		case int64:
+			return float64(n)
+		case int32:
+			return float64(n)
+		case uint64:
+			return float64(n)
+		case uint32:
+			return float64(n)
+		case json.Number:
+			if f, err := n.Float64(); err == nil {
+				return f
+			}
+		case string:
+			s := strings.TrimSpace(n)
+			if s == "" {
+				return 0
+			}
+			if f, err := strconv.ParseFloat(s, 64); err == nil {
+				return f
+			}
 		}
 	}
 	return 0
@@ -519,8 +545,39 @@ func getFloat(m map[string]any, key string) float64 {
 
 func getInt(m map[string]any, key string) int {
 	if v, ok := m[key]; ok {
-		if f, ok := v.(float64); ok {
-			return int(f)
+		switch n := v.(type) {
+		case int:
+			return n
+		case int64:
+			return int(n)
+		case int32:
+			return int(n)
+		case uint64:
+			return int(n)
+		case uint32:
+			return int(n)
+		case float64:
+			return int(math.Round(n))
+		case float32:
+			return int(math.Round(float64(n)))
+		case json.Number:
+			if i, err := n.Int64(); err == nil {
+				return int(i)
+			}
+			if f, err := n.Float64(); err == nil {
+				return int(math.Round(f))
+			}
+		case string:
+			s := strings.TrimSpace(n)
+			if s == "" {
+				return 0
+			}
+			if i, err := strconv.Atoi(s); err == nil {
+				return i
+			}
+			if f, err := strconv.ParseFloat(s, 64); err == nil {
+				return int(math.Round(f))
+			}
 		}
 	}
 	return 0
