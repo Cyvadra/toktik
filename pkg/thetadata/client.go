@@ -251,25 +251,55 @@ func (c *Client) ListStrikes(ctx context.Context, root string, exp time.Time) ([
 		return nil, fmt.Errorf("list strikes for %s exp %s via REST: %w", root, exp.Format("2006-01-02"), err)
 	}
 
-	// Try array of numbers
-	var strikes []float64
-	if err := unmarshalThetaJSON(raw, &strikes); err != nil {
-		// Try array of objects with "strike" field
+	strikes := make([]float64, 0)
+
+	// Try array of numbers first. Use a temporary slice to avoid keeping
+	// partial zero-value decodes from malformed payloads.
+	var direct []float64
+	if err := unmarshalThetaJSON(raw, &direct); err == nil {
+		strikes = append(strikes, direct...)
+	} else {
+		// Try array of objects with "strike" field.
 		var items []map[string]any
 		if err := unmarshalThetaJSON(raw, &items); err != nil {
 			return nil, fmt.Errorf("parse strikes data: %w", err)
 		}
 		for _, item := range items {
-			if s, ok := item["strike"]; ok {
-				if v, ok := s.(float64); ok {
-					strikes = append(strikes, v)
+			s, ok := item["strike"]
+			if !ok {
+				continue
+			}
+			switch v := s.(type) {
+			case float64:
+				strikes = append(strikes, v)
+			case string:
+				if parsed, err := strconv.ParseFloat(strings.TrimSpace(v), 64); err == nil {
+					strikes = append(strikes, parsed)
+				}
+			case json.Number:
+				if parsed, err := v.Float64(); err == nil {
+					strikes = append(strikes, parsed)
 				}
 			}
 		}
 	}
 
-	sort.Float64s(strikes)
-	return strikes, nil
+	// Drop invalid/non-positive strikes and de-duplicate.
+	cleaned := make([]float64, 0, len(strikes))
+	seen := make(map[float64]struct{}, len(strikes))
+	for _, strike := range strikes {
+		if strike <= 0 || math.IsNaN(strike) || math.IsInf(strike, 0) {
+			continue
+		}
+		if _, ok := seen[strike]; ok {
+			continue
+		}
+		seen[strike] = struct{}{}
+		cleaned = append(cleaned, strike)
+	}
+
+	sort.Float64s(cleaned)
+	return cleaned, nil
 }
 
 // ListDates returns all trading dates with data for a specific contract.
