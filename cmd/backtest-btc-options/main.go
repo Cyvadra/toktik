@@ -38,6 +38,12 @@ func main() {
 	targetExpiryDays := flag.Int("target-expiry-days", 15, "Target days to expiry when selecting contracts")
 	minExpiryDays := flag.Int("min-expiry-days", 7, "Minimum days to expiry when selecting contracts")
 	minPremium := flag.Float64("min-premium", 0.025, "Minimum bid premium required for the short leg")
+	// forum strategy params start
+	forumHoldHours := flag.Float64("forum-hold-hours", 24, "Fixed holding time in hours for the forum short-put strategy")
+	forumTargetExpiryDays := flag.Int("forum-target-expiry-days", 14, "Target days to expiry for the forum short-put strategy")
+	forumStrikeOffset := flag.Float64("forum-strike-offset", -1000, "Strike offset from ATM floor for the forum short-put strategy")
+	forumMinPremium := flag.Float64("forum-min-premium", 0.0, "Minimum bid premium required for the forum short-put strategy")
+	// forum strategy params end
 	shortDeltaMin := flag.Float64("short-delta-min", 0.4, "Minimum absolute delta for the short leg")
 	shortDeltaMax := flag.Float64("short-delta-max", 0.5, "Maximum absolute delta for the short leg")
 	longDeltaMin := flag.Float64("long-delta-min", 0.1, "Minimum absolute delta for the long leg")
@@ -76,8 +82,16 @@ func main() {
 		fmt.Fprintln(os.Stderr, "error: --max-hold-hours must be > 0")
 		os.Exit(1)
 	}
+	if *forumHoldHours <= 0 {
+		fmt.Fprintln(os.Stderr, "error: --forum-hold-hours must be > 0")
+		os.Exit(1)
+	}
 	if *targetExpiryDays <= 0 {
 		fmt.Fprintln(os.Stderr, "error: --target-expiry-days must be >= 1")
+		os.Exit(1)
+	}
+	if *forumTargetExpiryDays <= 0 {
+		fmt.Fprintln(os.Stderr, "error: --forum-target-expiry-days must be >= 1")
 		os.Exit(1)
 	}
 	if *minExpiryDays <= 0 {
@@ -109,23 +123,27 @@ func main() {
 	valuationPriceMode := mustParseOptionPriceMode(*spreadValuationPriceMode, "--spread-valuation-price-mode")
 
 	strats := resolveStrategies(*stratName, strategyConfig{
-		PositionSize:     *positionSize,
-		MaxHoldTime:      time.Duration(*maxHoldHours * float64(time.Hour)),
-		TargetExpiryDays: *targetExpiryDays,
-		MinExpiryDays:    *minExpiryDays,
-		MinPremium:       *minPremium,
-		ShortDeltaMin:    *shortDeltaMin,
-		ShortDeltaMax:    *shortDeltaMax,
-		LongDeltaMin:     *longDeltaMin,
-		LongDeltaMax:     *longDeltaMax,
-		EntryPriceMode:   entryPriceMode,
-		ExitPriceMode:    exitPriceMode,
-		ValuationMode:    valuationPriceMode,
-		MAPeriod:         *maPeriod,
-		PThreshold:       *pThreshold,
+		PositionSize:      *positionSize,
+		MaxHoldTime:       time.Duration(*maxHoldHours * float64(time.Hour)),
+		TargetExpiryDays:  *targetExpiryDays,
+		MinExpiryDays:     *minExpiryDays,
+		MinPremium:        *minPremium,
+		ShortDeltaMin:     *shortDeltaMin,
+		ShortDeltaMax:     *shortDeltaMax,
+		LongDeltaMin:      *longDeltaMin,
+		LongDeltaMax:      *longDeltaMax,
+		EntryPriceMode:    entryPriceMode,
+		ExitPriceMode:     exitPriceMode,
+		ValuationMode:     valuationPriceMode,
+		MAPeriod:          *maPeriod,
+		PThreshold:        *pThreshold,
+		ForumHoldTime:     time.Duration(*forumHoldHours * float64(time.Hour)),
+		ForumTargetDays:   *forumTargetExpiryDays,
+		ForumStrikeOffset: *forumStrikeOffset,
+		ForumMinPremium:   *forumMinPremium,
 	})
 	if len(strats) == 0 {
-		fmt.Fprintf(os.Stderr, "unknown strategy %q; supported: bull-put-spread, bear-call-spread, both\n", *stratName)
+		fmt.Fprintf(os.Stderr, "unknown strategy %q; supported: bull-put-spread, bear-call-spread, forum-short-put, both\n", *stratName)
 		os.Exit(1)
 	}
 
@@ -221,20 +239,24 @@ func runOne(
 }
 
 type strategyConfig struct {
-	PositionSize     float64
-	MaxHoldTime      time.Duration
-	TargetExpiryDays int
-	MinExpiryDays    int
-	MinPremium       float64
-	ShortDeltaMin    float64
-	ShortDeltaMax    float64
-	LongDeltaMin     float64
-	LongDeltaMax     float64
-	EntryPriceMode   backtest.OptionPriceMode
-	ExitPriceMode    backtest.OptionPriceMode
-	ValuationMode    backtest.OptionPriceMode
-	MAPeriod         int
-	PThreshold       float64
+	PositionSize      float64
+	MaxHoldTime       time.Duration
+	TargetExpiryDays  int
+	MinExpiryDays     int
+	MinPremium        float64
+	ShortDeltaMin     float64
+	ShortDeltaMax     float64
+	LongDeltaMin      float64
+	LongDeltaMax      float64
+	EntryPriceMode    backtest.OptionPriceMode
+	ExitPriceMode     backtest.OptionPriceMode
+	ValuationMode     backtest.OptionPriceMode
+	MAPeriod          int
+	PThreshold        float64
+	ForumHoldTime     time.Duration
+	ForumTargetDays   int
+	ForumStrikeOffset float64
+	ForumMinPremium   float64
 }
 
 // resolveStrategies maps a strategy name to the concrete strategy instances.
@@ -244,6 +266,8 @@ func resolveStrategies(name string, cfg strategyConfig) []backtest.Strategy {
 		return []backtest.Strategy{newConfiguredSpreadStrategy(strategies.BullSpread, cfg)}
 	case "bear-call-spread", "ma-deviation-bear", "bear":
 		return []backtest.Strategy{newConfiguredSpreadStrategy(strategies.BearSpread, cfg)}
+	case "forum-short-put", "ma-deviation-forum", "forum":
+		return []backtest.Strategy{newConfiguredForumShortPutStrategy(cfg)}
 	case "both", "all":
 		return []backtest.Strategy{
 			newConfiguredSpreadStrategy(strategies.BullSpread, cfg),
@@ -251,6 +275,21 @@ func resolveStrategies(name string, cfg strategyConfig) []backtest.Strategy {
 		}
 	default:
 		return nil
+	}
+}
+
+func newConfiguredForumShortPutStrategy(cfg strategyConfig) backtest.Strategy {
+	return &strategies.MADeviationForumShortPutStrategy{
+		PositionSize:       cfg.PositionSize,
+		HoldTime:           cfg.ForumHoldTime,
+		TargetExpiryDays:   cfg.ForumTargetDays,
+		StrikeOffset:       cfg.ForumStrikeOffset,
+		MinPremium:         cfg.ForumMinPremium,
+		EntryPriceMode:     cfg.EntryPriceMode,
+		ExitPriceMode:      cfg.ExitPriceMode,
+		ValuationPriceMode: cfg.ValuationMode,
+		MAPeriod:           cfg.MAPeriod,
+		PThreshold:         cfg.PThreshold,
 	}
 }
 

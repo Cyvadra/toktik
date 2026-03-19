@@ -1,6 +1,7 @@
 package cryptooptions
 
 import (
+	"context"
 	"encoding/csv"
 	"fmt"
 	"io"
@@ -187,9 +188,9 @@ func parseRow(record []string, idx *csvColumnIndex) (TickRow, error) {
 
 // ParseCSVFromZST opens a .zst file, streams decompression, and sends
 // parsed TickRow values on the returned channel. The channel is closed
-// when all rows have been read. Errors are logged but non-fatal rows
-// are skipped.
-func ParseCSVFromZST(path string) (<-chan TickRow, func(), error) {
+// when all rows have been read or the context is cancelled. Errors are
+// logged but non-fatal rows are skipped.
+func ParseCSVFromZST(ctx context.Context, path string) (<-chan TickRow, func(), error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, nil, fmt.Errorf("open %s: %w", path, err)
@@ -258,6 +259,8 @@ func ParseCSVFromZST(path string) (<-chan TickRow, func(), error) {
 			select {
 			case ch <- tick:
 			case <-done:
+				return
+			case <-ctx.Done():
 				return
 			}
 		}

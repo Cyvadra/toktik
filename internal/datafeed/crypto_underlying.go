@@ -6,6 +6,7 @@ import (
 	"log"
 	"time"
 
+	clickhouse "github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/Cyvadra/toktik/internal/backtest"
 )
@@ -53,7 +54,12 @@ func (f *CryptoUnderlyingDataFeed) Load(ctx context.Context, req backtest.DataRe
 		log.Printf("[compat] underlying feed for %s/%s is using a compatibility fallback source", baseAsset, interval)
 	}
 
-	rows, err := f.conn.Query(ctx, query)
+	rows, err := f.conn.Query(ctx, query,
+		clickhouse.Named("symbol", baseAsset),
+		clickhouse.Named("base_asset", baseAsset),
+		clickhouse.Named("from", req.From),
+		clickhouse.Named("to", req.To),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("load underlying for %s: %w", baseAsset, err)
 	}

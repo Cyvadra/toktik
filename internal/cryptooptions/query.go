@@ -62,16 +62,3 @@ WHERE symbol = {symbol:String}
 
 	return QuerySpotAggregationSQL(interval)
 }
-
-// EscapeSingleQuote escapes single quotes for ClickHouse string literals.
-func EscapeSingleQuote(s string) string {
-	result := make([]byte, 0, len(s))
-	for i := 0; i < len(s); i++ {
-		if s[i] == '\'' {
-			result = append(result, '\'', '\'')
-		} else {
-			result = append(result, s[i])
-		}
-	}
-	return string(result)
-}

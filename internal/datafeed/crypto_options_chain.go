@@ -7,6 +7,7 @@ import (
 	"sort"
 	"time"
 
+	clickhouse "github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/Cyvadra/toktik/internal/backtest"
 )
@@ -75,28 +76,31 @@ func NewCryptoOptionsChainProvider(ctx context.Context, conn driver.Conn, baseAs
     b.tick_count,
     b.open_interest
 FROM %s AS b
-INNER JOIN crypto_options_symbol_meta AS m
+LEFT JOIN crypto_options_symbol_meta FINAL AS m
     ON b.symbol_id = m.symbol_id
 %s
-WHERE b.base_asset = '%s'
-  AND b.timestamp >= '%s'
-  AND b.timestamp < '%s'
+WHERE b.base_asset = {base_asset:String}
+  AND b.timestamp >= {from:DateTime}
+  AND b.timestamp < {to:DateTime}
 ORDER BY b.timestamp`,
 		underlyingCloseExpr,
 		optionTableName,
 		joinClause,
-		escapeString(baseAsset),
-		from.Format("2006-01-02 15:04:05"),
-		to.Format("2006-01-02 15:04:05"),
 	)
 
-	rows, err := conn.Query(ctx, query)
+	rows, err := conn.Query(ctx, query,
+		clickhouse.Named("base_asset", baseAsset),
+		clickhouse.Named("symbol", baseAsset),
+		clickhouse.Named("from", from),
+		clickhouse.Named("to", to),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("load options chain for %s: %w", baseAsset, err)
 	}
 	defer rows.Close()
 
 	byTimestamp := make(map[int64][]backtest.OptionContract)
+	missingMetaCount := 0
 
 	for rows.Next() {
 		var (
@@ -133,6 +137,12 @@ ORDER BY b.timestamp`,
 			return nil, fmt.Errorf("scan chain row: %w", err)
 		}
 
+		// Skip rows where symbol metadata is missing (LEFT JOIN produced defaults).
+		if symbol == "" {
+			missingMetaCount++
+			continue
+		}
+
 		ot := backtest.Call
 		if optionType == "put" {
 			ot = backtest.Put
@@ -160,6 +170,10 @@ ORDER BY b.timestamp`,
 
 		key := ts.Truncate(resolution).Unix()
 		byTimestamp[key] = append(byTimestamp[key], contract)
+	}
+
+	if missingMetaCount > 0 {
+		log.Printf("[chain] %d bars skipped due to missing symbol metadata for %s", missingMetaCount, baseAsset)
 	}
 
 	return &CryptoOptionsChainProvider{
@@ -193,22 +207,6 @@ func parseInterval(interval string) (time.Duration, error) {
 		return d, nil
 	}
 	return 0, fmt.Errorf("unsupported interval for chain provider: %q", interval)
-}
-
-// escapeString performs basic escaping for ClickHouse string literals.
-func escapeString(s string) string {
-	// Replace single quotes with escaped single quotes
-	var result []byte
-	for i := 0; i < len(s); i++ {
-		if s[i] == '\'' {
-			result = append(result, '\\', '\'')
-		} else if s[i] == '\\' {
-			result = append(result, '\\', '\\')
-		} else {
-			result = append(result, s[i])
-		}
-	}
-	return string(result)
 }
 
 // SortContractsBySpread sorts contracts by bid-ask spread ratio (best first),

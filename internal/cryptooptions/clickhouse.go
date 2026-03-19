@@ -70,9 +70,25 @@ func ConnectClickHouse(ctx context.Context, dsn string) (driver.Conn, error) {
 }
 
 // InsertSymbols batch-inserts symbol metadata into crypto_options_symbol_meta.
+// It validates that no CRC32 symbol ID collisions exist within the batch or
+// against existing data in ClickHouse before inserting.
 func InsertSymbols(ctx context.Context, conn driver.Conn, symbols []SymbolMeta) error {
 	if len(symbols) == 0 {
 		return nil
+	}
+
+	// Check for ID collisions within this batch.
+	idToSymbol := make(map[uint32]string, len(symbols))
+	for _, s := range symbols {
+		if existing, ok := idToSymbol[s.SymbolID]; ok && existing != s.Symbol {
+			return fmt.Errorf("symbol ID collision within batch: %q and %q both produce ID %d", existing, s.Symbol, s.SymbolID)
+		}
+		idToSymbol[s.SymbolID] = s.Symbol
+	}
+
+	// Check for collisions against existing data.
+	if err := checkSymbolCollisions(ctx, conn, symbols); err != nil {
+		return err
 	}
 
 	batch, err := conn.PrepareBatch(ctx, `INSERT INTO crypto_options_symbol_meta (
@@ -98,6 +114,37 @@ symbol_id, symbol, base_asset, option_type, strike_price, expiration, underlying
 
 	if err := batch.Send(); err != nil {
 		return fmt.Errorf("send symbol_meta batch: %w", err)
+	}
+	return nil
+}
+
+// checkSymbolCollisions queries existing symbol metadata and returns an error
+// if any new symbol produces the same CRC32 ID as a different existing symbol.
+func checkSymbolCollisions(ctx context.Context, conn driver.Conn, symbols []SymbolMeta) error {
+	ids := make([]uint32, len(symbols))
+	byID := make(map[uint32]string, len(symbols))
+	for i, s := range symbols {
+		ids[i] = s.SymbolID
+		byID[s.SymbolID] = s.Symbol
+	}
+
+	rows, err := conn.Query(ctx,
+		`SELECT symbol_id, symbol FROM crypto_options_symbol_meta FINAL WHERE symbol_id IN ({ids:Array(UInt32)})`,
+		clickhouse.Named("ids", ids))
+	if err != nil {
+		return fmt.Errorf("check symbol collisions: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var id uint32
+		var existingSymbol string
+		if err := rows.Scan(&id, &existingSymbol); err != nil {
+			return fmt.Errorf("scan collision check: %w", err)
+		}
+		if newSymbol, ok := byID[id]; ok && newSymbol != existingSymbol {
+			return fmt.Errorf("symbol ID collision: new %q vs existing %q both produce CRC32 ID %d", newSymbol, existingSymbol, id)
+		}
 	}
 	return nil
 }

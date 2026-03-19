@@ -4,11 +4,17 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"sync"
 	"time"
 
+	clickhouse "github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/Cyvadra/toktik/internal/cryptooptions"
 )
+
+// schemaCache caches table/column existence checks for the lifetime of the process.
+// Schema is assumed to be stable within a single run.
+var schemaCache sync.Map
 
 func resolveOptionTableName(interval string) string {
 	if interval == "1m" {
@@ -31,10 +37,15 @@ func resolveSpotTableName(interval string) string {
 }
 
 func tableExists(ctx context.Context, conn driver.Conn, tableName string) (bool, error) {
-	rows, err := conn.Query(ctx, fmt.Sprintf(`SELECT count()
+	cacheKey := "table:" + tableName
+	if v, ok := schemaCache.Load(cacheKey); ok {
+		return v.(bool), nil
+	}
+
+	rows, err := conn.Query(ctx, `SELECT count()
 FROM system.tables
 WHERE database = currentDatabase()
-  AND name = '%s'`, escapeString(tableName)))
+  AND name = {table_name:String}`, clickhouse.Named("table_name", tableName))
 	if err != nil {
 		return false, err
 	}
@@ -48,15 +59,24 @@ WHERE database = currentDatabase()
 	if err := rows.Scan(&count); err != nil {
 		return false, err
 	}
-	return count > 0, nil
+	exists := count > 0
+	schemaCache.Store(cacheKey, exists)
+	return exists, nil
 }
 
 func columnExists(ctx context.Context, conn driver.Conn, tableName, columnName string) (bool, error) {
-	rows, err := conn.Query(ctx, fmt.Sprintf(`SELECT count()
+	cacheKey := "column:" + tableName + ":" + columnName
+	if v, ok := schemaCache.Load(cacheKey); ok {
+		return v.(bool), nil
+	}
+
+	rows, err := conn.Query(ctx, `SELECT count()
 FROM system.columns
 WHERE database = currentDatabase()
-  AND table = '%s'
-  AND name = '%s'`, escapeString(tableName), escapeString(columnName)))
+  AND table = {table_name:String}
+  AND name = {column_name:String}`,
+		clickhouse.Named("table_name", tableName),
+		clickhouse.Named("column_name", columnName))
 	if err != nil {
 		return false, err
 	}
@@ -70,7 +90,9 @@ WHERE database = currentDatabase()
 	if err := rows.Scan(&count); err != nil {
 		return false, err
 	}
-	return count > 0, nil
+	exists := count > 0
+	schemaCache.Store(cacheKey, exists)
+	return exists, nil
 }
 
 func buildSpotSourceSQLWithFallback(ctx context.Context, conn driver.Conn, interval, symbol string, from, to time.Time) (string, bool, error) {
@@ -83,14 +105,9 @@ func buildSpotSourceSQLWithFallback(ctx context.Context, conn driver.Conn, inter
 			return fmt.Sprintf(`SELECT
     timestamp, symbol, price_source, open, high, low, close, tick_count
 FROM %s
-WHERE symbol = '%s'
-  AND timestamp >= '%s'
-  AND timestamp < '%s'`,
-				tableName,
-				escapeString(symbol),
-				from.Format("2006-01-02 15:04:05"),
-				to.Format("2006-01-02 15:04:05"),
-			), false, nil
+WHERE symbol = {symbol:String}
+  AND timestamp >= {from:DateTime}
+  AND timestamp < {to:DateTime}`, tableName), false, nil
 		}
 	}
 
@@ -103,16 +120,12 @@ WHERE symbol = '%s'
 	}
 
 	if interval == "1m" {
-		return fmt.Sprintf(`SELECT
+		return `SELECT
     timestamp, symbol, price_source, open, high, low, close, tick_count
 FROM crypto_spot_bar_1m
-WHERE symbol = '%s'
-  AND timestamp >= '%s'
-  AND timestamp < '%s'`,
-			escapeString(symbol),
-			from.Format("2006-01-02 15:04:05"),
-			to.Format("2006-01-02 15:04:05"),
-		), false, nil
+WHERE symbol = {symbol:String}
+  AND timestamp >= {from:DateTime}
+  AND timestamp < {to:DateTime}`, false, nil
 	}
 
 	adhocSQL, err := cryptooptions.QuerySpotAggregationSQL(interval)
@@ -121,7 +134,7 @@ WHERE symbol = '%s'
 	}
 
 	log.Printf("[compat] spot view for %s missing; falling back to query-time aggregation from crypto_spot_bar_1m", interval)
-	return replaceNamedStringParamsCompat(adhocSQL, symbol, from, to), true, nil
+	return adhocSQL, true, nil
 }
 
 func legacyUnderlyingCloseExpr(ctx context.Context, conn driver.Conn, interval string) (string, bool, error) {
@@ -162,41 +175,10 @@ func buildLegacyUnderlyingSeriesSQL(ctx context.Context, conn driver.Conn, inter
         min(if(underlying_price_close > 0, underlying_price_close, underlying_price_open))
     ) AS low
 FROM %s
-WHERE base_asset = '%s'
-  AND timestamp >= '%s'
-  AND timestamp < '%s'
+WHERE base_asset = {base_asset:String}
+  AND timestamp >= {from:DateTime}
+  AND timestamp < {to:DateTime}
   AND underlying_price_close > 0
 GROUP BY timestamp
-ORDER BY timestamp`,
-		tableName,
-		escapeString(baseAsset),
-		from.Format("2006-01-02 15:04:05"),
-		to.Format("2006-01-02 15:04:05"),
-	), true, nil
-}
-
-func replaceNamedStringParamsCompat(sql, symbol string, from, to time.Time) string {
-	sql = replaceParamCompat(sql, "{symbol:String}", "'"+escapeString(symbol)+"'")
-	sql = replaceParamCompat(sql, "{from:DateTime}", "'"+from.Format("2006-01-02 15:04:05")+"'")
-	sql = replaceParamCompat(sql, "{to:DateTime}", "'"+to.Format("2006-01-02 15:04:05")+"'")
-	return sql
-}
-
-func replaceParamCompat(sql, old, new string) string {
-	for {
-		idx := indexOfCompat(sql, old)
-		if idx < 0 {
-			return sql
-		}
-		sql = sql[:idx] + new + sql[idx+len(old):]
-	}
-}
-
-func indexOfCompat(s, sub string) int {
-	for i := 0; i <= len(s)-len(sub); i++ {
-		if s[i:i+len(sub)] == sub {
-			return i
-		}
-	}
-	return -1
+ORDER BY timestamp`, tableName), true, nil
 }

@@ -199,7 +199,7 @@ func importOptionFile(ctx context.Context, dsn, pqPath string, batchSize int) (i
 		return 0, false, fmt.Errorf("connect: %w", err)
 	}
 
-	barCh, closer, err := cryptooptions.ReadParquet(pqPath)
+	barCh, closer, readErr, err := cryptooptions.ReadParquet(pqPath)
 	if err != nil {
 		return 0, false, fmt.Errorf("read parquet: %w", err)
 	}
@@ -221,6 +221,10 @@ func importOptionFile(ctx context.Context, dsn, pqPath string, batchSize int) (i
 				UnderlyingIndex: bar.UnderlyingIndex,
 			}
 		}
+	}
+
+	if *readErr != nil {
+		return 0, false, fmt.Errorf("read parquet: %w", *readErr)
 	}
 
 	if len(bars) == 0 {
@@ -281,7 +285,7 @@ func importSpotFile(ctx context.Context, dsn, pqPath string, batchSize int) (int
 		return 0, false, fmt.Errorf("connect: %w", err)
 	}
 
-	barCh, closer, err := cryptooptions.ReadSpotParquet(pqPath)
+	barCh, closer, readErr, err := cryptooptions.ReadSpotParquet(pqPath)
 	if err != nil {
 		return 0, false, fmt.Errorf("read spot parquet: %w", err)
 	}
@@ -290,6 +294,10 @@ func importSpotFile(ctx context.Context, dsn, pqPath string, batchSize int) (int
 	var bars []cryptooptions.SpotBar1m
 	for bar := range barCh {
 		bars = append(bars, bar)
+	}
+
+	if *readErr != nil {
+		return 0, false, fmt.Errorf("read spot parquet: %w", *readErr)
 	}
 
 	if len(bars) == 0 {

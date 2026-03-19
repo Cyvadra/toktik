@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log"
@@ -115,7 +116,7 @@ func processFile(inputDir, zstPath, outputDir string) error {
 	log.Printf("[START] %s", baseName)
 	fileStart := time.Now()
 
-	tickCh, closer, err := cryptooptions.ParseCSVFromZST(zstPath)
+	tickCh, closer, err := cryptooptions.ParseCSVFromZST(context.Background(), zstPath)
 	if err != nil {
 		return fmt.Errorf("open zst: %w", err)
 	}

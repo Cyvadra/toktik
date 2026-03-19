@@ -2,6 +2,7 @@ package cryptooptions
 
 import (
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/parquet-go/parquet-go"
@@ -114,18 +115,20 @@ func WriteSpotParquet(path string, bars []SpotBar1m) error {
 	return nil
 }
 
-// ReadParquet opens a Parquet file and returns a channel of Bar1m records
-// and a closer function.
-func ReadParquet(path string) (<-chan Bar1m, func(), error) {
+// ReadParquet opens a Parquet file and returns a channel of Bar1m records,
+// a closer function, a pointer to any read error encountered, and an
+// initialization error. The caller should check *readErr after draining the
+// channel to detect partial-read failures.
+func ReadParquet(path string) (<-chan Bar1m, func(), *error, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return nil, nil, fmt.Errorf("open parquet file %s: %w", path, err)
+		return nil, nil, nil, fmt.Errorf("open parquet file %s: %w", path, err)
 	}
 
 	info, err := f.Stat()
 	if err != nil {
 		f.Close()
-		return nil, nil, fmt.Errorf("stat parquet file %s: %w", path, err)
+		return nil, nil, nil, fmt.Errorf("stat parquet file %s: %w", path, err)
 	}
 	_ = info
 
@@ -137,6 +140,7 @@ func ReadParquet(path string) (<-chan Bar1m, func(), error) {
 		f.Close()
 	}
 
+	var readErr error
 	go func() {
 		defer close(ch)
 		buf := make([]Bar1m, 1024)
@@ -146,19 +150,23 @@ func ReadParquet(path string) (<-chan Bar1m, func(), error) {
 				ch <- buf[i]
 			}
 			if err != nil {
-				break
+				if err != io.EOF {
+					readErr = fmt.Errorf("read parquet %s: %w", path, err)
+				}
+				return
 			}
 		}
 	}()
 
-	return ch, closeFn, nil
+	return ch, closeFn, &readErr, nil
 }
 
-// ReadSpotParquet opens a SpotBar1m Parquet file and returns a channel of rows.
-func ReadSpotParquet(path string) (<-chan SpotBar1m, func(), error) {
+// ReadSpotParquet opens a SpotBar1m Parquet file and returns a channel of rows,
+// a closer function, a pointer to any read error, and an initialization error.
+func ReadSpotParquet(path string) (<-chan SpotBar1m, func(), *error, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return nil, nil, fmt.Errorf("open parquet file %s: %w", path, err)
+		return nil, nil, nil, fmt.Errorf("open parquet file %s: %w", path, err)
 	}
 
 	reader := parquet.NewGenericReader[SpotBar1m](f)
@@ -169,6 +177,7 @@ func ReadSpotParquet(path string) (<-chan SpotBar1m, func(), error) {
 		f.Close()
 	}
 
+	var readErr error
 	go func() {
 		defer close(ch)
 		buf := make([]SpotBar1m, 1024)
@@ -178,10 +187,13 @@ func ReadSpotParquet(path string) (<-chan SpotBar1m, func(), error) {
 				ch <- buf[i]
 			}
 			if err != nil {
-				break
+				if err != io.EOF {
+					readErr = fmt.Errorf("read parquet %s: %w", path, err)
+				}
+				return
 			}
 		}
 	}()
 
-	return ch, closeFn, nil
+	return ch, closeFn, &readErr, nil
 }

@@ -300,13 +300,6 @@ func (a *Aggregator) FlushSortedSpotBatches(batchSize int, writeBatch func([]Spo
 	return total, nil
 }
 
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
 func (a *Aggregator) OptionCount() int {
 	return len(a.optionAccumulators)
 }

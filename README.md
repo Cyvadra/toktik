@@ -145,7 +145,23 @@ bin/backtest-btc-options \
   --html-output report.html
 ```
 
-Available strategies: `golden-cross`, `delta-filter`, `bull-put-spread` (alias `ma-deviation-bull`), `bear-call-spread` (alias `ma-deviation-bear`), `both`.
+**BTC forum-style short put strategy:**
+```bash
+bin/backtest-btc-options \
+  --clickhouse-dsn "clickhouse://localhost:9000/default" \
+  --asset BTC \
+  --interval 1h \
+  --from 2025-01-01 \
+  --to 2025-03-01 \
+  --strategy forum-short-put \
+  --capital 1.0 \
+  --forum-target-expiry-days 14 \
+  --forum-strike-offset -1000 \
+  --forum-hold-hours 24 \
+  --html-output report.html
+```
+
+Available strategies: `golden-cross`, `delta-filter`, `bull-put-spread` (alias `ma-deviation-bull`), `bear-call-spread` (alias `ma-deviation-bear`), `forum-short-put` (alias `ma-deviation-forum`), `both`.
 
 ### 5. Find Missing Data
 
