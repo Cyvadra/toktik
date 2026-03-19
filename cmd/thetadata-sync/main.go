@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -18,6 +19,7 @@ func main() {
 	roots := flag.String("roots", "AAPL,SPY", "Comma-separated root symbols (or * for all)")
 	startDate := flag.String("start-date", "2019-01-01", "Start date (YYYY-MM-DD)")
 	endDate := flag.String("end-date", "2026-02-28", "End date (YYYY-MM-DD)")
+	mode := flag.String("mode", "eod", "Sync mode: eod or 5m")
 	baseURL := flag.String("base-url", "http://127.0.0.1:25503", "Theta Data terminal base URL")
 	chDSN := flag.String("clickhouse-dsn", "clickhouse://default:@localhost:9000/default", "ClickHouse DSN")
 	workers := flag.Int("workers", 4, "Concurrent workers")
@@ -35,6 +37,12 @@ func main() {
 	ed, err := time.Parse("2006-01-02", *endDate)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Invalid end-date: %v\n", err)
+		os.Exit(1)
+	}
+
+	modeValue := strings.ToLower(strings.TrimSpace(*mode))
+	if modeValue != "eod" && modeValue != "5m" {
+		fmt.Fprintf(os.Stderr, "Invalid mode %q: must be eod or 5m\n", *mode)
 		os.Exit(1)
 	}
 
@@ -74,6 +82,7 @@ func main() {
 		Roots:       rootList,
 		StartDate:   sd,
 		EndDate:     ed,
+		Mode:        modeValue,
 		BaseURL:     *baseURL,
 		CHDSN:       *chDSN,
 		Workers:     *workers,
@@ -84,6 +93,7 @@ func main() {
 	}
 
 	log.Printf("Theta Data Sync v2")
+	log.Printf("  Mode:       %s", cfg.Mode)
 	log.Printf("  Roots:      %v", cfg.Roots)
 	log.Printf("  Date range: %s to %s", cfg.StartDate.Format("2006-01-02"), cfg.EndDate.Format("2006-01-02"))
 	log.Printf("  Base URL:   %s", cfg.BaseURL)
@@ -115,7 +125,7 @@ func main() {
 		log.Printf("Schema initialized")
 	}
 
-	progress, err := thetadata.NewProgress(cfg.ProgressDir)
+	progress, err := thetadata.NewProgress(filepath.Join(cfg.ProgressDir, cfg.Mode))
 	if err != nil {
 		log.Fatalf("Progress init: %v", err)
 	}

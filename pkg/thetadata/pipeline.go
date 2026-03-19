@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
@@ -17,6 +18,8 @@ type Pipeline struct {
 	store    *Store
 	progress *Progress
 	limiter  *rate.Limiter
+	expMu    sync.Mutex
+	expCache map[string][]string
 }
 
 // NewPipeline creates a new sync pipeline.
@@ -27,6 +30,7 @@ func NewPipeline(cfg SyncConfig, client *Client, store *Store, progress *Progres
 		store:    store,
 		progress: progress,
 		limiter:  rate.NewLimiter(rate.Limit(cfg.RateLimit), 1),
+		expCache: make(map[string][]string),
 	}
 }
 
@@ -111,6 +115,10 @@ func (p *Pipeline) buildTasks() []DateTask {
 
 // processDate handles a single (root, date): fetch data, store, update progress.
 func (p *Pipeline) processDate(ctx context.Context, task DateTask) (int, error) {
+	if p.cfg.Mode == "5m" {
+		return p.processDate5m(ctx, task)
+	}
+
 	dateStr := task.Date.Format("2006-01-02")
 
 	if err := p.progress.MarkStarted(task.Root, dateStr); err != nil {
@@ -189,4 +197,121 @@ func (p *Pipeline) processDate(ctx context.Context, task DateTask) (int, error) 
 
 	_ = p.progress.MarkCompleted(task.Root, dateStr, len(eodRows))
 	return len(eodRows), nil
+}
+
+func (p *Pipeline) processDate5m(ctx context.Context, task DateTask) (int, error) {
+	dateStr := task.Date.Format("2006-01-02")
+
+	if err := p.progress.MarkStarted(task.Root, dateStr); err != nil {
+		return 0, fmt.Errorf("mark started: %w", err)
+	}
+
+	if has, _ := p.store.HasDateData(ctx, task.Root, task.Date); has {
+		if err := p.store.DeleteDateData(ctx, task.Root, task.Date); err != nil {
+			return 0, fmt.Errorf("delete stale data: %w", err)
+		}
+	}
+
+	expirations, err := p.listExpirations(ctx, task.Root)
+	if err != nil {
+		_ = p.progress.MarkFailed(task.Root, dateStr, err.Error())
+		return 0, fmt.Errorf("list expirations: %w", err)
+	}
+	if len(expirations) == 0 {
+		_ = p.progress.MarkCompleted(task.Root, dateStr, 0)
+		return 0, nil
+	}
+
+	if err := p.limiter.Wait(ctx); err != nil {
+		return 0, err
+	}
+
+	oiRows, err := p.client.GetOpenInterest(ctx, task.Root, dateStr)
+	if err != nil {
+		if p.cfg.Debug {
+			log.Printf("  OI unavailable for %s %s: %v", task.Root, dateStr, err)
+		}
+		oiRows = nil
+	}
+
+	oiMap := make(map[string]int, len(oiRows))
+	for _, r := range oiRows {
+		key := contractKeyStr(r.Symbol, r.Expiration, r.Strike, r.Right)
+		oiMap[key] = r.OI
+	}
+
+	totalBars := 0
+	for _, expiration := range expirations {
+		if err := p.limiter.Wait(ctx); err != nil {
+			return totalBars, err
+		}
+
+		ohlcRows, err := p.client.GetOHLC(ctx, task.Root, expiration, dateStr, dateStr, "5m")
+		if err != nil && !isThetaNoDataError(err) {
+			_ = p.progress.MarkFailed(task.Root, dateStr, err.Error())
+			return totalBars, fmt.Errorf("get 5m OHLC %s: %w", expiration, err)
+		}
+		if isThetaNoDataError(err) {
+			ohlcRows = nil
+		}
+
+		if err := p.limiter.Wait(ctx); err != nil {
+			return totalBars, err
+		}
+
+		quoteRows, err := p.client.GetQuotes(ctx, task.Root, expiration, dateStr, dateStr, "5m")
+		if err != nil && !isThetaNoDataError(err) {
+			_ = p.progress.MarkFailed(task.Root, dateStr, err.Error())
+			return totalBars, fmt.Errorf("get 5m quote %s: %w", expiration, err)
+		}
+		if isThetaNoDataError(err) {
+			quoteRows = nil
+		}
+
+		if len(ohlcRows) == 0 && len(quoteRows) == 0 {
+			continue
+		}
+
+		inserted, err := p.store.InsertQuoteOHLCBars(ctx, task.Root, ohlcRows, quoteRows, oiMap)
+		if err != nil {
+			_ = p.progress.MarkFailed(task.Root, dateStr, err.Error())
+			return totalBars, fmt.Errorf("insert 5m %s: %w", expiration, err)
+		}
+		totalBars += inserted
+	}
+
+	_ = p.progress.MarkCompleted(task.Root, dateStr, totalBars)
+	return totalBars, nil
+}
+
+func (p *Pipeline) listExpirations(ctx context.Context, root string) ([]string, error) {
+	p.expMu.Lock()
+	if expirations, ok := p.expCache[root]; ok {
+		out := append([]string(nil), expirations...)
+		p.expMu.Unlock()
+		return out, nil
+	}
+	p.expMu.Unlock()
+
+	if err := p.limiter.Wait(ctx); err != nil {
+		return nil, err
+	}
+
+	expirations, err := p.client.ListExpirations(ctx, root)
+	if err != nil {
+		return nil, err
+	}
+
+	p.expMu.Lock()
+	p.expCache[root] = append([]string(nil), expirations...)
+	p.expMu.Unlock()
+	return expirations, nil
+}
+
+func isThetaNoDataError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "no data found") || strings.Contains(msg, "not_found")
 }

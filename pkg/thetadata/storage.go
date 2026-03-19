@@ -46,6 +46,28 @@ func (s *Store) Close() error {
 	return s.conn.Close()
 }
 
+type intradayBarKey struct {
+	contract string
+	ts       time.Time
+}
+
+type intradayBar struct {
+	symbol     string
+	expiration string
+	strike     float64
+	right      string
+	timestamp  time.Time
+	hasOHLC    bool
+	hasQuote   bool
+	open       float64
+	high       float64
+	low        float64
+	close      float64
+	count      int
+	bid        float64
+	ask        float64
+}
+
 // InsertEODBars inserts assembled EOD bars into equity_options_bar_1m and
 // symbol metadata into equity_options_symbol_meta.
 // greeks is keyed by contractKey (symbol|expiration|strike|right).
@@ -176,6 +198,151 @@ func (s *Store) InsertEODBars(ctx context.Context, root string, date time.Time,
 	return nil
 }
 
+// InsertQuoteOHLCBars merges interval OHLC and quote rows and stores them in the
+// equity_options_bar_1m schema with real interval timestamps.
+func (s *Store) InsertQuoteOHLCBars(ctx context.Context, root string,
+	ohlcRows []OHLCRow, quoteRows []QuoteRow, oiMap map[string]int) (int, error) {
+
+	merged := make(map[intradayBarKey]*intradayBar, len(ohlcRows)+len(quoteRows))
+
+	for _, row := range ohlcRows {
+		right := normalizeOptionRight(row.Right)
+		if right != "call" && right != "put" {
+			continue
+		}
+		ts, err := parseThetaTimestamp(row.Timestamp)
+		if err != nil {
+			return 0, fmt.Errorf("parse OHLC timestamp %q: %w", row.Timestamp, err)
+		}
+		key := intradayBarKey{
+			contract: contractKeyStr(row.Symbol, row.Expiration, row.Strike, right),
+			ts:       ts,
+		}
+		entry, ok := merged[key]
+		if !ok {
+			entry = &intradayBar{
+				symbol:     row.Symbol,
+				expiration: row.Expiration,
+				strike:     row.Strike,
+				right:      right,
+				timestamp:  ts,
+			}
+			merged[key] = entry
+		}
+		entry.hasOHLC = true
+		entry.open = row.Open
+		entry.high = row.High
+		entry.low = row.Low
+		entry.close = row.Close
+		entry.count = row.Count
+	}
+
+	for _, row := range quoteRows {
+		right := normalizeOptionRight(row.Right)
+		if right != "call" && right != "put" {
+			continue
+		}
+		ts, err := parseThetaTimestamp(row.Timestamp)
+		if err != nil {
+			return 0, fmt.Errorf("parse quote timestamp %q: %w", row.Timestamp, err)
+		}
+		key := intradayBarKey{
+			contract: contractKeyStr(row.Symbol, row.Expiration, row.Strike, right),
+			ts:       ts,
+		}
+		entry, ok := merged[key]
+		if !ok {
+			entry = &intradayBar{
+				symbol:     row.Symbol,
+				expiration: row.Expiration,
+				strike:     row.Strike,
+				right:      right,
+				timestamp:  ts,
+			}
+			merged[key] = entry
+		}
+		entry.hasQuote = true
+		entry.bid = row.Bid
+		entry.ask = row.Ask
+	}
+
+	if len(merged) == 0 {
+		return 0, nil
+	}
+
+	symBatch, err := s.conn.PrepareBatch(ctx,
+		`INSERT INTO equity_options_symbol_meta (
+			symbol_id, symbol, base_asset, option_type, strike_price, expiration, underlying_index
+		)`)
+	if err != nil {
+		return 0, fmt.Errorf("prepare symbol_meta batch: %w", err)
+	}
+
+	barBatch, err := s.conn.PrepareBatch(ctx,
+		`INSERT INTO equity_options_bar_1m (
+			timestamp, symbol_id, base_asset,
+			mark_open, mark_high, mark_low, mark_close,
+			last_open, last_high, last_low, last_close,
+			bid_open, bid_high, bid_low, bid_close,
+			ask_open, ask_high, ask_low, ask_close,
+			mark_iv_open, mark_iv_close, bid_iv_open, ask_iv_open,
+			delta, gamma, vega, theta, rho,
+			open_interest, tick_count
+		)`)
+	if err != nil {
+		return 0, fmt.Errorf("prepare bar batch: %w", err)
+	}
+
+	seenSymbols := make(map[uint32]struct{}, len(merged))
+	inserted := 0
+	for _, row := range merged {
+		symbolStr := formatEquitySymbol(row.symbol, row.expiration, row.strike, row.right)
+		symID := cryptooptions.SymbolID(symbolStr)
+
+		if _, ok := seenSymbols[symID]; !ok {
+			exp, _ := time.Parse("2006-01-02", row.expiration)
+			if err := symBatch.Append(
+				symID, symbolStr, root, row.right,
+				float32(row.strike), exp, root,
+			); err != nil {
+				return inserted, fmt.Errorf("append symbol %s: %w", symbolStr, err)
+			}
+			seenSymbols[symID] = struct{}{}
+		}
+
+		markOpen, markHigh, markLow, markClose := deriveMarkOHLC(row)
+		bid := float32(row.bid)
+		ask := float32(row.ask)
+		openInterest := float32(oiMap[contractKeyStr(row.symbol, row.expiration, row.strike, row.right)])
+
+		if err := barBatch.Append(
+			row.timestamp,
+			symID,
+			root,
+			markOpen, markHigh, markLow, markClose,
+			float32(row.open), float32(row.high), float32(row.low), float32(row.close),
+			bid, bid, bid, bid,
+			ask, ask, ask, ask,
+			float32(0), float32(0), float32(0), float32(0),
+			float32(0), float32(0), float32(0), float32(0), float32(0),
+			openInterest,
+			uint16(row.count),
+		); err != nil {
+			return inserted, fmt.Errorf("append intraday bar: %w", err)
+		}
+		inserted++
+	}
+
+	if err := symBatch.Send(); err != nil {
+		return inserted, fmt.Errorf("send symbol batch: %w", err)
+	}
+	if err := barBatch.Send(); err != nil {
+		return inserted, fmt.Errorf("send bar batch: %w", err)
+	}
+
+	return inserted, nil
+}
+
 // HasDateData checks whether rows exist for a root/date in equity_options_bar_1m.
 func (s *Store) HasDateData(ctx context.Context, root string, date time.Time) (bool, error) {
 	var count uint64
@@ -221,4 +388,26 @@ func formatEquitySymbol(root, expiration string, strike float64, right string) s
 		r = "P"
 	}
 	return fmt.Sprintf("%s %s %s %.3f", root, t.Format("060102"), r, strike)
+}
+
+func parseThetaTimestamp(value string) (time.Time, error) {
+	for _, layout := range []string{"2006-01-02T15:04:05.000", "2006-01-02T15:04:05"} {
+		if ts, err := time.Parse(layout, value); err == nil {
+			return ts, nil
+		}
+	}
+	return time.Time{}, fmt.Errorf("unsupported timestamp: %s", value)
+}
+
+func deriveMarkOHLC(row *intradayBar) (float32, float32, float32, float32) {
+	if row.hasQuote {
+		mid := float32((row.bid + row.ask) / 2)
+		if mid > 0 {
+			return mid, mid, mid, mid
+		}
+	}
+	if row.hasOHLC {
+		return float32(row.open), float32(row.high), float32(row.low), float32(row.close)
+	}
+	return 0, 0, 0, 0
 }

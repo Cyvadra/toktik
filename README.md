@@ -182,6 +182,7 @@ bin/thetadata-sync \
   --roots "AAPL,SPY" \
   --start-date 2024-01-01 \
   --end-date 2025-01-01 \
+  --mode eod \
   --base-url "http://127.0.0.1:25503" \
   --clickhouse-dsn "clickhouse://localhost:9000/default" \
   --workers 4 \
@@ -195,14 +196,29 @@ go run ./cmd/thetadata-sync \
   --roots "AAPL,SPY" \
   --start-date 2024-01-01 \
   --end-date 2025-01-01 \
+  --mode eod \
   --base-url "http://127.0.0.1:25503" \
   --clickhouse-dsn "clickhouse://localhost:9000/default"
+```
+
+For 5-minute intraday OHLC + quote sync:
+
+```bash
+go run ./cmd/thetadata-sync \
+  --roots "AAPL" \
+  --start-date 2025-01-02 \
+  --end-date 2025-01-10 \
+  --mode 5m \
+  --base-url "http://127.0.0.1:25503" \
+  --clickhouse-dsn "clickhouse://localhost:9000/default" \
+  --workers 1 \
+  --rate-limit 1
 ```
 
 Notes:
 - Use `--roots "*"` to discover and sync all available option roots.
 - The schema file is auto-detected from `schema/clickhouse/equity_options.sql`; override with `--schema path/to/file.sql` if needed.
-- Progress is stored under `.thetadata-progress`, so rerunning resumes unfinished dates.
+- Progress is stored under `.thetadata-progress/<mode>`, so `eod` and `5m` runs do not skip each other's dates.
 
 ## Writing Custom Strategies
 

@@ -7,13 +7,13 @@ type SyncConfig struct {
 	Roots       []string
 	StartDate   time.Time
 	EndDate     time.Time
+	Mode        string
 	BaseURL     string
 	CHDSN       string
 	Workers     int
 	RateLimit   float64
 	ProgressDir string
 	SchemaFile  string
-	Intraday    bool
 	Debug       bool
 }
 

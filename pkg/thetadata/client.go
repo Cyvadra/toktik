@@ -275,15 +275,15 @@ func (c *Client) GetOpenInterest(ctx context.Context, symbol, date string) ([]Op
 	return decodeResponse[OpenInterestRow](raw)
 }
 
-// GetQuotes1m fetches 1-minute NBBO quotes for a root+expiration on a date range.
+// GetQuotes fetches interval NBBO quotes for a root+expiration on a date range.
 // Multi-day requests are limited to 1 month and must specify an expiration.
-func (c *Client) GetQuotes1m(ctx context.Context, symbol, expiration, startDate, endDate string) ([]QuoteRow, error) {
+func (c *Client) GetQuotes(ctx context.Context, symbol, expiration, startDate, endDate, interval string) ([]QuoteRow, error) {
 	q := url.Values{
 		"symbol":     {symbol},
 		"expiration": {expiration},
 		"start_date": {startDate},
 		"end_date":   {endDate},
-		"interval":   {"1m"},
+		"interval":   {interval},
 	}
 	raw, err := c.getJSON(ctx, "/option/history/quote", q)
 	if err != nil {
@@ -292,18 +292,28 @@ func (c *Client) GetQuotes1m(ctx context.Context, symbol, expiration, startDate,
 	return decodeResponse[QuoteRow](raw)
 }
 
-// GetOHLC1m fetches 1-minute OHLC bars for a root+expiration on a date range.
-func (c *Client) GetOHLC1m(ctx context.Context, symbol, expiration, startDate, endDate string) ([]OHLCRow, error) {
+// GetQuotes1m fetches 1-minute NBBO quotes for a root+expiration on a date range.
+func (c *Client) GetQuotes1m(ctx context.Context, symbol, expiration, startDate, endDate string) ([]QuoteRow, error) {
+	return c.GetQuotes(ctx, symbol, expiration, startDate, endDate, "1m")
+}
+
+// GetOHLC fetches interval OHLC bars for a root+expiration on a date range.
+func (c *Client) GetOHLC(ctx context.Context, symbol, expiration, startDate, endDate, interval string) ([]OHLCRow, error) {
 	q := url.Values{
 		"symbol":     {symbol},
 		"expiration": {expiration},
 		"start_date": {startDate},
 		"end_date":   {endDate},
-		"interval":   {"1m"},
+		"interval":   {interval},
 	}
 	raw, err := c.getJSON(ctx, "/option/history/ohlc", q)
 	if err != nil {
 		return nil, err
 	}
 	return decodeResponse[OHLCRow](raw)
+}
+
+// GetOHLC1m fetches 1-minute OHLC bars for a root+expiration on a date range.
+func (c *Client) GetOHLC1m(ctx context.Context, symbol, expiration, startDate, endDate string) ([]OHLCRow, error) {
+	return c.GetOHLC(ctx, symbol, expiration, startDate, endDate, "1m")
 }
