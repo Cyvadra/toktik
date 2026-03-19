@@ -160,17 +160,33 @@ bin/crypto-options-missing-days \
 ### 6. Sync US Stock Options (Theta Data)
 
 ```bash
+make build-thetadata-sync
+
 bin/thetadata-sync \
   --roots "AAPL,SPY" \
   --start-date 2024-01-01 \
   --end-date 2025-01-01 \
-  --mcp-url "http://127.0.0.1:25503" \
+  --base-url "http://127.0.0.1:25503" \
   --clickhouse-dsn "clickhouse://localhost:9000/default" \
   --workers 4 \
   --rate-limit 5.0
 ```
 
-Use `--all-roots` to discover and sync all available option roots. Add `--prefilter-roots` to score roots by activity and keep only the most active ones.
+Or run directly without building:
+
+```bash
+go run ./cmd/thetadata-sync \
+  --roots "AAPL,SPY" \
+  --start-date 2024-01-01 \
+  --end-date 2025-01-01 \
+  --base-url "http://127.0.0.1:25503" \
+  --clickhouse-dsn "clickhouse://localhost:9000/default"
+```
+
+Notes:
+- Use `--roots "*"` to discover and sync all available option roots.
+- The schema file is auto-detected from `schema/clickhouse/equity_options.sql`; override with `--schema path/to/file.sql` if needed.
+- Progress is stored under `.thetadata-progress`, so rerunning resumes unfinished dates.
 
 ## Writing Custom Strategies
 

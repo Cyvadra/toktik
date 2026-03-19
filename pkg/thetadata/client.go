@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 )
 
@@ -82,6 +83,11 @@ type jsonResponse struct {
 	Response []json.RawMessage `json:"response"`
 }
 
+type contractEnvelope struct {
+	Contract json.RawMessage   `json:"contract"`
+	Data     []json.RawMessage `json:"data"`
+}
+
 // decodeResponse extracts the response array from a Theta Data JSON response.
 func decodeResponse[T any](raw json.RawMessage) ([]T, error) {
 	var wrapper jsonResponse
@@ -95,13 +101,89 @@ func decodeResponse[T any](raw json.RawMessage) ([]T, error) {
 	}
 	items := make([]T, 0, len(wrapper.Response))
 	for _, elem := range wrapper.Response {
+		flattened, flattenErr := decodeContractEnvelope[T](elem)
+		if flattenErr == nil {
+			items = append(items, flattened...)
+			continue
+		}
+
 		var item T
 		if err := json.Unmarshal(elem, &item); err != nil {
-			return nil, fmt.Errorf("decode item: %w", err)
+			return nil, fmt.Errorf("decode item: %w (flatten: %v)", err, flattenErr)
 		}
+		normalizeOptionRightFields(&item)
 		items = append(items, item)
 	}
 	return items, nil
+}
+
+func decodeContractEnvelope[T any](raw json.RawMessage) ([]T, error) {
+	var envelope contractEnvelope
+	if err := json.Unmarshal(raw, &envelope); err != nil {
+		return nil, err
+	}
+	if len(envelope.Contract) == 0 || len(envelope.Data) == 0 {
+		return nil, fmt.Errorf("not contract envelope")
+	}
+
+	var contract map[string]any
+	if err := json.Unmarshal(envelope.Contract, &contract); err != nil {
+		return nil, fmt.Errorf("decode contract: %w", err)
+	}
+
+	items := make([]T, 0, len(envelope.Data))
+	for _, datum := range envelope.Data {
+		var payload map[string]any
+		if err := json.Unmarshal(datum, &payload); err != nil {
+			return nil, fmt.Errorf("decode data row: %w", err)
+		}
+		merged := make(map[string]any, len(contract)+len(payload))
+		for key, value := range contract {
+			merged[key] = value
+		}
+		for key, value := range payload {
+			merged[key] = value
+		}
+
+		buf, err := json.Marshal(merged)
+		if err != nil {
+			return nil, fmt.Errorf("marshal merged row: %w", err)
+		}
+
+		var item T
+		if err := json.Unmarshal(buf, &item); err != nil {
+			return nil, fmt.Errorf("decode merged row: %w", err)
+		}
+		normalizeOptionRightFields(&item)
+		items = append(items, item)
+	}
+	return items, nil
+}
+
+func normalizeOptionRightFields[T any](item *T) {
+	switch row := any(item).(type) {
+	case *EODRow:
+		row.Right = normalizeOptionRight(row.Right)
+	case *GreeksEODRow:
+		row.Right = normalizeOptionRight(row.Right)
+	case *OpenInterestRow:
+		row.Right = normalizeOptionRight(row.Right)
+	case *QuoteRow:
+		row.Right = normalizeOptionRight(row.Right)
+	case *OHLCRow:
+		row.Right = normalizeOptionRight(row.Right)
+	}
+}
+
+func normalizeOptionRight(right string) string {
+	switch {
+	case strings.EqualFold(right, "call"), strings.EqualFold(right, "c"):
+		return "call"
+	case strings.EqualFold(right, "put"), strings.EqualFold(right, "p"):
+		return "put"
+	default:
+		return strings.ToLower(strings.TrimSpace(right))
+	}
 }
 
 // ListSymbols returns all option root symbols.

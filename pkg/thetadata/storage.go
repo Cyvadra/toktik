@@ -87,14 +87,19 @@ func (s *Store) InsertEODBars(ctx context.Context, root string, date time.Time,
 	seenUnderlying := false
 
 	for _, row := range eodRows {
-		contractKey := contractKeyStr(row.Symbol, row.Expiration, row.Strike, row.Right)
-		symbolStr := formatEquitySymbol(row.Symbol, row.Expiration, row.Strike, row.Right)
+		right := normalizeOptionRight(row.Right)
+		if right != "call" && right != "put" {
+			continue
+		}
+
+		contractKey := contractKeyStr(row.Symbol, row.Expiration, row.Strike, right)
+		symbolStr := formatEquitySymbol(row.Symbol, row.Expiration, row.Strike, right)
 		symID := cryptooptions.SymbolID(symbolStr)
 
 		exp, _ := time.Parse("2006-01-02", row.Expiration)
 
 		if err := symBatch.Append(
-			symID, symbolStr, root, row.Right,
+			symID, symbolStr, root, right,
 			float32(row.Strike), exp, root,
 		); err != nil {
 			return fmt.Errorf("append symbol %s: %w", symbolStr, err)
@@ -201,7 +206,7 @@ func (s *Store) DeleteDateData(ctx context.Context, root string, date time.Time)
 
 // contractKeyStr builds a map key for matching EOD/Greeks/OI rows by contract identity.
 func contractKeyStr(symbol, expiration string, strike float64, right string) string {
-	return fmt.Sprintf("%s|%s|%.3f|%s", symbol, expiration, strike, right)
+	return fmt.Sprintf("%s|%s|%.3f|%s", symbol, expiration, strike, normalizeOptionRight(right))
 }
 
 // formatEquitySymbol creates a canonical symbol string for equity options.
