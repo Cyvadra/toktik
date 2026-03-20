@@ -24,6 +24,11 @@ type spotAccumulator struct {
 	LastTimestamp  time.Time
 	bar            SpotBar1m
 	hasFirst       bool
+	allPrices      []float32
+	firstPrices    []float32
+	lastPrices     []float32
+	openWindow     []float32
+	closeWindow    []float32
 }
 
 // Aggregator collects ticks and produces 1-minute aggregated bars.
@@ -61,8 +66,64 @@ func shouldReplaceClose(lastTimestamp, tickTimestamp time.Time) bool {
 	return lastTimestamp.IsZero() || !tickTimestamp.Before(lastTimestamp)
 }
 
-func isCanonicalUnderlyingIndex(value string) bool {
-	return strings.EqualFold(strings.TrimSpace(value), "index_price")
+func percentileSortedF32(sorted []float32, percentile float64) float32 {
+	n := len(sorted)
+	if n == 0 {
+		return 0
+	}
+	if percentile <= 0 {
+		return sorted[0]
+	}
+	if percentile >= 1 {
+		return sorted[n-1]
+	}
+
+	pos := percentile * float64(n-1)
+	lo := int(math.Floor(pos))
+	hi := int(math.Ceil(pos))
+	if lo == hi {
+		return sorted[lo]
+	}
+
+	w := float32(pos - float64(lo))
+	return sorted[lo]*(1-w) + sorted[hi]*w
+}
+
+func medianF32(values []float32) float32 {
+	if len(values) == 0 {
+		return 0
+	}
+	cp := append([]float32(nil), values...)
+	sort.Slice(cp, func(i, j int) bool {
+		return cp[i] < cp[j]
+	})
+	return percentileSortedF32(cp, 0.5)
+}
+
+func (s *spotAccumulator) finalize() {
+	if len(s.allPrices) == 0 {
+		return
+	}
+
+	sorted := append([]float32(nil), s.allPrices...)
+	sort.Slice(sorted, func(i, j int) bool {
+		return sorted[i] < sorted[j]
+	})
+
+	s.bar.High = percentileSortedF32(sorted, 0.95)
+	s.bar.Low = percentileSortedF32(sorted, 0.05)
+
+	if len(s.openWindow) > 0 {
+		s.bar.Open = medianF32(s.openWindow)
+	} else {
+		s.bar.Open = medianF32(s.firstPrices)
+	}
+
+	if len(s.closeWindow) > 0 {
+		s.bar.Close = medianF32(s.closeWindow)
+	} else {
+		s.bar.Close = medianF32(s.lastPrices)
+	}
 }
 
 func (a *Aggregator) Add(tick TickRow) {
@@ -158,7 +219,7 @@ func (a *Aggregator) Add(tick TickRow) {
 
 	acc.bar.TickCount++
 
-	if tick.UnderlyingPrice <= 0 || !isCanonicalUnderlyingIndex(tick.UnderlyingIndex) {
+	if tick.UnderlyingPrice <= 0 || tick.Timestamp.UnixNano() <= 0 {
 		return
 	}
 
@@ -171,40 +232,52 @@ func (a *Aggregator) Add(tick TickRow) {
 		spotAcc = &spotAccumulator{}
 		spotAcc.bar.Timestamp = minuteTS
 		spotAcc.bar.Symbol = acc.bar.BaseAsset
-		spotAcc.bar.PriceSource = tick.UnderlyingIndex
+		spotAcc.bar.PriceSource = strings.TrimSpace(tick.UnderlyingIndex)
 		a.spotAccumulators[spotKey] = spotAcc
+	}
+
+	underlyingIndex := strings.TrimSpace(tick.UnderlyingIndex)
+	if underlyingIndex != "" {
+		if spotAcc.bar.PriceSource == "" {
+			spotAcc.bar.PriceSource = underlyingIndex
+		} else if !strings.EqualFold(spotAcc.bar.PriceSource, underlyingIndex) {
+			spotAcc.bar.PriceSource = "mixed"
+		}
+	}
+
+	spotAcc.allPrices = append(spotAcc.allPrices, tick.UnderlyingPrice)
+	minuteEnd := minuteTS.Add(time.Minute)
+	openWindowEnd := minuteTS.Add(500 * time.Millisecond)
+	closeWindowStart := minuteEnd.Add(-500 * time.Millisecond)
+	if !tick.Timestamp.Before(minuteTS) && tick.Timestamp.Before(openWindowEnd) {
+		spotAcc.openWindow = append(spotAcc.openWindow, tick.UnderlyingPrice)
+	}
+	if !tick.Timestamp.Before(closeWindowStart) && tick.Timestamp.Before(minuteEnd) {
+		spotAcc.closeWindow = append(spotAcc.closeWindow, tick.UnderlyingPrice)
 	}
 
 	if !spotAcc.hasFirst {
 		spotAcc.FirstTimestamp = tick.Timestamp
 		spotAcc.LastTimestamp = tick.Timestamp
 		spotAcc.hasFirst = true
-		spotAcc.bar.Open = tick.UnderlyingPrice
-		spotAcc.bar.High = tick.UnderlyingPrice
-		spotAcc.bar.Low = tick.UnderlyingPrice
-		spotAcc.bar.Close = tick.UnderlyingPrice
-		if spotAcc.bar.PriceSource == "" {
-			spotAcc.bar.PriceSource = tick.UnderlyingIndex
-		}
+		spotAcc.firstPrices = append(spotAcc.firstPrices, tick.UnderlyingPrice)
+		spotAcc.lastPrices = append(spotAcc.lastPrices, tick.UnderlyingPrice)
 	} else {
 		if tick.Timestamp.Before(spotAcc.FirstTimestamp) {
 			spotAcc.FirstTimestamp = tick.Timestamp
-			spotAcc.bar.Open = tick.UnderlyingPrice
-			if tick.UnderlyingIndex != "" {
-				spotAcc.bar.PriceSource = tick.UnderlyingIndex
-			}
+			spotAcc.firstPrices = spotAcc.firstPrices[:0]
+			spotAcc.firstPrices = append(spotAcc.firstPrices, tick.UnderlyingPrice)
+		} else if tick.Timestamp.Equal(spotAcc.FirstTimestamp) {
+			spotAcc.firstPrices = append(spotAcc.firstPrices, tick.UnderlyingPrice)
 		}
 
-		spotAcc.bar.High = maxf32(spotAcc.bar.High, tick.UnderlyingPrice)
-		spotAcc.bar.Low = minf32NonZero(spotAcc.bar.Low, tick.UnderlyingPrice)
-		if spotAcc.bar.PriceSource == "" && tick.UnderlyingIndex != "" {
-			spotAcc.bar.PriceSource = tick.UnderlyingIndex
+		if tick.Timestamp.After(spotAcc.LastTimestamp) {
+			spotAcc.LastTimestamp = tick.Timestamp
+			spotAcc.lastPrices = spotAcc.lastPrices[:0]
+			spotAcc.lastPrices = append(spotAcc.lastPrices, tick.UnderlyingPrice)
+		} else if tick.Timestamp.Equal(spotAcc.LastTimestamp) {
+			spotAcc.lastPrices = append(spotAcc.lastPrices, tick.UnderlyingPrice)
 		}
-	}
-
-	if shouldReplaceClose(spotAcc.LastTimestamp, tick.Timestamp) {
-		spotAcc.LastTimestamp = tick.Timestamp
-		spotAcc.bar.Close = tick.UnderlyingPrice
 	}
 
 	spotAcc.bar.TickCount++
@@ -290,6 +363,7 @@ func (a *Aggregator) FlushSortedSpotBatches(batchSize int, writeBatch func([]Spo
 	batch := make([]SpotBar1m, 0, min(batchSize, len(ordered)))
 	total := 0
 	for _, acc := range ordered {
+		acc.finalize()
 		batch = append(batch, acc.bar)
 		if len(batch) == batchSize {
 			if err := writeBatch(batch); err != nil {
