@@ -229,6 +229,19 @@ func (c *Client) ListExpirations(ctx context.Context, symbol string) ([]string, 
 	return out, nil
 }
 
+// ListContracts returns the contracts that were quoted or traded on a given date.
+func (c *Client) ListContracts(ctx context.Context, requestType, symbol, date string) ([]Contract, error) {
+	q := url.Values{
+		"symbol": {symbol},
+		"date":   {date},
+	}
+	raw, err := c.getJSON(ctx, "/option/list/contracts/"+requestType, q)
+	if err != nil {
+		return nil, err
+	}
+	return decodeResponse[Contract](raw)
+}
+
 // GetEOD fetches the full-chain EOD report for a root on a single date.
 // Uses expiration=* and strike=* to get all contracts in one call.
 func (c *Client) GetEOD(ctx context.Context, symbol, date string) ([]EODRow, error) {

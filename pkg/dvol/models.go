@@ -8,7 +8,7 @@ const DefaultBaseURL = "https://www.deribit.com"
 // AcceptedCurrencies are currencies currently accepted by
 // public/get_volatility_index_data (as observed from live endpoint probes).
 // Some accepted currencies may legitimately return zero rows for a given range.
-var AcceptedCurrencies = []string{"BTC", "ETH", "SOL", "XRP", "BNB", "MATIC"}
+var AcceptedCurrencies = []string{"BTC", "ETH"}
 
 // DefaultCurrencies are the default sync targets with stable historical coverage.
 var DefaultCurrencies = []string{"BTC", "ETH"}
