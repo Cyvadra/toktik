@@ -256,10 +256,16 @@ func (bc *BarContext) Factor(ref FactorRef) *SecurityAccessor {
 
 // Buy submits a market buy order for the given security.
 func (bc *BarContext) Buy(ref SecurityRef, qty float64) {
+	bc.BuyWithNote(ref, qty, "")
+}
+
+// BuyWithNote submits a market buy order with a short note.
+func (bc *BarContext) BuyWithNote(ref SecurityRef, qty float64, note string) {
 	bc.broker.SubmitOrder(Order{
 		Security:   ref,
 		Side:       Buy,
 		Type:       MarketOrder,
+		Note:       note,
 		Qty:        qty,
 		SubmitBar:  bc.barIndex,
 		SubmitTime: bc.barTime,
@@ -268,10 +274,16 @@ func (bc *BarContext) Buy(ref SecurityRef, qty float64) {
 
 // Sell submits a market sell order for the given security.
 func (bc *BarContext) Sell(ref SecurityRef, qty float64) {
+	bc.SellWithNote(ref, qty, "")
+}
+
+// SellWithNote submits a market sell order with a short note.
+func (bc *BarContext) SellWithNote(ref SecurityRef, qty float64, note string) {
 	bc.broker.SubmitOrder(Order{
 		Security:   ref,
 		Side:       Sell,
 		Type:       MarketOrder,
+		Note:       note,
 		Qty:        qty,
 		SubmitBar:  bc.barIndex,
 		SubmitTime: bc.barTime,
@@ -280,14 +292,20 @@ func (bc *BarContext) Sell(ref SecurityRef, qty float64) {
 
 // BuyTWAP submits a market buy order sliced evenly across the next N bars.
 func (bc *BarContext) BuyTWAP(ref SecurityRef, qty float64, bars int) {
+	bc.BuyTWAPWithNote(ref, qty, bars, "")
+}
+
+// BuyTWAPWithNote submits a market buy order sliced evenly across the next N bars with a short note.
+func (bc *BarContext) BuyTWAPWithNote(ref SecurityRef, qty float64, bars int, note string) {
 	if bars <= 1 {
-		bc.Buy(ref, qty)
+		bc.BuyWithNote(ref, qty, note)
 		return
 	}
 	bc.broker.SubmitOrder(Order{
 		Security:   ref,
 		Side:       Buy,
 		Type:       TWAPMarketOrder,
+		Note:       note,
 		Qty:        qty,
 		TWAPBars:   bars,
 		SubmitBar:  bc.barIndex,
@@ -297,14 +315,20 @@ func (bc *BarContext) BuyTWAP(ref SecurityRef, qty float64, bars int) {
 
 // SellTWAP submits a market sell order sliced evenly across the next N bars.
 func (bc *BarContext) SellTWAP(ref SecurityRef, qty float64, bars int) {
+	bc.SellTWAPWithNote(ref, qty, bars, "")
+}
+
+// SellTWAPWithNote submits a market sell order sliced evenly across the next N bars with a short note.
+func (bc *BarContext) SellTWAPWithNote(ref SecurityRef, qty float64, bars int, note string) {
 	if bars <= 1 {
-		bc.Sell(ref, qty)
+		bc.SellWithNote(ref, qty, note)
 		return
 	}
 	bc.broker.SubmitOrder(Order{
 		Security:   ref,
 		Side:       Sell,
 		Type:       TWAPMarketOrder,
+		Note:       note,
 		Qty:        qty,
 		TWAPBars:   bars,
 		SubmitBar:  bc.barIndex,
@@ -314,10 +338,16 @@ func (bc *BarContext) SellTWAP(ref SecurityRef, qty float64, bars int) {
 
 // BuyLimit submits a limit buy order.
 func (bc *BarContext) BuyLimit(ref SecurityRef, qty, price float64) {
+	bc.BuyLimitWithNote(ref, qty, price, "")
+}
+
+// BuyLimitWithNote submits a limit buy order with a short note.
+func (bc *BarContext) BuyLimitWithNote(ref SecurityRef, qty, price float64, note string) {
 	bc.broker.SubmitOrder(Order{
 		Security:   ref,
 		Side:       Buy,
 		Type:       LimitOrder,
+		Note:       note,
 		Qty:        qty,
 		Price:      price,
 		SubmitBar:  bc.barIndex,
@@ -327,10 +357,16 @@ func (bc *BarContext) BuyLimit(ref SecurityRef, qty, price float64) {
 
 // SellLimit submits a limit sell order.
 func (bc *BarContext) SellLimit(ref SecurityRef, qty, price float64) {
+	bc.SellLimitWithNote(ref, qty, price, "")
+}
+
+// SellLimitWithNote submits a limit sell order with a short note.
+func (bc *BarContext) SellLimitWithNote(ref SecurityRef, qty, price float64, note string) {
 	bc.broker.SubmitOrder(Order{
 		Security:   ref,
 		Side:       Sell,
 		Type:       LimitOrder,
+		Note:       note,
 		Qty:        qty,
 		Price:      price,
 		SubmitBar:  bc.barIndex,
@@ -340,10 +376,16 @@ func (bc *BarContext) SellLimit(ref SecurityRef, qty, price float64) {
 
 // BuyStop submits a stop buy order.
 func (bc *BarContext) BuyStop(ref SecurityRef, qty, stopPrice float64) {
+	bc.BuyStopWithNote(ref, qty, stopPrice, "")
+}
+
+// BuyStopWithNote submits a stop buy order with a short note.
+func (bc *BarContext) BuyStopWithNote(ref SecurityRef, qty, stopPrice float64, note string) {
 	bc.broker.SubmitOrder(Order{
 		Security:   ref,
 		Side:       Buy,
 		Type:       StopOrder,
+		Note:       note,
 		Qty:        qty,
 		StopPrice:  stopPrice,
 		SubmitBar:  bc.barIndex,
@@ -353,10 +395,16 @@ func (bc *BarContext) BuyStop(ref SecurityRef, qty, stopPrice float64) {
 
 // SellStop submits a stop sell order.
 func (bc *BarContext) SellStop(ref SecurityRef, qty, stopPrice float64) {
+	bc.SellStopWithNote(ref, qty, stopPrice, "")
+}
+
+// SellStopWithNote submits a stop sell order with a short note.
+func (bc *BarContext) SellStopWithNote(ref SecurityRef, qty, stopPrice float64, note string) {
 	bc.broker.SubmitOrder(Order{
 		Security:   ref,
 		Side:       Sell,
 		Type:       StopOrder,
+		Note:       note,
 		Qty:        qty,
 		StopPrice:  stopPrice,
 		SubmitBar:  bc.barIndex,
@@ -508,6 +556,11 @@ func (bc *BarContext) OpenSpread(legs []SpreadLeg, tag string) int {
 
 // CloseSpreadLeg closes a specific leg of a spread at the given price.
 func (bc *BarContext) CloseSpreadLeg(spreadID, legIndex int, closePrice float64) bool {
+	return bc.CloseSpreadLegWithReason(spreadID, legIndex, closePrice, "")
+}
+
+// CloseSpreadLegWithReason closes a specific leg of a spread at the given price with a short reason.
+func (bc *BarContext) CloseSpreadLegWithReason(spreadID, legIndex int, closePrice float64, closeReason string) bool {
 	if bc.spreadTracker == nil {
 		return false
 	}
@@ -528,7 +581,7 @@ func (bc *BarContext) CloseSpreadLeg(spreadID, legIndex int, closePrice float64)
 		// Closing a long: sell to close = cash inflow
 		bc.broker.AdjustCash(amount)
 	}
-	return bc.spreadTracker.CloseLeg(spreadID, legIndex, closePrice, bc.barTime)
+	return bc.spreadTracker.CloseLegWithReason(spreadID, legIndex, closePrice, bc.barTime, closeReason)
 }
 
 // CloseSpread closes all open legs of a spread using the provided price function.

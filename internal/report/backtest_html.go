@@ -124,6 +124,7 @@ type tradeRowView struct {
 	Timestamp  string
 	Security   string
 	Side       string
+	Reason     string
 	Qty        string
 	FillPrice  string
 	Commission string
@@ -156,6 +157,7 @@ type spreadLegRowView struct {
 	EntryTime   string
 	ClosePrice  string
 	CloseTime   string
+	CloseReason string
 	RealizedPnL string
 	SideClass   string
 }
@@ -883,6 +885,7 @@ func buildTradeRows(trades []backtest.Trade, unit string) []tradeRowView {
 			Timestamp:  formatDateTime(trade.Timestamp),
 			Security:   fmt.Sprintf("%s / %s / %s", trade.Security.Market, trade.Security.Symbol, trade.Security.Interval),
 			Side:       strings.ToUpper(side),
+			Reason:     fallbackText(strings.TrimSpace(trade.Note), "-"),
 			Qty:        decimal(trade.Qty),
 			FillPrice:  amount(trade.FillPrice, unit),
 			Commission: amount(trade.Commission, unit),
@@ -924,6 +927,7 @@ func buildSpreadRows(spreads []backtest.SpreadPositionReport, unit string) []spr
 				EntryTime:   formatDateTime(leg.EntryTime),
 				ClosePrice:  nullableAmount4(leg.ClosePrice, leg.Closed, unit),
 				CloseTime:   "-",
+				CloseReason: fallbackText(strings.TrimSpace(leg.CloseReason), "-"),
 				RealizedPnL: signedAmount(leg.RealizedPnL, unit),
 				SideClass:   sideClass(leg.Side),
 			}
@@ -1369,6 +1373,13 @@ func nullableAmount4(value float64, ok bool, unit string) string {
 	return amount4(value, unit)
 }
 
+func fallbackText(value, fallback string) string {
+	if strings.TrimSpace(value) == "" {
+		return fallback
+	}
+	return value
+}
+
 func formatDate(value time.Time) string {
 	if value.IsZero() {
 		return "-"
@@ -1611,6 +1622,7 @@ const htmlTemplate = `<!DOCTYPE html>
                 <th class="px-4 py-2 font-medium">Entry Time</th>
                 <th class="px-4 py-2 font-medium">Close Price</th>
                 <th class="px-4 py-2 font-medium">Close Time</th>
+				<th class="px-4 py-2 font-medium">Close Reason</th>
                 <th class="px-4 py-2 font-medium">PnL</th>
               </tr>
             </thead>
@@ -1627,6 +1639,7 @@ const htmlTemplate = `<!DOCTYPE html>
                 <td class="px-4 py-1.5 mono text-slate-400">{{ .EntryTime }}</td>
                 <td class="px-4 py-1.5 mono text-slate-400">{{ .ClosePrice }}</td>
                 <td class="px-4 py-1.5 mono text-slate-400">{{ .CloseTime }}</td>
+				<td class="px-4 py-1.5 text-slate-300">{{ .CloseReason }}</td>
                 <td class="px-4 py-1.5 mono text-slate-300">{{ .RealizedPnL }}</td>
               </tr>
               {{ end }}
@@ -1652,6 +1665,7 @@ const htmlTemplate = `<!DOCTYPE html>
                 <th class="px-4 py-2">Time</th>
                 <th class="px-4 py-2">Security</th>
                 <th class="px-4 py-2">Side</th>
+								<th class="px-4 py-2">Reason</th>
                 <th class="px-4 py-2">Qty</th>
                 <th class="px-4 py-2">Fill</th>
                 <th class="px-4 py-2">Fee</th>
@@ -1665,6 +1679,7 @@ const htmlTemplate = `<!DOCTYPE html>
                 <td class="px-4 py-2 mono text-slate-300">{{ .Timestamp }}</td>
                 <td class="px-4 py-2 text-slate-200">{{ .Security }}</td>
                 <td class="px-4 py-2 font-semibold {{ .SideClass }}">{{ .Side }}</td>
+								<td class="px-4 py-2 text-slate-300">{{ .Reason }}</td>
                 <td class="px-4 py-2 mono text-slate-200">{{ .Qty }}</td>
                 <td class="px-4 py-2 mono text-slate-200">{{ .FillPrice }}</td>
                 <td class="px-4 py-2 mono text-slate-300">{{ .Commission }}</td>
@@ -2151,6 +2166,7 @@ const combinedHTMLTemplate = `<!DOCTYPE html>
 												<th class="px-4 py-3 font-medium">Time</th>
 												<th class="px-4 py-3 font-medium">Security</th>
 												<th class="px-4 py-3 font-medium">Side</th>
+												<th class="px-4 py-3 font-medium">Reason</th>
 												<th class="px-4 py-3 font-medium">Qty</th>
 												<th class="px-4 py-3 font-medium">Fill</th>
 												<th class="px-4 py-3 font-medium">Fee</th>
@@ -2164,6 +2180,7 @@ const combinedHTMLTemplate = `<!DOCTYPE html>
 												<td class="px-4 py-3 font-mono text-slate-300">{{ .Timestamp }}</td>
 												<td class="px-4 py-3 text-slate-200">{{ .Security }}</td>
 												<td class="px-4 py-3 font-semibold {{ .SideClass }}">{{ .Side }}</td>
+												<td class="px-4 py-3 text-slate-300">{{ .Reason }}</td>
 												<td class="px-4 py-3 font-mono text-slate-200">{{ .Qty }}</td>
 												<td class="px-4 py-3 font-mono text-slate-200">{{ .FillPrice }}</td>
 												<td class="px-4 py-3 font-mono text-slate-300">{{ .Commission }}</td>
@@ -2214,6 +2231,7 @@ const combinedHTMLTemplate = `<!DOCTYPE html>
 													<th class="px-4 py-3 font-medium">Qty</th>
 													<th class="px-4 py-3 font-medium">Entry</th>
 													<th class="px-4 py-3 font-medium">Close</th>
+													<th class="px-4 py-3 font-medium">Close Reason</th>
 													<th class="px-4 py-3 font-medium">PnL</th>
 												</tr>
 											</thead>
@@ -2228,6 +2246,7 @@ const combinedHTMLTemplate = `<!DOCTYPE html>
 													<td class="px-4 py-3 font-mono text-slate-200">{{ .Qty }}</td>
 													<td class="px-4 py-3 font-mono text-slate-200">{{ .EntryPrice }}</td>
 													<td class="px-4 py-3 font-mono text-slate-300">{{ .ClosePrice }}</td>
+													<td class="px-4 py-3 text-slate-300">{{ .CloseReason }}</td>
 													<td class="px-4 py-3 font-mono text-white">{{ .RealizedPnL }}</td>
 												</tr>
 												{{ end }}

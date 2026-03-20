@@ -51,6 +51,7 @@ type Order struct {
 	Security   SecurityRef
 	Side       Side
 	Type       OrderType
+	Note       string
 	Qty        float64
 	Price      float64 // limit price (for Limit and StopLimit)
 	StopPrice  float64 // trigger price (for Stop and StopLimit)
@@ -65,6 +66,7 @@ type Trade struct {
 	OrderID    int
 	Security   SecurityRef
 	Side       Side
+	Note       string
 	Qty        float64
 	FillPrice  float64
 	Commission float64

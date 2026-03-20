@@ -98,6 +98,19 @@ func (s *turtleTrendSimpStrategy) Init(ctx *backtest.SetupContext) error {
 	return nil
 }
 
+func (s *turtleTrendSimpStrategy) rollCloseReason(absDelta, pnlPct float64) string {
+	if absDelta > 0.55 && !math.IsNaN(pnlPct) && pnlPct > 0.66 {
+		return "换仓：Delta超标且浮盈超过66%"
+	}
+	if absDelta > 0.55 {
+		return "换仓：Delta超标(>|0.55|)"
+	}
+	if !math.IsNaN(pnlPct) && pnlPct > 0.66 {
+		return "换仓：浮盈超过66%"
+	}
+	return "换仓"
+}
+
 func (s *turtleTrendSimpStrategy) OnBar(ctx *backtest.BarContext) {
 	barIndex := ctx.BarIndex()
 	now := ctx.Time()
@@ -159,7 +172,7 @@ func (s *turtleTrendSimpStrategy) OnBar(ctx *backtest.BarContext) {
 		// Soft stop: if option value dropped ≥ 80% from entry
 		if !math.IsNaN(markPrice) && leg.EntryPrice > 0 && markPrice <= leg.EntryPrice*0.2 {
 			s.debugf("bar=%d long slot=%d soft-stop spread_id=%d symbol=%s entry=%.6f mark=%.6f", barIndex, i, sp.ID, leg.Contract.Symbol, leg.EntryPrice, markPrice)
-			ctx.CloseSpreadLeg(sp.ID, 0, s.exitPriceForLeg(*leg, contractMap))
+			ctx.CloseSpreadLegWithReason(sp.ID, 0, s.exitPriceForLeg(*leg, contractMap), "停损：权利金回撤达80%")
 			s.longSlots[i] = nil
 			// Reset long state if all long slots empty
 			if s.countLongSlots() == 0 {
@@ -182,9 +195,9 @@ func (s *turtleTrendSimpStrategy) OnBar(ctx *backtest.BarContext) {
 
 		if needsRoll {
 			s.debugf("bar=%d long slot=%d rolling spread_id=%d symbol=%s abs_delta=%.6f pnl_pct=%.6f", barIndex, i, sp.ID, currentContract.Symbol, absDelta, pnlPct)
-			ctx.CloseSpreadLeg(sp.ID, 0, s.exitPriceForLeg(*leg, contractMap))
+			ctx.CloseSpreadLegWithReason(sp.ID, 0, s.exitPriceForLeg(*leg, contractMap), s.rollCloseReason(absDelta, pnlPct))
 			// Re-open with same execution standard
-			s.openCallOption(ctx, chain, close, i)
+			s.openCallOption(ctx, chain, close, i, "换仓")
 		}
 	}
 
@@ -213,7 +226,7 @@ func (s *turtleTrendSimpStrategy) OnBar(ctx *backtest.BarContext) {
 		// Soft stop: option value dropped ≥ 80%
 		if !math.IsNaN(markPrice) && leg.EntryPrice > 0 && markPrice <= leg.EntryPrice*0.2 {
 			s.debugf("bar=%d short slot=%d soft-stop spread_id=%d symbol=%s entry=%.6f mark=%.6f", barIndex, i, sp.ID, leg.Contract.Symbol, leg.EntryPrice, markPrice)
-			ctx.CloseSpreadLeg(sp.ID, 0, s.exitPriceForLeg(*leg, contractMap))
+			ctx.CloseSpreadLegWithReason(sp.ID, 0, s.exitPriceForLeg(*leg, contractMap), "停损：权利金回撤达80%")
 			s.shortSlots[i] = nil
 			if s.countShortSlots() == 0 {
 				s.shortAddCount = 0
@@ -235,8 +248,8 @@ func (s *turtleTrendSimpStrategy) OnBar(ctx *backtest.BarContext) {
 
 		if needsRoll {
 			s.debugf("bar=%d short slot=%d rolling spread_id=%d symbol=%s abs_delta=%.6f pnl_pct=%.6f", barIndex, i, sp.ID, currentContract.Symbol, absDelta, pnlPct)
-			ctx.CloseSpreadLeg(sp.ID, 0, s.exitPriceForLeg(*leg, contractMap))
-			s.openPutOption(ctx, chain, close, i)
+			ctx.CloseSpreadLegWithReason(sp.ID, 0, s.exitPriceForLeg(*leg, contractMap), s.rollCloseReason(absDelta, pnlPct))
+			s.openPutOption(ctx, chain, close, i, "换仓")
 		}
 	}
 
@@ -283,7 +296,7 @@ func (s *turtleTrendSimpStrategy) OnBar(ctx *backtest.BarContext) {
 		if s.longSlots[0] == nil {
 			// First entry
 			s.longAddCount = 0
-			s.openCallOption(ctx, chain, close, 0)
+			s.openCallOption(ctx, chain, close, 0, "首仓")
 			s.lastLongEntryPrice = close
 		} else if s.longAddCount < 2 {
 			// Add-on: price must have risen 0.75 * ATR since last entry
@@ -291,7 +304,7 @@ func (s *turtleTrendSimpStrategy) OnBar(ctx *backtest.BarContext) {
 				slotIdx := s.nextFreeLongSlot()
 				if slotIdx >= 0 {
 					s.debugf("bar=%d long add-on triggered close=%.6f last_entry=%.6f atr=%.6f slot=%d", barIndex, close, s.lastLongEntryPrice, atr, slotIdx)
-					s.openCallOption(ctx, chain, close, slotIdx)
+					s.openCallOption(ctx, chain, close, slotIdx, "加仓")
 					s.lastLongEntryPrice = close
 					s.longAddCount++
 				}
@@ -309,7 +322,7 @@ func (s *turtleTrendSimpStrategy) OnBar(ctx *backtest.BarContext) {
 		s.debugf("bar=%d short breakout triggered close=%.6f threshold=%.6f", barIndex, close, shortBreakout)
 		if s.shortSlots[0] == nil {
 			s.shortAddCount = 0
-			s.openPutOption(ctx, chain, close, 0)
+			s.openPutOption(ctx, chain, close, 0, "首仓")
 			s.lastShortEntryPrice = close
 		} else if s.shortAddCount < 1 {
 			// Add-on: price must have fallen 0.75 * ATR since last entry
@@ -317,7 +330,7 @@ func (s *turtleTrendSimpStrategy) OnBar(ctx *backtest.BarContext) {
 				slotIdx := s.nextFreeShortSlot()
 				if slotIdx >= 0 {
 					s.debugf("bar=%d short add-on triggered close=%.6f last_entry=%.6f atr=%.6f slot=%d", barIndex, close, s.lastShortEntryPrice, atr, slotIdx)
-					s.openPutOption(ctx, chain, close, slotIdx)
+					s.openPutOption(ctx, chain, close, slotIdx, "加仓")
 					s.lastShortEntryPrice = close
 					s.shortAddCount++
 				}
@@ -369,7 +382,7 @@ func (s *turtleTrendSimpStrategy) checkLowVol(ctx *backtest.BarContext) (bool, s
 
 // openCallOption opens a single Call option per the execution standard.
 // DTE ≈ 35, Delta ≈ 0.33, sized by IV quantile.
-func (s *turtleTrendSimpStrategy) openCallOption(ctx *backtest.BarContext, chain *backtest.OptionsChain, underlyingPrice float64, slotIdx int) {
+func (s *turtleTrendSimpStrategy) openCallOption(ctx *backtest.BarContext, chain *backtest.OptionsChain, underlyingPrice float64, slotIdx int, reason string) {
 	if chain == nil || chain.Len() == 0 {
 		s.debugf("bar=%d openCallOption aborted: empty chain", ctx.BarIndex())
 		return
@@ -404,12 +417,17 @@ func (s *turtleTrendSimpStrategy) openCallOption(ctx *backtest.BarContext, chain
 
 	s.debugf("bar=%d openCallOption selected symbol=%s delta=%.6f iv=%.6f dte=%.2f entry_price=%.6f x=%.6f qty=%.6f slot=%d", ctx.BarIndex(), contract.Symbol, contract.Delta, contract.IV, contract.DaysToExpiry(ctx.Time()), entryPrice, x, qty, slotIdx)
 
+	tag := "海龟简易-Long"
+	if reason != "" {
+		tag += "：" + reason
+	}
+
 	spreadID := ctx.OpenSpread([]backtest.SpreadLeg{{
 		Contract:   contract,
 		Side:       backtest.Buy,
 		Qty:        qty,
 		EntryPrice: entryPrice,
-	}}, "turtle-trend-call")
+	}}, tag)
 
 	if spreadID > 0 {
 		s.longSlots[slotIdx] = &slotState{
@@ -424,7 +442,7 @@ func (s *turtleTrendSimpStrategy) openCallOption(ctx *backtest.BarContext, chain
 
 // openPutOption opens a single Put option per the execution standard.
 // DTE ≈ 35, Delta ≈ -0.33, sized by IV quantile.
-func (s *turtleTrendSimpStrategy) openPutOption(ctx *backtest.BarContext, chain *backtest.OptionsChain, underlyingPrice float64, slotIdx int) {
+func (s *turtleTrendSimpStrategy) openPutOption(ctx *backtest.BarContext, chain *backtest.OptionsChain, underlyingPrice float64, slotIdx int, reason string) {
 	if chain == nil || chain.Len() == 0 {
 		s.debugf("bar=%d openPutOption aborted: empty chain", ctx.BarIndex())
 		return
@@ -459,12 +477,17 @@ func (s *turtleTrendSimpStrategy) openPutOption(ctx *backtest.BarContext, chain 
 
 	s.debugf("bar=%d openPutOption selected symbol=%s delta=%.6f iv=%.6f dte=%.2f entry_price=%.6f x=%.6f qty=%.6f slot=%d", ctx.BarIndex(), contract.Symbol, contract.Delta, contract.IV, contract.DaysToExpiry(ctx.Time()), entryPrice, x, qty, slotIdx)
 
+	tag := "海龟简易-Short"
+	if reason != "" {
+		tag += "：" + reason
+	}
+
 	spreadID := ctx.OpenSpread([]backtest.SpreadLeg{{
 		Contract:   contract,
 		Side:       backtest.Buy,
 		Qty:        qty,
 		EntryPrice: entryPrice,
-	}}, "turtle-trend-put")
+	}}, tag)
 
 	if spreadID > 0 {
 		s.shortSlots[slotIdx] = &slotState{

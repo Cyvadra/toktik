@@ -184,6 +184,7 @@ func (b *Broker) ProcessPending(barIndex int, barTime time.Time) []Trade {
 				OrderID:    o.ID,
 				Security:   o.Security,
 				Side:       o.Side,
+				Note:       o.Note,
 				Qty:        fillQty,
 				FillPrice:  fillPrice,
 				Commission: commission,

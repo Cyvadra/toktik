@@ -105,6 +105,7 @@ type SpreadLegReport struct {
 	Closed      bool       `json:"closed"`
 	ClosePrice  float64    `json:"close_price,omitempty"`
 	CloseTime   *time.Time `json:"close_time,omitempty"`
+	CloseReason string     `json:"close_reason,omitempty"`
 	RealizedPnL float64    `json:"realized_pnl"`
 }
 
@@ -614,6 +615,7 @@ func buildSpreadPositionReports(tracker *SpreadTracker, endTime time.Time) []Spr
 				EntryPrice:  leg.EntryPrice,
 				EntryTime:   leg.EntryTime,
 				Closed:      leg.Closed,
+				CloseReason: leg.CloseReason,
 				RealizedPnL: leg.RealizedPnL(),
 			}
 			if leg.Closed {

@@ -295,14 +295,15 @@ type OptionsChainProvider interface {
 
 // SpreadLeg represents one leg of a multi-leg options position.
 type SpreadLeg struct {
-	Contract   OptionContract
-	Side       Side
-	Qty        float64
-	EntryPrice float64
-	EntryTime  time.Time
-	Closed     bool
-	ClosePrice float64
-	CloseTime  time.Time
+	Contract    OptionContract
+	Side        Side
+	Qty         float64
+	EntryPrice  float64
+	EntryTime   time.Time
+	Closed      bool
+	ClosePrice  float64
+	CloseTime   time.Time
+	CloseReason string
 }
 
 // UnrealizedPnL returns the unrealized PnL for this leg at the given mark price.
@@ -447,6 +448,11 @@ func (st *SpreadTracker) All() []*SpreadPosition {
 
 // CloseLeg marks a specific leg of a spread as closed at the given price.
 func (st *SpreadTracker) CloseLeg(spreadID, legIndex int, closePrice float64, closeTime time.Time) bool {
+	return st.CloseLegWithReason(spreadID, legIndex, closePrice, closeTime, "")
+}
+
+// CloseLegWithReason marks a specific leg of a spread as closed with a reason.
+func (st *SpreadTracker) CloseLegWithReason(spreadID, legIndex int, closePrice float64, closeTime time.Time, closeReason string) bool {
 	sp := st.Get(spreadID)
 	if sp == nil || legIndex < 0 || legIndex >= len(sp.Legs) {
 		return false
@@ -457,6 +463,7 @@ func (st *SpreadTracker) CloseLeg(spreadID, legIndex int, closePrice float64, cl
 	sp.Legs[legIndex].Closed = true
 	sp.Legs[legIndex].ClosePrice = closePrice
 	sp.Legs[legIndex].CloseTime = closeTime
+	sp.Legs[legIndex].CloseReason = closeReason
 	return true
 }
 
