@@ -54,6 +54,7 @@ type htmlReportView struct {
 	EquitySeriesData     template.JS
 	DrawdownSeriesData   template.JS
 	PnLUSDSeriesData     template.JS
+	ActiveTimeData       template.JS
 	HasPnLUSD            bool
 	PnLUSDMin            string
 	PnLUSDMax            string
@@ -744,6 +745,7 @@ func buildHTMLView(result *backtest.Result, meta HTMLMeta) htmlReportView {
 		UnderlyingCandleData: template.JS("[]"),
 		UnderlyingMarkerData: template.JS("[]"),
 		PnLUSDSeriesData:     template.JS("[]"),
+		ActiveTimeData:       template.JS("[]"),
 		EquitySeriesData:     marshalJS(buildLineSeries(result.Timestamps, result.EquityCurve)),
 		DrawdownSeriesData:   marshalJS(buildLineSeries(result.Timestamps, drawdown)),
 	}
@@ -798,6 +800,7 @@ func buildHTMLView(result *backtest.Result, meta HTMLMeta) htmlReportView {
 
 	markers, tradeMarkerCount, spreadEventCount := buildUnderlyingMarkers(result)
 	view.UnderlyingMarkerData = marshalJS(markers)
+	view.ActiveTimeData = marshalJS(buildActiveTimes(result))
 	view.TradeMarkerCount = tradeMarkerCount
 	view.SpreadEventCount = spreadEventCount
 	view.Notes = buildNotes(result, candleFallback)
@@ -1096,6 +1099,78 @@ func buildUnderlyingMarkers(result *backtest.Result) ([]chartMarker, int, int) {
 	return markers, tradeMarkerCount, spreadEventCount
 }
 
+func buildActiveTimes(result *backtest.Result) []int64 {
+	if result == nil || len(result.Timestamps) == 0 {
+		return []int64{}
+	}
+	n := len(result.Timestamps)
+	active := make([]bool, n)
+
+	for _, spread := range result.SpreadPositions {
+		for i, ts := range result.Timestamps {
+			if ts.Before(spread.OpenTime) {
+				continue
+			}
+			if spread.CloseTime != nil && ts.After(*spread.CloseTime) {
+				continue
+			}
+			active[i] = true
+		}
+	}
+
+	trades := append([]backtest.Trade(nil), result.Trades...)
+	sort.Slice(trades, func(i, j int) bool {
+		if trades[i].Timestamp.Equal(trades[j].Timestamp) {
+			if trades[i].Security.Symbol != trades[j].Security.Symbol {
+				return trades[i].Security.Symbol < trades[j].Security.Symbol
+			}
+			return trades[i].ID < trades[j].ID
+		}
+		return trades[i].Timestamp.Before(trades[j].Timestamp)
+	})
+
+	positionBySecurity := make(map[string]float64)
+	activeSecurities := 0
+	tradeIdx := 0
+	for i, ts := range result.Timestamps {
+		hadTrade := false
+		for tradeIdx < len(trades) && !trades[tradeIdx].Timestamp.After(ts) {
+			trade := trades[tradeIdx]
+			key := trade.Security.Market + "|" + trade.Security.Symbol + "|" + trade.Security.Interval
+			prevQty := positionBySecurity[key]
+			nextQty := prevQty
+			if trade.Side == backtest.Buy {
+				nextQty += trade.Qty
+			} else {
+				nextQty -= trade.Qty
+			}
+			if math.Abs(prevQty) <= 1e-9 && math.Abs(nextQty) > 1e-9 {
+				activeSecurities++
+			} else if math.Abs(prevQty) > 1e-9 && math.Abs(nextQty) <= 1e-9 {
+				activeSecurities--
+			}
+			if math.Abs(nextQty) <= 1e-9 {
+				delete(positionBySecurity, key)
+			} else {
+				positionBySecurity[key] = nextQty
+			}
+			hadTrade = true
+			tradeIdx++
+		}
+		if hadTrade || activeSecurities > 0 {
+			active[i] = true
+		}
+	}
+
+	activeTimes := make([]int64, 0, n)
+	for i, ok := range active {
+		if ok {
+			activeTimes = append(activeTimes, result.Timestamps[i].Unix())
+		}
+	}
+	return activeTimes
+}
+
 func appendMarker(markers map[markerKey]*chartMarker, marker chartMarker) {
 	key := markerKey{
 		Time:     marker.Time,
@@ -1368,6 +1443,19 @@ const htmlTemplate = `<!DOCTYPE html>
       <p class="text-sm text-slate-400 mt-1">{{ .Asset }} · {{ .Interval }} · {{ .Period }} · Generated {{ .GeneratedAt }}</p>
     </header>
 
+	<div class="section">
+	  <div class="flex flex-wrap items-center justify-between gap-3">
+		<div>
+		  <h2 class="!mb-1">Chart Time Axis</h2>
+		  <p class="text-xs text-slate-400">Ignore idle periods to compress empty flat segments (applies to all charts below).</p>
+		</div>
+		<label class="inline-flex items-center gap-2 rounded-md border border-white/10 px-3 py-2 text-sm text-slate-200 cursor-pointer select-none">
+		  <input id="toggle-ignore-idle" type="checkbox" class="accent-teal-400" />
+		  <span>Ignore idle periods</span>
+		</label>
+	  </div>
+	</div>
+
     <div class="section">
       <h2>Strategy Performance</h2>
       <div class="overflow-x-auto">
@@ -1607,6 +1695,7 @@ const htmlTemplate = `<!DOCTYPE html>
     const equitySeries = {{ .EquitySeriesData }};
     const drawdownSeries = {{ .DrawdownSeriesData }};
     const pnlUSDSeries = {{ .PnLUSDSeriesData }};
+	const activeTimes = {{ .ActiveTimeData }};
 
     const chartTheme = {
       layout: {
@@ -1646,6 +1735,36 @@ const htmlTemplate = `<!DOCTYPE html>
       return chart;
     }
 
+		function buildActiveTimeSet() {
+			var set = new Set();
+			if (!Array.isArray(activeTimes)) return set;
+			activeTimes.forEach(function(t) {
+				if (typeof t === 'number') set.add(t);
+			});
+			return set;
+		}
+
+		function filterLineSeriesByTimes(series, activeSet, enabled) {
+			if (!enabled || activeSet.size === 0) return series;
+			return series.filter(function(point) {
+				return activeSet.has(point.time);
+			});
+		}
+
+		function filterCandleSeriesByTimes(series, activeSet, enabled) {
+			if (!enabled || activeSet.size === 0) return series;
+			return series.filter(function(point) {
+				return activeSet.has(point.time);
+			});
+		}
+
+		function filterMarkerSeriesByTimes(series, activeSet, enabled) {
+			if (!enabled || activeSet.size === 0) return series;
+			return series.filter(function(point) {
+				return activeSet.has(point.time);
+			});
+		}
+
     function syncCharts(charts) {
       var syncing = false;
       charts.forEach(function(src) {
@@ -1659,18 +1778,31 @@ const htmlTemplate = `<!DOCTYPE html>
     }
 
     var charts = [];
+		var activeSet = buildActiveTimeSet();
+		var hasActiveFilter = activeSet.size > 1;
+
+		var underlyingChart = null;
+		var underlyingSeries = null;
+		var equityChart = null;
+		var equityPlot = null;
+		var pnlChart = null;
+		var pnlPlot = null;
+		var drawdownChart = null;
+		var drawdownPlot = null;
 
     if (underlyingCandles.length > 0) {
       var pc = createChart('underlying-chart', 420);
       if (pc) {
-        var cs = pc.addCandlestickSeries({
+				var cs = pc.addCandlestickSeries({
           upColor: '#22c55e', downColor: '#f97316',
           wickUpColor: '#22c55e', wickDownColor: '#f97316',
           borderUpColor: '#22c55e', borderDownColor: '#f97316'
         });
-        cs.setData(underlyingCandles);
-        cs.setMarkers(underlyingMarkers);
+				cs.setData(underlyingCandles);
+				cs.setMarkers(underlyingMarkers);
         pc.timeScale().fitContent();
+				underlyingChart = pc;
+				underlyingSeries = cs;
         charts.push(pc);
       }
     }
@@ -1683,6 +1815,8 @@ const htmlTemplate = `<!DOCTYPE html>
       });
       el.setData(equitySeries);
       ec.timeScale().fitContent();
+			equityChart = ec;
+			equityPlot = el;
       charts.push(ec);
     }
 
@@ -1695,6 +1829,8 @@ const htmlTemplate = `<!DOCTYPE html>
         });
         pul.setData(pnlUSDSeries);
         puc.timeScale().fitContent();
+				pnlChart = puc;
+				pnlPlot = pul;
         charts.push(puc);
       }
     }
@@ -1707,10 +1843,46 @@ const htmlTemplate = `<!DOCTYPE html>
       });
       dl.setData(drawdownSeries);
       dc.timeScale().fitContent();
+			drawdownChart = dc;
+			drawdownPlot = dl;
       charts.push(dc);
     }
 
+		function applyIdleFilter(enabled) {
+			var useFilter = enabled && hasActiveFilter;
+
+			if (underlyingSeries) {
+				underlyingSeries.setData(filterCandleSeriesByTimes(underlyingCandles, activeSet, useFilter));
+				underlyingSeries.setMarkers(filterMarkerSeriesByTimes(underlyingMarkers, activeSet, useFilter));
+			}
+			if (equityPlot) {
+				equityPlot.setData(filterLineSeriesByTimes(equitySeries, activeSet, useFilter));
+			}
+			if (pnlPlot) {
+				pnlPlot.setData(filterLineSeriesByTimes(pnlUSDSeries, activeSet, useFilter));
+			}
+			if (drawdownPlot) {
+				drawdownPlot.setData(filterLineSeriesByTimes(drawdownSeries, activeSet, useFilter));
+			}
+
+			charts.forEach(function(chart) {
+				chart.timeScale().fitContent();
+			});
+		}
+
     if (charts.length > 1) syncCharts(charts);
+
+		var toggle = document.getElementById('toggle-ignore-idle');
+		if (toggle) {
+			toggle.disabled = !hasActiveFilter;
+			if (!hasActiveFilter) {
+				toggle.checked = false;
+				toggle.title = 'No active positions/trades were detected on the timeline.';
+			}
+			toggle.addEventListener('change', function(e) {
+				applyIdleFilter(e.target.checked);
+			});
+		}
   </script>
 </body>
 </html>`
