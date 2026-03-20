@@ -113,6 +113,16 @@ func processFile(inputDir, zstPath, outputDir string) error {
 	outPath := filepath.Join(outputDir, stem+".parquet")
 	spotOutPath := filepath.Join(outputDir, "spot", stem+".parquet")
 
+	// Skip if both output files already exist (resume support)
+	if st1, err1 := os.Stat(outPath); err1 == nil {
+		if st2, err2 := os.Stat(spotOutPath); err2 == nil {
+			if min(st1.Size(), st2.Size()) > 32*1024*1024 {
+				log.Printf("[SKIP] %s: output already exists", baseName)
+				return nil
+			}
+		}
+	}
+
 	log.Printf("[START] %s", baseName)
 	fileStart := time.Now()
 
