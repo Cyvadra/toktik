@@ -22,7 +22,12 @@ var KlineIntervals = []KlineInterval{
 	{Suffix: "15m", TimeFunc: "toStartOfFifteenMinutes(timestamp)"},
 	{Suffix: "30m", TimeFunc: "toStartOfInterval(timestamp, INTERVAL 30 minute)"},
 	{Suffix: "1h", TimeFunc: "toStartOfHour(timestamp)"},
+	{Suffix: "2h", TimeFunc: "toStartOfInterval(timestamp, INTERVAL 2 hour)"},
+	{Suffix: "3h", TimeFunc: "toStartOfInterval(timestamp, INTERVAL 3 hour)"},
 	{Suffix: "4h", TimeFunc: "toStartOfInterval(timestamp, INTERVAL 4 hour)"},
+	{Suffix: "6h", TimeFunc: "toStartOfInterval(timestamp, INTERVAL 6 hour)"},
+	{Suffix: "8h", TimeFunc: "toStartOfInterval(timestamp, INTERVAL 8 hour)"},
+	{Suffix: "12h", TimeFunc: "toStartOfInterval(timestamp, INTERVAL 12 hour)"},
 	{Suffix: "1d", TimeFunc: "toStartOfDay(timestamp)"},
 }
 
@@ -276,6 +281,7 @@ var validAdHocIntervals = map[string]string{
 	"30m": "30 minute",
 	"1h":  "1 hour",
 	"2h":  "2 hour",
+	"3h":  "3 hour",
 	"4h":  "4 hour",
 	"6h":  "6 hour",
 	"8h":  "8 hour",
@@ -291,7 +297,12 @@ var PrecomputedIntervals = map[string]string{
 	"15m": "crypto_options_bar_15m",
 	"30m": "crypto_options_bar_30m",
 	"1h":  "crypto_options_bar_1h",
+	"2h":  "crypto_options_bar_2h",
+	"3h":  "crypto_options_bar_3h",
 	"4h":  "crypto_options_bar_4h",
+	"6h":  "crypto_options_bar_6h",
+	"8h":  "crypto_options_bar_8h",
+	"12h": "crypto_options_bar_12h",
 	"1d":  "crypto_options_bar_1d",
 }
 
@@ -302,7 +313,12 @@ var SpotPrecomputedIntervals = map[string]string{
 	"15m": "crypto_spot_bar_15m",
 	"30m": "crypto_spot_bar_30m",
 	"1h":  "crypto_spot_bar_1h",
+	"2h":  "crypto_spot_bar_2h",
+	"3h":  "crypto_spot_bar_3h",
 	"4h":  "crypto_spot_bar_4h",
+	"6h":  "crypto_spot_bar_6h",
+	"8h":  "crypto_spot_bar_8h",
+	"12h": "crypto_spot_bar_12h",
 	"1d":  "crypto_spot_bar_1d",
 }
 

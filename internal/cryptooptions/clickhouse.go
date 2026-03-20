@@ -6,12 +6,18 @@ import (
 	"log"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
 const dateLayout = "2006-01-02"
+
+const (
+	defaultClickHouseDialTimeout = 30 * time.Second
+	defaultClickHouseReadTimeout = 30 * time.Minute
+)
 
 // InitSchema reads the DDL file and executes each statement against ClickHouse.
 func InitSchema(ctx context.Context, conn driver.Conn, ddlPath string) error {
@@ -58,6 +64,12 @@ func ConnectClickHouse(ctx context.Context, dsn string) (driver.Conn, error) {
 	opts, err := clickhouse.ParseDSN(dsn)
 	if err != nil {
 		return nil, fmt.Errorf("parse ClickHouse DSN: %w", err)
+	}
+	if opts.DialTimeout == 0 || opts.DialTimeout < defaultClickHouseDialTimeout {
+		opts.DialTimeout = defaultClickHouseDialTimeout
+	}
+	if opts.ReadTimeout == 0 || opts.ReadTimeout < defaultClickHouseReadTimeout {
+		opts.ReadTimeout = defaultClickHouseReadTimeout
 	}
 	conn, err := clickhouse.Open(opts)
 	if err != nil {

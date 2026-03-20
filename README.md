@@ -4,7 +4,7 @@ Quantitative backtesting and market data platform for crypto options trading, bu
 
 ## Features
 
-- **Market data pipeline** — Convert zstd-compressed CSV tick data → Parquet → ClickHouse OHLCV bars with pre-computed materialized views (5m, 15m, 30m, 1h, 4h, 1d)
+- **Market data pipeline** — Convert zstd-compressed CSV tick data → Parquet → ClickHouse OHLCV bars with pre-computed materialized views (5m, 15m, 30m, 1h, 2h, 3h, 4h, 6h, 8h, 12h, 1d)
 - **Event-driven backtesting engine** — Pine Script-style strategy interface with multi-asset, multi-leg options support, vectorized indicator computation, and realistic broker simulation (slippage, commissions, TWAP)
 - **REST API** — Query historical bars, symbols, greeks, and run backtests with cursor-based pagination
 - **Options spread strategies** — Built-in bull put / bear call spread strategies with MA deviation signals
@@ -26,6 +26,7 @@ make build-all
 make build-api
 make build-convert
 make build-import
+make build-kline-backfill
 make build-backtest-btc-options
 
 # Cross-compile
@@ -62,6 +63,7 @@ bin/crypto-options-import \
 ```
 
 The importer automatically initializes the ClickHouse schema (tables + materialized views) and performs deduplication sampling to skip already-imported files.
+Default generated windows are: `1m`, `5m`, `15m`, `30m`, `1h`, `2h`, `3h`, `4h`, `6h`, `8h`, `12h`, `1d`.
 
 ### 2. Start the API Server
 
@@ -170,7 +172,25 @@ bin/crypto-options-missing-days \
   --base-asset BTC
 ```
 
-### 6. Sync US Stock Options (Theta Data)
+### 6. Backfill Missing K-line Window Tables
+
+Manually generate precomputed K-line windows from 1-minute base tables:
+
+```bash
+bin/crypto-options-kline-backfill \
+  --clickhouse-dsn "clickhouse://localhost:9000/default" \
+  --intervals "1m,5m,15m,30m,1h,2h,3h,4h,6h,8h,12h,1d" \
+  --base-asset BTC \
+  --from 2025-01-01 \
+  --to 2025-03-01
+```
+
+Notes:
+- `1m` is the base table and will be skipped during backfill.
+- Without `--replace`, intervals with existing rows in the selected scope are skipped to avoid duplicate aggregation states.
+- Add `--replace` to rebuild selected intervals in-range.
+
+### 7. Sync US Stock Options (Theta Data)
 
 ```bash
 make build-thetadata-sync
