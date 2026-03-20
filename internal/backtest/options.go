@@ -488,14 +488,41 @@ type ScheduledAction struct {
 	SpreadID    int
 	LegIndex    int // -1 means close all legs
 	ActionType  ScheduledActionType
+
+	// Trigger behavior for pending spread actions.
+	OrderType    SpreadOrderType
+	TriggerSide  Side
+	TriggerPrice float64
+
+	// Optional per-action slippage override (fraction, e.g. 0.002 = 20 bps).
+	// Values <= 0 mean "use engine default slippage".
+	SlippagePct float64
+
+	// Open action payload.
+	OpenLegs []SpreadLeg
+	OpenTag  string
+
+	// Close action payload.
+	CloseReason string
 }
 
 // ScheduledActionType enumerates the kinds of scheduled actions.
 type ScheduledActionType int
 
 const (
+	// ScheduleOpenSpread opens a spread when trigger conditions are met.
+	ScheduleOpenSpread ScheduledActionType = iota
 	// ScheduleCloseLeg closes a specific leg of a spread.
-	ScheduleCloseLeg ScheduledActionType = iota
+	ScheduleCloseLeg
 	// ScheduleCloseSpread closes all legs of a spread.
 	ScheduleCloseSpread
+)
+
+// SpreadOrderType defines trigger style for scheduled spread actions.
+type SpreadOrderType int
+
+const (
+	SpreadOrderMarket SpreadOrderType = iota
+	SpreadOrderLimit
+	SpreadOrderStop
 )

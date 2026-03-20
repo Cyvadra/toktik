@@ -154,6 +154,7 @@ type spreadLegRowView struct {
 	Expiration  string
 	Qty         string
 	EntryPrice  string
+	EntryAmount string
 	EntryTime   string
 	ClosePrice  string
 	CloseTime   string
@@ -924,6 +925,7 @@ func buildSpreadRows(spreads []backtest.SpreadPositionReport, unit string) []spr
 				Expiration:  formatDate(leg.Expiration),
 				Qty:         decimal(leg.Qty),
 				EntryPrice:  amount4(leg.EntryPrice, unit),
+				EntryAmount: amount4(leg.Qty*leg.EntryPrice, unit),
 				EntryTime:   formatDateTime(leg.EntryTime),
 				ClosePrice:  nullableAmount4(leg.ClosePrice, leg.Closed, unit),
 				CloseTime:   "-",
@@ -1619,6 +1621,7 @@ const htmlTemplate = `<!DOCTYPE html>
                 <th class="px-4 py-2 font-medium">Expiry</th>
                 <th class="px-4 py-2 font-medium">Qty</th>
                 <th class="px-4 py-2 font-medium">Entry Price</th>
+				<th class="px-4 py-2 font-medium">Entry Amount</th>
                 <th class="px-4 py-2 font-medium">Entry Time</th>
                 <th class="px-4 py-2 font-medium">Close Price</th>
                 <th class="px-4 py-2 font-medium">Close Time</th>
@@ -1636,6 +1639,7 @@ const htmlTemplate = `<!DOCTYPE html>
                 <td class="px-4 py-1.5 mono text-slate-400">{{ .Expiration }}</td>
                 <td class="px-4 py-1.5 mono text-slate-300">{{ .Qty }}</td>
                 <td class="px-4 py-1.5 mono text-slate-300">{{ .EntryPrice }}</td>
+				<td class="px-4 py-1.5 mono text-slate-300">{{ .EntryAmount }}</td>
                 <td class="px-4 py-1.5 mono text-slate-400">{{ .EntryTime }}</td>
                 <td class="px-4 py-1.5 mono text-slate-400">{{ .ClosePrice }}</td>
                 <td class="px-4 py-1.5 mono text-slate-400">{{ .CloseTime }}</td>

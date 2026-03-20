@@ -610,27 +610,48 @@ func (bc *BarContext) Spreads() *SpreadTracker {
 
 // ScheduleCloseLeg schedules automatic closing of a spread leg at a future time.
 func (bc *BarContext) ScheduleCloseLeg(triggerTime time.Time, spreadID, legIndex int) {
+	bc.ScheduleCloseLegOrder(triggerTime, spreadID, legIndex, SpreadOrderMarket, Sell, math.NaN(), 0, "")
+}
+
+// ScheduleCloseLegOrder schedules closing a specific spread leg with trigger semantics.
+// triggerSide follows standard order semantics: Buy triggers on upward moves; Sell on downward moves.
+func (bc *BarContext) ScheduleCloseLegOrder(triggerTime time.Time, spreadID, legIndex int, orderType SpreadOrderType, triggerSide Side, triggerPrice, slippagePct float64, closeReason string) {
 	if bc.scheduledActions == nil {
 		return
 	}
 	*bc.scheduledActions = append(*bc.scheduledActions, ScheduledAction{
-		TriggerTime: triggerTime,
-		SpreadID:    spreadID,
-		LegIndex:    legIndex,
-		ActionType:  ScheduleCloseLeg,
+		TriggerTime:  triggerTime,
+		SpreadID:     spreadID,
+		LegIndex:     legIndex,
+		ActionType:   ScheduleCloseLeg,
+		OrderType:    orderType,
+		TriggerSide:  triggerSide,
+		TriggerPrice: triggerPrice,
+		SlippagePct:  slippagePct,
+		CloseReason:  closeReason,
 	})
 }
 
 // ScheduleCloseSpread schedules automatic closing of all legs at a future time.
 func (bc *BarContext) ScheduleCloseSpread(triggerTime time.Time, spreadID int) {
+	bc.ScheduleCloseSpreadOrder(triggerTime, spreadID, SpreadOrderMarket, Sell, math.NaN(), 0, "")
+}
+
+// ScheduleCloseSpreadOrder schedules closing all spread legs with trigger semantics.
+func (bc *BarContext) ScheduleCloseSpreadOrder(triggerTime time.Time, spreadID int, orderType SpreadOrderType, triggerSide Side, triggerPrice, slippagePct float64, closeReason string) {
 	if bc.scheduledActions == nil {
 		return
 	}
 	*bc.scheduledActions = append(*bc.scheduledActions, ScheduledAction{
-		TriggerTime: triggerTime,
-		SpreadID:    spreadID,
-		LegIndex:    -1,
-		ActionType:  ScheduleCloseSpread,
+		TriggerTime:  triggerTime,
+		SpreadID:     spreadID,
+		LegIndex:     -1,
+		ActionType:   ScheduleCloseSpread,
+		OrderType:    orderType,
+		TriggerSide:  triggerSide,
+		TriggerPrice: triggerPrice,
+		SlippagePct:  slippagePct,
+		CloseReason:  closeReason,
 	})
 }
 
@@ -642,6 +663,31 @@ func (bc *BarContext) ScheduleCloseAfter(d time.Duration, spreadID int) {
 // ScheduleCloseLegAfter schedules closing a specific leg after a duration from now.
 func (bc *BarContext) ScheduleCloseLegAfter(d time.Duration, spreadID, legIndex int) {
 	bc.ScheduleCloseLeg(bc.barTime.Add(d), spreadID, legIndex)
+}
+
+// ScheduleOpenSpread schedules opening a spread at/after triggerTime as a market-style action.
+func (bc *BarContext) ScheduleOpenSpread(triggerTime time.Time, legs []SpreadLeg, tag string) {
+	bc.ScheduleOpenSpreadOrder(triggerTime, legs, tag, SpreadOrderMarket, Buy, math.NaN(), 0)
+}
+
+// ScheduleOpenSpreadOrder schedules opening a spread with trigger semantics.
+// triggerSide follows standard order semantics: Buy triggers on upward moves; Sell on downward moves.
+func (bc *BarContext) ScheduleOpenSpreadOrder(triggerTime time.Time, legs []SpreadLeg, tag string, orderType SpreadOrderType, triggerSide Side, triggerPrice, slippagePct float64) {
+	if bc.scheduledActions == nil {
+		return
+	}
+	legsCopy := make([]SpreadLeg, len(legs))
+	copy(legsCopy, legs)
+	*bc.scheduledActions = append(*bc.scheduledActions, ScheduledAction{
+		TriggerTime:  triggerTime,
+		ActionType:   ScheduleOpenSpread,
+		OrderType:    orderType,
+		TriggerSide:  triggerSide,
+		TriggerPrice: triggerPrice,
+		SlippagePct:  slippagePct,
+		OpenLegs:     legsCopy,
+		OpenTag:      tag,
+	})
 }
 
 func (bc *BarContext) spreadUnrealizedEquity() float64 {

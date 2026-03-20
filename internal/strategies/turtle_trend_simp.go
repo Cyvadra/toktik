@@ -48,6 +48,8 @@ type turtleTrendSimpStrategy struct {
 	shortAddCount       int     // number of short add-ons executed
 }
 
+const turtlePendingSlippagePct = 0.005
+
 // slotState tracks a single option position slot.
 type slotState struct {
 	spreadID   int
@@ -172,13 +174,16 @@ func (s *turtleTrendSimpStrategy) OnBar(ctx *backtest.BarContext) {
 		// Soft stop: if option value dropped ≥ 80% from entry
 		if !math.IsNaN(markPrice) && leg.EntryPrice > 0 && markPrice <= leg.EntryPrice*0.2 {
 			s.debugf("bar=%d long slot=%d soft-stop spread_id=%d symbol=%s entry=%.6f mark=%.6f", barIndex, i, sp.ID, leg.Contract.Symbol, leg.EntryPrice, markPrice)
-			ctx.CloseSpreadLegWithReason(sp.ID, 0, s.exitPriceForLeg(*leg, contractMap), "停损：权利金回撤达80%")
-			s.longSlots[i] = nil
-			// Reset long state if all long slots empty
-			if s.countLongSlots() == 0 {
-				s.longAddCount = 0
-				s.lastLongEntryPrice = 0
-			}
+			ctx.ScheduleCloseLegOrder(
+				now,
+				sp.ID,
+				0,
+				backtest.SpreadOrderMarket,
+				backtest.Sell,
+				math.NaN(),
+				turtlePendingSlippagePct,
+				s.withDeltaReason("停损：权利金回撤达80%", currentContract.Delta),
+			)
 			continue
 		}
 
@@ -195,7 +200,7 @@ func (s *turtleTrendSimpStrategy) OnBar(ctx *backtest.BarContext) {
 
 		if needsRoll {
 			s.debugf("bar=%d long slot=%d rolling spread_id=%d symbol=%s abs_delta=%.6f pnl_pct=%.6f", barIndex, i, sp.ID, currentContract.Symbol, absDelta, pnlPct)
-			ctx.CloseSpreadLegWithReason(sp.ID, 0, s.exitPriceForLeg(*leg, contractMap), s.rollCloseReason(absDelta, pnlPct))
+			ctx.CloseSpreadLegWithReason(sp.ID, 0, s.exitPriceForLeg(*leg, contractMap), s.withDeltaReason(s.rollCloseReason(absDelta, pnlPct), currentContract.Delta))
 			// Re-open with same execution standard
 			s.openCallOption(ctx, chain, close, i, "换仓")
 		}
@@ -226,12 +231,16 @@ func (s *turtleTrendSimpStrategy) OnBar(ctx *backtest.BarContext) {
 		// Soft stop: option value dropped ≥ 80%
 		if !math.IsNaN(markPrice) && leg.EntryPrice > 0 && markPrice <= leg.EntryPrice*0.2 {
 			s.debugf("bar=%d short slot=%d soft-stop spread_id=%d symbol=%s entry=%.6f mark=%.6f", barIndex, i, sp.ID, leg.Contract.Symbol, leg.EntryPrice, markPrice)
-			ctx.CloseSpreadLegWithReason(sp.ID, 0, s.exitPriceForLeg(*leg, contractMap), "停损：权利金回撤达80%")
-			s.shortSlots[i] = nil
-			if s.countShortSlots() == 0 {
-				s.shortAddCount = 0
-				s.lastShortEntryPrice = 0
-			}
+			ctx.ScheduleCloseLegOrder(
+				now,
+				sp.ID,
+				0,
+				backtest.SpreadOrderMarket,
+				backtest.Sell,
+				math.NaN(),
+				turtlePendingSlippagePct,
+				s.withDeltaReason("停损：权利金回撤达80%", currentContract.Delta),
+			)
 			continue
 		}
 
@@ -247,9 +256,9 @@ func (s *turtleTrendSimpStrategy) OnBar(ctx *backtest.BarContext) {
 		}
 
 		if needsRoll {
-			s.debugf("bar=%d short slot=%d rolling spread_id=%d symbol=%s abs_delta=%.6f pnl_pct=%.6f", barIndex, i, sp.ID, currentContract.Symbol, absDelta, pnlPct)
-			ctx.CloseSpreadLegWithReason(sp.ID, 0, s.exitPriceForLeg(*leg, contractMap), s.rollCloseReason(absDelta, pnlPct))
-			s.openPutOption(ctx, chain, close, i, "换仓")
+			// s.debugf("bar=%d short slot=%d rolling spread_id=%d symbol=%s abs_delta=%.6f pnl_pct=%.6f", barIndex, i, sp.ID, currentContract.Symbol, absDelta, pnlPct)
+			ctx.CloseSpreadLegWithReason(sp.ID, 0, s.exitPriceForLeg(*leg, contractMap), s.withDeltaReason(s.rollCloseReason(absDelta, pnlPct), currentContract.Delta))
+			// s.openPutOption(ctx, chain, close, i, "换仓")
 		}
 	}
 
@@ -322,17 +331,18 @@ func (s *turtleTrendSimpStrategy) OnBar(ctx *backtest.BarContext) {
 		s.debugf("bar=%d short breakout triggered close=%.6f threshold=%.6f", barIndex, close, shortBreakout)
 		if s.shortSlots[0] == nil {
 			s.shortAddCount = 0
-			s.openPutOption(ctx, chain, close, 0, "首仓")
-			s.lastShortEntryPrice = close
+			// todo: later remove this
+			// s.openPutOption(ctx, chain, close, 0, "首仓")
+			// s.lastShortEntryPrice = close
 		} else if s.shortAddCount < 1 {
 			// Add-on: price must have fallen 0.75 * ATR since last entry
 			if close <= s.lastShortEntryPrice-0.75*atr {
 				slotIdx := s.nextFreeShortSlot()
 				if slotIdx >= 0 {
 					s.debugf("bar=%d short add-on triggered close=%.6f last_entry=%.6f atr=%.6f slot=%d", barIndex, close, s.lastShortEntryPrice, atr, slotIdx)
-					s.openPutOption(ctx, chain, close, slotIdx, "加仓")
-					s.lastShortEntryPrice = close
-					s.shortAddCount++
+					// s.openPutOption(ctx, chain, close, slotIdx, "加仓")
+					// s.lastShortEntryPrice = close
+					// s.shortAddCount++
 				}
 			} else if s.shouldDebugBar(barIndex) {
 				s.debugf("bar=%d short add-on blocked close=%.6f required=%.6f", barIndex, close, s.lastShortEntryPrice-0.75*atr)
@@ -421,6 +431,7 @@ func (s *turtleTrendSimpStrategy) openCallOption(ctx *backtest.BarContext, chain
 	if reason != "" {
 		tag += "：" + reason
 	}
+	tag = s.withDeltaReason(tag, contract.Delta)
 
 	spreadID := ctx.OpenSpread([]backtest.SpreadLeg{{
 		Contract:   contract,
@@ -481,6 +492,7 @@ func (s *turtleTrendSimpStrategy) openPutOption(ctx *backtest.BarContext, chain 
 	if reason != "" {
 		tag += "：" + reason
 	}
+	tag = s.withDeltaReason(tag, contract.Delta)
 
 	spreadID := ctx.OpenSpread([]backtest.SpreadLeg{{
 		Contract:   contract,
@@ -504,6 +516,9 @@ func (s *turtleTrendSimpStrategy) openPutOption(ctx *backtest.BarContext, chain 
 // It uses the average IV of ATM options from the chain as a proxy for IV index,
 // then computes the 120-bar quantile rank.
 func (s *turtleTrendSimpStrategy) ivCoefficient(chain *backtest.OptionsChain, isPut bool) float64 {
+	// TODO: next version
+	return 1.0
+
 	if chain == nil || chain.Len() == 0 {
 		return 1.0
 	}
@@ -652,6 +667,13 @@ func (s *turtleTrendSimpStrategy) debugf(format string, args ...interface{}) {
 		return
 	}
 	log.Printf("[turtle-trend-simp] "+format, args...)
+}
+
+func (s *turtleTrendSimpStrategy) withDeltaReason(base string, delta float64) string {
+	if math.IsNaN(delta) {
+		return base
+	}
+	return base + " | delta=" + strconv.FormatFloat(delta, 'f', 4, 64)
 }
 
 func parseEnvBool(key string) bool {

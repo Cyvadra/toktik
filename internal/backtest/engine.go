@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"strings"
 	"sync"
 	"time"
 )
@@ -364,6 +365,75 @@ func (e *Engine) replay(prepared *PreparedData, strategy Strategy, params map[st
 		return contract
 	}
 
+	applySpreadSlippage := func(price float64, side Side, actionSlip float64) float64 {
+		if math.IsNaN(price) || price <= 0 {
+			return price
+		}
+		slipPct := actionSlip
+		if slipPct <= 0 {
+			slipPct = e.config.SlippagePct
+		}
+		if slipPct <= 0 {
+			return price
+		}
+		slip := price * slipPct
+		if side == Buy {
+			return price + slip
+		}
+		return price - slip
+	}
+
+	appendDeltaNote := func(base, label string, delta float64) string {
+		if math.IsNaN(delta) {
+			return base
+		}
+		note := fmt.Sprintf("%sDelta=%.4f", label, delta)
+		if strings.TrimSpace(base) == "" {
+			return note
+		}
+		return base + " | " + note
+	}
+
+	triggeredByBar := func(action ScheduledAction, barOpen, barHigh, barLow float64) bool {
+		if action.OrderType == SpreadOrderMarket {
+			return true
+		}
+		if math.IsNaN(action.TriggerPrice) || action.TriggerPrice <= 0 {
+			return false
+		}
+		low := barLow
+		high := barHigh
+		if math.IsNaN(low) {
+			low = barOpen
+		}
+		if math.IsNaN(high) {
+			high = barOpen
+		}
+		if math.IsNaN(low) || math.IsNaN(high) {
+			return false
+		}
+
+		side := action.TriggerSide
+		if side != Buy && side != Sell {
+			side = Buy
+		}
+
+		switch action.OrderType {
+		case SpreadOrderStop:
+			if side == Buy {
+				return high >= action.TriggerPrice
+			}
+			return low <= action.TriggerPrice
+		case SpreadOrderLimit:
+			if side == Buy {
+				return low <= action.TriggerPrice
+			}
+			return high >= action.TriggerPrice
+		default:
+			return false
+		}
+	}
+
 	for i := 0; i < nBars; i++ {
 		barCtx.barIndex = i
 		barCtx.barTime = prepared.PrimaryDS.Timestamps[i]
@@ -387,16 +457,57 @@ func (e *Engine) replay(prepared *PreparedData, strategy Strategy, params map[st
 		}
 
 		if len(scheduledActions) > 0 {
+			barOpen := secColumns[0]["open"][i]
+			barHigh := secColumns[0]["high"][i]
+			barLow := secColumns[0]["low"][i]
+
 			var remaining []ScheduledAction
 			for _, sa := range scheduledActions {
 				if !prepared.PrimaryDS.Timestamps[i].Before(sa.TriggerTime) {
+					if !triggeredByBar(sa, barOpen, barHigh, barLow) {
+						remaining = append(remaining, sa)
+						continue
+					}
 					switch sa.ActionType {
+					case ScheduleOpenSpread:
+						if len(sa.OpenLegs) == 0 {
+							continue
+						}
+						tag := sa.OpenTag
+						legs := make([]SpreadLeg, len(sa.OpenLegs))
+						for legIndex := range sa.OpenLegs {
+							leg := sa.OpenLegs[legIndex]
+							contract := currentSpreadContract(leg.Contract, contractMap)
+							entryPrice := spreadPricing.EntryMode.EntryPrice(leg.Side, contract)
+							entryPrice = applySpreadSlippage(entryPrice, leg.Side, sa.SlippagePct)
+							if math.IsNaN(entryPrice) || entryPrice <= 0 {
+								legs = nil
+								break
+							}
+							leg.Contract = contract
+							leg.EntryPrice = entryPrice
+							leg.EntryTime = prepared.PrimaryDS.Timestamps[i]
+							legs[legIndex] = leg
+							if legIndex == 0 {
+								tag = appendDeltaNote(tag, "exec_", contract.Delta)
+							}
+						}
+						if len(legs) > 0 {
+							barCtx.OpenSpread(legs, tag)
+						}
 					case ScheduleCloseLeg:
 						sp := spreadTracker.Get(sa.SpreadID)
 						if sp != nil && sa.LegIndex >= 0 && sa.LegIndex < len(sp.Legs) && !sp.Legs[sa.LegIndex].Closed {
 							contract := currentSpreadContract(sp.Legs[sa.LegIndex].Contract, contractMap)
-							closePrice := spreadPricing.ExitMode.ExitPrice(sp.Legs[sa.LegIndex].Side, contract)
-							barCtx.CloseSpreadLeg(sa.SpreadID, sa.LegIndex, closePrice)
+							entrySide := sp.Legs[sa.LegIndex].Side
+							closePrice := spreadPricing.ExitMode.ExitPrice(entrySide, contract)
+							exitSide := Sell
+							if entrySide == Sell {
+								exitSide = Buy
+							}
+							closePrice = applySpreadSlippage(closePrice, exitSide, sa.SlippagePct)
+							reason := appendDeltaNote(sa.CloseReason, "exec_", contract.Delta)
+							barCtx.CloseSpreadLegWithReason(sa.SpreadID, sa.LegIndex, closePrice, reason)
 						}
 					case ScheduleCloseSpread:
 						sp := spreadTracker.Get(sa.SpreadID)
@@ -406,8 +517,15 @@ func (e *Engine) replay(prepared *PreparedData, strategy Strategy, params map[st
 									continue
 								}
 								contract := currentSpreadContract(sp.Legs[legIndex].Contract, contractMap)
-								closePrice := spreadPricing.ExitMode.ExitPrice(sp.Legs[legIndex].Side, contract)
-								barCtx.CloseSpreadLeg(sa.SpreadID, legIndex, closePrice)
+								entrySide := sp.Legs[legIndex].Side
+								closePrice := spreadPricing.ExitMode.ExitPrice(entrySide, contract)
+								exitSide := Sell
+								if entrySide == Sell {
+									exitSide = Buy
+								}
+								closePrice = applySpreadSlippage(closePrice, exitSide, sa.SlippagePct)
+								reason := appendDeltaNote(sa.CloseReason, "exec_", contract.Delta)
+								barCtx.CloseSpreadLegWithReason(sa.SpreadID, legIndex, closePrice, reason)
 							}
 						}
 					}
