@@ -41,11 +41,6 @@ type Config struct {
 	ShortDeltaMax float64
 	LongDeltaMin  float64
 	LongDeltaMax  float64
-
-	ForumHoldTime     time.Duration
-	ForumTargetDays   int
-	ForumStrikeOffset float64
-	ForumMinPremium   float64
 }
 
 type jsonConfig struct {
@@ -66,10 +61,6 @@ type jsonConfig struct {
 	ShortDeltaMax      *float64 `json:"short_delta_max,omitempty"`
 	LongDeltaMin       *float64 `json:"long_delta_min,omitempty"`
 	LongDeltaMax       *float64 `json:"long_delta_max,omitempty"`
-	ForumHoldHours     *float64 `json:"forum_hold_hours,omitempty"`
-	ForumTargetDays    *int     `json:"forum_target_days,omitempty"`
-	ForumStrikeOffset  *float64 `json:"forum_strike_offset,omitempty"`
-	ForumMinPremium    *float64 `json:"forum_min_premium,omitempty"`
 }
 
 // DefaultConfig returns a baseline config that matches existing behavior.
@@ -160,18 +151,6 @@ func ConfigFromJSON(raw json.RawMessage) (Config, error) {
 	}
 	if jc.LongDeltaMax != nil {
 		cfg.LongDeltaMax = *jc.LongDeltaMax
-	}
-	if jc.ForumHoldHours != nil {
-		cfg.ForumHoldTime = time.Duration(*jc.ForumHoldHours * float64(time.Hour))
-	}
-	if jc.ForumTargetDays != nil {
-		cfg.ForumTargetDays = *jc.ForumTargetDays
-	}
-	if jc.ForumStrikeOffset != nil {
-		cfg.ForumStrikeOffset = *jc.ForumStrikeOffset
-	}
-	if jc.ForumMinPremium != nil {
-		cfg.ForumMinPremium = *jc.ForumMinPremium
 	}
 
 	return cfg, nil

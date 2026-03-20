@@ -155,9 +155,6 @@ bin/backtest-btc-options \
   --to 2025-03-01 \
   --strategy forum-short-put \
   --capital 1.0 \
-  --forum-target-expiry-days 14 \
-  --forum-strike-offset -1000 \
-  --forum-hold-hours 24 \
   --html-output report.html
 ```
 

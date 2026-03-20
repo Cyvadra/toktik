@@ -7,6 +7,15 @@ import (
 	"github.com/Cyvadra/toktik/internal/backtest"
 )
 
+const (
+	forumShortPutDefaultMAPeriod         = 120
+	forumShortPutDefaultPThreshold       = 0.15
+	forumShortPutDefaultTargetExpiryDays = 14
+	forumShortPutDefaultPositionSize     = 1
+	forumShortPutDefaultHoldTime         = 24 * time.Hour
+	forumShortPutDefaultStrikeOffset     = -1000
+)
+
 func init() {
 	Register(Registration{
 		Name:    "forum-short-put",
@@ -15,10 +24,6 @@ func init() {
 		Factory: func(cfg Config) (backtest.Strategy, error) {
 			return &MADeviationForumShortPutStrategy{
 				PositionSize:       cfg.PositionSize,
-				HoldTime:           cfg.ForumHoldTime,
-				TargetExpiryDays:   cfg.ForumTargetDays,
-				StrikeOffset:       cfg.ForumStrikeOffset,
-				MinPremium:         cfg.ForumMinPremium,
 				EntryPriceMode:     cfg.EntryPriceMode,
 				ExitPriceMode:      cfg.ExitPriceMode,
 				ValuationPriceMode: cfg.ValuationPriceMode,
@@ -257,22 +262,22 @@ func (s *MADeviationForumShortPutStrategy) applyDefaults() {
 		s.ValuationPriceMode = pricingDefaults.ValuationMode
 	}
 	if s.MAPeriod == 0 {
-		s.MAPeriod = 120
+		s.MAPeriod = forumShortPutDefaultMAPeriod
 	}
 	if s.PThreshold == 0 {
-		s.PThreshold = 0.15
+		s.PThreshold = forumShortPutDefaultPThreshold
 	}
 	if s.TargetExpiryDays == 0 {
-		s.TargetExpiryDays = 14
+		s.TargetExpiryDays = forumShortPutDefaultTargetExpiryDays
 	}
 	if s.PositionSize == 0 {
-		s.PositionSize = 1
+		s.PositionSize = forumShortPutDefaultPositionSize
 	}
 	if s.HoldTime == 0 {
-		s.HoldTime = 24 * time.Hour
+		s.HoldTime = forumShortPutDefaultHoldTime
 	}
 	if s.StrikeOffset == 0 {
-		s.StrikeOffset = -1000
+		s.StrikeOffset = forumShortPutDefaultStrikeOffset
 	}
 }
 

@@ -38,16 +38,10 @@ func main() {
 	outputJSON := flag.String("output", "", "Optional JSON output file path")
 	outputHTML := flag.String("html-output", "", "Optional HTML report output path (defaults to reports/backtests/<strategy>_<period>.html; multi-strategy runs emit one combined file)")
 	positionSize := flag.Float64("position-size", 1, "Contracts per leg when opening a spread (1 = 1 coin contract per leg, e.g. 1 BTC + 1 BTC)")
-	maxHoldHours := flag.Float64("max-hold-hours", 48, "Maximum spread holding time in hours")
+	maxHoldHours := flag.Float64("max-hold-hours", 48, "Maximum holding time in hours")
 	targetExpiryDays := flag.Int("target-expiry-days", 15, "Target days to expiry when selecting contracts")
 	minExpiryDays := flag.Int("min-expiry-days", 7, "Minimum days to expiry when selecting contracts")
 	minPremium := flag.Float64("min-premium", 0.025, "Minimum bid premium required for the short leg")
-	// forum strategy params start
-	forumHoldHours := flag.Float64("forum-hold-hours", 24, "Fixed holding time in hours for the forum short-put strategy")
-	forumTargetExpiryDays := flag.Int("forum-target-expiry-days", 14, "Target days to expiry for the forum short-put strategy")
-	forumStrikeOffset := flag.Float64("forum-strike-offset", -1000, "Strike offset from ATM floor for the forum short-put strategy")
-	forumMinPremium := flag.Float64("forum-min-premium", 0.0, "Minimum bid premium required for the forum short-put strategy")
-	// forum strategy params end
 	shortDeltaMin := flag.Float64("short-delta-min", 0.4, "Minimum absolute delta for the short leg")
 	shortDeltaMax := flag.Float64("short-delta-max", 0.5, "Maximum absolute delta for the short leg")
 	longDeltaMin := flag.Float64("long-delta-min", 0.1, "Minimum absolute delta for the long leg")
@@ -86,16 +80,8 @@ func main() {
 		fmt.Fprintln(os.Stderr, "error: --max-hold-hours must be > 0")
 		os.Exit(1)
 	}
-	if *forumHoldHours <= 0 {
-		fmt.Fprintln(os.Stderr, "error: --forum-hold-hours must be > 0")
-		os.Exit(1)
-	}
 	if *targetExpiryDays <= 0 {
 		fmt.Fprintln(os.Stderr, "error: --target-expiry-days must be >= 1")
-		os.Exit(1)
-	}
-	if *forumTargetExpiryDays <= 0 {
-		fmt.Fprintln(os.Stderr, "error: --forum-target-expiry-days must be >= 1")
 		os.Exit(1)
 	}
 	if *minExpiryDays <= 0 {
@@ -141,10 +127,6 @@ func main() {
 	strategyCfg.ValuationPriceMode = valuationPriceMode
 	strategyCfg.MAPeriod = *maPeriod
 	strategyCfg.PThreshold = *pThreshold
-	strategyCfg.ForumHoldTime = time.Duration(*forumHoldHours * float64(time.Hour))
-	strategyCfg.ForumTargetDays = *forumTargetExpiryDays
-	strategyCfg.ForumStrikeOffset = *forumStrikeOffset
-	strategyCfg.ForumMinPremium = *forumMinPremium
 
 	strats, err := strategies.Resolve(*stratName, strategyCfg)
 	if err != nil {
