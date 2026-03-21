@@ -25,7 +25,15 @@ func init() {
 	})
 }
 
+// htfInterval is the higher-timeframe bar interval used for signal generation.
+// The primary bar interval (e.g. 5m) controls execution granularity.
+const htfInterval = "8h"
+
 // turtleTrendSimpStrategy implements the "期权趋势替代" strategy.
+//
+// The strategy runs on a low-timeframe primary (e.g. 5m) for fine-grained
+// position management and exit scanning, while entry signals are derived
+// from an 8h higher-timeframe security registered during Init.
 //
 // Long side: buys Calls when price breaks above Max(DonchianUpper20, BollingerUpper20)
 // under low-volatility conditions, using options as a trend replacement for spot.
@@ -40,6 +48,10 @@ type turtleTrendSimpStrategy struct {
 	Debug              bool
 	DebugEvery         int
 
+	// Higher-timeframe (8h) security for signal indicators.
+	htfRef             backtest.SecurityRef
+	lastHTFSignalIndex int // tracks the latest aligned 8h bar index already consumed
+
 	// internal state per side
 	longSlots    [3]*slotState // max 1 initial + 2 add-ons for longs (calls)
 	shortSlots   [2]*slotState // max 1 initial + 1 add-on for shorts (puts)
@@ -52,10 +64,14 @@ type turtleTrendSimpStrategy struct {
 	shortAddCount       int     // number of short add-ons executed
 
 	// Spot trading state (signal reference system)
-	longSpotOpen  bool    // whether a long spot position is currently open
-	shortSpotOpen bool    // whether a short spot position is currently open
-	longSpotHigh  float64 // BTC_max: highest price since long spot entry
-	shortSpotLow  float64 // BTC_min: lowest price since short spot entry
+	longSpotOpen        bool    // whether a long spot position is currently open
+	shortSpotOpen       bool    // whether a short spot position is currently open
+	longSpotEntryPrice  float64 // long spot initial entry anchor for add-on signal
+	shortSpotEntryPrice float64 // short spot initial entry anchor for add-on signal
+	longSpotAddCount    int     // number of executed long spot add-ons
+	shortSpotAddCount   int     // number of executed short spot add-ons
+	longSpotHigh        float64 // BTC_max: highest price since long spot entry
+	shortSpotLow        float64 // BTC_min: lowest price since short spot entry
 }
 
 // slotState tracks a single option position slot.
@@ -83,24 +99,29 @@ func (s *turtleTrendSimpStrategy) Name() string { return "TurtleTrendSimp" }
 func (s *turtleTrendSimpStrategy) Init(ctx *backtest.SetupContext) error {
 	s.applyDefaults()
 
+	// Register an 8h higher-timeframe security for signal indicators.
+	primary := ctx.PrimaryRef()
+	s.htfRef = ctx.AddSecurity(primary.Market, primary.Symbol, htfInterval)
+
+	// All signal indicators are computed on the 8h security.
 	// Donchian Channel (20): upper = Highest(high,20), lower = Lowest(low,20)
-	ctx.Register("dc20", backtest.Donchian("high", "low", 20))
+	ctx.RegisterOn(s.htfRef, "dc20", backtest.Donchian("high", "low", 20))
 
 	// Bollinger Bands (20, 2σ)
-	ctx.Register("bb20", backtest.Bollinger("close", 20, 2))
+	ctx.RegisterOn(s.htfRef, "bb20", backtest.Bollinger("close", 20, 2))
 
 	// ATR(20) for add-on spacing and short entry offset
-	ctx.Register("atr20", backtest.ATR(20))
+	ctx.RegisterOn(s.htfRef, "atr20", backtest.ATR(20))
 
 	// Rolling StdDev of close over 20 bars, then MA(StdDev, 20)
-	ctx.Register("std20", backtest.Custom(
+	ctx.RegisterOn(s.htfRef, "std20", backtest.Custom(
 		[]string{"close"},
 		func(inputs map[string][]float64) []float64 {
 			return rollingStdDev(inputs["close"], 20)
 		},
 	))
-	ctx.Register("ma_std20", backtest.SMA("std20", 20))
-	ctx.Register("stdma20", backtest.Custom(
+	ctx.RegisterOn(s.htfRef, "ma_std20", backtest.SMA("std20", 20))
+	ctx.RegisterOn(s.htfRef, "stdma20", backtest.Custom(
 		[]string{"std20", "ma_std20"},
 		func(inputs map[string][]float64) []float64 {
 			std := inputs["std20"]
@@ -117,10 +138,118 @@ func (s *turtleTrendSimpStrategy) Init(ctx *backtest.SetupContext) error {
 		},
 	))
 
-	// IV quantile proxy: use average option IV from the chain.
-	// We compute this at runtime in OnBar from the options chain,
-	// but we still need the rolling quantile infrastructure.
-	// We'll compute IV quantile directly in OnBar from chain data.
+	return nil
+}
+
+// Preload shifts 8h indicator columns by 1 bar (to avoid look-ahead into the
+// current incomplete 8h bar) and aligns them onto the primary (5m) timeline.
+// It also precomputes the low-volatility entry filter in 8h space.
+func (s *turtleTrendSimpStrategy) Preload(ctx *backtest.PreloadContext) error {
+	htf := ctx.Security(s.htfRef)
+	if htf == nil || htf.Len() == 0 {
+		return nil
+	}
+	n := htf.Len()
+
+	// 1. Create _prev columns: shift each 8h indicator by 1 bar so that at
+	//    every 5m bar we only see the most recently COMPLETED 8h bar's value.
+	shiftNames := []string{"dc20_upper", "dc20_lower", "bb20_upper", "bb20_lower", "atr20", "close"}
+	for _, name := range shiftNames {
+		col := htf.Column(name)
+		if col == nil {
+			continue
+		}
+		shifted := make([]float64, n)
+		shifted[0] = math.NaN()
+		copy(shifted[1:], col[:n-1])
+		if err := htf.SetColumn(name+"_prev", shifted); err != nil {
+			return err
+		}
+	}
+
+	// 2. Compute low-vol flag in 8h space.
+	//    For each 8h bar i, check if any of bars i, i-1, i-2 has
+	//    stdma20 percentile rank < 0.35 over 120 trailing bars.
+	//    Then shift by 1 so it's safe to read during the next 8h period.
+	stdma20 := htf.Column("stdma20")
+	if stdma20 != nil {
+		raw := make([]float64, n)
+		for i := range raw {
+			raw[i] = 0
+		}
+		for i := 0; i < n; i++ {
+			for offset := 0; offset <= 2; offset++ {
+				idx := i - offset
+				if idx < 0 {
+					continue
+				}
+				val := stdma20[idx]
+				if math.IsNaN(val) {
+					continue
+				}
+				count, total := 0, 0
+				for k := 0; k < 120; k++ {
+					bi := idx - k
+					if bi < 0 {
+						break
+					}
+					v := stdma20[bi]
+					if math.IsNaN(v) {
+						continue
+					}
+					total++
+					if v < val {
+						count++
+					}
+				}
+				if total > 0 && float64(count)/float64(total) < 0.35 {
+					raw[i] = 1
+					break
+				}
+			}
+		}
+		// Shift by 1 to avoid look-ahead
+		shifted := make([]float64, n)
+		shifted[0] = 0
+		copy(shifted[1:], raw[:n-1])
+		if err := htf.SetColumn("lowvol_ok_prev", shifted); err != nil {
+			return err
+		}
+	}
+
+	// 3. Align all _prev columns onto the primary (5m) timeline.
+	alignNames := []string{"dc20_upper_prev", "dc20_lower_prev", "bb20_upper_prev", "bb20_lower_prev", "atr20_prev", "close_prev", "lowvol_ok_prev"}
+	for _, name := range alignNames {
+		if htf.Column(name) == nil {
+			continue
+		}
+		aligned, err := ctx.ColumnAlignedToPrimary(s.htfRef, name)
+		if err != nil {
+			continue
+		}
+		if err := ctx.Primary().SetColumn("htf_"+name, aligned); err != nil {
+			return err
+		}
+	}
+
+	// 4. Project the actual aligned 8h bar index onto the primary timeline.
+	//    Signal evaluation should advance only when this index changes, not when
+	//    the primary timestamp happens to cross a wall-clock 8h boundary.
+	alignedHTFIndex := make([]float64, ctx.Primary().Len())
+	for i := range alignedHTFIndex {
+		alignedHTFIndex[i] = math.NaN()
+	}
+	if alignMap := htf.AlignMap(); len(alignMap) > 0 {
+		for i := 0; i < len(alignedHTFIndex) && i < len(alignMap); i++ {
+			if alignMap[i] < 0 {
+				continue
+			}
+			alignedHTFIndex[i] = float64(alignMap[i])
+		}
+	}
+	if err := ctx.Primary().SetColumn("htf_signal_index", alignedHTFIndex); err != nil {
+		return err
+	}
 
 	return nil
 }
@@ -146,7 +275,8 @@ func (s *turtleTrendSimpStrategy) OnBar(ctx *backtest.BarContext) {
 		return
 	}
 
-	atr := ctx.Ind("atr20")
+	// ATR from the completed 8h bar, aligned to the 5m primary timeline.
+	atr := ctx.Field("htf_atr20_prev")
 
 	// --- Manage existing positions ---
 	chain := ctx.OptionsChain()
@@ -349,17 +479,25 @@ func (s *turtleTrendSimpStrategy) OnBar(ctx *backtest.BarContext) {
 		s.shortRemoved = updated
 	}
 
-	// --- Spot trailing-stop management ---
+	// Spot signals should only advance when a new aligned 8h bar becomes available.
+	if !s.consumeHTFSignal(ctx.Field("htf_signal_index")) {
+		return
+	}
+
 	primary := ctx.PrimaryRef()
+
+	// --- Spot trailing-stop management (runs on aligned 8h signal updates) ---
 	if s.longSpotOpen {
 		if close > s.longSpotHigh {
 			s.longSpotHigh = close
 		}
 		if !math.IsNaN(atr) && close < s.longSpotHigh-3*atr {
-			if ctx.Position(primary) > 0 {
-				ctx.ClosePosition(primary)
+			if qty := ctx.Position(primary); qty > 0 {
+				ctx.SellWithNote(primary, qty, "海龟简易-Spot-Long：止损平仓(跌破BTC_max-3ATR)")
 			}
 			s.longSpotOpen = false
+			s.longSpotEntryPrice = 0
+			s.longSpotAddCount = 0
 			s.longSpotHigh = 0
 		}
 	}
@@ -368,28 +506,30 @@ func (s *turtleTrendSimpStrategy) OnBar(ctx *backtest.BarContext) {
 			s.shortSpotLow = close
 		}
 		if !math.IsNaN(atr) && close > s.shortSpotLow+3*atr {
-			if ctx.Position(primary) < 0 {
-				ctx.ClosePosition(primary)
+			if qty := ctx.Position(primary); qty < 0 {
+				ctx.BuyWithNote(primary, -qty, "海龟简易-Spot-Short：止损平仓(突破BTC_min+3ATR)")
 			}
 			s.shortSpotOpen = false
+			s.shortSpotEntryPrice = 0
+			s.shortSpotAddCount = 0
 			s.shortSpotLow = 0
 		}
 	}
 
-	// --- Check signal conditions ---
-	lowVolOK, _ := s.checkLowVol(ctx)
-	if !lowVolOK {
-		return
-	}
+	// --- Entry signals: gated to actual 8h bar availability ---
 
-	dcUpper := ctx.IndAt("dc20_upper", 1)
-	dcLower := ctx.IndAt("dc20_lower", 1)
-	bbUpper := ctx.IndAt("bb20_upper", 1)
-	bbLower := ctx.IndAt("bb20_lower", 1)
-	atrSignal := ctx.IndAt("atr20", 1)
+	// Read preloaded (shifted-by-1, aligned) 8h indicator values.
+	lowVolOK := ctx.Field("htf_lowvol_ok_prev")
+	allowInitialEntry := s.allowInitialEntry(lowVolOK)
 
-	if math.IsNaN(dcUpper) || math.IsNaN(bbUpper) || math.IsNaN(dcLower) || math.IsNaN(bbLower) || math.IsNaN(atrSignal) {
+	dcUpper := ctx.Field("htf_dc20_upper_prev")
+	dcLower := ctx.Field("htf_dc20_lower_prev")
+	bbUpper := ctx.Field("htf_bb20_upper_prev")
+	bbLower := ctx.Field("htf_bb20_lower_prev")
+	atrSignal := ctx.Field("htf_atr20_prev")
+	htfClose := ctx.Field("htf_close_prev")
 
+	if math.IsNaN(dcUpper) || math.IsNaN(bbUpper) || math.IsNaN(dcLower) || math.IsNaN(bbLower) || math.IsNaN(atrSignal) || math.IsNaN(htfClose) {
 		return
 	}
 
@@ -398,12 +538,14 @@ func (s *turtleTrendSimpStrategy) OnBar(ctx *backtest.BarContext) {
 	longBreakout := math.Max(dcUpper, bbUpper)
 	shortBreakout := math.Min(dcLower, bbLower) - 0.5*atrSignal
 
-	if close > longBreakout && s.Direction != DirectionShortOnly {
+	if allowInitialEntry && close > longBreakout && s.Direction != DirectionShortOnly {
 		if !s.longSpotOpen {
 			// Spot system: open a $100 reference long position.
 			spotQty := 100.0 / close
 			ctx.BuyWithNote(primary, spotQty, "海龟简易-Spot-Long：首仓")
 			s.longSpotOpen = true
+			s.longSpotEntryPrice = close
+			s.longSpotAddCount = 0
 			s.longSpotHigh = close
 
 			// Option system: open primary Call position alongside spot entry.
@@ -414,29 +556,66 @@ func (s *turtleTrendSimpStrategy) OnBar(ctx *backtest.BarContext) {
 					s.lastLongEntryPrice = close
 				}
 			}
-		} else if s.longSlots[0] != nil && s.longAddCount < 2 {
-			// Option add-on: price must have risen 0.75 * ATR since last entry
-			if close >= s.lastLongEntryPrice+0.75*atr {
+		}
+	}
+
+	// Long spot add-on signal: once spot first entry is open, add signal fires
+	// for each +0.75*ATR favorable move from the initial spot entry price.
+	longSpotTargetAddCount := 0
+	if s.longSpotOpen && !math.IsNaN(atr) && atr > 0 && s.longSpotEntryPrice > 0 {
+		longSpotTargetAddCount = int(math.Floor((close - s.longSpotEntryPrice) / (0.75 * atr)))
+		if longSpotTargetAddCount < 0 {
+			longSpotTargetAddCount = 0
+		}
+	}
+
+	// Long spot add-ons follow the same 0.75*ATR ladder from initial spot entry.
+	if s.longSpotOpen && !math.IsNaN(atr) && atr > 0 {
+		targetSpotAdds := longSpotTargetAddCount
+		if targetSpotAdds > 2 {
+			targetSpotAdds = 2
+		}
+		for s.longSpotAddCount < targetSpotAdds {
+			spotQty := 100.0 / close
+			note := "海龟简易-Spot-Long：加仓" + strconv.Itoa(s.longSpotAddCount+1)
+			ctx.BuyWithNote(primary, spotQty, note)
+			s.longSpotAddCount++
+		}
+	}
+
+	// Long option add-ons: remove self-referential option ladder and only follow
+	// spot add-on signal, with an extra guard that at least one active long slot exists.
+	if s.Direction != DirectionShortOnly && s.longAddCount < 2 && longSpotTargetAddCount > 0 && s.countLongSlots() > 0 {
+		if !math.IsNaN(atr) && atr > 0 {
+			targetAddCount := longSpotTargetAddCount
+			if targetAddCount > 2 {
+				targetAddCount = 2
+			}
+			for s.longAddCount < targetAddCount {
 				slotIdx := s.nextFreeLongSlot()
-				if slotIdx >= 0 {
-					if slot := s.openCallOption(ctx, chain, close, "active-long-add", "加仓"); slot != nil {
-						s.longSlots[slotIdx] = slot
-						s.lastLongEntryPrice = close
-						s.longAddCount++
-					}
+				if slotIdx < 0 {
+					break
 				}
+				slot := s.openCallOption(ctx, chain, close, "active-long-add", "加仓")
+				if slot == nil {
+					break
+				}
+				s.longSlots[slotIdx] = slot
+				s.longAddCount++
 			}
 		}
 	}
 
 	// --- Short entry ---
 	// Breakout below prior-bar Min(Donchian lower 20, Bollinger lower 20) - 0.5*ATR
-	if close < shortBreakout && s.Direction != DirectionLongOnly {
+	if allowInitialEntry && close < shortBreakout && s.Direction != DirectionLongOnly {
 		if !s.shortSpotOpen {
 			// Spot system: open a $100 reference short position.
 			spotQty := 100.0 / close
 			ctx.SellWithNote(primary, spotQty, "海龟简易-Spot-Short：首仓")
 			s.shortSpotOpen = true
+			s.shortSpotEntryPrice = close
+			s.shortSpotAddCount = 0
 			s.shortSpotLow = close
 
 			// Option system: open primary Put position alongside spot entry.
@@ -447,52 +626,53 @@ func (s *turtleTrendSimpStrategy) OnBar(ctx *backtest.BarContext) {
 					s.lastShortEntryPrice = close
 				}
 			}
-		} else if s.shortSlots[0] != nil && s.shortAddCount < 1 {
-			// Option add-on: price must have fallen 0.75 * ATR since last entry
-			if close <= s.lastShortEntryPrice-0.75*atr {
-				slotIdx := s.nextFreeShortSlot()
-				if slotIdx >= 0 {
-					if slot := s.openPutOption(ctx, chain, close, "active-short-add", "加仓"); slot != nil {
-						s.shortSlots[slotIdx] = slot
-						s.lastShortEntryPrice = close
-						s.shortAddCount++
-					}
-				}
-			}
 		}
 	}
-}
 
-// checkLowVol checks whether at least one of the last 3 bars has
-// stdma20 = Std(Close,20) / MA(Std(Close,20),20) below the 35th percentile
-// of the past 120 bars.
-func (s *turtleTrendSimpStrategy) checkLowVol(ctx *backtest.BarContext) (bool, string) {
-	for barsAgo := 0; barsAgo <= 2; barsAgo++ {
-		stdMa := ctx.IndAt("stdma20", barsAgo)
-		if math.IsNaN(stdMa) {
-			continue
-		}
-		// Compute percentile rank of stdma20 within the last 120 bars of stdma20.
-		count := 0
-		total := 0
-		for k := barsAgo; k < barsAgo+120; k++ {
-			v := ctx.IndAt("stdma20", k)
-			if math.IsNaN(v) {
-				continue
-			}
-			total++
-			if v < stdMa {
-				count++
-			}
-		}
-		if total > 0 {
-			rank := float64(count) / float64(total)
-			if rank < 0.35 {
-				return true, "rank below 35th percentile in lookback"
-			}
+	// Short spot add-on signal: once spot first entry is open, add signal fires
+	// for each -0.75*ATR favorable move from the initial spot entry price.
+	shortSpotTargetAddCount := 0
+	if s.shortSpotOpen && !math.IsNaN(atr) && atr > 0 && s.shortSpotEntryPrice > 0 {
+		shortSpotTargetAddCount = int(math.Floor((s.shortSpotEntryPrice - close) / (0.75 * atr)))
+		if shortSpotTargetAddCount < 0 {
+			shortSpotTargetAddCount = 0
 		}
 	}
-	return false, "no bar in last 3 satisfied low-vol rank < 0.35"
+
+	// Short spot add-ons follow the same 0.75*ATR ladder from initial spot entry.
+	if s.shortSpotOpen && !math.IsNaN(atr) && atr > 0 {
+		targetSpotAdds := shortSpotTargetAddCount
+		if targetSpotAdds > 1 {
+			targetSpotAdds = 1
+		}
+		for s.shortSpotAddCount < targetSpotAdds {
+			spotQty := 100.0 / close
+			note := "海龟简易-Spot-Short：加仓" + strconv.Itoa(s.shortSpotAddCount+1)
+			ctx.SellWithNote(primary, spotQty, note)
+			s.shortSpotAddCount++
+		}
+	}
+
+	// Short option add-ons: only follow spot add-on signal, with an extra
+	// guard that at least one active short slot exists.
+	if s.Direction != DirectionLongOnly && s.shortAddCount < 1 && shortSpotTargetAddCount > 0 && s.countShortSlots() > 0 {
+		targetAddCount := shortSpotTargetAddCount
+		if targetAddCount > 1 {
+			targetAddCount = 1
+		}
+		for s.shortAddCount < targetAddCount {
+			slotIdx := s.nextFreeShortSlot()
+			if slotIdx < 0 {
+				break
+			}
+			slot := s.openPutOption(ctx, chain, close, "active-short-add", "加仓")
+			if slot == nil {
+				break
+			}
+			s.shortSlots[slotIdx] = slot
+			s.shortAddCount++
+		}
+	}
 }
 
 // openCallOption opens a single Call option per the execution standard.
@@ -702,6 +882,22 @@ func (s *turtleTrendSimpStrategy) nextFreeShortSlot() int {
 	return -1
 }
 
+func (s *turtleTrendSimpStrategy) consumeHTFSignal(signalIndex float64) bool {
+	if math.IsNaN(signalIndex) {
+		return false
+	}
+	idx := int(signalIndex)
+	if idx == s.lastHTFSignalIndex {
+		return false
+	}
+	s.lastHTFSignalIndex = idx
+	return true
+}
+
+func (s *turtleTrendSimpStrategy) allowInitialEntry(lowVolOK float64) bool {
+	return lowVolOK == 1
+}
+
 func (s *turtleTrendSimpStrategy) applyDefaults() {
 	pricingDefaults := backtest.DefaultSpreadPricingConfig()
 	if s.EntryPriceMode == backtest.OptionPriceModeUnspecified {
@@ -716,6 +912,7 @@ func (s *turtleTrendSimpStrategy) applyDefaults() {
 	if s.Direction == "" {
 		s.Direction = DirectionBoth
 	}
+	s.lastHTFSignalIndex = -1
 	if !s.Debug {
 		s.Debug = parseEnvBool("TOKTIK_TURTLE_DEBUG")
 	}

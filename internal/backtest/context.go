@@ -93,6 +93,9 @@ func (sc *SetupContext) RegisterFactor(ref FactorRef, name string, ind Indicator
 	}
 }
 
+// PrimaryRef returns the primary security reference.
+func (sc *SetupContext) PrimaryRef() SecurityRef { return sc.primaryRef }
+
 // SetParam sets a named parameter with a default value.
 func (sc *SetupContext) SetParam(name string, defaultValue interface{}) {
 	if _, exists := sc.params[name]; !exists {

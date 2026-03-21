@@ -1,6 +1,7 @@
 package strategies
 
 import (
+	"math"
 	"testing"
 	"time"
 
@@ -75,5 +76,36 @@ func TestTurtleTrendSimpShouldCloseForExpiry(t *testing.T) {
 	}
 	if strategy.shouldCloseForExpiry(backtest.OptionContract{Expiration: now.Add(25 * time.Hour)}, now) {
 		t.Fatal("expected contract with more than 1 day to expiry to remain open")
+	}
+}
+
+func TestTurtleTrendSimpConsumeHTFSignal(t *testing.T) {
+	strategy := &turtleTrendSimpStrategy{lastHTFSignalIndex: -1}
+
+	if strategy.consumeHTFSignal(math.NaN()) {
+		t.Fatal("expected NaN signal index to be ignored")
+	}
+	if !strategy.consumeHTFSignal(0) {
+		t.Fatal("expected first HTF signal index to be consumed")
+	}
+	if strategy.consumeHTFSignal(0) {
+		t.Fatal("expected duplicate HTF signal index to be ignored")
+	}
+	if !strategy.consumeHTFSignal(1) {
+		t.Fatal("expected next HTF signal index to be consumed")
+	}
+}
+
+func TestTurtleTrendSimpAllowInitialEntry(t *testing.T) {
+	strategy := &turtleTrendSimpStrategy{}
+
+	if strategy.allowInitialEntry(0) {
+		t.Fatal("expected low-vol filter to block initial entries when flag is 0")
+	}
+	if strategy.allowInitialEntry(math.NaN()) {
+		t.Fatal("expected low-vol filter to block initial entries when flag is NaN")
+	}
+	if !strategy.allowInitialEntry(1) {
+		t.Fatal("expected low-vol filter to allow initial entries when flag is 1")
 	}
 }

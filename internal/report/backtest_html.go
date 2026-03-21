@@ -136,6 +136,13 @@ type tradeRowView struct {
 type spreadRowView struct {
 	ID          int
 	Tag         string
+	AnchorID    string
+	EventType   string
+	EventClass  string
+	EventTime   string
+	RelatedLink string
+	RelatedText string
+	eventUnix   int64
 	Status      string
 	OpenTime    string
 	CloseTime   string
@@ -911,23 +918,9 @@ func buildTradeRows(trades []backtest.Trade, unit string) []tradeRowView {
 }
 
 func buildSpreadRows(spreads []backtest.SpreadPositionReport, unit string) []spreadRowView {
-	rows := make([]spreadRowView, 0, len(spreads))
+	rows := make([]spreadRowView, 0, len(spreads)*2)
 	for _, spread := range spreads {
-		row := spreadRowView{
-			ID:          spread.ID,
-			Tag:         spread.Tag,
-			Status:      strings.ToUpper(spread.Status),
-			OpenTime:    formatDateTime(spread.OpenTime),
-			CloseTime:   "-",
-			DaysHeld:    fmt.Sprintf("%.2f d", spread.DaysHeld),
-			NetPremium:  signedAmount(spread.NetPremium, unit),
-			RealizedPnL: signedAmount(spread.RealizedPnL, unit),
-			StatusClass: statusClass(spread.Status),
-			Legs:        make([]spreadLegRowView, 0, len(spread.Legs)),
-		}
-		if spread.CloseTime != nil {
-			row.CloseTime = formatDateTime(*spread.CloseTime)
-		}
+		legs := make([]spreadLegRowView, 0, len(spread.Legs))
 		for _, leg := range spread.Legs {
 			expiryOpenDays := leg.Expiration.Sub(leg.EntryTime).Hours() / 24
 			legView := spreadLegRowView{
@@ -950,10 +943,71 @@ func buildSpreadRows(spreads []backtest.SpreadPositionReport, unit string) []spr
 			if leg.CloseTime != nil {
 				legView.CloseTime = formatDateTime(*leg.CloseTime)
 			}
-			row.Legs = append(row.Legs, legView)
+			legs = append(legs, legView)
 		}
-		rows = append(rows, row)
+
+		openAnchor := fmt.Sprintf("spread-%d-open", spread.ID)
+		closeAnchor := fmt.Sprintf("spread-%d-close", spread.ID)
+
+		openRow := spreadRowView{
+			ID:          spread.ID,
+			Tag:         spread.Tag,
+			AnchorID:    openAnchor,
+			EventType:   "OPEN",
+			EventClass:  "bg-sky-500/15 text-sky-200 ring-sky-400/40",
+			EventTime:   formatDateTime(spread.OpenTime),
+			Status:      "OPENED",
+			eventUnix:   spread.OpenTime.Unix(),
+			OpenTime:    formatDateTime(spread.OpenTime),
+			CloseTime:   "-",
+			DaysHeld:    "-",
+			NetPremium:  signedAmount(spread.NetPremium, unit),
+			RealizedPnL: "-",
+			StatusClass: statusClass("open"),
+			Legs:        legs,
+		}
+		if spread.CloseTime != nil {
+			openRow.RelatedLink = closeAnchor
+			openRow.RelatedText = "Jump to CLOSE"
+		}
+		rows = append(rows, openRow)
+
+		if spread.CloseTime != nil {
+			rows = append(rows, spreadRowView{
+				ID:          spread.ID,
+				Tag:         spread.Tag,
+				AnchorID:    closeAnchor,
+				EventType:   "CLOSE",
+				EventClass:  "bg-rose-500/15 text-rose-200 ring-rose-400/40",
+				EventTime:   formatDateTime(*spread.CloseTime),
+				RelatedLink: openAnchor,
+				RelatedText: "Jump to OPEN",
+				Status:      strings.ToUpper(spread.Status),
+				eventUnix:   spread.CloseTime.Unix(),
+				OpenTime:    formatDateTime(spread.OpenTime),
+				CloseTime:   formatDateTime(*spread.CloseTime),
+				DaysHeld:    fmt.Sprintf("%.2f d", spread.DaysHeld),
+				NetPremium:  signedAmount(spread.NetPremium, unit),
+				RealizedPnL: signedAmount(spread.RealizedPnL, unit),
+				StatusClass: statusClass(spread.Status),
+				Legs:        legs,
+			})
+		}
 	}
+
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].eventUnix != rows[j].eventUnix {
+			return rows[i].eventUnix < rows[j].eventUnix
+		}
+		if rows[i].ID != rows[j].ID {
+			return rows[i].ID < rows[j].ID
+		}
+		if rows[i].EventType != rows[j].EventType {
+			return rows[i].EventType == "OPEN"
+		}
+		return rows[i].Tag < rows[j].Tag
+	})
+
 	return rows
 }
 
@@ -1615,25 +1669,24 @@ const htmlTemplate = `<!DOCTYPE html>
     <div class="section">
       <div class="flex items-center justify-between mb-3">
         <h2 class="!mb-0">Spread Activity</h2>
-        <span class="mono text-xs text-slate-400">{{ .SpreadsCount }} positions</span>
+				<span class="mono text-xs text-slate-400">{{ .SpreadsCount }} positions · {{ len .Spreads }} events</span>
       </div>
+			<p class="text-xs text-slate-400 mb-4">OPEN and CLOSE are split into separate events and sorted by time. Use jump links to switch between the two events of the same spread.</p>
       {{ range .Spreads }}
-      <div class="mb-4 border border-white/5 rounded-lg overflow-hidden">
-        <div class="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5 bg-white/[0.02] border-b border-white/5">
-          <div class="flex items-center gap-3">
-            <span class="font-medium text-slate-200">#{{ .ID }} {{ .Tag }}</span>
-						{{ range .Legs }}
-						<span class="mono text-[11px] text-slate-400">{{ .Qty }} | {{ .OpenSelect }}</span>
-						{{ end }}
-            <span class="mono text-xs px-2 py-0.5 rounded {{ .StatusClass }}">{{ .Status }}</span>
-          </div>
-          <div class="flex gap-5 text-xs text-slate-400">
-            <span>Open {{ .OpenTime }}</span>
-            <span>Held {{ .DaysHeld }}</span>
-            <span>Premium <span class="mono text-slate-300">{{ .NetPremium }}</span></span>
-            <span>PnL <span class="mono text-slate-300">{{ .RealizedPnL }}</span></span>
-          </div>
-        </div>
+			<div id="{{ .AnchorID }}" class="mb-4 border border-white/5 rounded-lg overflow-hidden">
+				<div class="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5 bg-white/[0.02] border-b border-white/5">
+					<div class="flex items-center gap-3">
+						<span class="mono text-xs px-2 py-0.5 rounded ring-1 {{ .EventClass }}">{{ .EventType }}</span>
+						<span class="font-medium text-slate-200">#{{ .ID }} {{ .Tag }}</span>
+						<span class="mono text-xs px-2 py-0.5 rounded {{ .StatusClass }}">{{ .Status }}</span>
+					</div>
+					<div class="flex gap-5 text-xs text-slate-400">
+						<span>{{ .EventTime }}</span>
+						<span>Premium <span class="mono text-slate-300">{{ .NetPremium }}</span></span>
+						<span>PnL <span class="mono text-slate-300">{{ .RealizedPnL }}</span></span>
+						{{ if .RelatedLink }}<a class="text-sky-300 hover:text-sky-200 underline underline-offset-2" href="#{{ .RelatedLink }}">{{ .RelatedText }}</a>{{ end }}
+					</div>
+				</div>
         <div class="overflow-x-auto">
           <table class="w-full text-sm">
             <thead>
@@ -1643,16 +1696,22 @@ const htmlTemplate = `<!DOCTYPE html>
                 <th class="px-4 py-2 font-medium">Type</th>
                 <th class="px-4 py-2 font-medium">Strike</th>
                 <th class="px-4 py-2 font-medium">Expiry</th>
-                <th class="px-4 py-2 font-medium">Entry Price</th>
+								{{ if eq .EventType "OPEN" }}
+								<th class="px-4 py-2 font-medium">Select</th>
+								<th class="px-4 py-2 font-medium">Qty</th>
+								<th class="px-4 py-2 font-medium">Entry Price</th>
 				<th class="px-4 py-2 font-medium">Entry Amount</th>
-                <th class="px-4 py-2 font-medium">Entry Time</th>
-                <th class="px-4 py-2 font-medium">Close Price</th>
-                <th class="px-4 py-2 font-medium">Close Time</th>
+								{{ else }}
+								<th class="px-4 py-2 font-medium">Qty</th>
+								<th class="px-4 py-2 font-medium">Close Price</th>
+								<th class="px-4 py-2 font-medium">Close Time</th>
 				<th class="px-4 py-2 font-medium">Close Reason</th>
-                <th class="px-4 py-2 font-medium">PnL</th>
+								<th class="px-4 py-2 font-medium">Leg PnL</th>
+								{{ end }}
               </tr>
             </thead>
             <tbody>
+							{{ $eventType := .EventType }}
               {{ range .Legs }}
               <tr class="border-b border-white/[0.03]">
                 <td class="px-4 py-1.5 mono text-slate-300">{{ .Symbol }}</td>
@@ -1660,13 +1719,18 @@ const htmlTemplate = `<!DOCTYPE html>
                 <td class="px-4 py-1.5 text-slate-400">{{ .Type }}</td>
                 <td class="px-4 py-1.5 mono text-slate-300">{{ .StrikePrice }}</td>
                 <td class="px-4 py-1.5 mono text-slate-400">{{ .Expiration }}</td>
-                <td class="px-4 py-1.5 mono text-slate-300">{{ .EntryPrice }}</td>
+								{{ if eq $eventType "OPEN" }}
+								<td class="px-4 py-1.5 mono text-slate-300">{{ .OpenSelect }}</td>
+								<td class="px-4 py-1.5 mono text-slate-300">{{ .Qty }}</td>
+								<td class="px-4 py-1.5 mono text-slate-300">{{ .EntryPrice }}</td>
 				<td class="px-4 py-1.5 mono text-slate-300">{{ .EntryAmount }}</td>
-                <td class="px-4 py-1.5 mono text-slate-400">{{ .EntryTime }}</td>
-                <td class="px-4 py-1.5 mono text-slate-400">{{ .ClosePrice }}</td>
-                <td class="px-4 py-1.5 mono text-slate-400">{{ .CloseTime }}</td>
+								{{ else }}
+								<td class="px-4 py-1.5 mono text-slate-300">{{ .Qty }}</td>
+								<td class="px-4 py-1.5 mono text-slate-400">{{ .ClosePrice }}</td>
+								<td class="px-4 py-1.5 mono text-slate-400">{{ .CloseTime }}</td>
 				<td class="px-4 py-1.5 text-slate-300">{{ .CloseReason }}</td>
-                <td class="px-4 py-1.5 mono text-slate-300">{{ .RealizedPnL }}</td>
+								<td class="px-4 py-1.5 mono text-slate-300">{{ .RealizedPnL }}</td>
+								{{ end }}
               </tr>
               {{ end }}
             </tbody>
@@ -2224,24 +2288,24 @@ const combinedHTMLTemplate = `<!DOCTYPE html>
 						<section class="rounded-[1.75rem] border border-white/10 bg-panel/40 p-5 lg:p-6">
 							<div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
 								<h3 class="text-2xl font-bold text-white">Spread Activity</h3>
-								<span class="rounded-full border border-white/10 bg-white/5 px-3 py-1 font-mono text-xs text-slate-300">{{ .Report.SpreadsCount }} positions</span>
+								<span class="rounded-full border border-white/10 bg-white/5 px-3 py-1 font-mono text-xs text-slate-300">{{ .Report.SpreadsCount }} positions · {{ len .Report.Spreads }} events</span>
 							</div>
 							{{ if .Report.NoSpreadRows }}
 							<div class="mt-5 rounded-2xl border border-dashed border-white/15 bg-white/5 px-4 py-6 text-sm text-slate-300">No spread positions were recorded in this run.</div>
 							{{ else }}
+							<p class="mt-3 text-sm text-slate-300">OPEN and CLOSE are listed separately in chronological order. Use jump links to move between the two events for the same spread.</p>
 							<div class="mt-5 space-y-4">
 								{{ range .Report.Spreads }}
-								<article class="overflow-hidden rounded-2xl border border-white/10 bg-white/[0.03]">
+								<article id="{{ .AnchorID }}" class="overflow-hidden rounded-2xl border border-white/10 bg-white/[0.03]">
 									<div class="flex flex-col gap-3 border-b border-white/10 px-4 py-4 lg:flex-row lg:items-center lg:justify-between">
 										<div>
 											<div class="flex flex-wrap items-center gap-3">
+												<span class="rounded-full px-2.5 py-1 text-[11px] font-mono ring-1 {{ .EventClass }}">{{ .EventType }}</span>
 												<h4 class="text-lg font-bold text-white">#{{ .ID }} {{ .Tag }}</h4>
-												{{ range .Legs }}
-												<span class="rounded-full border border-white/10 bg-white/5 px-2 py-0.5 font-mono text-[11px] text-slate-300">{{ .Qty }} | {{ .OpenSelect }}</span>
-												{{ end }}
 												<span class="rounded-full px-2.5 py-1 text-[11px] font-mono ring-1 {{ .StatusClass }}">{{ .Status }}</span>
+												{{ if .RelatedLink }}<a href="#{{ .RelatedLink }}" class="font-mono text-xs text-steel underline underline-offset-2 hover:text-white">{{ .RelatedText }}</a>{{ end }}
 											</div>
-											<p class="mt-2 text-sm text-slate-300">Opened {{ .OpenTime }} · Closed {{ .CloseTime }} · Held {{ .DaysHeld }}</p>
+											<p class="mt-2 text-sm text-slate-300">Event time {{ .EventTime }} · Opened {{ .OpenTime }} · Closed {{ .CloseTime }} · Held {{ .DaysHeld }}</p>
 										</div>
 										<div class="grid grid-cols-2 gap-4 text-sm lg:text-right">
 											<div><div class="text-slate-400">Net premium</div><div class="font-mono text-white">{{ .NetPremium }}</div></div>
@@ -2257,13 +2321,22 @@ const combinedHTMLTemplate = `<!DOCTYPE html>
 													<th class="px-4 py-3 font-medium">Type</th>
 													<th class="px-4 py-3 font-medium">Strike</th>
 													<th class="px-4 py-3 font-medium">Expiry</th>
-													<th class="px-4 py-3 font-medium">Entry</th>
-													<th class="px-4 py-3 font-medium">Close</th>
+													{{ if eq .EventType "OPEN" }}
+													<th class="px-4 py-3 font-medium">Select</th>
+													<th class="px-4 py-3 font-medium">Qty</th>
+													<th class="px-4 py-3 font-medium">Entry Price</th>
+													<th class="px-4 py-3 font-medium">Entry Amount</th>
+													{{ else }}
+													<th class="px-4 py-3 font-medium">Qty</th>
+													<th class="px-4 py-3 font-medium">Close Price</th>
+													<th class="px-4 py-3 font-medium">Close Time</th>
 													<th class="px-4 py-3 font-medium">Close Reason</th>
-													<th class="px-4 py-3 font-medium">PnL</th>
+													<th class="px-4 py-3 font-medium">Leg PnL</th>
+													{{ end }}
 												</tr>
 											</thead>
 											<tbody class="divide-y divide-white/5">
+												{{ $eventType := .EventType }}
 												{{ range .Legs }}
 												<tr>
 													<td class="px-4 py-3 font-mono text-slate-200">{{ .Symbol }}</td>
@@ -2271,10 +2344,18 @@ const combinedHTMLTemplate = `<!DOCTYPE html>
 													<td class="px-4 py-3 text-slate-200">{{ .Type }}</td>
 													<td class="px-4 py-3 font-mono text-slate-200">{{ .StrikePrice }}</td>
 													<td class="px-4 py-3 font-mono text-slate-300">{{ .Expiration }}</td>
+													{{ if eq $eventType "OPEN" }}
+													<td class="px-4 py-3 font-mono text-slate-300">{{ .OpenSelect }}</td>
+													<td class="px-4 py-3 font-mono text-slate-200">{{ .Qty }}</td>
 													<td class="px-4 py-3 font-mono text-slate-200">{{ .EntryPrice }}</td>
+													<td class="px-4 py-3 font-mono text-slate-200">{{ .EntryAmount }}</td>
+													{{ else }}
+													<td class="px-4 py-3 font-mono text-slate-200">{{ .Qty }}</td>
 													<td class="px-4 py-3 font-mono text-slate-300">{{ .ClosePrice }}</td>
+													<td class="px-4 py-3 font-mono text-slate-300">{{ .CloseTime }}</td>
 													<td class="px-4 py-3 text-slate-300">{{ .CloseReason }}</td>
 													<td class="px-4 py-3 font-mono text-white">{{ .RealizedPnL }}</td>
+													{{ end }}
 												</tr>
 												{{ end }}
 											</tbody>
