@@ -1622,6 +1622,9 @@ const htmlTemplate = `<!DOCTYPE html>
         <div class="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5 bg-white/[0.02] border-b border-white/5">
           <div class="flex items-center gap-3">
             <span class="font-medium text-slate-200">#{{ .ID }} {{ .Tag }}</span>
+						{{ range .Legs }}
+						<span class="mono text-[11px] text-slate-400">{{ .Qty }} | {{ .OpenSelect }}</span>
+						{{ end }}
             <span class="mono text-xs px-2 py-0.5 rounded {{ .StatusClass }}">{{ .Status }}</span>
           </div>
           <div class="flex gap-5 text-xs text-slate-400">
@@ -1640,8 +1643,6 @@ const htmlTemplate = `<!DOCTYPE html>
                 <th class="px-4 py-2 font-medium">Type</th>
                 <th class="px-4 py-2 font-medium">Strike</th>
                 <th class="px-4 py-2 font-medium">Expiry</th>
-				<th class="px-4 py-2 font-medium">Expiry-Open / Delta</th>
-                <th class="px-4 py-2 font-medium">Qty</th>
                 <th class="px-4 py-2 font-medium">Entry Price</th>
 				<th class="px-4 py-2 font-medium">Entry Amount</th>
                 <th class="px-4 py-2 font-medium">Entry Time</th>
@@ -1659,8 +1660,6 @@ const htmlTemplate = `<!DOCTYPE html>
                 <td class="px-4 py-1.5 text-slate-400">{{ .Type }}</td>
                 <td class="px-4 py-1.5 mono text-slate-300">{{ .StrikePrice }}</td>
                 <td class="px-4 py-1.5 mono text-slate-400">{{ .Expiration }}</td>
-				<td class="px-4 py-1.5 mono text-slate-300">{{ .OpenSelect }}</td>
-                <td class="px-4 py-1.5 mono text-slate-300">{{ .Qty }}</td>
                 <td class="px-4 py-1.5 mono text-slate-300">{{ .EntryPrice }}</td>
 				<td class="px-4 py-1.5 mono text-slate-300">{{ .EntryAmount }}</td>
                 <td class="px-4 py-1.5 mono text-slate-400">{{ .EntryTime }}</td>
@@ -2237,6 +2236,9 @@ const combinedHTMLTemplate = `<!DOCTYPE html>
 										<div>
 											<div class="flex flex-wrap items-center gap-3">
 												<h4 class="text-lg font-bold text-white">#{{ .ID }} {{ .Tag }}</h4>
+												{{ range .Legs }}
+												<span class="rounded-full border border-white/10 bg-white/5 px-2 py-0.5 font-mono text-[11px] text-slate-300">{{ .Qty }} | {{ .OpenSelect }}</span>
+												{{ end }}
 												<span class="rounded-full px-2.5 py-1 text-[11px] font-mono ring-1 {{ .StatusClass }}">{{ .Status }}</span>
 											</div>
 											<p class="mt-2 text-sm text-slate-300">Opened {{ .OpenTime }} · Closed {{ .CloseTime }} · Held {{ .DaysHeld }}</p>
@@ -2255,8 +2257,6 @@ const combinedHTMLTemplate = `<!DOCTYPE html>
 													<th class="px-4 py-3 font-medium">Type</th>
 													<th class="px-4 py-3 font-medium">Strike</th>
 													<th class="px-4 py-3 font-medium">Expiry</th>
-													<th class="px-4 py-3 font-medium">Expiry-Open / Delta</th>
-													<th class="px-4 py-3 font-medium">Qty</th>
 													<th class="px-4 py-3 font-medium">Entry</th>
 													<th class="px-4 py-3 font-medium">Close</th>
 													<th class="px-4 py-3 font-medium">Close Reason</th>
@@ -2271,8 +2271,6 @@ const combinedHTMLTemplate = `<!DOCTYPE html>
 													<td class="px-4 py-3 text-slate-200">{{ .Type }}</td>
 													<td class="px-4 py-3 font-mono text-slate-200">{{ .StrikePrice }}</td>
 													<td class="px-4 py-3 font-mono text-slate-300">{{ .Expiration }}</td>
-													<td class="px-4 py-3 font-mono text-slate-200">{{ .OpenSelect }}</td>
-													<td class="px-4 py-3 font-mono text-slate-200">{{ .Qty }}</td>
 													<td class="px-4 py-3 font-mono text-slate-200">{{ .EntryPrice }}</td>
 													<td class="px-4 py-3 font-mono text-slate-300">{{ .ClosePrice }}</td>
 													<td class="px-4 py-3 text-slate-300">{{ .CloseReason }}</td>
