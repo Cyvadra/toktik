@@ -5,6 +5,7 @@ import (
 	"math"
 	"os"
 	"strconv"
+	"time"
 
 	"github.com/Cyvadra/toktik/internal/backtest"
 )
@@ -39,16 +40,16 @@ type turtleTrendSimpStrategy struct {
 	DebugEvery         int
 
 	// internal state per side
-	longSlots  [3]*slotState // max 1 initial + 2 add-ons for longs (calls)
-	shortSlots [2]*slotState // max 1 initial + 1 add-on for shorts (puts)
+	longSlots    [3]*slotState // max 1 initial + 2 add-ons for longs (calls)
+	shortSlots   [2]*slotState // max 1 initial + 1 add-on for shorts (puts)
+	longRemoved  []*slotState  // detached long positions no longer block new entries
+	shortRemoved []*slotState  // detached short positions no longer block new entries
 
 	lastLongEntryPrice  float64 // price at last long entry/add-on
 	lastShortEntryPrice float64 // price at last short entry/add-on
 	longAddCount        int     // number of long add-ons executed
 	shortAddCount       int     // number of short add-ons executed
 }
-
-const turtlePendingSlippagePct = 0.005
 
 // slotState tracks a single option position slot.
 type slotState struct {
@@ -136,7 +137,7 @@ func (s *turtleTrendSimpStrategy) OnBar(ctx *backtest.BarContext) {
 
 	if s.shouldDebugBar(barIndex) {
 		s.debugf(
-			"bar=%d time=%s close=%.6f atr20=%.6f chain_contracts=%d long_slots=%d short_slots=%d long_adds=%d short_adds=%d",
+			"bar=%d time=%s close=%.6f atr20=%.6f chain_contracts=%d long_slots=%d short_slots=%d long_removed=%d short_removed=%d long_adds=%d short_adds=%d",
 			barIndex,
 			now.Format("2006-01-02 15:04:05"),
 			close,
@@ -144,12 +145,15 @@ func (s *turtleTrendSimpStrategy) OnBar(ctx *backtest.BarContext) {
 			chainLen(chain),
 			s.countLongSlots(),
 			s.countShortSlots(),
+			len(s.longRemoved),
+			len(s.shortRemoved),
 			s.longAddCount,
 			s.shortAddCount,
 		)
 	}
 
-	// Check soft-stop and rolling for long slots
+	// Check active long slots.
+	longSeriesRemoved := false
 	for i := range s.longSlots {
 		slot := s.longSlots[i]
 		if slot == nil {
@@ -171,20 +175,19 @@ func (s *turtleTrendSimpStrategy) OnBar(ctx *backtest.BarContext) {
 		currentContract := s.currentContract(leg.Contract, contractMap)
 		markPrice := s.valuationPriceForLeg(*leg, contractMap)
 
-		// Soft stop: if option value dropped ≥ 80% from entry
-		if !math.IsNaN(markPrice) && leg.EntryPrice > 0 && markPrice <= leg.EntryPrice*0.2 {
-			s.debugf("bar=%d long slot=%d soft-stop spread_id=%d symbol=%s entry=%.6f mark=%.6f", barIndex, i, sp.ID, leg.Contract.Symbol, leg.EntryPrice, markPrice)
-			ctx.ScheduleCloseLegOrder(
-				now,
-				sp.ID,
-				0,
-				backtest.SpreadOrderMarket,
-				backtest.Sell,
-				math.NaN(),
-				turtlePendingSlippagePct,
-				s.withDeltaReason("停损：权利金回撤达80%", currentContract.Delta),
-			)
+		if s.shouldCloseForExpiry(currentContract, now) {
+			s.debugf("bar=%d long slot=%d expiry-close spread_id=%d symbol=%s dte=%.6f", barIndex, i, sp.ID, currentContract.Symbol, currentContract.DaysToExpiry(now))
+			ctx.CloseSpreadLegWithReason(sp.ID, 0, s.exitPriceForLeg(*leg, contractMap), s.withDeltaReason("到期前一天平仓", currentContract.Delta))
+			s.longSlots[i] = nil
 			continue
+		}
+
+		// When the main slot suffers an 80% premium drawdown, detach the whole side.
+		if i == 0 && s.hitRemovalThreshold(*leg, markPrice) {
+			s.debugf("bar=%d long main slot detached spread_id=%d symbol=%s entry=%.6f mark=%.6f", barIndex, sp.ID, leg.Contract.Symbol, leg.EntryPrice, markPrice)
+			s.detachLongSeries(barIndex)
+			longSeriesRemoved = true
+			break
 		}
 
 		// Rolling: |Delta| > 0.55 or unrealized profit > 66%
@@ -201,12 +204,12 @@ func (s *turtleTrendSimpStrategy) OnBar(ctx *backtest.BarContext) {
 		if needsRoll {
 			s.debugf("bar=%d long slot=%d rolling spread_id=%d symbol=%s abs_delta=%.6f pnl_pct=%.6f", barIndex, i, sp.ID, currentContract.Symbol, absDelta, pnlPct)
 			ctx.CloseSpreadLegWithReason(sp.ID, 0, s.exitPriceForLeg(*leg, contractMap), s.withDeltaReason(s.rollCloseReason(absDelta, pnlPct), currentContract.Delta))
-			// Re-open with same execution standard
-			s.openCallOption(ctx, chain, close, i, "换仓")
+			s.longSlots[i] = s.openCallOption(ctx, chain, close, "active-long", "换仓")
 		}
 	}
 
-	// Check soft-stop and rolling for short slots
+	// Check active short slots.
+	shortSeriesRemoved := false
 	for i := range s.shortSlots {
 		slot := s.shortSlots[i]
 		if slot == nil {
@@ -228,20 +231,18 @@ func (s *turtleTrendSimpStrategy) OnBar(ctx *backtest.BarContext) {
 		currentContract := s.currentContract(leg.Contract, contractMap)
 		markPrice := s.valuationPriceForLeg(*leg, contractMap)
 
-		// Soft stop: option value dropped ≥ 80%
-		if !math.IsNaN(markPrice) && leg.EntryPrice > 0 && markPrice <= leg.EntryPrice*0.2 {
-			s.debugf("bar=%d short slot=%d soft-stop spread_id=%d symbol=%s entry=%.6f mark=%.6f", barIndex, i, sp.ID, leg.Contract.Symbol, leg.EntryPrice, markPrice)
-			ctx.ScheduleCloseLegOrder(
-				now,
-				sp.ID,
-				0,
-				backtest.SpreadOrderMarket,
-				backtest.Sell,
-				math.NaN(),
-				turtlePendingSlippagePct,
-				s.withDeltaReason("停损：权利金回撤达80%", currentContract.Delta),
-			)
+		if s.shouldCloseForExpiry(currentContract, now) {
+			s.debugf("bar=%d short slot=%d expiry-close spread_id=%d symbol=%s dte=%.6f", barIndex, i, sp.ID, currentContract.Symbol, currentContract.DaysToExpiry(now))
+			ctx.CloseSpreadLegWithReason(sp.ID, 0, s.exitPriceForLeg(*leg, contractMap), s.withDeltaReason("到期前一天平仓", currentContract.Delta))
+			s.shortSlots[i] = nil
 			continue
+		}
+
+		if i == 0 && s.hitRemovalThreshold(*leg, markPrice) {
+			s.debugf("bar=%d short main slot detached spread_id=%d symbol=%s entry=%.6f mark=%.6f", barIndex, sp.ID, leg.Contract.Symbol, leg.EntryPrice, markPrice)
+			s.detachShortSeries(barIndex)
+			shortSeriesRemoved = true
+			break
 		}
 
 		// Rolling: |Delta| > 0.55 or profit > 66%
@@ -256,10 +257,109 @@ func (s *turtleTrendSimpStrategy) OnBar(ctx *backtest.BarContext) {
 		}
 
 		if needsRoll {
-			// s.debugf("bar=%d short slot=%d rolling spread_id=%d symbol=%s abs_delta=%.6f pnl_pct=%.6f", barIndex, i, sp.ID, currentContract.Symbol, absDelta, pnlPct)
 			ctx.CloseSpreadLegWithReason(sp.ID, 0, s.exitPriceForLeg(*leg, contractMap), s.withDeltaReason(s.rollCloseReason(absDelta, pnlPct), currentContract.Delta))
-			// s.openPutOption(ctx, chain, close, i, "换仓")
+			s.shortSlots[i] = s.openPutOption(ctx, chain, close, "active-short", "换仓")
 		}
+	}
+
+	// Check detached long positions. They keep rolling/profit-taking, but never block new entries.
+	if len(s.longRemoved) > 0 {
+		updated := make([]*slotState, 0, len(s.longRemoved))
+		for i, slot := range s.longRemoved {
+			if slot == nil {
+				continue
+			}
+			sp := ctx.Spreads().Get(slot.spreadID)
+			if sp == nil || sp.IsFullyClosed() {
+				s.debugf("bar=%d removed long idx=%d cleared: spread missing or fully closed spread_id=%d", barIndex, i, slot.spreadID)
+				continue
+			}
+			leg := &sp.Legs[0]
+			if leg.Closed {
+				continue
+			}
+
+			currentContract := s.currentContract(leg.Contract, contractMap)
+			markPrice := s.valuationPriceForLeg(*leg, contractMap)
+
+			if s.shouldCloseForExpiry(currentContract, now) {
+				s.debugf("bar=%d removed long idx=%d expiry-close spread_id=%d symbol=%s dte=%.6f", barIndex, i, sp.ID, currentContract.Symbol, currentContract.DaysToExpiry(now))
+				ctx.CloseSpreadLegWithReason(sp.ID, 0, s.exitPriceForLeg(*leg, contractMap), s.withDeltaReason("到期前一天平仓", currentContract.Delta))
+				continue
+			}
+
+			absDelta := math.Abs(currentContract.Delta)
+			pnlPct := sp.LegUnrealizedPnLPct(0, markPrice)
+			needsRoll := false
+			if absDelta > 0.55 {
+				needsRoll = true
+			}
+			if !math.IsNaN(pnlPct) && pnlPct > 0.66 {
+				needsRoll = true
+			}
+
+			if needsRoll {
+				s.debugf("bar=%d removed long idx=%d rolling spread_id=%d symbol=%s abs_delta=%.6f pnl_pct=%.6f", barIndex, i, sp.ID, currentContract.Symbol, absDelta, pnlPct)
+				ctx.CloseSpreadLegWithReason(sp.ID, 0, s.exitPriceForLeg(*leg, contractMap), s.withDeltaReason(s.rollCloseReason(absDelta, pnlPct), currentContract.Delta))
+				if reopened := s.openCallOption(ctx, chain, close, "removed-long", "换仓"); reopened != nil {
+					updated = append(updated, reopened)
+				}
+				continue
+			}
+
+			updated = append(updated, slot)
+		}
+		s.longRemoved = updated
+	}
+
+	// Check detached short positions. They keep rolling/profit-taking, but never block new entries.
+	if len(s.shortRemoved) > 0 {
+		updated := make([]*slotState, 0, len(s.shortRemoved))
+		for i, slot := range s.shortRemoved {
+			if slot == nil {
+				continue
+			}
+			sp := ctx.Spreads().Get(slot.spreadID)
+			if sp == nil || sp.IsFullyClosed() {
+				s.debugf("bar=%d removed short idx=%d cleared: spread missing or fully closed spread_id=%d", barIndex, i, slot.spreadID)
+				continue
+			}
+			leg := &sp.Legs[0]
+			if leg.Closed {
+				continue
+			}
+
+			currentContract := s.currentContract(leg.Contract, contractMap)
+			markPrice := s.valuationPriceForLeg(*leg, contractMap)
+
+			if s.shouldCloseForExpiry(currentContract, now) {
+				s.debugf("bar=%d removed short idx=%d expiry-close spread_id=%d symbol=%s dte=%.6f", barIndex, i, sp.ID, currentContract.Symbol, currentContract.DaysToExpiry(now))
+				ctx.CloseSpreadLegWithReason(sp.ID, 0, s.exitPriceForLeg(*leg, contractMap), s.withDeltaReason("到期前一天平仓", currentContract.Delta))
+				continue
+			}
+
+			absDelta := math.Abs(currentContract.Delta)
+			pnlPct := sp.LegUnrealizedPnLPct(0, markPrice)
+			needsRoll := false
+			if absDelta > 0.55 {
+				needsRoll = true
+			}
+			if !math.IsNaN(pnlPct) && pnlPct > 0.66 {
+				needsRoll = true
+			}
+
+			if needsRoll {
+				s.debugf("bar=%d removed short idx=%d rolling spread_id=%d symbol=%s abs_delta=%.6f pnl_pct=%.6f", barIndex, i, sp.ID, currentContract.Symbol, absDelta, pnlPct)
+				ctx.CloseSpreadLegWithReason(sp.ID, 0, s.exitPriceForLeg(*leg, contractMap), s.withDeltaReason(s.rollCloseReason(absDelta, pnlPct), currentContract.Delta))
+				if reopened := s.openPutOption(ctx, chain, close, "removed-short", "换仓"); reopened != nil {
+					updated = append(updated, reopened)
+				}
+				continue
+			}
+
+			updated = append(updated, slot)
+		}
+		s.shortRemoved = updated
 	}
 
 	// --- Check signal conditions ---
@@ -302,24 +402,30 @@ func (s *turtleTrendSimpStrategy) OnBar(ctx *backtest.BarContext) {
 
 	if close > longBreakout {
 		s.debugf("bar=%d long breakout triggered close=%.6f threshold=%.6f", barIndex, close, longBreakout)
-		if s.longSlots[0] == nil {
+		if s.countLongSlots() == 0 {
 			// First entry
 			s.longAddCount = 0
-			s.openCallOption(ctx, chain, close, 0, "首仓")
-			s.lastLongEntryPrice = close
-		} else if s.longAddCount < 2 {
+			if slot := s.openCallOption(ctx, chain, close, "active-long-0", "首仓"); slot != nil {
+				s.longSlots[0] = slot
+				s.lastLongEntryPrice = close
+			}
+		} else if s.longSlots[0] != nil && s.longAddCount < 2 {
 			// Add-on: price must have risen 0.75 * ATR since last entry
 			if close >= s.lastLongEntryPrice+0.75*atr {
 				slotIdx := s.nextFreeLongSlot()
 				if slotIdx >= 0 {
 					s.debugf("bar=%d long add-on triggered close=%.6f last_entry=%.6f atr=%.6f slot=%d", barIndex, close, s.lastLongEntryPrice, atr, slotIdx)
-					s.openCallOption(ctx, chain, close, slotIdx, "加仓")
-					s.lastLongEntryPrice = close
-					s.longAddCount++
+					if slot := s.openCallOption(ctx, chain, close, "active-long-add", "加仓"); slot != nil {
+						s.longSlots[slotIdx] = slot
+						s.lastLongEntryPrice = close
+						s.longAddCount++
+					}
 				}
 			} else if s.shouldDebugBar(barIndex) {
 				s.debugf("bar=%d long add-on blocked close=%.6f required=%.6f", barIndex, close, s.lastLongEntryPrice+0.75*atr)
 			}
+		} else if s.shouldDebugBar(barIndex) && longSeriesRemoved {
+			s.debugf("bar=%d long series detached and awaits a fresh base slot before add-ons", barIndex)
 		} else if s.shouldDebugBar(barIndex) {
 			s.debugf("bar=%d long breakout seen but add limit reached long_add_count=%d", barIndex, s.longAddCount)
 		}
@@ -329,24 +435,33 @@ func (s *turtleTrendSimpStrategy) OnBar(ctx *backtest.BarContext) {
 	// Breakout below prior-bar Min(Donchian lower 20, Bollinger lower 20) - 0.5*ATR
 	if close < shortBreakout {
 		s.debugf("bar=%d short breakout triggered close=%.6f threshold=%.6f", barIndex, close, shortBreakout)
-		if s.shortSlots[0] == nil {
+		if s.countShortSlots() == 0 {
 			s.shortAddCount = 0
 			// todo: later remove this
-			// s.openPutOption(ctx, chain, close, 0, "首仓")
+			// if slot := s.openPutOption(ctx, chain, close, "active-short-0", "首仓"); slot != nil {
+			// 	s.shortSlots[0] = slot
+			// 	s.lastShortEntryPrice = close
+			// }
 			// s.lastShortEntryPrice = close
-		} else if s.shortAddCount < 1 {
+		} else if s.shortSlots[0] != nil && s.shortAddCount < 1 {
 			// Add-on: price must have fallen 0.75 * ATR since last entry
 			if close <= s.lastShortEntryPrice-0.75*atr {
 				slotIdx := s.nextFreeShortSlot()
 				if slotIdx >= 0 {
 					s.debugf("bar=%d short add-on triggered close=%.6f last_entry=%.6f atr=%.6f slot=%d", barIndex, close, s.lastShortEntryPrice, atr, slotIdx)
-					// s.openPutOption(ctx, chain, close, slotIdx, "加仓")
+					// if slot := s.openPutOption(ctx, chain, close, "active-short-add", "加仓"); slot != nil {
+					// 	s.shortSlots[slotIdx] = slot
+					// 	s.lastShortEntryPrice = close
+					// 	s.shortAddCount++
+					// }
 					// s.lastShortEntryPrice = close
 					// s.shortAddCount++
 				}
 			} else if s.shouldDebugBar(barIndex) {
 				s.debugf("bar=%d short add-on blocked close=%.6f required=%.6f", barIndex, close, s.lastShortEntryPrice-0.75*atr)
 			}
+		} else if s.shouldDebugBar(barIndex) && shortSeriesRemoved {
+			s.debugf("bar=%d short series detached and awaits a fresh base slot before add-ons", barIndex)
 		} else if s.shouldDebugBar(barIndex) {
 			s.debugf("bar=%d short breakout seen but add limit reached short_add_count=%d", barIndex, s.shortAddCount)
 		}
@@ -392,29 +507,29 @@ func (s *turtleTrendSimpStrategy) checkLowVol(ctx *backtest.BarContext) (bool, s
 
 // openCallOption opens a single Call option per the execution standard.
 // DTE ≈ 35, Delta ≈ 0.33, sized by IV quantile.
-func (s *turtleTrendSimpStrategy) openCallOption(ctx *backtest.BarContext, chain *backtest.OptionsChain, underlyingPrice float64, slotIdx int, reason string) {
+func (s *turtleTrendSimpStrategy) openCallOption(ctx *backtest.BarContext, chain *backtest.OptionsChain, underlyingPrice float64, slotRef, reason string) *slotState {
 	if chain == nil || chain.Len() == 0 {
 		s.debugf("bar=%d openCallOption aborted: empty chain", ctx.BarIndex())
-		return
+		return nil
 	}
 
 	calls := chain.Calls().ExpiryNearest(35)
 	if calls.Len() == 0 {
 		s.debugf("bar=%d openCallOption aborted: no calls near 35 DTE", ctx.BarIndex())
-		return
+		return nil
 	}
 
 	sorted := calls.SortByDelta(0.33)
 	if len(sorted) == 0 {
 		s.debugf("bar=%d openCallOption aborted: no call candidates after delta sort", ctx.BarIndex())
-		return
+		return nil
 	}
 	contract := sorted[0]
 
 	entryPrice := s.EntryPriceMode.EntryPrice(backtest.Buy, contract)
 	if math.IsNaN(entryPrice) || entryPrice <= 0 {
 		s.debugf("bar=%d openCallOption aborted: invalid entry price symbol=%s entry_price=%.6f bid=%.6f ask=%.6f mark=%.6f delta=%.6f dte=%.2f", ctx.BarIndex(), contract.Symbol, entryPrice, contract.BidPrice, contract.AskPrice, contract.MarkPrice, contract.Delta, contract.DaysToExpiry(ctx.Time()))
-		return
+		return nil
 	}
 
 	// Size: x * 1 BTC based on IV quantile
@@ -422,10 +537,10 @@ func (s *turtleTrendSimpStrategy) openCallOption(ctx *backtest.BarContext, chain
 	qty := x / entryPrice
 	if qty <= 0 {
 		s.debugf("bar=%d openCallOption aborted: non-positive qty x=%.6f entry_price=%.6f", ctx.BarIndex(), x, entryPrice)
-		return
+		return nil
 	}
 
-	s.debugf("bar=%d openCallOption selected symbol=%s delta=%.6f iv=%.6f dte=%.2f entry_price=%.6f x=%.6f qty=%.6f slot=%d", ctx.BarIndex(), contract.Symbol, contract.Delta, contract.IV, contract.DaysToExpiry(ctx.Time()), entryPrice, x, qty, slotIdx)
+	s.debugf("bar=%d openCallOption selected symbol=%s delta=%.6f iv=%.6f dte=%.2f entry_price=%.6f x=%.6f qty=%.6f slot=%s", ctx.BarIndex(), contract.Symbol, contract.Delta, contract.IV, contract.DaysToExpiry(ctx.Time()), entryPrice, x, qty, slotRef)
 
 	tag := "海龟简易-Long"
 	if reason != "" {
@@ -441,41 +556,41 @@ func (s *turtleTrendSimpStrategy) openCallOption(ctx *backtest.BarContext, chain
 	}}, tag)
 
 	if spreadID > 0 {
-		s.longSlots[slotIdx] = &slotState{
+		s.debugf("bar=%d openCallOption success spread_id=%d slot=%s", ctx.BarIndex(), spreadID, slotRef)
+		return &slotState{
 			spreadID:   spreadID,
 			entryPrice: underlyingPrice,
 		}
-		s.debugf("bar=%d openCallOption success spread_id=%d slot=%d", ctx.BarIndex(), spreadID, slotIdx)
-	} else {
-		s.debugf("bar=%d openCallOption failed: ctx.OpenSpread returned 0", ctx.BarIndex())
 	}
+	s.debugf("bar=%d openCallOption failed: ctx.OpenSpread returned 0", ctx.BarIndex())
+	return nil
 }
 
 // openPutOption opens a single Put option per the execution standard.
 // DTE ≈ 35, Delta ≈ -0.33, sized by IV quantile.
-func (s *turtleTrendSimpStrategy) openPutOption(ctx *backtest.BarContext, chain *backtest.OptionsChain, underlyingPrice float64, slotIdx int, reason string) {
+func (s *turtleTrendSimpStrategy) openPutOption(ctx *backtest.BarContext, chain *backtest.OptionsChain, underlyingPrice float64, slotRef, reason string) *slotState {
 	if chain == nil || chain.Len() == 0 {
 		s.debugf("bar=%d openPutOption aborted: empty chain", ctx.BarIndex())
-		return
+		return nil
 	}
 
 	puts := chain.Puts().ExpiryNearest(35)
 	if puts.Len() == 0 {
 		s.debugf("bar=%d openPutOption aborted: no puts near 35 DTE", ctx.BarIndex())
-		return
+		return nil
 	}
 
 	sorted := puts.SortByDelta(-0.33)
 	if len(sorted) == 0 {
 		s.debugf("bar=%d openPutOption aborted: no put candidates after delta sort", ctx.BarIndex())
-		return
+		return nil
 	}
 	contract := sorted[0]
 
 	entryPrice := s.EntryPriceMode.EntryPrice(backtest.Buy, contract)
 	if math.IsNaN(entryPrice) || entryPrice <= 0 {
 		s.debugf("bar=%d openPutOption aborted: invalid entry price symbol=%s entry_price=%.6f bid=%.6f ask=%.6f mark=%.6f delta=%.6f dte=%.2f", ctx.BarIndex(), contract.Symbol, entryPrice, contract.BidPrice, contract.AskPrice, contract.MarkPrice, contract.Delta, contract.DaysToExpiry(ctx.Time()))
-		return
+		return nil
 	}
 
 	// Size: x * 1 BTC based on IV quantile (short/put variant with IV >= 85% bracket)
@@ -483,10 +598,10 @@ func (s *turtleTrendSimpStrategy) openPutOption(ctx *backtest.BarContext, chain 
 	qty := x / entryPrice
 	if qty <= 0 {
 		s.debugf("bar=%d openPutOption aborted: non-positive qty x=%.6f entry_price=%.6f", ctx.BarIndex(), x, entryPrice)
-		return
+		return nil
 	}
 
-	s.debugf("bar=%d openPutOption selected symbol=%s delta=%.6f iv=%.6f dte=%.2f entry_price=%.6f x=%.6f qty=%.6f slot=%d", ctx.BarIndex(), contract.Symbol, contract.Delta, contract.IV, contract.DaysToExpiry(ctx.Time()), entryPrice, x, qty, slotIdx)
+	s.debugf("bar=%d openPutOption selected symbol=%s delta=%.6f iv=%.6f dte=%.2f entry_price=%.6f x=%.6f qty=%.6f slot=%s", ctx.BarIndex(), contract.Symbol, contract.Delta, contract.IV, contract.DaysToExpiry(ctx.Time()), entryPrice, x, qty, slotRef)
 
 	tag := "海龟简易-Short"
 	if reason != "" {
@@ -502,14 +617,14 @@ func (s *turtleTrendSimpStrategy) openPutOption(ctx *backtest.BarContext, chain 
 	}}, tag)
 
 	if spreadID > 0 {
-		s.shortSlots[slotIdx] = &slotState{
+		s.debugf("bar=%d openPutOption success spread_id=%d slot=%s", ctx.BarIndex(), spreadID, slotRef)
+		return &slotState{
 			spreadID:   spreadID,
 			entryPrice: underlyingPrice,
 		}
-		s.debugf("bar=%d openPutOption success spread_id=%d slot=%d", ctx.BarIndex(), spreadID, slotIdx)
-	} else {
-		s.debugf("bar=%d openPutOption failed: ctx.OpenSpread returned 0", ctx.BarIndex())
 	}
+	s.debugf("bar=%d openPutOption failed: ctx.OpenSpread returned 0", ctx.BarIndex())
+	return nil
 }
 
 // ivCoefficient computes the position sizing coefficient x based on IV percentile.
@@ -517,62 +632,8 @@ func (s *turtleTrendSimpStrategy) openPutOption(ctx *backtest.BarContext, chain 
 // then computes the 120-bar quantile rank.
 func (s *turtleTrendSimpStrategy) ivCoefficient(chain *backtest.OptionsChain, isPut bool) float64 {
 	// TODO: next version
+	_, _ = chain, isPut
 	return 1.0
-
-	if chain == nil || chain.Len() == 0 {
-		return 1.0
-	}
-
-	// Compute average IV from near-ATM options as IV proxy
-	contracts := chain.Contracts()
-	var ivSum float64
-	var ivCount int
-	for i := range contracts {
-		iv := contracts[i].IV
-		if !math.IsNaN(iv) && iv > 0 {
-			ivSum += iv
-			ivCount++
-		}
-	}
-	if ivCount == 0 {
-		return 1.0
-	}
-
-	// Use the average IV directly against the specification thresholds.
-	// The spec says thresholds are 120-bar IV history percentiles at 35, 60, 85.
-	// Since we only have the current bar's chain IV, we treat the average IV
-	// as a direct percentile indicator (commonly IV ranges 0–1 or 0–100%).
-	// The spec thresholds (35%, 60%, 85%) map to fractional IV percentiles.
-	avgIV := ivSum / float64(ivCount)
-
-	// avgIV is typically a fraction (e.g. 0.6 = 60%).
-	// Map to percentile rank: treat 35/60/85 as percentile cutoffs.
-	// We'll use the raw IV value as a proxy since we don't have historical IV series.
-	pct := avgIV // IV as a fraction, e.g. 0.35 means 35%
-
-	if isPut {
-		// Put variant has extra IV >= 85% → x = 0.5
-		switch {
-		case pct >= 0.85:
-			return 0.5
-		case pct >= 0.60:
-			return 0.7
-		case pct >= 0.35:
-			return 1.0
-		default:
-			return 1.2
-		}
-	}
-
-	// Call variant: no IV >= 85% bracket in the spec (implicitly x = 0.7 still)
-	switch {
-	case pct >= 0.60:
-		return 0.7
-	case pct >= 0.35:
-		return 1.0
-	default:
-		return 1.2
-	}
 }
 
 func (s *turtleTrendSimpStrategy) currentContract(contract backtest.OptionContract, contractMap map[string]backtest.OptionContract) backtest.OptionContract {
@@ -593,6 +654,44 @@ func (s *turtleTrendSimpStrategy) exitPriceForLeg(leg backtest.SpreadLeg, contra
 func (s *turtleTrendSimpStrategy) valuationPriceForLeg(leg backtest.SpreadLeg, contractMap map[string]backtest.OptionContract) float64 {
 	contract := s.currentContract(leg.Contract, contractMap)
 	return s.ValuationPriceMode.ExitPrice(leg.Side, contract)
+}
+
+func (s *turtleTrendSimpStrategy) hitRemovalThreshold(leg backtest.SpreadLeg, markPrice float64) bool {
+	return !math.IsNaN(markPrice) && leg.EntryPrice > 0 && markPrice <= leg.EntryPrice*0.2
+}
+
+func (s *turtleTrendSimpStrategy) shouldCloseForExpiry(contract backtest.OptionContract, now time.Time) bool {
+	return contract.DaysToExpiry(now) <= 1
+}
+
+func (s *turtleTrendSimpStrategy) detachLongSeries(barIndex int) {
+	moved := 0
+	for _, slot := range s.longSlots {
+		if slot == nil {
+			continue
+		}
+		s.longRemoved = append(s.longRemoved, slot)
+		moved++
+	}
+	s.longSlots = [3]*slotState{}
+	s.longAddCount = 0
+	s.lastLongEntryPrice = 0
+	s.debugf("bar=%d detached long series moved=%d removed_total=%d", barIndex, moved, len(s.longRemoved))
+}
+
+func (s *turtleTrendSimpStrategy) detachShortSeries(barIndex int) {
+	moved := 0
+	for _, slot := range s.shortSlots {
+		if slot == nil {
+			continue
+		}
+		s.shortRemoved = append(s.shortRemoved, slot)
+		moved++
+	}
+	s.shortSlots = [2]*slotState{}
+	s.shortAddCount = 0
+	s.lastShortEntryPrice = 0
+	s.debugf("bar=%d detached short series moved=%d removed_total=%d", barIndex, moved, len(s.shortRemoved))
 }
 
 func (s *turtleTrendSimpStrategy) countLongSlots() int {
