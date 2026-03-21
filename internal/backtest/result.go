@@ -99,6 +99,7 @@ type SpreadLegReport struct {
 	Type        OptionType `json:"type"`
 	StrikePrice float64    `json:"strike_price"`
 	Expiration  time.Time  `json:"expiration"`
+	Delta       float64    `json:"delta"`
 	Qty         float64    `json:"qty"`
 	EntryPrice  float64    `json:"entry_price"`
 	EntryTime   time.Time  `json:"entry_time"`
@@ -611,6 +612,7 @@ func buildSpreadPositionReports(tracker *SpreadTracker, endTime time.Time) []Spr
 				Type:        leg.Contract.Type,
 				StrikePrice: leg.Contract.StrikePrice,
 				Expiration:  leg.Contract.Expiration,
+				Delta:       leg.Contract.Delta,
 				Qty:         leg.Qty,
 				EntryPrice:  leg.EntryPrice,
 				EntryTime:   leg.EntryTime,

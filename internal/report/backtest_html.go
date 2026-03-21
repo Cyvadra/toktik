@@ -152,6 +152,7 @@ type spreadLegRowView struct {
 	Type        string
 	StrikePrice string
 	Expiration  string
+	OpenSelect  string
 	Qty         string
 	EntryPrice  string
 	EntryAmount string
@@ -917,12 +918,14 @@ func buildSpreadRows(spreads []backtest.SpreadPositionReport, unit string) []spr
 			row.CloseTime = formatDateTime(*spread.CloseTime)
 		}
 		for _, leg := range spread.Legs {
+			expiryOpenDays := leg.Expiration.Sub(leg.EntryTime).Hours() / 24
 			legView := spreadLegRowView{
 				Symbol:      leg.Symbol,
 				Side:        strings.ToUpper(leg.Side),
 				Type:        strings.ToUpper(string(leg.Type)),
 				StrikePrice: currency(leg.StrikePrice),
 				Expiration:  formatDate(leg.Expiration),
+				OpenSelect:  expiryOpenDelta(expiryOpenDays, leg.Delta),
 				Qty:         decimal(leg.Qty),
 				EntryPrice:  amount4(leg.EntryPrice, unit),
 				EntryAmount: amount4(leg.Qty*leg.EntryPrice, unit),
@@ -1353,6 +1356,13 @@ func decimal(value float64) string {
 	return fmt.Sprintf("%.2f", value)
 }
 
+func expiryOpenDelta(expiryOpenDays, delta float64) string {
+	if math.IsNaN(expiryOpenDays) || math.IsInf(expiryOpenDays, 0) || math.IsNaN(delta) || math.IsInf(delta, 0) {
+		return "-"
+	}
+	return fmt.Sprintf("%.2f d | Δ %.2f", expiryOpenDays, delta)
+}
+
 func integer(value int) string {
 	return fmt.Sprintf("%d", value)
 }
@@ -1619,6 +1629,7 @@ const htmlTemplate = `<!DOCTYPE html>
                 <th class="px-4 py-2 font-medium">Type</th>
                 <th class="px-4 py-2 font-medium">Strike</th>
                 <th class="px-4 py-2 font-medium">Expiry</th>
+				<th class="px-4 py-2 font-medium">Expiry-Open / Delta</th>
                 <th class="px-4 py-2 font-medium">Qty</th>
                 <th class="px-4 py-2 font-medium">Entry Price</th>
 				<th class="px-4 py-2 font-medium">Entry Amount</th>
@@ -1637,6 +1648,7 @@ const htmlTemplate = `<!DOCTYPE html>
                 <td class="px-4 py-1.5 text-slate-400">{{ .Type }}</td>
                 <td class="px-4 py-1.5 mono text-slate-300">{{ .StrikePrice }}</td>
                 <td class="px-4 py-1.5 mono text-slate-400">{{ .Expiration }}</td>
+				<td class="px-4 py-1.5 mono text-slate-300">{{ .OpenSelect }}</td>
                 <td class="px-4 py-1.5 mono text-slate-300">{{ .Qty }}</td>
                 <td class="px-4 py-1.5 mono text-slate-300">{{ .EntryPrice }}</td>
 				<td class="px-4 py-1.5 mono text-slate-300">{{ .EntryAmount }}</td>
@@ -2232,6 +2244,7 @@ const combinedHTMLTemplate = `<!DOCTYPE html>
 													<th class="px-4 py-3 font-medium">Type</th>
 													<th class="px-4 py-3 font-medium">Strike</th>
 													<th class="px-4 py-3 font-medium">Expiry</th>
+													<th class="px-4 py-3 font-medium">Expiry-Open / Delta</th>
 													<th class="px-4 py-3 font-medium">Qty</th>
 													<th class="px-4 py-3 font-medium">Entry</th>
 													<th class="px-4 py-3 font-medium">Close</th>
@@ -2247,6 +2260,7 @@ const combinedHTMLTemplate = `<!DOCTYPE html>
 													<td class="px-4 py-3 text-slate-200">{{ .Type }}</td>
 													<td class="px-4 py-3 font-mono text-slate-200">{{ .StrikePrice }}</td>
 													<td class="px-4 py-3 font-mono text-slate-300">{{ .Expiration }}</td>
+													<td class="px-4 py-3 font-mono text-slate-200">{{ .OpenSelect }}</td>
 													<td class="px-4 py-3 font-mono text-slate-200">{{ .Qty }}</td>
 													<td class="px-4 py-3 font-mono text-slate-200">{{ .EntryPrice }}</td>
 													<td class="px-4 py-3 font-mono text-slate-300">{{ .ClosePrice }}</td>
