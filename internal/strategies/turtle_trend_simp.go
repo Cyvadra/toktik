@@ -87,9 +87,22 @@ func (s *turtleTrendSimpStrategy) Init(ctx *backtest.SetupContext) error {
 		},
 	))
 	ctx.Register("ma_std20", backtest.SMA("std20", 20))
-
-	// Quantile of ma_std20 over 120 bars — for the low-vol filter
-	ctx.Register("vol_quantile", backtest.Quantile("ma_std20", 120, 0))
+	ctx.Register("stdma20", backtest.Custom(
+		[]string{"std20", "ma_std20"},
+		func(inputs map[string][]float64) []float64 {
+			std := inputs["std20"]
+			maStd := inputs["ma_std20"]
+			out := make([]float64, len(std))
+			for i := range out {
+				if i >= len(maStd) || math.IsNaN(std[i]) || math.IsNaN(maStd[i]) || maStd[i] == 0 {
+					out[i] = math.NaN()
+					continue
+				}
+				out[i] = std[i] / maStd[i]
+			}
+			return out
+		},
+	))
 
 	// IV quantile proxy: use average option IV from the chain.
 	// We compute this at runtime in OnBar from the options chain,
@@ -363,17 +376,9 @@ func (s *turtleTrendSimpStrategy) OnBar(ctx *backtest.BarContext) {
 	}
 
 	// --- Check signal conditions ---
-	volQuantile := ctx.Ind("vol_quantile")
-	if math.IsNaN(volQuantile) {
-		if s.shouldDebugBar(barIndex) {
-			s.debugf("bar=%d skip: vol_quantile is NaN (warmup or indicator unavailable)", barIndex)
-		}
-		return
-	}
-
 	lowVolOK, lowVolReason := s.checkLowVol(ctx)
 	if s.shouldDebugBar(barIndex) {
-		s.debugf("bar=%d low-vol-check result=%t detail=%s ma_std20=%.6f ma_std20[-1]=%.6f ma_std20[-2]=%.6f", barIndex, lowVolOK, lowVolReason, ctx.Ind("ma_std20"), ctx.IndAt("ma_std20", 1), ctx.IndAt("ma_std20", 2))
+		s.debugf("bar=%d low-vol-check result=%t detail=%s stdma20=%.6f stdma20[-1]=%.6f stdma20[-2]=%.6f", barIndex, lowVolOK, lowVolReason, ctx.Ind("stdma20"), ctx.IndAt("stdma20", 1), ctx.IndAt("stdma20", 2))
 	}
 	if !lowVolOK {
 		return
@@ -469,33 +474,34 @@ func (s *turtleTrendSimpStrategy) OnBar(ctx *backtest.BarContext) {
 }
 
 // checkLowVol checks whether at least one of the last 3 bars has
-// MA(Std,20) in the bottom 35th percentile of the past 120 bars.
+// stdma20 = Std(Close,20) / MA(Std(Close,20),20) below the 35th percentile
+// of the past 120 bars.
 func (s *turtleTrendSimpStrategy) checkLowVol(ctx *backtest.BarContext) (bool, string) {
 	for barsAgo := 0; barsAgo <= 2; barsAgo++ {
-		maStd := ctx.IndAt("ma_std20", barsAgo)
-		if math.IsNaN(maStd) {
+		stdMa := ctx.IndAt("stdma20", barsAgo)
+		if math.IsNaN(stdMa) {
 			if s.shouldDebugBar(ctx.BarIndex()) {
-				s.debugf("bar=%d low-vol barsAgo=%d skipped: ma_std20 is NaN", ctx.BarIndex(), barsAgo)
+				s.debugf("bar=%d low-vol barsAgo=%d skipped: stdma20 is NaN", ctx.BarIndex(), barsAgo)
 			}
 			continue
 		}
-		// Compute percentile rank of maStd within the last 120 bars of ma_std20
+		// Compute percentile rank of stdma20 within the last 120 bars of stdma20.
 		count := 0
 		total := 0
 		for k := barsAgo; k < barsAgo+120; k++ {
-			v := ctx.IndAt("ma_std20", k)
+			v := ctx.IndAt("stdma20", k)
 			if math.IsNaN(v) {
 				continue
 			}
 			total++
-			if v < maStd {
+			if v < stdMa {
 				count++
 			}
 		}
 		if total > 0 {
 			rank := float64(count) / float64(total)
 			if s.shouldDebugBar(ctx.BarIndex()) {
-				s.debugf("bar=%d low-vol barsAgo=%d ma_std20=%.6f rank=%.6f sample=%d", ctx.BarIndex(), barsAgo, maStd, rank, total)
+				s.debugf("bar=%d low-vol barsAgo=%d stdma20=%.6f rank=%.6f sample=%d", ctx.BarIndex(), barsAgo, stdMa, rank, total)
 			}
 			if rank < 0.35 {
 				return true, "rank below 35th percentile in lookback"
