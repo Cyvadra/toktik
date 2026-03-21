@@ -51,6 +51,7 @@ func main() {
 	spreadValuationPriceMode := flag.String("spread-valuation-price-mode", "mark_close", "Spread mark-to-market pricing: mark_close or bidask")
 	maPeriod := flag.Int("ma-period", 120, "SMA period for MA deviation signal")
 	pThreshold := flag.Float64("p-threshold", 0.15, "MA deviation ratio threshold for signal entry")
+	direction := flag.String("direction", "both", "Trade direction: both | long_only | short_only")
 	flag.Parse()
 
 	if *fromStr == "" || *toStr == "" {
@@ -127,6 +128,14 @@ func main() {
 	strategyCfg.ValuationPriceMode = valuationPriceMode
 	strategyCfg.MAPeriod = *maPeriod
 	strategyCfg.PThreshold = *pThreshold
+
+	switch strategies.TradeDirection(strings.ToLower(*direction)) {
+	case strategies.DirectionBoth, strategies.DirectionLongOnly, strategies.DirectionShortOnly:
+		strategyCfg.Direction = strategies.TradeDirection(*direction)
+	default:
+		fmt.Fprintf(os.Stderr, "error: --direction %q is invalid; want both|long_only|short_only\n", *direction)
+		os.Exit(1)
+	}
 
 	strats, err := strategies.Resolve(*stratName, strategyCfg)
 	if err != nil {

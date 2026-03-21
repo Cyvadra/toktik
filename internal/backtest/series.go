@@ -5,6 +5,8 @@ import (
 	"time"
 )
 
+var _ = alignTimestamps
+
 // alignSeries maps each primary timestamp to the index of the latest
 // secondary bar whose timestamp is ≤ the primary timestamp.
 // Returns -1 for primary bars that precede all secondary data.

@@ -16,6 +16,15 @@ const (
 	defaultSlowPeriod    = 50
 )
 
+// TradeDirection restricts which sides of a strategy are active.
+type TradeDirection string
+
+const (
+	DirectionBoth      TradeDirection = "both"       // long and short (default)
+	DirectionLongOnly  TradeDirection = "long_only"  // long / call entries only
+	DirectionShortOnly TradeDirection = "short_only" // short / put entries only
+)
+
 // Config is the unified runtime strategy configuration shared across strategies.
 // Individual strategy factories read only the fields they need.
 type Config struct {
@@ -41,6 +50,8 @@ type Config struct {
 	ShortDeltaMax float64
 	LongDeltaMin  float64
 	LongDeltaMax  float64
+
+	Direction TradeDirection // "both" | "long_only" | "short_only"
 }
 
 type jsonConfig struct {
@@ -61,6 +72,7 @@ type jsonConfig struct {
 	ShortDeltaMax      *float64 `json:"short_delta_max,omitempty"`
 	LongDeltaMin       *float64 `json:"long_delta_min,omitempty"`
 	LongDeltaMax       *float64 `json:"long_delta_max,omitempty"`
+	Direction          *string  `json:"direction,omitempty"`
 }
 
 // DefaultConfig returns a baseline config that matches existing behavior.
@@ -73,6 +85,7 @@ func DefaultConfig() Config {
 		FastPeriod:         defaultFastPeriod,
 		SlowPeriod:         defaultSlowPeriod,
 		EntryTWAPBars:      defaultEntryTWAPBars,
+		Direction:          DirectionBoth,
 	}
 }
 
@@ -151,6 +164,15 @@ func ConfigFromJSON(raw json.RawMessage) (Config, error) {
 	}
 	if jc.LongDeltaMax != nil {
 		cfg.LongDeltaMax = *jc.LongDeltaMax
+	}
+	if jc.Direction != nil {
+		d := TradeDirection(strings.ToLower(strings.TrimSpace(*jc.Direction)))
+		switch d {
+		case DirectionBoth, DirectionLongOnly, DirectionShortOnly:
+			cfg.Direction = d
+		default:
+			return cfg, fmt.Errorf("direction: unknown value %q, want both|long_only|short_only", *jc.Direction)
+		}
 	}
 
 	return cfg, nil

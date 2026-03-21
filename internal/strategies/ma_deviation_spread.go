@@ -286,7 +286,7 @@ func (s *MADeviationSpreadStrategy) manageSpreads(ctx *backtest.BarContext, now 
 }
 
 // tryOpenSpread selects options from the chain and opens a spread.
-func (s *MADeviationSpreadStrategy) tryOpenSpread(ctx *backtest.BarContext, now time.Time) {
+func (s *MADeviationSpreadStrategy) tryOpenSpread(ctx *backtest.BarContext, _ time.Time) {
 	chain := ctx.OptionsChain()
 	if chain == nil || chain.Len() == 0 {
 		return

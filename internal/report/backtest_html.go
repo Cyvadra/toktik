@@ -192,6 +192,17 @@ type markerKey struct {
 	Shape    string
 }
 
+var (
+	_ = combinedHTMLReportView{}
+	_ = combinedHTMLStrategyView{}
+	_ = buildCombinedHTMLView
+	_ = slugToken
+	_ = currency4
+	_ = signedCurrency
+	_ = nullableCurrency4
+	_ = combinedHTMLTemplate
+)
+
 // WriteBacktestHTML renders a self-contained static HTML report for a backtest result.
 func WriteBacktestHTML(path string, result *backtest.Result, meta HTMLMeta) error {
 	view := buildHTMLView(result, meta)

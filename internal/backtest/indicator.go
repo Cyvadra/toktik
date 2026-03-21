@@ -36,11 +36,6 @@ type MultiIndicator interface {
 // It modifies the data map in-place, adding computed series.
 func resolveIndicators(registered map[string]Indicator, data map[string][]float64) error {
 	// Build dependency graph
-	type node struct {
-		name string
-		ind  Indicator
-	}
-
 	inDegree := make(map[string]int)
 	dependents := make(map[string][]string) // dep → list of indicators that need it
 
