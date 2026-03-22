@@ -1,6 +1,7 @@
 package strategies
 
 import (
+	"fmt"
 	"log"
 	"math"
 	"strconv"
@@ -60,10 +61,14 @@ type btcCoinEnhancedStrategy struct {
 	BearExpiryDays    int     // default 25
 	PositionBTC       float64 // default 10 BTC notional per trade
 
+	// Higher-timeframe state for bullish-regime signal evaluation.
+	htfRef             backtest.SecurityRef
+	htfInterval        string
+	lastHTFSignalIndex int
+
 	// Internal state
-	activeCall *enhancedSlot // tracked short call position
-	activePut  *enhancedSlot // tracked long put position
-	callHalved bool          // whether half of call has been closed
+	activeCalls [2]*enhancedSlot // tracked short call tranches
+	activePut   *enhancedSlot    // tracked long put position
 }
 
 type enhancedSlot struct {
@@ -84,32 +89,123 @@ func (s *btcCoinEnhancedStrategy) Name() string { return "BTCCoinEnhanced" }
 
 func (s *btcCoinEnhancedStrategy) Init(ctx *backtest.SetupContext) error {
 	s.applyDefaults()
+	s.lastHTFSignalIndex = -1
 
-	// RSI(200) for regime detection
-	ctx.Register("rsi200", backtest.RSI("close", s.RSIPeriod))
+	primary := ctx.PrimaryRef()
+	htfInterval, err := s.resolveHigherTimeframe(primary.Interval)
+	if err != nil {
+		return err
+	}
+	s.htfInterval = htfInterval
+	s.htfRef = ctx.AddSecurity(primary.Market, primary.Symbol, htfInterval)
 
-	// MACD(12,26,9) for divergence detection
-	ctx.Register("macd", backtest.MACD("close", 12, 26, 9))
+	registerPrimary := func(name string, ind backtest.Indicator) {
+		ctx.Register(name, ind)
+	}
+	registerHTF := func(name string, ind backtest.Indicator) {
+		ctx.RegisterOn(s.htfRef, name, ind)
+	}
 
-	// Rolling highest of high over divergence period
-	ctx.Register("hh30", backtest.Highest("high", s.DivergencePeriod))
+	s.registerSignalIndicators(registerPrimary)
+	s.registerSignalIndicators(registerHTF)
 
-	// Volatility: StdDev(close, 20) → MA(StdDev, 20)
-	ctx.Register("std20", backtest.Custom(
+	s.debugf("init entry_mode=%v exit_mode=%v valuation_mode=%v primary_interval=%s htf_interval=%s rsi_period=%d bull_expiry=%d bear_expiry=%d",
+		s.EntryPriceMode, s.ExitPriceMode, s.ValuationPriceMode, primary.Interval, s.htfInterval, s.RSIPeriod, s.BullExpiryDays, s.BearExpiryDays)
+
+	return nil
+}
+
+func (s *btcCoinEnhancedStrategy) Preload(ctx *backtest.PreloadContext) error {
+	htf := ctx.Security(s.htfRef)
+	if htf == nil || htf.Len() == 0 {
+		return nil
+	}
+
+	rsi, err := htf.RequireColumn("rsi200")
+	if err != nil {
+		return err
+	}
+	high, err := htf.RequireColumn("high")
+	if err != nil {
+		return err
+	}
+	hh30, err := htf.RequireColumn("hh30")
+	if err != nil {
+		return err
+	}
+	diff, err := htf.RequireColumn("macd")
+	if err != nil {
+		return err
+	}
+	open, err := htf.RequireColumn("open")
+	if err != nil {
+		return err
+	}
+	close, err := htf.RequireColumn("close")
+	if err != nil {
+		return err
+	}
+	stdma20, err := htf.RequireColumn("stdma20")
+	if err != nil {
+		return err
+	}
+
+	derived := map[string][]float64{
+		"rsi200_prev":     shiftSeries(rsi),
+		"divergence_prev": shiftSeries(s.divergenceFlags(high, hh30, diff)),
+		"bearish_prev":    shiftSeries(s.bearishCandleFlags(open, close)),
+		"vol_ok_prev":     shiftSeries(s.volatilityFlags(stdma20)),
+	}
+	for name, values := range derived {
+		if err := htf.SetColumn(name, values); err != nil {
+			return err
+		}
+	}
+
+	alignNames := []string{"rsi200_prev", "divergence_prev", "bearish_prev", "vol_ok_prev"}
+	for _, name := range alignNames {
+		aligned, err := ctx.ColumnAlignedToPrimary(s.htfRef, name)
+		if err != nil {
+			return err
+		}
+		if err := ctx.Primary().SetColumn("htf_"+name, aligned); err != nil {
+			return err
+		}
+	}
+
+	alignedHTFIndex := make([]float64, ctx.Primary().Len())
+	for i := range alignedHTFIndex {
+		alignedHTFIndex[i] = math.NaN()
+	}
+	if alignMap := htf.AlignMap(); len(alignMap) > 0 {
+		for i := 0; i < len(alignedHTFIndex) && i < len(alignMap); i++ {
+			if alignMap[i] < 0 {
+				continue
+			}
+			alignedHTFIndex[i] = float64(alignMap[i])
+		}
+	}
+	return ctx.Primary().SetColumn("htf_signal_index", alignedHTFIndex)
+}
+
+func (s *btcCoinEnhancedStrategy) registerSignalIndicators(register func(name string, ind backtest.Indicator)) {
+	register("rsi200", backtest.RSI("close", s.RSIPeriod))
+	register("macd", backtest.MACD("close", 12, 26, 9))
+	register("hh30", backtest.Highest("high", s.DivergencePeriod))
+	register("std20", backtest.Custom(
 		[]string{"close"},
 		func(inputs map[string][]float64) []float64 {
 			return rollingStdDev(inputs["close"], 20)
 		},
 	))
-	ctx.Register("ma_std20", backtest.SMA("std20", 20))
-
-	// Quantile of ma_std20 over the volatility lookback period
-	ctx.Register("vol_quantile", backtest.Quantile("ma_std20", s.VolQuantilePeriod, 0))
-
-	s.debugf("init entry_mode=%v exit_mode=%v valuation_mode=%v rsi_period=%d bull_expiry=%d bear_expiry=%d",
-		s.EntryPriceMode, s.ExitPriceMode, s.ValuationPriceMode, s.RSIPeriod, s.BullExpiryDays, s.BearExpiryDays)
-
-	return nil
+	register("ma_std20", backtest.SMA("std20", 20))
+	register("stdma20", backtest.Custom(
+		[]string{"std20", "ma_std20"},
+		func(inputs map[string][]float64) []float64 {
+			return divideSeries(inputs["std20"], inputs["ma_std20"])
+		},
+	))
+	register("vol_quantile", backtest.Quantile("stdma20", s.VolQuantilePeriod, 0))
 }
 
 func (s *btcCoinEnhancedStrategy) OnBar(ctx *backtest.BarContext) {
@@ -129,43 +225,53 @@ func (s *btcCoinEnhancedStrategy) OnBar(ctx *backtest.BarContext) {
 	}
 
 	// --- Manage existing positions ---
-	s.manageCallPosition(ctx, contractMap)
+	s.manageCallPositions(ctx, contractMap)
 	s.managePutPosition(ctx, chain, contractMap)
 
+	// Do not stack a new combo while any leg from the previous one remains active.
+	if s.hasOpenExposure() {
+		return
+	}
+
 	// --- Check entry signal ---
-	rsi := ctx.Ind("rsi200")
+	rsi := ctx.Field("htf_rsi200_prev")
 	if math.IsNaN(rsi) {
 		return
 	}
 
-	// Already have an active call → no new entry
-	if s.activeCall != nil {
-		return
-	}
-
 	// Determine expiry based on RSI regime
+	useHTFSignals := rsi > s.RSIThreshold
 	expiryDays := s.BearExpiryDays
-	if rsi > s.RSIThreshold {
+	if useHTFSignals {
 		expiryDays = s.BullExpiryDays
 	}
 
-	// Check volatility condition: ma_std20 must be above 50th percentile
-	if !s.checkVolCondition(ctx) {
-		return
-	}
-
-	// Check divergence signal
-	if !s.checkDivergence(ctx) {
-		return
-	}
-
-	// Check bearish candle (close < open)
-	open := ctx.Open()
-	if math.IsNaN(open) || close >= open {
-		if s.shouldDebugBar(barIndex) {
-			s.debugf("bar=%d skip: not a bearish candle close=%.6f open=%.6f", barIndex, close, open)
+	if useHTFSignals {
+		if !s.consumeHTFSignal(ctx.Field("htf_signal_index")) {
+			return
 		}
-		return
+		if !s.fieldFlag(ctx, "htf_vol_ok_prev") {
+			return
+		}
+		if !s.fieldFlag(ctx, "htf_divergence_prev") {
+			return
+		}
+		if !s.fieldFlag(ctx, "htf_bearish_prev") {
+			return
+		}
+	} else {
+		if !s.checkVolCondition(ctx, "stdma20") {
+			return
+		}
+		if !s.checkDivergence(ctx, "high", "hh30", "macd") {
+			return
+		}
+		if !s.isBearishCandle(ctx, "open", "close") {
+			if s.shouldDebugBar(barIndex) {
+				s.debugf("bar=%d skip: not a bearish candle close=%.6f open=%.6f", barIndex, close, ctx.Open())
+			}
+			return
+		}
 	}
 
 	// --- Entry: build the hedge combo ---
@@ -175,102 +281,101 @@ func (s *btcCoinEnhancedStrategy) OnBar(ctx *backtest.BarContext) {
 
 	s.debugf("bar=%d entry signal triggered rsi=%.2f expiry_days=%d close=%.6f", barIndex, rsi, expiryDays, close)
 
-	// 1. Sell Call: Delta ≈ 0.3
-	callSlot := s.openShortCall(ctx, chain, expiryDays)
-	if callSlot == nil {
+	// 1. Sell Call: Delta ≈ 0.3, split into two equal tranches so the
+	// documented 70% partial profit-taking can be represented exactly.
+	callSlots := s.openShortCallTranches(ctx, chain, expiryDays)
+	callPremium := 0.0
+	for i := range callSlots {
+		if callSlots[i] == nil {
+			continue
+		}
+		s.activeCalls[i] = callSlots[i]
+		callPremium += callSlots[i].entryPrice * callSlots[i].qty
+	}
+	if callPremium <= 0 {
 		return
 	}
-	s.activeCall = callSlot
-	s.callHalved = false
 
 	// 2. Buy Put: spend 70% of Call premium, Delta ≈ -0.25
-	callPremium := callSlot.entryPrice * callSlot.qty
 	putBudget := callPremium * s.PutBudgetRatio
 	putSlot := s.openLongPut(ctx, chain, expiryDays, putBudget)
 	if putSlot != nil {
 		s.activePut = putSlot
 	}
 
-	s.debugf("bar=%d entry complete call_spread_id=%d call_premium=%.6f put_budget=%.6f put_spread_id=%d",
-		barIndex, callSlot.spreadID, callPremium, putBudget, s.putSpreadID())
+	s.debugf("bar=%d entry complete call_spread_ids=[%d,%d] call_premium=%.6f put_budget=%.6f put_spread_id=%d",
+		barIndex, s.callSpreadID(0), s.callSpreadID(1), callPremium, putBudget, s.putSpreadID())
 }
 
-// manageCallPosition manages the short call position.
-func (s *btcCoinEnhancedStrategy) manageCallPosition(ctx *backtest.BarContext, contractMap map[string]backtest.OptionContract) {
-	if s.activeCall == nil {
+// manageCallPositions manages the short call tranches.
+func (s *btcCoinEnhancedStrategy) manageCallPositions(ctx *backtest.BarContext, contractMap map[string]backtest.OptionContract) {
+	for idx := range s.activeCalls {
+		slot := s.activeCalls[idx]
+		if slot == nil {
+			continue
+		}
+
+		sp := ctx.Spreads().Get(slot.spreadID)
+		if sp == nil || sp.IsFullyClosed() || len(sp.Legs) == 0 || sp.Legs[0].Closed {
+			s.activeCalls[idx] = nil
+			continue
+		}
+
+		leg := &sp.Legs[0]
+		currentContract := s.currentContract(leg.Contract, contractMap)
+
+		if currentContract.DaysToExpiry(ctx.Time()) <= 1 {
+			exitPrice := s.ExitPriceMode.ExitPrice(leg.Side, currentContract)
+			ctx.CloseSpreadLegWithReason(sp.ID, 0, exitPrice, "Call到期平仓")
+			s.activeCalls[idx] = nil
+			continue
+		}
+
+		markPrice := s.ValuationPriceMode.ExitPrice(leg.Side, currentContract)
+		pnlPct := sp.LegUnrealizedPnLPct(0, markPrice)
+		if math.IsNaN(pnlPct) {
+			continue
+		}
+
+		if pnlPct > s.CallFullProfit {
+			exitPrice := s.ExitPriceMode.ExitPrice(leg.Side, currentContract)
+			ctx.CloseSpreadLegWithReason(sp.ID, 0, exitPrice,
+				"Call全平：浮盈>"+strconv.FormatFloat(s.CallFullProfit*100, 'f', 0, 64)+"%")
+			s.activeCalls[idx] = nil
+			s.debugf("bar=%d call full close tranche=%d pnl_pct=%.4f", ctx.BarIndex(), idx, pnlPct)
+		}
+	}
+
+	if s.countActiveCalls() != len(s.activeCalls) {
 		return
 	}
 
-	sp := ctx.Spreads().Get(s.activeCall.spreadID)
-	if sp == nil || sp.IsFullyClosed() {
-		s.activeCall = nil
-		s.callHalved = false
-		return
-	}
-	leg := &sp.Legs[0]
-	if leg.Closed {
-		s.activeCall = nil
-		s.callHalved = false
-		return
-	}
+	for idx := range s.activeCalls {
+		slot := s.activeCalls[idx]
+		if slot == nil {
+			continue
+		}
 
-	currentContract := s.currentContract(leg.Contract, contractMap)
-	markPrice := s.ValuationPriceMode.ExitPrice(leg.Side, currentContract)
+		sp := ctx.Spreads().Get(slot.spreadID)
+		if sp == nil || sp.IsFullyClosed() || len(sp.Legs) == 0 || sp.Legs[0].Closed {
+			s.activeCalls[idx] = nil
+			continue
+		}
 
-	// Close for expiry
-	if currentContract.DaysToExpiry(ctx.Time()) <= 1 {
-		exitPrice := s.ExitPriceMode.ExitPrice(leg.Side, currentContract)
-		ctx.CloseSpreadLegWithReason(sp.ID, 0, exitPrice, "Call到期平仓")
-		s.activeCall = nil
-		s.callHalved = false
-		return
-	}
+		leg := &sp.Legs[0]
+		currentContract := s.currentContract(leg.Contract, contractMap)
+		markPrice := s.ValuationPriceMode.ExitPrice(leg.Side, currentContract)
+		pnlPct := sp.LegUnrealizedPnLPct(0, markPrice)
+		if math.IsNaN(pnlPct) || pnlPct <= s.CallHalfProfit {
+			continue
+		}
 
-	// Profit-taking
-	pnlPct := sp.LegUnrealizedPnLPct(0, markPrice)
-	if math.IsNaN(pnlPct) {
-		return
-	}
-
-	if pnlPct > s.CallFullProfit {
-		// Close all remaining
-		exitPrice := s.ExitPriceMode.ExitPrice(leg.Side, currentContract)
-		ctx.CloseSpreadLegWithReason(sp.ID, 0, exitPrice,
-			"Call全平：浮盈>"+strconv.FormatFloat(s.CallFullProfit*100, 'f', 0, 64)+"%")
-		s.activeCall = nil
-		s.callHalved = false
-		s.debugf("bar=%d call full close pnl_pct=%.4f", ctx.BarIndex(), pnlPct)
-		return
-	}
-
-	if !s.callHalved && pnlPct > s.CallHalfProfit {
-		// Close half the position by closing this leg and reopening with half qty
 		exitPrice := s.ExitPriceMode.ExitPrice(leg.Side, currentContract)
 		ctx.CloseSpreadLegWithReason(sp.ID, 0, exitPrice,
 			"Call半平：浮盈>"+strconv.FormatFloat(s.CallHalfProfit*100, 'f', 0, 64)+"%")
-
-		// Reopen with half the original quantity
-		halfQty := s.activeCall.qty / 2
-		if halfQty > 0 {
-			entryPrice := s.EntryPriceMode.EntryPrice(backtest.Sell, currentContract)
-			if optionPriceOK(entryPrice) {
-				spreadID := ctx.OpenSpread([]backtest.SpreadLeg{{
-					Contract:   currentContract,
-					Side:       backtest.Sell,
-					Qty:        halfQty,
-					EntryPrice: entryPrice,
-				}}, "币本位增强-Call半仓")
-				if spreadID > 0 {
-					s.activeCall = &enhancedSlot{
-						spreadID:   spreadID,
-						entryPrice: entryPrice,
-						qty:        halfQty,
-					}
-					s.callHalved = true
-					s.debugf("bar=%d call half close pnl_pct=%.4f new_spread_id=%d half_qty=%.6f", ctx.BarIndex(), pnlPct, spreadID, halfQty)
-				}
-			}
-		}
+		s.activeCalls[idx] = nil
+		s.debugf("bar=%d call half close tranche=%d pnl_pct=%.4f", ctx.BarIndex(), idx, pnlPct)
+		return
 	}
 }
 
@@ -334,7 +439,7 @@ func (s *btcCoinEnhancedStrategy) managePutPosition(ctx *backtest.BarContext, ch
 	ctx.CloseSpreadLegWithReason(sp.ID, 0, exitPrice, reason)
 
 	// Determine expiry from current RSI regime
-	rsi := ctx.Ind("rsi200")
+	rsi := ctx.Field("htf_rsi200_prev")
 	expiryDays := s.BearExpiryDays
 	if !math.IsNaN(rsi) && rsi > s.RSIThreshold {
 		expiryDays = s.BullExpiryDays
@@ -350,24 +455,24 @@ func (s *btcCoinEnhancedStrategy) managePutPosition(ctx *backtest.BarContext, ch
 	}
 }
 
-// checkVolCondition verifies that MA(Std,20) is above the 50th percentile
-// over the past VolQuantilePeriod bars.
-func (s *btcCoinEnhancedStrategy) checkVolCondition(ctx *backtest.BarContext) bool {
-	maStd := ctx.Ind("ma_std20")
-	if math.IsNaN(maStd) {
+// checkVolCondition verifies that Std(20)/MA(Std(20),20) is above the configured
+// percentile threshold over the past VolQuantilePeriod bars.
+func (s *btcCoinEnhancedStrategy) checkVolCondition(ctx *backtest.BarContext, fieldName string) bool {
+	value := ctx.Field(fieldName)
+	if math.IsNaN(value) {
 		return false
 	}
 
-	// Compute percentile rank within the lookback window
+	// Compute percentile rank within the lookback window.
 	count := 0
 	total := 0
 	for k := 0; k < s.VolQuantilePeriod; k++ {
-		v := ctx.IndAt("ma_std20", k)
+		v := ctx.FieldAt(fieldName, k)
 		if math.IsNaN(v) {
 			continue
 		}
 		total++
-		if v < maStd {
+		if v < value {
 			count++
 		}
 	}
@@ -376,18 +481,21 @@ func (s *btcCoinEnhancedStrategy) checkVolCondition(ctx *backtest.BarContext) bo
 	}
 	rank := float64(count) / float64(total)
 	if s.shouldDebugBar(ctx.BarIndex()) {
-		s.debugf("bar=%d vol_check rank=%.4f threshold=%.4f", ctx.BarIndex(), rank, s.VolQuantileMin)
+		s.debugf("bar=%d vol_check field=%s value=%.6f rank=%.4f threshold=%.4f", ctx.BarIndex(), fieldName, value, rank, s.VolQuantileMin)
 	}
 	return rank >= s.VolQuantileMin
 }
 
-// checkDivergence checks for MACD top-divergence:
-// Price makes new 30-bar high but MACD DIFF is lower than at the previous 30-bar high.
-func (s *btcCoinEnhancedStrategy) checkDivergence(ctx *backtest.BarContext) bool {
+// checkDivergence checks for MACD top-divergence using the documented formula:
+//
+//	HH30 = HHV(HIGH, 30)
+//	PREV_HH = REF(HH30, 1)
+//	SELL_SIGNAL = HIGH == HH30 && HIGH > PREV_HH && DIFF < PREV_DIFF_HH
+func (s *btcCoinEnhancedStrategy) checkDivergence(ctx *backtest.BarContext, highField, hhField, diffField string) bool {
 	barIndex := ctx.BarIndex()
-	high := ctx.High()
-	hh30 := ctx.Ind("hh30")
-	diff := ctx.Ind("macd")
+	high := ctx.Field(highField)
+	hh30 := ctx.Field(hhField)
+	diff := ctx.Field(diffField)
 
 	if math.IsNaN(high) || math.IsNaN(hh30) || math.IsNaN(diff) {
 		return false
@@ -398,30 +506,29 @@ func (s *btcCoinEnhancedStrategy) checkDivergence(ctx *backtest.BarContext) bool
 		return false
 	}
 
-	// Find the previous 30-bar high (the one before the current)
-	prevHH := math.NaN()
+	prevHH := ctx.FieldAt(hhField, 1)
+	if math.IsNaN(prevHH) || high <= prevHH {
+		return false
+	}
+
 	prevDiff := math.NaN()
 
 	for barsAgo := 1; barsAgo < s.DivergencePeriod*3 && barsAgo <= barIndex; barsAgo++ {
-		pastHigh := ctx.FieldAt("high", barsAgo)
-		pastHH30 := ctx.IndAt("hh30", barsAgo)
-		if math.IsNaN(pastHigh) || math.IsNaN(pastHH30) {
+		pastHigh := ctx.FieldAt(highField, barsAgo)
+		if math.IsNaN(pastHigh) {
 			continue
 		}
-		// This bar was a local 30-bar high point
-		if pastHigh == pastHH30 && pastHigh < high {
-			prevHH = pastHigh
-			prevDiff = ctx.IndAt("macd", barsAgo)
+		if pastHigh == prevHH {
+			prevDiff = ctx.FieldAt(diffField, barsAgo)
 			break
 		}
 	}
 
-	if math.IsNaN(prevHH) || math.IsNaN(prevDiff) {
+	if math.IsNaN(prevDiff) {
 		return false
 	}
 
-	// Divergence: price higher but DIFF lower
-	diverged := high > prevHH && diff < prevDiff
+	diverged := diff < prevDiff
 	if diverged && s.shouldDebugBar(barIndex) {
 		s.debugf("bar=%d divergence detected high=%.6f prev_hh=%.6f diff=%.6f prev_diff=%.6f",
 			barIndex, high, prevHH, diff, prevDiff)
@@ -429,49 +536,65 @@ func (s *btcCoinEnhancedStrategy) checkDivergence(ctx *backtest.BarContext) bool
 	return diverged
 }
 
-// openShortCall sells a call option with Delta ≈ 0.3 and the given expiry.
-func (s *btcCoinEnhancedStrategy) openShortCall(ctx *backtest.BarContext, chain *backtest.OptionsChain, expiryDays int) *enhancedSlot {
+func (s *btcCoinEnhancedStrategy) fieldFlag(ctx *backtest.BarContext, fieldName string) bool {
+	v := ctx.Field(fieldName)
+	return !math.IsNaN(v) && v > 0
+}
+
+func (s *btcCoinEnhancedStrategy) isBearishCandle(ctx *backtest.BarContext, openField, closeField string) bool {
+	open := ctx.Field(openField)
+	close := ctx.Field(closeField)
+	return !math.IsNaN(open) && !math.IsNaN(close) && close < open
+}
+
+// openShortCallTranches sells a call option with Delta ≈ 0.3 split across two tranches.
+func (s *btcCoinEnhancedStrategy) openShortCallTranches(ctx *backtest.BarContext, chain *backtest.OptionsChain, expiryDays int) [2]*enhancedSlot {
+	var slots [2]*enhancedSlot
+
 	calls := chain.Calls().ExpiryNearest(expiryDays)
 	if calls.Len() == 0 {
 		s.debugf("bar=%d openShortCall: no calls near %d DTE", ctx.BarIndex(), expiryDays)
-		return nil
+		return slots
 	}
 
 	sorted := calls.SortByDelta(s.CallDelta)
 	if len(sorted) == 0 {
-		return nil
+		return slots
 	}
 	contract := sorted[0]
 
 	entryPrice := s.EntryPriceMode.EntryPrice(backtest.Sell, contract)
 	if !optionPriceOK(entryPrice) {
 		s.debugf("bar=%d openShortCall: invalid entry price=%.6f symbol=%s", ctx.BarIndex(), entryPrice, contract.Symbol)
-		return nil
+		return slots
 	}
 
-	// Size: notional 10 BTC → qty = PositionBTC / underlying_price * entryPrice normalization
-	// For BTC options on Deribit, qty is in contracts (1 contract = 1 BTC notional).
-	qty := s.PositionBTC
-
-	s.debugf("bar=%d openShortCall symbol=%s delta=%.4f iv=%.4f dte=%.1f entry=%.6f qty=%.4f",
-		ctx.BarIndex(), contract.Symbol, contract.Delta, contract.IV, contract.DaysToExpiry(ctx.Time()), entryPrice, qty)
-
-	spreadID := ctx.OpenSpread([]backtest.SpreadLeg{{
-		Contract:   contract,
-		Side:       backtest.Sell,
-		Qty:        qty,
-		EntryPrice: entryPrice,
-	}}, "币本位增强-SellCall")
-
-	if spreadID <= 0 {
-		return nil
+	qtyPerTranche := s.PositionBTC / float64(len(slots))
+	if qtyPerTranche <= 0 {
+		return slots
 	}
 
-	return &enhancedSlot{
-		spreadID:   spreadID,
-		entryPrice: entryPrice,
-		qty:        qty,
+	s.debugf("bar=%d openShortCall symbol=%s delta=%.4f iv=%.4f dte=%.1f entry=%.6f qty_per_tranche=%.4f",
+		ctx.BarIndex(), contract.Symbol, contract.Delta, contract.IV, contract.DaysToExpiry(ctx.Time()), entryPrice, qtyPerTranche)
+
+	for i := range slots {
+		spreadID := ctx.OpenSpread([]backtest.SpreadLeg{{
+			Contract:   contract,
+			Side:       backtest.Sell,
+			Qty:        qtyPerTranche,
+			EntryPrice: entryPrice,
+		}}, "币本位增强-SellCall")
+		if spreadID <= 0 {
+			return slots
+		}
+		slots[i] = &enhancedSlot{
+			spreadID:   spreadID,
+			entryPrice: entryPrice,
+			qty:        qtyPerTranche,
+		}
 	}
+
+	return slots
 }
 
 // openLongPut buys a put option with Delta ≈ -0.25 using the given budget.
@@ -535,6 +658,27 @@ func (s *btcCoinEnhancedStrategy) currentContract(contract backtest.OptionContra
 	return contract
 }
 
+func (s *btcCoinEnhancedStrategy) countActiveCalls() int {
+	count := 0
+	for i := range s.activeCalls {
+		if s.activeCalls[i] != nil {
+			count++
+		}
+	}
+	return count
+}
+
+func (s *btcCoinEnhancedStrategy) hasOpenExposure() bool {
+	return s.countActiveCalls() > 0 || s.activePut != nil
+}
+
+func (s *btcCoinEnhancedStrategy) callSpreadID(idx int) int {
+	if idx < 0 || idx >= len(s.activeCalls) || s.activeCalls[idx] == nil {
+		return 0
+	}
+	return s.activeCalls[idx].spreadID
+}
+
 func (s *btcCoinEnhancedStrategy) putSpreadID() int {
 	if s.activePut == nil {
 		return 0
@@ -544,6 +688,128 @@ func (s *btcCoinEnhancedStrategy) putSpreadID() int {
 
 func optionPriceOK(v float64) bool {
 	return !math.IsNaN(v) && !math.IsInf(v, 0) && v > 0
+}
+
+func divideSeries(num, denom []float64) []float64 {
+	out := make([]float64, len(num))
+	for i := range out {
+		if i >= len(denom) || math.IsNaN(num[i]) || math.IsNaN(denom[i]) || denom[i] == 0 {
+			out[i] = math.NaN()
+			continue
+		}
+		out[i] = num[i] / denom[i]
+	}
+	return out
+}
+
+func shiftSeries(src []float64) []float64 {
+	out := make([]float64, len(src))
+	if len(src) == 0 {
+		return out
+	}
+	out[0] = math.NaN()
+	copy(out[1:], src[:len(src)-1])
+	return out
+}
+
+func (s *btcCoinEnhancedStrategy) volatilityFlags(series []float64) []float64 {
+	out := make([]float64, len(series))
+	for i := range out {
+		out[i] = 0
+		current := series[i]
+		if math.IsNaN(current) {
+			continue
+		}
+		count := 0
+		total := 0
+		for k := 0; k < s.VolQuantilePeriod; k++ {
+			idx := i - k
+			if idx < 0 {
+				break
+			}
+			v := series[idx]
+			if math.IsNaN(v) {
+				continue
+			}
+			total++
+			if v < current {
+				count++
+			}
+		}
+		if total > 0 && float64(count)/float64(total) >= s.VolQuantileMin {
+			out[i] = 1
+		}
+	}
+	return out
+}
+
+func (s *btcCoinEnhancedStrategy) bearishCandleFlags(open, close []float64) []float64 {
+	out := make([]float64, len(open))
+	for i := range out {
+		out[i] = 0
+		if i >= len(close) || math.IsNaN(open[i]) || math.IsNaN(close[i]) {
+			continue
+		}
+		if close[i] < open[i] {
+			out[i] = 1
+		}
+	}
+	return out
+}
+
+func (s *btcCoinEnhancedStrategy) divergenceFlags(high, hh30, diff []float64) []float64 {
+	out := make([]float64, len(high))
+	for i := range out {
+		out[i] = 0
+		if i >= len(hh30) || i >= len(diff) {
+			continue
+		}
+		if math.IsNaN(high[i]) || math.IsNaN(hh30[i]) || math.IsNaN(diff[i]) || high[i] != hh30[i] {
+			continue
+		}
+		if i == 0 || math.IsNaN(hh30[i-1]) || high[i] <= hh30[i-1] {
+			continue
+		}
+		prevHH := hh30[i-1]
+		prevDiff := math.NaN()
+		for barsAgo := 1; barsAgo < s.DivergencePeriod*3 && barsAgo <= i; barsAgo++ {
+			idx := i - barsAgo
+			if math.IsNaN(high[idx]) {
+				continue
+			}
+			if high[idx] == prevHH {
+				prevDiff = diff[idx]
+				break
+			}
+		}
+		if !math.IsNaN(prevDiff) && diff[i] < prevDiff {
+			out[i] = 1
+		}
+	}
+	return out
+}
+
+func (s *btcCoinEnhancedStrategy) consumeHTFSignal(signalIndex float64) bool {
+	if math.IsNaN(signalIndex) {
+		return false
+	}
+	idx := int(signalIndex)
+	if idx == s.lastHTFSignalIndex {
+		return false
+	}
+	s.lastHTFSignalIndex = idx
+	return true
+}
+
+func (s *btcCoinEnhancedStrategy) resolveHigherTimeframe(primaryInterval string) (string, error) {
+	switch primaryInterval {
+	case "3h":
+		return "12h", nil
+	case "6h":
+		return "1d", nil
+	default:
+		return "", fmt.Errorf("btc-coin-enhanced expects a small-cycle primary interval of 3h or 6h, got %q", primaryInterval)
+	}
 }
 
 func (s *btcCoinEnhancedStrategy) applyDefaults() {

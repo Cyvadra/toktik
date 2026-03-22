@@ -1,6 +1,9 @@
 package cryptooptions
 
 import (
+	"bufio"
+	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/csv"
 	"fmt"
@@ -8,10 +11,13 @@ import (
 	"log"
 	"os"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/klauspost/compress/zstd"
 )
+
+var zstdMagic = []byte{0x28, 0xb5, 0x2f, 0xfd}
 
 // csvColumnIndex maps CSV header names to their column index.
 type csvColumnIndex struct {
@@ -186,30 +192,79 @@ func parseRow(record []string, idx *csvColumnIndex) (TickRow, error) {
 	}, nil
 }
 
-// ParseCSVFromZST opens a .zst file, streams decompression, and sends
-// parsed TickRow values on the returned channel. The channel is closed
-// when all rows have been read or the context is cancelled. Errors are
-// logged but non-fatal rows are skipped.
-func ParseCSVFromZST(ctx context.Context, path string) (<-chan TickRow, func(), error) {
+func openCompressedCSV(path string) (io.Reader, func(), string, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return nil, nil, fmt.Errorf("open %s: %w", path, err)
+		return nil, nil, "", fmt.Errorf("open %s: %w", path, err)
 	}
 
-	decoder, err := zstd.NewReader(f, zstd.WithDecoderConcurrency(1))
-	if err != nil {
+	buffered := bufio.NewReader(f)
+	magic, err := buffered.Peek(len(zstdMagic))
+	if err != nil && err != io.EOF {
 		f.Close()
-		return nil, nil, fmt.Errorf("zstd decoder for %s: %w", path, err)
+		return nil, nil, "", fmt.Errorf("peek compression magic for %s: %w", path, err)
 	}
 
-	csvReader := csv.NewReader(decoder)
+	var (
+		reader io.Reader
+		closer func()
+		format string
+	)
+
+	switch {
+	case len(magic) >= 2 && magic[0] == 0x1f && magic[1] == 0x8b:
+		gzipReader, err := gzip.NewReader(buffered)
+		if err != nil {
+			f.Close()
+			return nil, nil, "", fmt.Errorf("gzip reader for %s: %w", path, err)
+		}
+		reader = gzipReader
+		closer = func() { _ = gzipReader.Close() }
+		format = "gzip"
+	case len(magic) >= len(zstdMagic) && bytes.Equal(magic[:len(zstdMagic)], zstdMagic):
+		zstdReader, err := zstd.NewReader(buffered, zstd.WithDecoderConcurrency(1))
+		if err != nil {
+			f.Close()
+			return nil, nil, "", fmt.Errorf("zstd decoder for %s: %w", path, err)
+		}
+		reader = zstdReader
+		closer = zstdReader.Close
+		format = "zstd"
+	default:
+		f.Close()
+		return nil, nil, "", fmt.Errorf("unsupported compression format in %s: expected gzip or zstd magic, got % x", path, magic)
+	}
+
+	var once sync.Once
+	closeFn := func() {
+		once.Do(func() {
+			if closer != nil {
+				closer()
+			}
+			_ = f.Close()
+		})
+	}
+
+	return reader, closeFn, format, nil
+}
+
+// ParseCSVFromZST opens a compressed CSV file, auto-detects gzip or zstd,
+// and sends parsed TickRow values on the returned channel. The channel is
+// closed when all rows have been read or the context is cancelled. Errors
+// are logged but non-fatal rows are skipped.
+func ParseCSVFromZST(ctx context.Context, path string) (<-chan TickRow, func(), error) {
+	reader, closeFn, _, err := openCompressedCSV(path)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	csvReader := csv.NewReader(reader)
 	csvReader.ReuseRecord = true
 	csvReader.LazyQuotes = true
 
 	header, err := csvReader.Read()
 	if err != nil {
-		decoder.Close()
-		f.Close()
+		closeFn()
 		return nil, nil, fmt.Errorf("read CSV header from %s: %w", path, err)
 	}
 
@@ -218,17 +273,18 @@ func ParseCSVFromZST(ctx context.Context, path string) (<-chan TickRow, func(), 
 
 	idx, err := buildColumnIndex(headerCopy)
 	if err != nil {
-		decoder.Close()
-		f.Close()
+		closeFn()
 		return nil, nil, fmt.Errorf("build column index for %s: %w", path, err)
 	}
 
 	ch := make(chan TickRow, 4096)
 	done := make(chan struct{})
-	closeFn := func() {
-		close(done)
-		decoder.Close()
-		f.Close()
+	var closeOnce sync.Once
+	closeReader := func() {
+		closeOnce.Do(func() {
+			close(done)
+			closeFn()
+		})
 	}
 
 	go func() {
@@ -269,5 +325,5 @@ func ParseCSVFromZST(ctx context.Context, path string) (<-chan TickRow, func(), 
 		}
 	}()
 
-	return ch, closeFn, nil
+	return ch, closeReader, nil
 }
