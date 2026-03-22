@@ -200,6 +200,7 @@ func parseInterval(interval string) (time.Duration, error) {
 		"30m": 30 * time.Minute,
 		"1h":  time.Hour,
 		"2h":  2 * time.Hour,
+		"3h":  3 * time.Hour,
 		"4h":  4 * time.Hour,
 		"6h":  6 * time.Hour,
 		"8h":  8 * time.Hour,

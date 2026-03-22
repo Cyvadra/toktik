@@ -14,6 +14,9 @@ import (
 	"time"
 )
 
+// DefaultBaseURL is the default Deribit API root.
+const DefaultBaseURL = "https://www.deribit.com"
+
 // Client wraps Deribit public API methods for DVOL history.
 type Client struct {
 	baseURL    string
@@ -37,7 +40,6 @@ func NewClient(baseURL string) *Client {
 }
 
 // SupportsCurrency probes whether a currency is accepted by Deribit DVOL endpoint.
-// A currency can be accepted even if current window returns zero rows.
 func (c *Client) SupportsCurrency(ctx context.Context, currency, resolution string) (bool, error) {
 	cur := normalizeCurrency(currency)
 	res, err := normalizeResolution(resolution)
@@ -154,14 +156,12 @@ func (c *Client) fetchPage(ctx context.Context, currency, resolution string, sta
 		}
 		ts := int64(row[0])
 		bars = append(bars, Bar{
-			Currency:   currency,
-			IndexName:  currency + "-DVOL",
-			Resolution: resolution,
-			Timestamp:  time.UnixMilli(ts).UTC(),
-			Open:       row[1],
-			High:       row[2],
-			Low:        row[3],
-			Close:      row[4],
+			Symbol:    currency,
+			Timestamp: time.UnixMilli(ts).UTC(),
+			Open:      row[1],
+			High:      row[2],
+			Low:       row[3],
+			Close:     row[4],
 		})
 	}
 
@@ -242,12 +242,12 @@ func normalizeResolution(resolution string) (string, error) {
 		return "3600", nil
 	case "43200", "12h":
 		return "43200", nil
-	case "86400", "1d", "1day", "1D":
+	case "86400", "1d", "1day":
 		return "86400", nil
-	default:
-		if raw == "1D" {
-			return "86400", nil
-		}
+	}
+
+	if raw == "1D" {
+		return "86400", nil
 	}
 
 	return "", fmt.Errorf("unsupported resolution %q (supported: 1, 60, 3600, 43200, 86400 or aliases 1s/1m/1h/12h/1d)", resolution)

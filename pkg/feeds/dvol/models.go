@@ -2,32 +2,26 @@ package dvol
 
 import "time"
 
-// DefaultBaseURL is the default Deribit API root.
-const DefaultBaseURL = "https://www.deribit.com"
-
-// AcceptedCurrencies are currencies currently accepted by
-// public/get_volatility_index_data (as observed from live endpoint probes).
-// Some accepted currencies may legitimately return zero rows for a given range.
+// AcceptedCurrencies are currencies accepted by Deribit DVOL endpoint.
 var AcceptedCurrencies = []string{"BTC", "ETH"}
 
-// DefaultCurrencies are the default sync targets with stable historical coverage.
+// DefaultCurrencies are the default sync targets.
 var DefaultCurrencies = []string{"BTC", "ETH"}
 
-// AcceptedResolutions are the documented-by-probe resolution values accepted by
-// public/get_volatility_index_data.
+// AcceptedResolutions are the resolution values accepted by the endpoint.
 var AcceptedResolutions = []string{"1", "60", "3600", "43200", "86400"}
 
 // Bar is one OHLC row from Deribit volatility index data.
 type Bar struct {
-	Currency   string
-	IndexName  string
-	Resolution string
-	Timestamp  time.Time
-	Open       float64
-	High       float64
-	Low        float64
-	Close      float64
+	Symbol    string
+	Timestamp time.Time
+	Open      float64
+	High      float64
+	Low       float64
+	Close     float64
 }
+
+// --- Deribit API wire types (unexported) ---
 
 type apiResponse struct {
 	JSONRPC string     `json:"jsonrpc"`

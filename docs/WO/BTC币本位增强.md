@@ -1,108 +1,47 @@
-# 策略需求简报：BTC币本位增强策略
+## **BTC Coin-Margined Enhancement Strategy**
 
-## 一、 策略概述
-本策略为基于RSI多空分界的期权背离增强策略，在12h/24h大周期与3h/6h小周期之间切换，通过卖出看涨期权+买入看跌期权构建对冲组合。
+**Core Parameters**
+* **Initial Capital:** 100 BTC
+* **Position Size:** 10 BTC (notional value) per entry.
+* **Divergence Definition:** 1.  **MACD Divergence:** Price makes a Higher High (HH), but MACD Diff makes a Lower High (or vice versa).
+    2.  **Volatility Filter:** Current Standard Deviation ($std / mastd$) must be above the **50th percentile** (last 100 bars).
 
-## 二、 核心运行环境
-- **初始资金：** 100 BTC
-- **单次开仓名义价值：** 10 BTC
-- **交易标的：** BTC期权
+---
 
-## 三、 信号触发机制
+### **Scenario 1: High RSI (Bullish/Neutral Trend)**
+* **Condition:** $RSI(200) > 50$
+* **Signal Level:** 12h or 24h charts.
+* **Entry Trigger:** Bearish Divergence (MACD or CCI) followed by one **Bearish Candle**.
+* **Trade Execution:**
+    * **Sell Call:** Delta 0.3 (~40 days to expiry).
+    * **Buy Put:** Delta -0.25 (~40 days to expiry).
+    * **Budgeting:** Use **70%** of the premium collected from the Sell Call to fund the Put.
+* **Exit (Stop):** Spot price bounces **$3 \times ATR$** from the post-entry low.
 
-### 3.1 多空周期划分
-| RSI状态 | 操作周期 | 期权期限 |
-|---------|----------|----------|
-| **RSI(20*10) > 50** | 12h 或 24h级别 | 40天左右到期 |
-| **RSI(20*10) < 50** | 3h 或 6h级别 | 25天左右到期 |
+---
 
-### 3.2 建仓条件
-当出现背离信号后，出现**一根阴线**，则开始建仓：
+### **Scenario 2: Low RSI (Bearish/Weak Trend)**
+* **Condition:** $RSI(200) < 50$
+* **Signal Level:** 3h or 6h charts.
+* **Entry Trigger:** Bearish Divergence signal.
+* **Trade Execution:**
+    * **Sell Call:** Delta 0.3 (~25 days to expiry).
+    * **Buy Put:** Delta -0.25 (~25 days to expiry).
+    * **Budgeting:** Use **70%** of the premium collected from the Sell Call to fund the Put.
+* **Exit (Stop):** Spot price drops **$3 \times ATR$** from the post-entry high.
 
-1. **卖出Call：** Delta ≈ 0.3 的看涨期权
-2. **买入Put：** 用卖出Call所得期权费的70%，买入 Delta ≈ -0.25 的看跌期权
-3. **期限统一：** Call和Put选择相同期限（40天或25天）
+---
 
-### 3.3 背离信号定义
-背离信号需同时满足以下两个条件：
+### **Dynamic Management**
 
-#### 条件1：MACD顶背离
-```
-HH30 = HHV(HIGH, 30)                    // 30周期最高价
-PREV_HH = REF(HH30, 1)                   // 前一个30周期最高价
-DIFF_HH = REF(DIFF, BARSSINCE(HIGH == HH30))        // 当前高点对应的MACD DIFF值
-PREV_DIFF_HH = REF(DIFF, BARSSINCE(HIGH == PREV_HH)) // 前高对应的MACD DIFF值
+#### **1. Long Put Management**
+* **Auto-Roll/Rebalance:** If Put Delta exceeds **-0.5** (absolute value > 0.5) OR floating profit exceeds **50%**.
+* **Action:** Close and restart the entry process.
 
-SELL_SIGNAL = (HIGH == HH30) AND          // 价格创30周期新高
-              (HIGH > PREV_HH) AND        // 当前高点高于前高
-              (DIFF_HH < PREV_DIFF_HH)    // 但DIFF值低于前高（顶背离）
-```
+#### **2. Short Call Management (Profit Taking)**
+* **Partial Close:** Close **50%** of the position if floating profit > **70%**.
+* **Full Close:** Close **100%** of the position if floating profit > **88%**.
 
-#### 条件2：波动率条件
-- **指标：** `Std(20) / MA(Std(20),20)`
-- **周期：** 过去100根K线
-- **要求：** 当前处在50分位**以上**
+---
 
-## 四、 动态管理机制
-
-### 4.1 Put期权管理
-**自动换仓条件（满足任一）：**
-- Put期权 Delta绝对值 > 0.5
-- Put期权 浮盈 > 50%
-
-**换仓执行：** 平仓当前Put，按原流程重新买入Delta ≈ -0.25的Put
-
-### 4.2 Call期权管理
-| 浮盈水平 | 操作 |
-|----------|------|
-| > 70% | 平仓一半头寸 |
-| > 88% | 全部平仓 |
-
-## 五、 执行流程示意图
-
-```
-开始
-  ↓
-检查RSI(20*10)状态
-  ↓
-┌─────────────────────┐
-│ RSI > 50 ?          │
-├─────────┬───────────┤
-│   是    │    否     │
-│ 12h/24h │  3h/6h    │
-│ 周期    │  周期     │
-│ 40天期权│  25天期权 │
-└─────────┴───────────┘
-  ↓
-等待背离信号 + 阴线
-  ↓
-┌─────────────────────┐
-│ 1. 卖出Call (Δ=0.3) │
-│ 2. 获得期权费      │
-│ 3. 用70%期权费     │
-│    买入Put (Δ=-0.25)│
-└─────────────────────┘
-  ↓
-持仓管理
-  ├─ Put Δ > |0.5|? → 换仓
-  ├─ Put 浮盈>50%? → 换仓
-  ├─ Call 浮盈>70%? → 平一半
-  └─ Call 浮盈>88%? → 全平
-```
-
-## 六、 关键参数汇总
-
-| 参数 | 取值 | 说明 |
-|------|------|------|
-| RSI周期 | 20*10 | 200周期RSI |
-| RSI阈值 | 50 | 多空分界线 |
-| 大周期 | 12h/24h | RSI>50时使用 |
-| 小周期 | 3h/6h | RSI<50时使用 |
-| 背离周期 | 30 | 价格创新高周期数 |
-| 波动率分位 | >50% | 背离必要条件 |
-| Call Delta | 0.3 | 卖出看涨 |
-| Put Delta | -0.25 | 买入看跌 |
-| Put换仓Delta | > |0.5| | Delta绝对值阈值 |
-| Put换仓浮盈 | >50% | 止盈阈值 |
-| Call平半 | >70% | 部分止盈 |
-| Call全平 | >88% | 全部止盈 |
+**Would you like me to help you draft the PineScript code for the divergence and volatility filters?**

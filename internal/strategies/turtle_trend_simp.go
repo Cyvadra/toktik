@@ -255,14 +255,14 @@ func (s *turtleTrendSimpStrategy) Preload(ctx *backtest.PreloadContext) error {
 }
 
 func (s *turtleTrendSimpStrategy) rollCloseReason(absDelta, pnlPct float64) string {
-	if absDelta > 0.55 && !math.IsNaN(pnlPct) && pnlPct > 0.66 {
-		return "换仓：Delta超标且浮盈超过66%"
+	if absDelta > 0.55 && !math.IsNaN(pnlPct) && pnlPct > 0.33 {
+		return "换仓：Delta超标且浮盈超过33%"
 	}
 	if absDelta > 0.55 {
 		return "换仓：Delta超标(>|0.55|)"
 	}
-	if !math.IsNaN(pnlPct) && pnlPct > 0.66 {
-		return "换仓：浮盈超过66%"
+	if !math.IsNaN(pnlPct) && pnlPct > 0.33 {
+		return "换仓：浮盈超过33%"
 	}
 	return "换仓"
 }
@@ -320,14 +320,14 @@ func (s *turtleTrendSimpStrategy) OnBar(ctx *backtest.BarContext) {
 			break
 		}
 
-		// Rolling: |Delta| > 0.55 or unrealized profit > 66%
+		// Rolling: |Delta| > 0.55 or unrealized profit > 33%
 		absDelta := math.Abs(currentContract.Delta)
 		pnlPct := sp.LegUnrealizedPnLPct(0, markPrice)
 		needsRoll := false
 		if absDelta > 0.55 {
 			needsRoll = true
 		}
-		if !math.IsNaN(pnlPct) && pnlPct > 0.66 {
+		if !math.IsNaN(pnlPct) && pnlPct > 0.33 {
 			needsRoll = true
 		}
 
@@ -368,14 +368,14 @@ func (s *turtleTrendSimpStrategy) OnBar(ctx *backtest.BarContext) {
 			break
 		}
 
-		// Rolling: |Delta| > 0.55 or profit > 66%
+		// Rolling: |Delta| > 0.55 or profit > 33%
 		absDelta := math.Abs(currentContract.Delta)
 		pnlPct := sp.LegUnrealizedPnLPct(0, markPrice)
 		needsRoll := false
 		if absDelta > 0.55 {
 			needsRoll = true
 		}
-		if !math.IsNaN(pnlPct) && pnlPct > 0.66 {
+		if !math.IsNaN(pnlPct) && pnlPct > 0.33 {
 			needsRoll = true
 		}
 
@@ -415,7 +415,7 @@ func (s *turtleTrendSimpStrategy) OnBar(ctx *backtest.BarContext) {
 			if absDelta > 0.55 {
 				needsRoll = true
 			}
-			if !math.IsNaN(pnlPct) && pnlPct > 0.66 {
+			if !math.IsNaN(pnlPct) && pnlPct > 0.33 {
 				needsRoll = true
 			}
 
@@ -462,7 +462,7 @@ func (s *turtleTrendSimpStrategy) OnBar(ctx *backtest.BarContext) {
 			if absDelta > 0.55 {
 				needsRoll = true
 			}
-			if !math.IsNaN(pnlPct) && pnlPct > 0.66 {
+			if !math.IsNaN(pnlPct) && pnlPct > 0.33 {
 				needsRoll = true
 			}
 

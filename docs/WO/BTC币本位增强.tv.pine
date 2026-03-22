@@ -1,0 +1,92 @@
+//@version=6
+strategy("BTC 币本位增强策略信号", overlay=true)
+
+// --- 1. RSI (200) 12h ---
+rsi_12h = request.security(syminfo.tickerid, "720", ta.rsi(close, 200))
+plot(rsi_12h, "RSI 200 (12h)", color=color.new(color.purple, 50), display=display.none)
+
+// --- 2. 波动率条件 (Relative Volatility) ---
+// 定义：std(20) / ma(std(20), 20)
+std20 = ta.stdev(close, 20)
+ma_std20 = ta.sma(std20, 20)
+ratio = std20 / ma_std20
+
+// 过去100根K线的50分位 (中位数)
+vol_threshold = ta.percentile_linear_interpolation(ratio, 100, 50)
+vol_condition = ratio > vol_threshold
+
+// --- 3. 背离计算函数 (MACD 逻辑) ---
+// 为了简洁，这里以 MACD 为例，你也可以根据需要替换为 CCI
+get_divergence(tf) =>
+    [macdLine, signalLine, _] = request.security(syminfo.tickerid, tf, ta.macd(close, 12, 26, 9))
+    price_high = ta.highest(high, 30)
+    price_low = ta.lowest(low, 30)
+    // 顶背离: 价格创新高，MACD未创新高
+    top_div = ta.highest(high, 5) == price_high and macdLine < ta.highest(macdLine, 30)[1] and vol_condition
+    // 底背离: 价格创新低，MACD未创新低
+    bot_div = ta.lowest(low, 5) == price_low and macdLine > ta.lowest(macdLine, 30)[1] and vol_condition
+    [top_div, bot_div]
+
+// 获取不同周期的背离信号
+[div_12h_top, div_12h_bot] = get_divergence("720")
+[div_24h_top, div_24h_bot] = get_divergence("1440")
+[div_3h_top, div_3h_bot] = get_divergence("180")
+[div_6h_top, div_6h_bot] = get_divergence("360")
+
+// --- 4. 逻辑组合 ---
+div_wide_top = div_12h_top or div_24h_top
+// div_wide_bot = div_12h_bot or div_24h_bot
+// div_quick_top = div_3h_top or div_6h_top
+div_quick_bot = div_3h_bot or div_6h_bot
+
+// --- 5. 可视化 ---
+// plotshape(div_wide_top, "div_wide_top", shape.triangledown, location.abovebar, color.red, size=size.small)
+// plotshape(div_wide_bot, "div_wide_bot", shape.triangleup, location.belowbar, color.green, size=size.small)
+// plotshape(div_quick_top, "div_quick_top", shape.triangledown, location.abovebar, color.orange, size=size.small)
+// plotshape(div_quick_bot, "div_quick_bot", shape.triangleup, location.belowbar,color.aqua, size=size.small)
+
+// 仪表盘或背景高亮（当波动率达标时）
+bgcolor(vol_condition ? color.new(color.gray, 95) : na)
+
+// ———— 交易开仓信号 ————
+
+// 当 rsi（20*10） 大于50，则 在 12h 或24h级别上找  macd或cci 的背离信号，当出现背离信号后出现一根阴线， 则开始建仓  sell call  和 buy put的头寸
+cond_short = ta.barssince(div_wide_top) <= 5 and close < open and rsi_12h > 50
+bgcolor(cond_short ? color.new(color.red,90) : na)
+// 当rsi（20*10） 小于50，则在3h 或 6h 级别找 背离信号，建仓 sell call 和buyput 头寸；  选择delta为0.3的看涨期权，每次开仓，计算卖出call 的期权费，期权费中的 0.7，用来买 delta为-0.25的看跌期权，期限都选25天左右到期的
+cond_long = div_quick_bot and rsi_12h < 50
+bgcolor(cond_long ? color.new(color.green,90) : na)
+
+
+// 仓位模拟
+
+var bool flag_pos_long = false
+var bool flag_pos_short = false
+var float highest_since_long_entry = na
+var float lowest_since_short_entry = na
+
+if not flag_pos_long and cond_long
+    strategy.entry('long', strategy.long)
+    flag_pos_long := true
+    highest_since_long_entry := high
+if not flag_pos_short and cond_short
+    strategy.entry('short', strategy.short)
+    flag_pos_short := true
+    lowest_since_short_entry := low
+
+// 回落 3*atr 平仓
+atr20 = ta.atr(20)
+if flag_pos_long
+    highest_since_long_entry := math.max(highest_since_long_entry,high)
+    if highest_since_long_entry - low > 3*atr20
+        strategy.close('long')
+        flag_pos_long := false
+if flag_pos_short
+    lowest_since_short_entry := math.min(lowest_since_short_entry,low)
+    if high - lowest_since_short_entry > 3*atr20
+        strategy.close('short')
+        flag_pos_short := false
+
+
+
+

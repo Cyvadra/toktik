@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strings"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
@@ -18,17 +19,61 @@ type KlineInterval struct {
 // KlineIntervals lists all pre-computed K-line intervals.
 // Materialized views aggregate crypto_options_bar_1m on INSERT.
 var KlineIntervals = []KlineInterval{
-	{Suffix: "5m", TimeFunc: "toStartOfFiveMinutes(timestamp)"},
-	{Suffix: "15m", TimeFunc: "toStartOfFifteenMinutes(timestamp)"},
-	{Suffix: "30m", TimeFunc: "toStartOfInterval(timestamp, INTERVAL 30 minute)"},
-	{Suffix: "1h", TimeFunc: "toStartOfHour(timestamp)"},
-	{Suffix: "2h", TimeFunc: "toStartOfInterval(timestamp, INTERVAL 2 hour)"},
-	{Suffix: "3h", TimeFunc: "toStartOfInterval(timestamp, INTERVAL 3 hour)"},
-	{Suffix: "4h", TimeFunc: "toStartOfInterval(timestamp, INTERVAL 4 hour)"},
-	{Suffix: "6h", TimeFunc: "toStartOfInterval(timestamp, INTERVAL 6 hour)"},
-	{Suffix: "8h", TimeFunc: "toStartOfInterval(timestamp, INTERVAL 8 hour)"},
-	{Suffix: "12h", TimeFunc: "toStartOfInterval(timestamp, INTERVAL 12 hour)"},
-	{Suffix: "1d", TimeFunc: "toStartOfDay(timestamp)"},
+	{Suffix: "5m", TimeFunc: mustKlineBucketExpr("timestamp", "5m")},
+	{Suffix: "15m", TimeFunc: mustKlineBucketExpr("timestamp", "15m")},
+	{Suffix: "30m", TimeFunc: mustKlineBucketExpr("timestamp", "30m")},
+	{Suffix: "1h", TimeFunc: mustKlineBucketExpr("timestamp", "1h")},
+	{Suffix: "2h", TimeFunc: mustKlineBucketExpr("timestamp", "2h")},
+	{Suffix: "3h", TimeFunc: mustKlineBucketExpr("timestamp", "3h")},
+	{Suffix: "4h", TimeFunc: mustKlineBucketExpr("timestamp", "4h")},
+	{Suffix: "6h", TimeFunc: mustKlineBucketExpr("timestamp", "6h")},
+	{Suffix: "8h", TimeFunc: mustKlineBucketExpr("timestamp", "8h")},
+	{Suffix: "12h", TimeFunc: mustKlineBucketExpr("timestamp", "12h")},
+	{Suffix: "1d", TimeFunc: mustKlineBucketExpr("timestamp", "1d")},
+}
+
+var fixedWidthBucketSeconds = map[string]int64{
+	"1m":  60,
+	"2m":  120,
+	"3m":  180,
+	"5m":  300,
+	"10m": 600,
+	"15m": 900,
+	"30m": 1800,
+	"1h":  3600,
+	"2h":  7200,
+	"3h":  10800,
+	"4h":  14400,
+	"6h":  21600,
+	"8h":  28800,
+	"12h": 43200,
+	"1d":  86400,
+}
+
+func mustKlineBucketExpr(column, interval string) string {
+	expr, err := klineBucketExpr(column, interval)
+	if err != nil {
+		panic(err)
+	}
+	return expr
+}
+
+func klineBucketExpr(column, interval string) (string, error) {
+	column = strings.TrimSpace(column)
+	if column == "" {
+		return "", fmt.Errorf("bucket column cannot be empty")
+	}
+
+	if interval == "1w" {
+		return fmt.Sprintf("toDateTime(toStartOfWeek(toTimeZone(%s, 'UTC'), 1), 'UTC')", column), nil
+	}
+
+	seconds, ok := fixedWidthBucketSeconds[interval]
+	if !ok {
+		return "", fmt.Errorf("unsupported interval: %q", interval)
+	}
+
+	return fmt.Sprintf("toDateTime(intDiv(toUnixTimestamp(%s), %d) * %d, 'UTC')", column, seconds, seconds), nil
 }
 
 // InitKlineSchema creates AggregatingMergeTree tables, materialized views,
@@ -330,13 +375,13 @@ var SpotPrecomputedIntervals = map[string]string{
 //
 //	{symbol_id:UInt32}, {from:String}, {to:String}
 func QueryTimeAggregationSQL(interval string) (string, error) {
-	chInterval, ok := validAdHocIntervals[interval]
-	if !ok {
+	bucketExpr, err := klineBucketExpr("timestamp", interval)
+	if err != nil {
 		return "", fmt.Errorf("unsupported interval: %q", interval)
 	}
 
 	return fmt.Sprintf(`SELECT
-    toStartOfInterval(timestamp, INTERVAL %s) AS timestamp,
+    %s AS timestamp,
     symbol_id,
     base_asset,
     argMin(mark_open, timestamp)              AS mark_open,
@@ -371,22 +416,22 @@ WHERE symbol_id = {symbol_id:UInt32}
     AND timestamp >= parseDateTimeBestEffort({from:String})
     AND timestamp < parseDateTimeBestEffort({to:String})
 GROUP BY
-    toStartOfInterval(timestamp, INTERVAL %s),
+    %s,
     symbol_id,
     base_asset
-ORDER BY timestamp`, chInterval, chInterval), nil
+ORDER BY timestamp`, bucketExpr, bucketExpr), nil
 }
 
 // QuerySpotAggregationSQL returns a SQL query that aggregates 1-minute spot bars
 // into the requested interval on the fly.
 func QuerySpotAggregationSQL(interval string) (string, error) {
-	chInterval, ok := validAdHocIntervals[interval]
-	if !ok {
+	bucketExpr, err := klineBucketExpr("timestamp", interval)
+	if err != nil {
 		return "", fmt.Errorf("unsupported interval: %q", interval)
 	}
 
 	return fmt.Sprintf(`SELECT
-    toStartOfInterval(timestamp, INTERVAL %s) AS timestamp,
+    %s AS timestamp,
     symbol,
     any(price_source)                         AS price_source,
     argMin(open, timestamp)                   AS open,
@@ -399,7 +444,7 @@ WHERE symbol = {symbol:String}
     AND timestamp >= parseDateTimeBestEffort({from:String})
     AND timestamp < parseDateTimeBestEffort({to:String})
 GROUP BY
-    toStartOfInterval(timestamp, INTERVAL %s),
+    %s,
     symbol
-ORDER BY timestamp`, chInterval, chInterval), nil
+ORDER BY timestamp`, bucketExpr, bucketExpr), nil
 }
