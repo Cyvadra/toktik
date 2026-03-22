@@ -538,6 +538,11 @@ func (bc *BarContext) OptionsChain() *OptionsChain {
 // Each leg specifies the contract, side, quantity, and entry price.
 // Returns the spread ID for later reference.
 func (bc *BarContext) OpenSpread(legs []SpreadLeg, tag string) int {
+	return bc.OpenSpreadWithRef(legs, tag, "")
+}
+
+// OpenSpreadWithRef opens a multi-leg spread position with an internal execution ref.
+func (bc *BarContext) OpenSpreadWithRef(legs []SpreadLeg, tag, ref string) int {
 	if bc.spreadTracker == nil {
 		return 0
 	}
@@ -554,7 +559,7 @@ func (bc *BarContext) OpenSpread(legs []SpreadLeg, tag string) int {
 			bc.broker.AdjustCash(-amount)
 		}
 	}
-	return bc.spreadTracker.Open(legs, bc.barTime, bc.barIndex, tag)
+	return bc.spreadTracker.OpenWithRef(legs, bc.barTime, bc.barIndex, tag, ref)
 }
 
 // CloseSpreadLeg closes a specific leg of a spread at the given price.
@@ -670,12 +675,22 @@ func (bc *BarContext) ScheduleCloseLegAfter(d time.Duration, spreadID, legIndex 
 
 // ScheduleOpenSpread schedules opening a spread at/after triggerTime as a market-style action.
 func (bc *BarContext) ScheduleOpenSpread(triggerTime time.Time, legs []SpreadLeg, tag string) {
-	bc.ScheduleOpenSpreadOrder(triggerTime, legs, tag, SpreadOrderMarket, Buy, math.NaN(), 0)
+	bc.ScheduleOpenSpreadWithRef(triggerTime, legs, tag, "")
+}
+
+// ScheduleOpenSpreadWithRef schedules opening a spread at/after triggerTime with an internal execution ref.
+func (bc *BarContext) ScheduleOpenSpreadWithRef(triggerTime time.Time, legs []SpreadLeg, tag, ref string) {
+	bc.ScheduleOpenSpreadOrderWithRef(triggerTime, legs, tag, ref, SpreadOrderMarket, Buy, math.NaN(), 0)
 }
 
 // ScheduleOpenSpreadOrder schedules opening a spread with trigger semantics.
 // triggerSide follows standard order semantics: Buy triggers on upward moves; Sell on downward moves.
 func (bc *BarContext) ScheduleOpenSpreadOrder(triggerTime time.Time, legs []SpreadLeg, tag string, orderType SpreadOrderType, triggerSide Side, triggerPrice, slippagePct float64) {
+	bc.ScheduleOpenSpreadOrderWithRef(triggerTime, legs, tag, "", orderType, triggerSide, triggerPrice, slippagePct)
+}
+
+// ScheduleOpenSpreadOrderWithRef schedules opening a spread with trigger semantics and an internal execution ref.
+func (bc *BarContext) ScheduleOpenSpreadOrderWithRef(triggerTime time.Time, legs []SpreadLeg, tag, ref string, orderType SpreadOrderType, triggerSide Side, triggerPrice, slippagePct float64) {
 	if bc.scheduledActions == nil {
 		return
 	}
@@ -690,6 +705,7 @@ func (bc *BarContext) ScheduleOpenSpreadOrder(triggerTime time.Time, legs []Spre
 		SlippagePct:  slippagePct,
 		OpenLegs:     legsCopy,
 		OpenTag:      tag,
+		OpenRef:      ref,
 	})
 }
 

@@ -493,7 +493,7 @@ func (e *Engine) replay(prepared *PreparedData, strategy Strategy, params map[st
 							}
 						}
 						if len(legs) > 0 {
-							barCtx.OpenSpread(legs, tag)
+							barCtx.OpenSpreadWithRef(legs, tag, sa.OpenRef)
 						}
 					case ScheduleCloseLeg:
 						sp := spreadTracker.Get(sa.SpreadID)

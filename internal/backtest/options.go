@@ -335,6 +335,7 @@ type SpreadPosition struct {
 	OpenTime time.Time
 	OpenBar  int
 	Tag      string // user-defined label (e.g. "bull-put-spread")
+	Ref      string // internal reference for strategy-level tracking of delayed executions
 }
 
 // IsFullyClosed returns true if all legs are closed.
@@ -407,6 +408,11 @@ func NewSpreadTracker() *SpreadTracker {
 
 // Open creates a new spread position and returns its ID.
 func (st *SpreadTracker) Open(legs []SpreadLeg, openTime time.Time, openBar int, tag string) int {
+	return st.OpenWithRef(legs, openTime, openBar, tag, "")
+}
+
+// OpenWithRef creates a new spread position and returns its ID.
+func (st *SpreadTracker) OpenWithRef(legs []SpreadLeg, openTime time.Time, openBar int, tag, ref string) int {
 	id := st.nextID
 	st.nextID++
 	sp := &SpreadPosition{
@@ -415,6 +421,7 @@ func (st *SpreadTracker) Open(legs []SpreadLeg, openTime time.Time, openBar int,
 		OpenTime: openTime,
 		OpenBar:  openBar,
 		Tag:      tag,
+		Ref:      ref,
 	}
 	st.spreads = append(st.spreads, sp)
 	return id
@@ -501,6 +508,7 @@ type ScheduledAction struct {
 	// Open action payload.
 	OpenLegs []SpreadLeg
 	OpenTag  string
+	OpenRef  string
 
 	// Close action payload.
 	CloseReason string

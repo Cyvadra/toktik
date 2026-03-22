@@ -72,12 +72,15 @@ type turtleTrendSimpStrategy struct {
 	shortSpotAddCount   int     // number of executed short spot add-ons
 	longSpotHigh        float64 // BTC_max: highest price since long spot entry
 	shortSpotLow        float64 // BTC_min: lowest price since short spot entry
+	nextPendingRefID    int
 }
 
 // slotState tracks a single option position slot.
 type slotState struct {
 	spreadID   int
 	entryPrice float64 // underlying price at entry
+	pendingRef string
+	pendingBar int
 }
 
 var (
@@ -275,6 +278,8 @@ func (s *turtleTrendSimpStrategy) OnBar(ctx *backtest.BarContext) {
 		return
 	}
 
+	s.resolvePendingSlots(ctx)
+
 	// ATR from the completed 8h bar, aligned to the 5m primary timeline.
 	atr := ctx.Field("htf_atr20_prev")
 
@@ -292,6 +297,9 @@ func (s *turtleTrendSimpStrategy) OnBar(ctx *backtest.BarContext) {
 	for i := range s.longSlots {
 		slot := s.longSlots[i]
 		if slot == nil {
+			continue
+		}
+		if slot.isPending() {
 			continue
 		}
 		sp := ctx.Spreads().Get(slot.spreadID)
@@ -343,6 +351,9 @@ func (s *turtleTrendSimpStrategy) OnBar(ctx *backtest.BarContext) {
 		if slot == nil {
 			continue
 		}
+		if slot.isPending() {
+			continue
+		}
 		sp := ctx.Spreads().Get(slot.spreadID)
 		if sp == nil || sp.IsFullyClosed() {
 			s.shortSlots[i] = nil
@@ -392,6 +403,10 @@ func (s *turtleTrendSimpStrategy) OnBar(ctx *backtest.BarContext) {
 			if slot == nil {
 				continue
 			}
+			if slot.isPending() {
+				updated = append(updated, slot)
+				continue
+			}
 			sp := ctx.Spreads().Get(slot.spreadID)
 			if sp == nil || sp.IsFullyClosed() {
 				continue
@@ -437,6 +452,10 @@ func (s *turtleTrendSimpStrategy) OnBar(ctx *backtest.BarContext) {
 		updated := make([]*slotState, 0, len(s.shortRemoved))
 		for _, slot := range s.shortRemoved {
 			if slot == nil {
+				continue
+			}
+			if slot.isPending() {
+				updated = append(updated, slot)
 				continue
 			}
 			sp := ctx.Spreads().Get(slot.spreadID)
@@ -585,7 +604,7 @@ func (s *turtleTrendSimpStrategy) OnBar(ctx *backtest.BarContext) {
 
 	// Long option add-ons: remove self-referential option ladder and only follow
 	// spot add-on signal, with an extra guard that at least one active long slot exists.
-	if s.Direction != DirectionShortOnly && s.longAddCount < 2 && longSpotTargetAddCount > 0 && s.countLongSlots() > 0 {
+	if s.Direction != DirectionShortOnly && s.longAddCount < 2 && longSpotTargetAddCount > 0 && s.countActiveLongSlots() > 0 {
 		if !math.IsNaN(atr) && atr > 0 {
 			targetAddCount := longSpotTargetAddCount
 			if targetAddCount > 2 {
@@ -655,7 +674,7 @@ func (s *turtleTrendSimpStrategy) OnBar(ctx *backtest.BarContext) {
 
 	// Short option add-ons: only follow spot add-on signal, with an extra
 	// guard that at least one active short slot exists.
-	if s.Direction != DirectionLongOnly && s.shortAddCount < 1 && shortSpotTargetAddCount > 0 && s.countShortSlots() > 0 {
+	if s.Direction != DirectionLongOnly && s.shortAddCount < 1 && shortSpotTargetAddCount > 0 && s.countActiveShortSlots() > 0 {
 		targetAddCount := shortSpotTargetAddCount
 		if targetAddCount > 1 {
 			targetAddCount = 1
@@ -711,20 +730,15 @@ func (s *turtleTrendSimpStrategy) openCallOption(ctx *backtest.BarContext, chain
 	}
 	tag = s.withDeltaReason(tag, contract.Delta)
 
-	spreadID := ctx.OpenSpread([]backtest.SpreadLeg{{
+	pendingRef := s.nextPendingRef(slotRef)
+	ctx.ScheduleOpenSpreadWithRef(ctx.Time().Add(time.Nanosecond), []backtest.SpreadLeg{{
 		Contract:   contract,
 		Side:       backtest.Buy,
 		Qty:        qty,
 		EntryPrice: entryPrice,
-	}}, tag)
+	}}, tag, pendingRef)
 
-	if spreadID > 0 {
-		return &slotState{
-			spreadID:   spreadID,
-			entryPrice: underlyingPrice,
-		}
-	}
-	return nil
+	return &slotState{spreadID: -1, entryPrice: underlyingPrice, pendingRef: pendingRef, pendingBar: ctx.BarIndex()}
 }
 
 // openPutOption opens a single Put option per the execution standard.
@@ -763,20 +777,15 @@ func (s *turtleTrendSimpStrategy) openPutOption(ctx *backtest.BarContext, chain 
 	}
 	tag = s.withDeltaReason(tag, contract.Delta)
 
-	spreadID := ctx.OpenSpread([]backtest.SpreadLeg{{
+	pendingRef := s.nextPendingRef(slotRef)
+	ctx.ScheduleOpenSpreadWithRef(ctx.Time().Add(time.Nanosecond), []backtest.SpreadLeg{{
 		Contract:   contract,
 		Side:       backtest.Buy,
 		Qty:        qty,
 		EntryPrice: entryPrice,
-	}}, tag)
+	}}, tag, pendingRef)
 
-	if spreadID > 0 {
-		return &slotState{
-			spreadID:   spreadID,
-			entryPrice: underlyingPrice,
-		}
-	}
-	return nil
+	return &slotState{spreadID: -1, entryPrice: underlyingPrice, pendingRef: pendingRef, pendingBar: ctx.BarIndex()}
 }
 
 // ivCoefficient computes the position sizing coefficient x based on IV percentile.
@@ -864,6 +873,26 @@ func (s *turtleTrendSimpStrategy) countShortSlots() int {
 	return n
 }
 
+func (s *turtleTrendSimpStrategy) countActiveLongSlots() int {
+	n := 0
+	for _, slot := range s.longSlots {
+		if slot != nil && !slot.isPending() {
+			n++
+		}
+	}
+	return n
+}
+
+func (s *turtleTrendSimpStrategy) countActiveShortSlots() int {
+	n := 0
+	for _, slot := range s.shortSlots {
+		if slot != nil && !slot.isPending() {
+			n++
+		}
+	}
+	return n
+}
+
 func (s *turtleTrendSimpStrategy) nextFreeLongSlot() int {
 	for i, slot := range s.longSlots {
 		if slot == nil {
@@ -894,6 +923,68 @@ func (s *turtleTrendSimpStrategy) consumeHTFSignal(signalIndex float64) bool {
 	return true
 }
 
+func (s *turtleTrendSimpStrategy) resolvePendingSlots(ctx *backtest.BarContext) {
+	for i, slot := range s.longSlots {
+		s.longSlots[i] = s.resolvePendingSlot(ctx, slot)
+	}
+	for i, slot := range s.shortSlots {
+		s.shortSlots[i] = s.resolvePendingSlot(ctx, slot)
+	}
+	if len(s.longRemoved) > 0 {
+		updated := make([]*slotState, 0, len(s.longRemoved))
+		for _, slot := range s.longRemoved {
+			resolved := s.resolvePendingSlot(ctx, slot)
+			if resolved != nil {
+				updated = append(updated, resolved)
+			}
+		}
+		s.longRemoved = updated
+	}
+	if len(s.shortRemoved) > 0 {
+		updated := make([]*slotState, 0, len(s.shortRemoved))
+		for _, slot := range s.shortRemoved {
+			resolved := s.resolvePendingSlot(ctx, slot)
+			if resolved != nil {
+				updated = append(updated, resolved)
+			}
+		}
+		s.shortRemoved = updated
+	}
+}
+
+func (s *turtleTrendSimpStrategy) resolvePendingSlot(ctx *backtest.BarContext, slot *slotState) *slotState {
+	if slot == nil || !slot.isPending() {
+		return slot
+	}
+	if spread := s.findSpreadByRef(ctx.Spreads(), slot.pendingRef); spread != nil {
+		slot.spreadID = spread.ID
+		slot.pendingRef = ""
+		slot.pendingBar = 0
+		return slot
+	}
+	if ctx.BarIndex() > slot.pendingBar+1 {
+		return nil
+	}
+	return slot
+}
+
+func (s *turtleTrendSimpStrategy) findSpreadByRef(tracker *backtest.SpreadTracker, pendingRef string) *backtest.SpreadPosition {
+	if tracker == nil || pendingRef == "" {
+		return nil
+	}
+	for _, spread := range tracker.All() {
+		if spread != nil && spread.Ref == pendingRef {
+			return spread
+		}
+	}
+	return nil
+}
+
+func (s *turtleTrendSimpStrategy) nextPendingRef(slotRef string) string {
+	s.nextPendingRefID++
+	return s.Name() + "/" + slotRef + "/" + strconv.Itoa(s.nextPendingRefID)
+}
+
 func (s *turtleTrendSimpStrategy) allowInitialEntry(lowVolOK float64) bool {
 	return lowVolOK == 1
 }
@@ -919,6 +1010,10 @@ func (s *turtleTrendSimpStrategy) applyDefaults() {
 	if s.DebugEvery <= 0 {
 		s.DebugEvery = parseEnvInt("TOKTIK_TURTLE_DEBUG_EVERY", 100)
 	}
+}
+
+func (s *slotState) isPending() bool {
+	return s != nil && s.spreadID <= 0 && s.pendingRef != ""
 }
 
 func (s *turtleTrendSimpStrategy) shouldDebugBar(barIndex int) bool {
