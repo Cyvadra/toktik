@@ -15,6 +15,8 @@ import (
 	"github.com/Cyvadra/toktik/internal/cryptooptions"
 	"github.com/Cyvadra/toktik/internal/datafeed"
 	"github.com/Cyvadra/toktik/internal/report"
+	"github.com/Cyvadra/toktik/pkg/feeds"
+	_ "github.com/Cyvadra/toktik/pkg/feeds/dvol"
 	"github.com/Cyvadra/toktik/pkg/strategies"
 )
 
@@ -151,6 +153,16 @@ func main() {
 		log.Fatalf("ClickHouse connection failed: %v", err)
 	}
 
+	factorStore, err := feeds.NewStore(ctx, *dsn)
+	if err != nil {
+		log.Fatalf("Factor store connection failed: %v", err)
+	}
+	defer func() {
+		if closeErr := factorStore.Close(); closeErr != nil {
+			log.Printf("Warning: failed to close factor store: %v", closeErr)
+		}
+	}()
+
 	cfg := backtest.Config{
 		InitialCapital:  *capital,
 		AccountUnit:     strings.ToUpper(strings.TrimSpace(*baseAsset)),
@@ -173,7 +185,7 @@ func main() {
 
 	for i, strat := range strats {
 		log.Printf("--- Running strategy: %s ---", strat.Name())
-		result, runErr := runOne(ctx, conn, cfg, *baseAsset, *interval, from, to, strat, chainProvider)
+		result, runErr := runOne(ctx, conn, factorStore, cfg, *baseAsset, *interval, from, to, strat, chainProvider)
 		if runErr != nil {
 			log.Fatalf("Backtest failed [%s]: %v", strat.Name(), runErr)
 		}
@@ -222,6 +234,7 @@ func main() {
 func runOne(
 	ctx context.Context,
 	conn driver.Conn,
+	factorStore *feeds.Store,
 	cfg backtest.Config,
 	baseAsset, interval string,
 	from, to time.Time,
@@ -230,6 +243,7 @@ func runOne(
 ) (*backtest.Result, error) {
 	engine := backtest.NewEngine(cfg)
 	engine.RegisterDataFeed("crypto-underlying", datafeed.NewCryptoUnderlyingDataFeed(conn))
+	engine.RegisterFactorFeed("dvol", datafeed.NewFeedFactorBridge("dvol", factorStore))
 	engine.SetOptionsChainProvider(chainProvider)
 	return engine.Run(ctx, "crypto-underlying", baseAsset, interval, from, to, strat, nil)
 }
