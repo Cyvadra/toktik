@@ -12,7 +12,7 @@ func init() {
 		Name:   "delta-filter",
 		Groups: []string{"signal"},
 		Factory: func(cfg catalog.Config) (backtest.Strategy, error) {
-			return &deltaFilterStrategy{entryTWAP: intOrDefault(cfg.EntryTWAPBars, defaultEntryTWAPBars)}, nil
+			return &deltaFilterStrategy{entryTWAP: catalog.IntOrDefault(cfg.EntryTWAPBars, defaultEntryTWAPBars)}, nil
 		},
 	})
 }
@@ -62,11 +62,4 @@ func (s *deltaFilterStrategy) OnBar(ctx *backtest.BarContext) {
 	if (deltaOK == 0 || rsi > 70) && ctx.Position(primary) > 0 {
 		ctx.ClosePosition(primary)
 	}
-}
-
-func intOrDefault(value, fallback int) int {
-	if value == 0 {
-		return fallback
-	}
-	return value
 }

@@ -49,15 +49,15 @@ func init() {
 				EntryPriceMode:     cfg.EntryPriceMode,
 				ExitPriceMode:      cfg.ExitPriceMode,
 				ValuationPriceMode: cfg.ValuationPriceMode,
-				lookback:           intOrDefault(cfg.FastPeriod, defaultLookback),
-				minAmpPr:           floatOrDefault(cfg.PThreshold, defaultMinAmpPr),
-				scoreThreshold:     intOrDefault(cfg.SlowPeriod, defaultScoreThreshold),
+				lookback:           catalog.IntOrDefault(cfg.FastPeriod, defaultLookback),
+				minAmpPr:           catalog.FloatOrDefault(cfg.PThreshold, defaultMinAmpPr),
+				scoreThreshold:     catalog.IntOrDefault(cfg.SlowPeriod, defaultScoreThreshold),
 				strictScore:        defaultStrictScore,
 				dvolMinPr:          defaultDvolMinPr,
-				targetExpiryDays:   intOrDefault(cfg.TargetExpiryDays, defaultTargetDTE),
-				minExpiryDays:      intOrDefault(cfg.MinExpiryDays, defaultMinDTE),
-				shortDeltaMin:      floatOrDefault(cfg.ShortDeltaMin, defaultShortDeltaMin),
-				shortDeltaMax:      floatOrDefault(cfg.ShortDeltaMax, defaultShortDeltaMax),
+				targetExpiryDays:   catalog.IntOrDefault(cfg.TargetExpiryDays, defaultTargetDTE),
+				minExpiryDays:      catalog.IntOrDefault(cfg.MinExpiryDays, defaultMinDTE),
+				shortDeltaMin:      catalog.FloatOrDefault(cfg.ShortDeltaMin, defaultShortDeltaMin),
+				shortDeltaMax:      catalog.FloatOrDefault(cfg.ShortDeltaMax, defaultShortDeltaMax),
 			}, nil
 		},
 	})
@@ -632,20 +632,6 @@ func (s *buyFlashLowStrategy) exitPrice(leg backtest.SpreadLeg, contractMap map[
 func (s *buyFlashLowStrategy) valuationPrice(leg backtest.SpreadLeg, contractMap map[string]backtest.OptionContract) float64 {
 	contract := s.currentContract(leg.Contract, contractMap)
 	return s.ValuationPriceMode.ExitPrice(leg.Side, contract)
-}
-
-func intOrDefault(value, fallback int) int {
-	if value == 0 {
-		return fallback
-	}
-	return value
-}
-
-func floatOrDefault(value, fallback float64) float64 {
-	if value == 0 {
-		return fallback
-	}
-	return value
 }
 
 func percentileRank(source string, period int) backtest.Indicator {
