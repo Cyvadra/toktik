@@ -14,6 +14,7 @@ package buyflashlow
 
 import (
 	"math"
+	"time"
 
 	"github.com/Cyvadra/toktik/internal/backtest"
 	"github.com/Cyvadra/toktik/pkg/strategies/catalog"
@@ -24,6 +25,18 @@ const (
 	defaultMinAmpPr       = 66.0
 	defaultScoreThreshold = 3
 	defaultStrictScore    = 5
+	defaultDvolMinPr      = 60.0
+	dvolPrWindowShort     = 90
+	dvolPrWindowLong      = 360
+	defaultSpotNotional   = 1e-6
+	defaultTargetDTE      = 15
+	defaultMinDTE         = 7
+	defaultShortDeltaMin  = 0.15
+	defaultShortDeltaMax  = 0.35
+	defaultPremiumTarget  = 3.0
+	defaultMaxContracts   = 100.0
+	defaultTakeProfit1    = 0.70
+	defaultTakeProfit2    = 0.88
 )
 
 func init() {
@@ -33,26 +46,58 @@ func init() {
 		Groups:  []string{"momentum", "single-leg"},
 		Factory: func(cfg catalog.Config) (backtest.Strategy, error) {
 			return &buyFlashLowStrategy{
-				lookback:       intOrDefault(cfg.FastPeriod, defaultLookback),
-				minAmpPr:       floatOrDefault(cfg.PThreshold, defaultMinAmpPr),
-				scoreThreshold: intOrDefault(cfg.SlowPeriod, defaultScoreThreshold),
-				strictScore:    defaultStrictScore,
+				EntryPriceMode:     cfg.EntryPriceMode,
+				ExitPriceMode:      cfg.ExitPriceMode,
+				ValuationPriceMode: cfg.ValuationPriceMode,
+				lookback:           intOrDefault(cfg.FastPeriod, defaultLookback),
+				minAmpPr:           floatOrDefault(cfg.PThreshold, defaultMinAmpPr),
+				scoreThreshold:     intOrDefault(cfg.SlowPeriod, defaultScoreThreshold),
+				strictScore:        defaultStrictScore,
+				dvolMinPr:          defaultDvolMinPr,
+				targetExpiryDays:   intOrDefault(cfg.TargetExpiryDays, defaultTargetDTE),
+				minExpiryDays:      intOrDefault(cfg.MinExpiryDays, defaultMinDTE),
+				shortDeltaMin:      floatOrDefault(cfg.ShortDeltaMin, defaultShortDeltaMin),
+				shortDeltaMax:      floatOrDefault(cfg.ShortDeltaMax, defaultShortDeltaMax),
 			}, nil
 		},
 	})
 }
 
 type buyFlashLowStrategy struct {
-	lookback       int
-	minAmpPr       float64
-	scoreThreshold int
-	strictScore    int
+	EntryPriceMode     backtest.OptionPriceMode
+	ExitPriceMode      backtest.OptionPriceMode
+	ValuationPriceMode backtest.OptionPriceMode
+
+	lookback         int
+	minAmpPr         float64
+	scoreThreshold   int
+	strictScore      int
+	dvolMinPr        float64
+	targetExpiryDays int
+	minExpiryDays    int
+	shortDeltaMin    float64
+	shortDeltaMax    float64
+	spotNotional     float64
+	premiumTarget    float64
+	maxContracts     float64
+	takeProfit1      float64
+	takeProfit2      float64
 
 	// runtime state
 	highestSinceEntry float64
+	optionSpreadIDs   [2]int
+	dvolFactor        backtest.FactorRef
 }
 
 func (s *buyFlashLowStrategy) Name() string { return "BuyFlashLow" }
+
+func (s *buyFlashLowStrategy) SpreadPricingConfig() backtest.SpreadPricingConfig {
+	return backtest.SpreadPricingConfig{
+		EntryMode:     s.EntryPriceMode,
+		ExitMode:      s.ExitPriceMode,
+		ValuationMode: s.ValuationPriceMode,
+	}.WithDefaults()
+}
 
 // ReportColumns implements backtest.ReportColumnProvider so the HTML report's
 // data window shows key indicator values when hovering over the candlestick chart.
@@ -66,16 +111,32 @@ func (s *buyFlashLowStrategy) ReportColumns() []backtest.ReportColumn {
 		{Source: "amp_score", Label: "Amp Score", Decimals: 0},
 		{Source: "vol_score", Label: "Vol Score", Decimals: 0},
 		{Source: "l_prev", Label: "Support", Decimals: 2},
+		{Source: "dvol", Label: "DVOL", Decimals: 2},
+		{Source: "dvol_pr_90", Label: "DVOL PR90%", Decimals: 1},
+		{Source: "dvol_pr_360", Label: "DVOL PR360%", Decimals: 1},
 	}
 }
 
 func (s *buyFlashLowStrategy) Init(ctx *backtest.SetupContext) error {
+	s.applyDefaults()
 	s.highestSinceEntry = math.NaN()
 
 	lkb := s.lookback
 	ctx.SetParam("lookback", lkb)
 	ctx.SetParam("min_amp_pr", s.minAmpPr)
 	ctx.SetParam("score_threshold", s.scoreThreshold)
+	ctx.SetParam("dvol_min_pr", s.dvolMinPr)
+
+	// DVOL factor is used only by the options leg as an additional volatility filter.
+	s.dvolFactor = ctx.AddFactor("dvol", ctx.PrimaryRef().Interval)
+	ctx.RegisterFactor(s.dvolFactor, "dvol", backtest.Custom(
+		[]string{"close"},
+		func(inputs map[string][]float64) []float64 {
+			return inputs["close"]
+		},
+	))
+	ctx.RegisterFactor(s.dvolFactor, "dvol_pr_90", percentileRank("close", dvolPrWindowShort))
+	ctx.RegisterFactor(s.dvolFactor, "dvol_pr_360", percentileRank("close", dvolPrWindowLong))
 
 	ctx.Register("atr", backtest.ATR(lkb))
 	ctx.Register("sma_2", backtest.SMA("close", 2))
@@ -259,6 +320,10 @@ func (s *buyFlashLowStrategy) OnBar(ctx *backtest.BarContext) {
 	low := ctx.Low()
 	cls := ctx.Close()
 	vol := ctx.Ind("vol_norm")
+	now := ctx.Time()
+	chain := ctx.OptionsChain()
+	contractMap := s.buildContractMap(chain)
+	hasOpenOptionPosition := s.manageOpenShortPuts(ctx, now, contractMap)
 
 	atr := ctx.Ind("atr")
 	if math.IsNaN(atr) || atr <= 0 {
@@ -348,18 +413,6 @@ func (s *buyFlashLowStrategy) OnBar(ctx *backtest.BarContext) {
 
 	volScore := computeVolScore(volRank10, volRank20, volRank100, volSMA100, vol)
 
-	// When no volume data is available the maximum achievable score is 2 (amplitude
-	// only). Clamp the threshold so high-quality pin bars can still trigger.
-	const ampMax, volMax = 2, 3
-	volDataPresent := !math.IsNaN(volRank10) || !math.IsNaN(volRank20) || !math.IsNaN(volRank100)
-	maxPossible := ampMax
-	if volDataPresent {
-		maxPossible += volMax
-	}
-	if currentThreshold > maxPossible {
-		currentThreshold = maxPossible
-	}
-
 	if ampScore+volScore < currentThreshold {
 		return
 	}
@@ -367,9 +420,218 @@ func (s *buyFlashLowStrategy) OnBar(ctx *backtest.BarContext) {
 	// ── Entry ──────────────────────────────────────────────────────────────
 	if cls > 0 {
 		s.highestSinceEntry = cls
-		qty := (ctx.Equity() * 0.95) / cls
+		qty := s.spotNotional / cls
 		ctx.Buy(primary, qty)
+		if !hasOpenOptionPosition {
+			// if s.shouldOpenShortPut(ctx) {
+			s.openShortPutTranches(ctx, chain)
+			// }
+		}
 	}
+}
+
+func (s *buyFlashLowStrategy) shouldOpenShortPut(ctx *backtest.BarContext) bool {
+	dvol := ctx.Factor(s.dvolFactor)
+	pr90 := dvol.Ind("dvol_pr_90")
+	pr360 := dvol.Ind("dvol_pr_360")
+	return (!math.IsNaN(pr90) && pr90 >= s.dvolMinPr) || (!math.IsNaN(pr360) && pr360 >= s.dvolMinPr)
+}
+
+func (s *buyFlashLowStrategy) applyDefaults() {
+	pricingDefaults := backtest.DefaultSpreadPricingConfig()
+	if s.EntryPriceMode == backtest.OptionPriceModeUnspecified {
+		s.EntryPriceMode = pricingDefaults.EntryMode
+	}
+	if s.ExitPriceMode == backtest.OptionPriceModeUnspecified {
+		s.ExitPriceMode = pricingDefaults.ExitMode
+	}
+	if s.ValuationPriceMode == backtest.OptionPriceModeUnspecified {
+		s.ValuationPriceMode = pricingDefaults.ValuationMode
+	}
+	if s.targetExpiryDays == 0 {
+		s.targetExpiryDays = defaultTargetDTE
+	}
+	if s.minExpiryDays == 0 {
+		s.minExpiryDays = defaultMinDTE
+	}
+	if s.shortDeltaMin == 0 {
+		s.shortDeltaMin = defaultShortDeltaMin
+	}
+	if s.shortDeltaMax == 0 {
+		s.shortDeltaMax = defaultShortDeltaMax
+	}
+	if s.spotNotional <= 0 {
+		s.spotNotional = defaultSpotNotional
+	}
+	if s.premiumTarget <= 0 {
+		s.premiumTarget = defaultPremiumTarget
+	}
+	if s.maxContracts <= 0 {
+		s.maxContracts = defaultMaxContracts
+	}
+	if s.takeProfit1 <= 0 {
+		s.takeProfit1 = defaultTakeProfit1
+	}
+	if s.takeProfit2 <= 0 {
+		s.takeProfit2 = defaultTakeProfit2
+	}
+}
+
+func (s *buyFlashLowStrategy) buildContractMap(chain *backtest.OptionsChain) map[string]backtest.OptionContract {
+	if chain == nil || chain.Len() == 0 {
+		return nil
+	}
+	contractMap := make(map[string]backtest.OptionContract, chain.Len())
+	for _, contract := range chain.Contracts() {
+		contractMap[contract.Symbol] = contract
+	}
+	return contractMap
+}
+
+func (s *buyFlashLowStrategy) manageOpenShortPuts(ctx *backtest.BarContext, now time.Time, contractMap map[string]backtest.OptionContract) bool {
+	active := false
+	for i, spreadID := range s.optionSpreadIDs {
+		if spreadID <= 0 {
+			continue
+		}
+		sp := ctx.Spreads().Get(spreadID)
+		if sp == nil || sp.IsFullyClosed() || len(sp.Legs) == 0 || sp.Legs[0].Closed {
+			s.optionSpreadIDs[i] = 0
+			continue
+		}
+
+		leg := sp.Legs[0]
+		contract := s.currentContract(leg.Contract, contractMap)
+		markPrice := s.valuationPrice(leg, contractMap)
+		pnlPct := sp.LegUnrealizedPnLPct(0, markPrice)
+
+		shouldClose := false
+		closeReason := ""
+		if contract.DaysToExpiry(now) <= 1 {
+			shouldClose = true
+			closeReason = "sell put到期前平仓"
+		} else if i == 0 && !math.IsNaN(pnlPct) && pnlPct >= s.takeProfit1 {
+			shouldClose = true
+			closeReason = "sell put止盈70%"
+		} else if i == 1 && !math.IsNaN(pnlPct) && pnlPct >= s.takeProfit2 {
+			shouldClose = true
+			closeReason = "sell put止盈88%"
+		}
+
+		if shouldClose {
+			closePrice := s.exitPrice(leg, contractMap)
+			if !math.IsNaN(closePrice) && closePrice > 0 && ctx.CloseSpreadLegWithReason(spreadID, 0, closePrice, closeReason) {
+				s.optionSpreadIDs[i] = 0
+				continue
+			}
+		}
+
+		active = true
+	}
+	return active
+}
+
+func (s *buyFlashLowStrategy) openShortPutTranches(ctx *backtest.BarContext, chain *backtest.OptionsChain) {
+	if chain == nil || chain.Len() == 0 {
+		return
+	}
+	contract := s.selectShortPut(chain)
+	if contract == nil {
+		return
+	}
+
+	entryPrice := s.EntryPriceMode.EntryPrice(backtest.Sell, *contract)
+	if math.IsNaN(entryPrice) || entryPrice <= 0 {
+		return
+	}
+
+	totalQty := s.premiumTarget / entryPrice
+	if totalQty > s.maxContracts {
+		totalQty = s.maxContracts
+	}
+	if totalQty <= 0 {
+		return
+	}
+
+	firstQty := totalQty / 2
+	secondQty := totalQty - firstQty
+	tranches := []struct {
+		qty float64
+		tag string
+	}{
+		{qty: firstQty, tag: "buy-flash-low-short-put-tp70"},
+		{qty: secondQty, tag: "buy-flash-low-short-put-runner"},
+	}
+
+	for i, tranche := range tranches {
+		if tranche.qty <= 0 {
+			continue
+		}
+		spreadID := ctx.OpenSpread([]backtest.SpreadLeg{{
+			Contract:   *contract,
+			Side:       backtest.Sell,
+			Qty:        tranche.qty,
+			EntryPrice: entryPrice,
+		}}, tranche.tag)
+		if spreadID > 0 {
+			s.optionSpreadIDs[i] = spreadID
+		}
+	}
+}
+
+func (s *buyFlashLowStrategy) selectShortPut(chain *backtest.OptionsChain) *backtest.OptionContract {
+	puts := chain.Puts()
+	if puts.Len() == 0 {
+		return nil
+	}
+
+	expiryFiltered := puts.ExpiryRange(s.minExpiryDays, s.targetExpiryDays)
+	if expiryFiltered.Len() == 0 {
+		expiryFiltered = puts.ExpiryMin(s.minExpiryDays)
+	}
+	if expiryFiltered.Len() == 0 {
+		return nil
+	}
+	expiryFiltered = expiryFiltered.ExpiryNearest(s.targetExpiryDays)
+
+	targeted := expiryFiltered.DeltaRange(-s.shortDeltaMax, -s.shortDeltaMin)
+	if targeted.Len() > 0 {
+		if contract := targeted.BestSpread(); contract != nil {
+			return contract
+		}
+	}
+
+	targetDelta := -(s.shortDeltaMin + s.shortDeltaMax) / 2
+	sorted := expiryFiltered.SortByDelta(targetDelta)
+	for i := range sorted {
+		contract := sorted[i]
+		entryPrice := s.EntryPriceMode.EntryPrice(backtest.Sell, contract)
+		if !math.IsNaN(entryPrice) && entryPrice > 0 {
+			return &contract
+		}
+	}
+
+	return nil
+}
+
+func (s *buyFlashLowStrategy) currentContract(contract backtest.OptionContract, contractMap map[string]backtest.OptionContract) backtest.OptionContract {
+	if contractMap == nil {
+		return contract
+	}
+	if updated, ok := contractMap[contract.Symbol]; ok {
+		return updated
+	}
+	return contract
+}
+
+func (s *buyFlashLowStrategy) exitPrice(leg backtest.SpreadLeg, contractMap map[string]backtest.OptionContract) float64 {
+	contract := s.currentContract(leg.Contract, contractMap)
+	return s.ExitPriceMode.ExitPrice(leg.Side, contract)
+}
+
+func (s *buyFlashLowStrategy) valuationPrice(leg backtest.SpreadLeg, contractMap map[string]backtest.OptionContract) float64 {
+	contract := s.currentContract(leg.Contract, contractMap)
+	return s.ValuationPriceMode.ExitPrice(leg.Side, contract)
 }
 
 func intOrDefault(value, fallback int) int {
@@ -384,6 +646,31 @@ func floatOrDefault(value, fallback float64) float64 {
 		return fallback
 	}
 	return value
+}
+
+func percentileRank(source string, period int) backtest.Indicator {
+	return backtest.Custom(
+		[]string{source},
+		func(inputs map[string][]float64) []float64 {
+			series := inputs[source]
+			n := len(series)
+			out := make([]float64, n)
+			for i := 0; i < n; i++ {
+				if i < period || math.IsNaN(series[i]) {
+					out[i] = math.NaN()
+					continue
+				}
+				count := 0
+				for j := i - period; j < i; j++ {
+					if !math.IsNaN(series[j]) && series[j] < series[i] {
+						count++
+					}
+				}
+				out[i] = float64(count) / float64(period) * 100
+			}
+			return out
+		},
+	)
 }
 
 func computeAmpScore(ampPr100 float64) int {

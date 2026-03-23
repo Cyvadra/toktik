@@ -68,7 +68,9 @@ func ConnectClickHouse(ctx context.Context, dsn string) (driver.Conn, error) {
 	if opts.DialTimeout == 0 || opts.DialTimeout < defaultClickHouseDialTimeout {
 		opts.DialTimeout = defaultClickHouseDialTimeout
 	}
-	if opts.ReadTimeout == 0 || opts.ReadTimeout < defaultClickHouseReadTimeout {
+	// ReadTimeout=0 means no timeout; only enforce the minimum when a non-zero
+	// value is already set (e.g. from the DSN) but is shorter than the floor.
+	if opts.ReadTimeout != 0 && opts.ReadTimeout < defaultClickHouseReadTimeout {
 		opts.ReadTimeout = defaultClickHouseReadTimeout
 	}
 	conn, err := clickhouse.Open(opts)

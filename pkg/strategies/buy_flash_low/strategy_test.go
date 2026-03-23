@@ -15,8 +15,54 @@ type stagedFlashLowFeed struct {
 	secondRunFrom time.Time
 }
 
-func (f *stagedFlashLowFeed) Fields() []string {
+type risingDvolFactorFeed struct{}
+
+func (f *risingDvolFactorFeed) Fields() []string {
 	return []string{"open", "high", "low", "close"}
+}
+
+func (f *risingDvolFactorFeed) Load(_ context.Context, req backtest.FactorRequest) (*backtest.DataSet, error) {
+	if !req.To.After(req.From) {
+		ds := backtest.NewDataSet(0)
+		ds.SetTimestamps(nil)
+		ds.AddColumn("open", nil)
+		ds.AddColumn("high", nil)
+		ds.AddColumn("low", nil)
+		ds.AddColumn("close", nil)
+		return ds, nil
+	}
+
+	bars := int(req.To.Sub(req.From) / time.Hour)
+	if bars <= 0 {
+		bars = 1
+	}
+
+	ds := backtest.NewDataSet(bars)
+	ts := make([]time.Time, bars)
+	open := make([]float64, bars)
+	high := make([]float64, bars)
+	low := make([]float64, bars)
+	closeSeries := make([]float64, bars)
+
+	for i := 0; i < bars; i++ {
+		ts[i] = req.From.Add(time.Duration(i) * time.Hour)
+		base := 50.0 + float64(i)*0.1
+		open[i] = base
+		high[i] = base + 0.2
+		low[i] = base - 0.2
+		closeSeries[i] = base + 0.1
+	}
+
+	ds.SetTimestamps(ts)
+	ds.AddColumn("open", open)
+	ds.AddColumn("high", high)
+	ds.AddColumn("low", low)
+	ds.AddColumn("close", closeSeries)
+	return ds, nil
+}
+
+func (f *stagedFlashLowFeed) Fields() []string {
+	return []string{"open", "high", "low", "close", "volume"}
 }
 
 func (f *stagedFlashLowFeed) Load(_ context.Context, req backtest.DataRequest) (*backtest.DataSet, error) {
@@ -34,6 +80,7 @@ func flashLowDataSet(from time.Time, bars int) *backtest.DataSet {
 	high := make([]float64, bars)
 	low := make([]float64, bars)
 	closeSeries := make([]float64, bars)
+	volume := make([]float64, bars)
 
 	for i := 0; i < bars; i++ {
 		ts[i] = from.Add(time.Duration(i) * time.Hour)
@@ -41,6 +88,7 @@ func flashLowDataSet(from time.Time, bars int) *backtest.DataSet {
 		high[i] = 101
 		low[i] = 99
 		closeSeries[i] = 100.5
+		volume[i] = 100
 	}
 
 	if bars > 100 {
@@ -48,6 +96,7 @@ func flashLowDataSet(from time.Time, bars int) *backtest.DataSet {
 		high[100] = 110
 		low[100] = 98.5
 		closeSeries[100] = 109.5
+		volume[100] = 1000
 	}
 
 	if bars > 101 {
@@ -62,6 +111,7 @@ func flashLowDataSet(from time.Time, bars int) *backtest.DataSet {
 	ds.AddColumn("high", high)
 	ds.AddColumn("low", low)
 	ds.AddColumn("close", closeSeries)
+	ds.AddColumn("volume", volume)
 	return ds
 }
 
@@ -76,6 +126,7 @@ func TestStrategyInstanceCanBeReusedAfterUnfilledFinalBarSignal(t *testing.T) {
 		firstRunFrom:  firstFrom,
 		secondRunFrom: secondFrom,
 	})
+	engine.RegisterFactorFeed("dvol", &risingDvolFactorFeed{})
 
 	strategy := &buyFlashLowStrategy{
 		lookback:       defaultLookback,
@@ -104,7 +155,7 @@ func TestStrategyInstanceCanBeReusedAfterUnfilledFinalBarSignal(t *testing.T) {
 type trailingAnchorFeed struct{}
 
 func (f *trailingAnchorFeed) Fields() []string {
-	return []string{"open", "high", "low", "close"}
+	return []string{"open", "high", "low", "close", "volume"}
 }
 
 func (f *trailingAnchorFeed) Load(_ context.Context, req backtest.DataRequest) (*backtest.DataSet, error) {
@@ -115,6 +166,7 @@ func (f *trailingAnchorFeed) Load(_ context.Context, req backtest.DataRequest) (
 	high := make([]float64, bars)
 	low := make([]float64, bars)
 	closeSeries := make([]float64, bars)
+	volume := make([]float64, bars)
 
 	for i := 0; i < bars; i++ {
 		ts[i] = req.From.Add(time.Duration(i) * time.Hour)
@@ -122,12 +174,14 @@ func (f *trailingAnchorFeed) Load(_ context.Context, req backtest.DataRequest) (
 		high[i] = 101
 		low[i] = 99
 		closeSeries[i] = 100.5
+		volume[i] = 100
 	}
 
 	open[100] = 100
 	high[100] = 120
 	low[100] = 98.5
 	closeSeries[100] = 110.5
+	volume[100] = 1000
 
 	open[101] = 109
 	high[101] = 111
@@ -144,6 +198,7 @@ func (f *trailingAnchorFeed) Load(_ context.Context, req backtest.DataRequest) (
 	ds.AddColumn("high", high)
 	ds.AddColumn("low", low)
 	ds.AddColumn("close", closeSeries)
+	ds.AddColumn("volume", volume)
 	return ds, nil
 }
 
@@ -152,6 +207,7 @@ func TestEntrySeedsTrailingAnchorFromSignalClose(t *testing.T) {
 
 	engine := backtest.NewEngine(backtest.Config{InitialCapital: 1000})
 	engine.RegisterDataFeed("test", &trailingAnchorFeed{})
+	engine.RegisterFactorFeed("dvol", &risingDvolFactorFeed{})
 
 	strategy := &buyFlashLowStrategy{
 		lookback:       defaultLookback,

@@ -18,7 +18,6 @@ import (
 var DefaultKlineWindows = []string{"1m", "5m", "15m", "30m", "1h", "2h", "3h", "4h", "6h", "8h", "12h", "1d"}
 
 const (
-	backfillTimeoutRetryLimit = 3
 	backfillTimeoutRetryDelay = 5 * time.Second
 )
 
@@ -278,8 +277,7 @@ func spotAggDeleteScope(ctx context.Context, conn driver.Conn, aggTable string, 
 }
 
 func retryBackfillTimeout(ctx context.Context, operation string, fn func() error) error {
-	var lastErr error
-	for attempt := 1; attempt <= backfillTimeoutRetryLimit; attempt++ {
+	for attempt := 1; ; attempt++ {
 		err := fn()
 		if err == nil {
 			return nil
@@ -288,12 +286,7 @@ func retryBackfillTimeout(ctx context.Context, operation string, fn func() error
 			return err
 		}
 
-		lastErr = err
-		if attempt == backfillTimeoutRetryLimit {
-			break
-		}
-
-		log.Printf("[kline-backfill] warning: %s timed out on attempt %d/%d, retrying in %s: %v", operation, attempt, backfillTimeoutRetryLimit, backfillTimeoutRetryDelay, err)
+		log.Printf("[kline-backfill] warning: %s timed out on attempt %d, retrying in %s: %v", operation, attempt, backfillTimeoutRetryDelay, err)
 
 		select {
 		case <-ctx.Done():
@@ -301,8 +294,6 @@ func retryBackfillTimeout(ctx context.Context, operation string, fn func() error
 		case <-time.After(backfillTimeoutRetryDelay):
 		}
 	}
-
-	return fmt.Errorf("%s timed out after %d attempts: %w", operation, backfillTimeoutRetryLimit, lastErr)
 }
 
 func isRetryableTimeout(err error) bool {
