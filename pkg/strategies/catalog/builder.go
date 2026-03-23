@@ -1,15 +1,15 @@
-package strategies
+package catalog
 
 import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/Cyvadra/toktik/internal/backtest"
+	"github.com/Cyvadra/toktik/pkg/strategy"
 )
 
 // Build returns a configured backtest strategy from the strategy name and
 // optional JSON parameters blob.
-func Build(strategyName string, params json.RawMessage) (backtest.Strategy, error) {
+func Build(strategyName string, params json.RawMessage) (strategy.Strategy, error) {
 	cfg, err := ConfigFromJSON(params)
 	if err != nil {
 		return nil, err

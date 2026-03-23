@@ -1,17 +1,18 @@
-package strategies
+package sf31long
 
 import (
 	"math"
 
 	"github.com/Cyvadra/toktik/internal/backtest"
+	"github.com/Cyvadra/toktik/pkg/strategies/catalog"
 )
 
 func init() {
-	Register(Registration{
+	catalog.Register(catalog.Registration{
 		Name:    "sf31-long",
 		Aliases: []string{"sf31_long"},
 		Groups:  []string{"trend", "single-leg"},
-		Factory: func(cfg Config) (backtest.Strategy, error) {
+		Factory: func(cfg catalog.Config) (backtest.Strategy, error) {
 			return &sf31LongStrategy{
 				BarNo:     intOrDefault(cfg.FastPeriod, 10),
 				DnBand:    floatOrDefault(cfg.PThreshold, 10),
@@ -203,6 +204,13 @@ func (s *sf31LongStrategy) resetState() {
 }
 
 func floatOrDefault(value, fallback float64) float64 {
+	if value == 0 {
+		return fallback
+	}
+	return value
+}
+
+func intOrDefault(value, fallback int) int {
 	if value == 0 {
 		return fallback
 	}

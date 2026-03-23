@@ -1,12 +1,17 @@
-package strategies
+package deltafilter
 
-import "github.com/Cyvadra/toktik/internal/backtest"
+import (
+	"github.com/Cyvadra/toktik/internal/backtest"
+	"github.com/Cyvadra/toktik/pkg/strategies/catalog"
+)
+
+const defaultEntryTWAPBars = 1
 
 func init() {
-	Register(Registration{
+	catalog.Register(catalog.Registration{
 		Name:   "delta-filter",
 		Groups: []string{"signal"},
-		Factory: func(cfg Config) (backtest.Strategy, error) {
+		Factory: func(cfg catalog.Config) (backtest.Strategy, error) {
 			return &deltaFilterStrategy{entryTWAP: intOrDefault(cfg.EntryTWAPBars, defaultEntryTWAPBars)}, nil
 		},
 	})
@@ -57,4 +62,11 @@ func (s *deltaFilterStrategy) OnBar(ctx *backtest.BarContext) {
 	if (deltaOK == 0 || rsi > 70) && ctx.Position(primary) > 0 {
 		ctx.ClosePosition(primary)
 	}
+}
+
+func intOrDefault(value, fallback int) int {
+	if value == 0 {
+		return fallback
+	}
+	return value
 }

@@ -1,13 +1,22 @@
-package strategies
+package goldencross
 
-import "github.com/Cyvadra/toktik/internal/backtest"
+import (
+	"github.com/Cyvadra/toktik/internal/backtest"
+	"github.com/Cyvadra/toktik/pkg/strategies/catalog"
+)
+
+const (
+	defaultFastPeriod    = 10
+	defaultSlowPeriod    = 50
+	defaultEntryTWAPBars = 1
+)
 
 func init() {
-	Register(Registration{
+	catalog.Register(catalog.Registration{
 		Name:    "golden-cross",
 		Aliases: []string{"golden_cross"},
 		Groups:  []string{"trend"},
-		Factory: func(cfg Config) (backtest.Strategy, error) {
+		Factory: func(cfg catalog.Config) (backtest.Strategy, error) {
 			return &goldenCrossStrategy{
 				fastPeriod: intOrDefault(cfg.FastPeriod, defaultFastPeriod),
 				slowPeriod: intOrDefault(cfg.SlowPeriod, defaultSlowPeriod),

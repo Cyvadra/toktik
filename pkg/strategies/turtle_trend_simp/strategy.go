@@ -1,4 +1,4 @@
-package strategies
+package turtletrendsimp
 
 import (
 	"math"
@@ -7,14 +7,15 @@ import (
 	"time"
 
 	"github.com/Cyvadra/toktik/internal/backtest"
+	"github.com/Cyvadra/toktik/pkg/strategies/catalog"
 )
 
 func init() {
-	Register(Registration{
+	catalog.Register(catalog.Registration{
 		Name:    "turtle-trend-simp",
 		Aliases: []string{"turtle_trend_simp", "turtle-trend"},
 		Groups:  []string{"trend", "single-leg"},
-		Factory: func(cfg Config) (backtest.Strategy, error) {
+		Factory: func(cfg catalog.Config) (backtest.Strategy, error) {
 			return &turtleTrendSimpStrategy{
 				EntryPriceMode:     cfg.EntryPriceMode,
 				ExitPriceMode:      cfg.ExitPriceMode,
@@ -48,7 +49,7 @@ type turtleTrendSimpStrategy struct {
 	ExitPriceMode      backtest.OptionPriceMode
 	ValuationPriceMode backtest.OptionPriceMode
 	SpotSignalNotional float64
-	Direction          TradeDirection // both | long_only | short_only
+	Direction          catalog.TradeDirection // both | long_only | short_only
 	Debug              bool
 	DebugEvery         int
 
@@ -566,7 +567,7 @@ func (s *turtleTrendSimpStrategy) OnBar(ctx *backtest.BarContext) {
 	longBreakout := math.Max(dcUpper, bbUpper)
 	shortBreakout := math.Min(dcLower, bbLower) - 0.5*atrSignal
 
-	if allowInitialEntry && close > longBreakout && s.Direction != DirectionShortOnly {
+	if allowInitialEntry && close > longBreakout && s.Direction != catalog.DirectionShortOnly {
 		if !s.longSpotOpen && !s.hasPendingSpotAction(spotActionLongOpen, 0) {
 			s.enqueueSpotAction(pendingSpotAction{
 				triggerTime: triggerTime,
@@ -616,7 +617,7 @@ func (s *turtleTrendSimpStrategy) OnBar(ctx *backtest.BarContext) {
 
 	// Long option add-ons are driven by primary-interval close breakouts over
 	// the next ATR ladder anchored to the active option series initial entry.
-	if s.Direction != DirectionShortOnly && s.countActiveLongSlots() > 0 && s.shouldOpenLongSpreadAdd(prevClose, close, atr) {
+	if s.Direction != catalog.DirectionShortOnly && s.countActiveLongSlots() > 0 && s.shouldOpenLongSpreadAdd(prevClose, close, atr) {
 		slotIdx := s.nextFreeLongSlot()
 		if slotIdx >= 0 {
 			slot := s.openCallOption(ctx, chain, close, triggerTime, "active-long-add", "加仓")
@@ -629,7 +630,7 @@ func (s *turtleTrendSimpStrategy) OnBar(ctx *backtest.BarContext) {
 
 	// --- Short entry ---
 	// Breakout below prior-bar Min(Donchian lower 20, Bollinger lower 20) - 0.5*ATR
-	if allowInitialEntry && close < shortBreakout && s.Direction != DirectionLongOnly {
+	if allowInitialEntry && close < shortBreakout && s.Direction != catalog.DirectionLongOnly {
 		if !s.shortSpotOpen && !s.hasPendingSpotAction(spotActionShortOpen, 0) {
 			s.enqueueSpotAction(pendingSpotAction{
 				triggerTime: triggerTime,
@@ -679,7 +680,7 @@ func (s *turtleTrendSimpStrategy) OnBar(ctx *backtest.BarContext) {
 
 	// Short option add-ons are driven by primary-interval close breakouts below
 	// the next ATR ladder anchored to the active option series initial entry.
-	if s.Direction != DirectionLongOnly && s.countActiveShortSlots() > 0 && s.shouldOpenShortSpreadAdd(prevClose, close, atr) {
+	if s.Direction != catalog.DirectionLongOnly && s.countActiveShortSlots() > 0 && s.shouldOpenShortSpreadAdd(prevClose, close, atr) {
 		slotIdx := s.nextFreeShortSlot()
 		if slotIdx >= 0 {
 			slot := s.openPutOption(ctx, chain, close, triggerTime, "active-short-add", "加仓")
@@ -1060,7 +1061,7 @@ func (s *turtleTrendSimpStrategy) applyDefaults() {
 		s.SpotSignalNotional = turtleTrendSimpSpotSignalNotional
 	}
 	if s.Direction == "" {
-		s.Direction = DirectionBoth
+		s.Direction = catalog.DirectionBoth
 	}
 	s.lastHTFSignalIndex = -1
 	if !s.Debug {

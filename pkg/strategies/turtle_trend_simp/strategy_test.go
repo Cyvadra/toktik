@@ -1,4 +1,4 @@
-package strategies
+package turtletrendsimp
 
 import (
 	"math"

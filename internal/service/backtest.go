@@ -8,7 +8,7 @@ import (
 	"github.com/Cyvadra/toktik/internal/cryptooptions"
 	"github.com/Cyvadra/toktik/internal/datafeed"
 	"github.com/Cyvadra/toktik/internal/dto"
-	"github.com/Cyvadra/toktik/internal/strategies"
+	"github.com/Cyvadra/toktik/pkg/strategies"
 )
 
 const (

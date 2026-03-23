@@ -1,4 +1,4 @@
-package strategies
+package catalog
 
 import (
 	"encoding/json"

@@ -1,18 +1,19 @@
-package strategies
+package madeviationspread
 
 import (
 	"math"
 	"time"
 
 	"github.com/Cyvadra/toktik/internal/backtest"
+	"github.com/Cyvadra/toktik/pkg/strategies/catalog"
 )
 
 func init() {
-	Register(Registration{
+	catalog.Register(catalog.Registration{
 		Name:    "ma-deviation-bull",
 		Aliases: []string{"bull-put-spread", "bull"},
 		Groups:  []string{"spread"},
-		Factory: func(cfg Config) (backtest.Strategy, error) {
+		Factory: func(cfg catalog.Config) (backtest.Strategy, error) {
 			return &MADeviationSpreadStrategy{
 				Direction:          BullSpread,
 				PositionSize:       cfg.PositionSize,
@@ -33,11 +34,11 @@ func init() {
 		},
 	})
 
-	Register(Registration{
+	catalog.Register(catalog.Registration{
 		Name:    "ma-deviation-bear",
 		Aliases: []string{"bear-call-spread", "bear"},
 		Groups:  []string{"spread"},
-		Factory: func(cfg Config) (backtest.Strategy, error) {
+		Factory: func(cfg catalog.Config) (backtest.Strategy, error) {
 			return &MADeviationSpreadStrategy{
 				Direction:          BearSpread,
 				PositionSize:       cfg.PositionSize,

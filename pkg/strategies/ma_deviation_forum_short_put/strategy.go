@@ -1,10 +1,11 @@
-package strategies
+package madeviationforumshortput
 
 import (
 	"math"
 	"time"
 
 	"github.com/Cyvadra/toktik/internal/backtest"
+	"github.com/Cyvadra/toktik/pkg/strategies/catalog"
 )
 
 const (
@@ -17,11 +18,11 @@ const (
 )
 
 func init() {
-	Register(Registration{
+	catalog.Register(catalog.Registration{
 		Name:    "forum-short-put",
 		Aliases: []string{"ma-deviation-forum", "forum"},
 		Groups:  []string{"single-leg"},
-		Factory: func(cfg Config) (backtest.Strategy, error) {
+		Factory: func(cfg catalog.Config) (backtest.Strategy, error) {
 			return &MADeviationForumShortPutStrategy{
 				PositionSize:       cfg.PositionSize,
 				EntryPriceMode:     cfg.EntryPriceMode,

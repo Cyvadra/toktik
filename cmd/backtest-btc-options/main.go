@@ -15,7 +15,7 @@ import (
 	"github.com/Cyvadra/toktik/internal/cryptooptions"
 	"github.com/Cyvadra/toktik/internal/datafeed"
 	"github.com/Cyvadra/toktik/internal/report"
-	"github.com/Cyvadra/toktik/internal/strategies"
+	"github.com/Cyvadra/toktik/pkg/strategies"
 )
 
 func main() {
