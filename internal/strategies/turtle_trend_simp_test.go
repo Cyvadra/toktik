@@ -15,8 +15,8 @@ func TestTurtleTrendSimpDetachLongSeriesResetsActiveState(t *testing.T) {
 			nil,
 			{spreadID: 13, entryPrice: 103},
 		},
-		longAddCount:       2,
-		lastLongEntryPrice: 123.45,
+		longAddCount:         2,
+		longSpreadEntryPrice: 123.45,
 	}
 
 	strategy.detachLongSeries(10)
@@ -33,8 +33,8 @@ func TestTurtleTrendSimpDetachLongSeriesResetsActiveState(t *testing.T) {
 	if strategy.longAddCount != 0 {
 		t.Fatalf("longAddCount = %d, want 0", strategy.longAddCount)
 	}
-	if strategy.lastLongEntryPrice != 0 {
-		t.Fatalf("lastLongEntryPrice = %f, want 0", strategy.lastLongEntryPrice)
+	if strategy.longSpreadEntryPrice != 0 {
+		t.Fatalf("longSpreadEntryPrice = %f, want 0", strategy.longSpreadEntryPrice)
 	}
 }
 
@@ -44,8 +44,8 @@ func TestTurtleTrendSimpDetachShortSeriesResetsActiveState(t *testing.T) {
 			{spreadID: 21, entryPrice: 99},
 			{spreadID: 22, entryPrice: 95},
 		},
-		shortAddCount:       1,
-		lastShortEntryPrice: 87.6,
+		shortAddCount:         1,
+		shortSpreadEntryPrice: 87.6,
 	}
 
 	strategy.detachShortSeries(20)
@@ -62,8 +62,8 @@ func TestTurtleTrendSimpDetachShortSeriesResetsActiveState(t *testing.T) {
 	if strategy.shortAddCount != 0 {
 		t.Fatalf("shortAddCount = %d, want 0", strategy.shortAddCount)
 	}
-	if strategy.lastShortEntryPrice != 0 {
-		t.Fatalf("lastShortEntryPrice = %f, want 0", strategy.lastShortEntryPrice)
+	if strategy.shortSpreadEntryPrice != 0 {
+		t.Fatalf("shortSpreadEntryPrice = %f, want 0", strategy.shortSpreadEntryPrice)
 	}
 }
 
@@ -107,5 +107,56 @@ func TestTurtleTrendSimpAllowInitialEntry(t *testing.T) {
 	}
 	if !strategy.allowInitialEntry(1) {
 		t.Fatal("expected low-vol filter to allow initial entries when flag is 1")
+	}
+}
+
+func TestTurtleTrendSimpApplyDefaultsSetsTinySpotSignalNotional(t *testing.T) {
+	strategy := &turtleTrendSimpStrategy{}
+
+	strategy.applyDefaults()
+
+	if strategy.SpotSignalNotional != turtleTrendSimpSpotSignalNotional {
+		t.Fatalf("SpotSignalNotional = %g, want %g", strategy.SpotSignalNotional, turtleTrendSimpSpotSignalNotional)
+	}
+	if strategy.SpotSignalNotional >= 1 {
+		t.Fatalf("SpotSignalNotional = %g, want a negligible signal-only notional", strategy.SpotSignalNotional)
+	}
+}
+
+func TestTurtleTrendSimpShouldOpenLongSpreadAddRequiresFreshCross(t *testing.T) {
+	strategy := &turtleTrendSimpStrategy{
+		longSpreadEntryPrice: 100,
+		longAddCount:         0,
+	}
+
+	if !strategy.shouldOpenLongSpreadAdd(100, 116, 10) {
+		t.Fatal("expected first long spread add to trigger on the first fresh threshold cross")
+	}
+
+	strategy.longAddCount = 1
+	if strategy.shouldOpenLongSpreadAdd(116, 117, 10) {
+		t.Fatal("expected second long spread add to stay blocked without a fresh cross on the next bar")
+	}
+	if !strategy.shouldOpenLongSpreadAdd(114, 116, 10) {
+		t.Fatal("expected second long spread add to trigger once price freshly crosses the next ladder")
+	}
+	strategy.longAddCount = 2
+	if strategy.shouldOpenLongSpreadAdd(114, 130, 10) {
+		t.Fatal("expected long spread add to stop after the configured maximum")
+	}
+}
+
+func TestTurtleTrendSimpShouldOpenShortSpreadAddRequiresFreshCross(t *testing.T) {
+	strategy := &turtleTrendSimpStrategy{
+		shortSpreadEntryPrice: 100,
+		shortAddCount:         0,
+	}
+
+	if !strategy.shouldOpenShortSpreadAdd(100, 92, 10) {
+		t.Fatal("expected short spread add to trigger on the first fresh threshold cross")
+	}
+	strategy.shortAddCount = 1
+	if strategy.shouldOpenShortSpreadAdd(92, 91, 10) {
+		t.Fatal("expected short spread add to stay blocked after the maximum add count")
 	}
 }

@@ -19,6 +19,7 @@ func init() {
 				EntryPriceMode:     cfg.EntryPriceMode,
 				ExitPriceMode:      cfg.ExitPriceMode,
 				ValuationPriceMode: cfg.ValuationPriceMode,
+				SpotSignalNotional: 0,
 				Direction:          cfg.Direction,
 			}, nil
 		},
@@ -28,6 +29,8 @@ func init() {
 // htfInterval is the higher-timeframe bar interval used for signal generation.
 // The primary bar interval (e.g. 5m) controls execution granularity.
 const htfInterval = "8h"
+const htfBarDuration = 8 * time.Hour
+const turtleTrendSimpSpotSignalNotional = 1e-6
 
 // turtleTrendSimpStrategy implements the "期权趋势替代" strategy.
 //
@@ -44,6 +47,7 @@ type turtleTrendSimpStrategy struct {
 	EntryPriceMode     backtest.OptionPriceMode
 	ExitPriceMode      backtest.OptionPriceMode
 	ValuationPriceMode backtest.OptionPriceMode
+	SpotSignalNotional float64
 	Direction          TradeDirection // both | long_only | short_only
 	Debug              bool
 	DebugEvery         int
@@ -58,10 +62,10 @@ type turtleTrendSimpStrategy struct {
 	longRemoved  []*slotState  // detached long positions no longer block new entries
 	shortRemoved []*slotState  // detached short positions no longer block new entries
 
-	lastLongEntryPrice  float64 // price at last long entry/add-on
-	lastShortEntryPrice float64 // price at last short entry/add-on
-	longAddCount        int     // number of long add-ons executed
-	shortAddCount       int     // number of short add-ons executed
+	longSpreadEntryPrice  float64 // underlying price of the active long series initial entry
+	shortSpreadEntryPrice float64 // underlying price of the active short series initial entry
+	longAddCount          int     // number of long add-ons executed for the active option series
+	shortAddCount         int     // number of short add-ons executed for the active option series
 
 	// Spot trading state (signal reference system)
 	longSpotOpen        bool    // whether a long spot position is currently open
@@ -72,15 +76,36 @@ type turtleTrendSimpStrategy struct {
 	shortSpotAddCount   int     // number of executed short spot add-ons
 	longSpotHigh        float64 // BTC_max: highest price since long spot entry
 	shortSpotLow        float64 // BTC_min: lowest price since short spot entry
+	pendingSpotActions  []*pendingSpotAction
 	nextPendingRefID    int
 }
 
 // slotState tracks a single option position slot.
 type slotState struct {
-	spreadID   int
-	entryPrice float64 // underlying price at entry
-	pendingRef string
-	pendingBar int
+	spreadID    int
+	entryPrice  float64 // underlying price at entry
+	pendingRef  string
+	pendingTime time.Time
+}
+
+type spotActionKind int
+
+const (
+	spotActionLongOpen spotActionKind = iota
+	spotActionLongAdd
+	spotActionLongClose
+	spotActionShortOpen
+	spotActionShortAdd
+	spotActionShortClose
+)
+
+type pendingSpotAction struct {
+	triggerTime time.Time
+	kind        spotActionKind
+	notional    float64
+	qty         float64
+	note        string
+	addCount    int
 }
 
 var (
@@ -279,9 +304,11 @@ func (s *turtleTrendSimpStrategy) OnBar(ctx *backtest.BarContext) {
 	}
 
 	s.resolvePendingSlots(ctx)
+	s.resolvePendingSpotActions(ctx)
 
 	// ATR from the completed 8h bar, aligned to the 5m primary timeline.
 	atr := ctx.Field("htf_atr20_prev")
+	prevClose := ctx.FieldAt("close", 1)
 
 	// --- Manage existing positions ---
 	chain := ctx.OptionsChain()
@@ -316,12 +343,6 @@ func (s *turtleTrendSimpStrategy) OnBar(ctx *backtest.BarContext) {
 		currentContract := s.currentContract(leg.Contract, contractMap)
 		markPrice := s.valuationPriceForLeg(*leg, contractMap)
 
-		if s.shouldCloseForExpiry(currentContract, now) {
-			ctx.CloseSpreadLegWithReason(sp.ID, 0, s.exitPriceForLeg(*leg, contractMap), s.withDeltaReason("到期前一天平仓", currentContract.Delta))
-			s.longSlots[i] = nil
-			continue
-		}
-
 		// When the main slot suffers an 80% premium drawdown, detach the whole side.
 		if i == 0 && s.hitRemovalThreshold(*leg, markPrice) {
 			s.detachLongSeries(barIndex)
@@ -341,7 +362,7 @@ func (s *turtleTrendSimpStrategy) OnBar(ctx *backtest.BarContext) {
 
 		if needsRoll {
 			ctx.CloseSpreadLegWithReason(sp.ID, 0, s.exitPriceForLeg(*leg, contractMap), s.withDeltaReason(s.rollCloseReason(absDelta, pnlPct), currentContract.Delta))
-			s.longSlots[i] = s.openCallOption(ctx, chain, close, "active-long", "换仓")
+			s.longSlots[i] = s.openCallOption(ctx, chain, close, s.immediateExecutionTime(now), "active-long", "换仓")
 		}
 	}
 
@@ -368,12 +389,6 @@ func (s *turtleTrendSimpStrategy) OnBar(ctx *backtest.BarContext) {
 		currentContract := s.currentContract(leg.Contract, contractMap)
 		markPrice := s.valuationPriceForLeg(*leg, contractMap)
 
-		if s.shouldCloseForExpiry(currentContract, now) {
-			ctx.CloseSpreadLegWithReason(sp.ID, 0, s.exitPriceForLeg(*leg, contractMap), s.withDeltaReason("到期前一天平仓", currentContract.Delta))
-			s.shortSlots[i] = nil
-			continue
-		}
-
 		if i == 0 && s.hitRemovalThreshold(*leg, markPrice) {
 			s.detachShortSeries(barIndex)
 			break
@@ -392,7 +407,7 @@ func (s *turtleTrendSimpStrategy) OnBar(ctx *backtest.BarContext) {
 
 		if needsRoll {
 			ctx.CloseSpreadLegWithReason(sp.ID, 0, s.exitPriceForLeg(*leg, contractMap), s.withDeltaReason(s.rollCloseReason(absDelta, pnlPct), currentContract.Delta))
-			s.shortSlots[i] = s.openPutOption(ctx, chain, close, "active-short", "换仓")
+			s.shortSlots[i] = s.openPutOption(ctx, chain, close, s.immediateExecutionTime(now), "active-short", "换仓")
 		}
 	}
 
@@ -419,11 +434,6 @@ func (s *turtleTrendSimpStrategy) OnBar(ctx *backtest.BarContext) {
 			currentContract := s.currentContract(leg.Contract, contractMap)
 			markPrice := s.valuationPriceForLeg(*leg, contractMap)
 
-			if s.shouldCloseForExpiry(currentContract, now) {
-				ctx.CloseSpreadLegWithReason(sp.ID, 0, s.exitPriceForLeg(*leg, contractMap), s.withDeltaReason("到期前一天平仓", currentContract.Delta))
-				continue
-			}
-
 			absDelta := math.Abs(currentContract.Delta)
 			pnlPct := sp.LegUnrealizedPnLPct(0, markPrice)
 			needsRoll := false
@@ -436,7 +446,7 @@ func (s *turtleTrendSimpStrategy) OnBar(ctx *backtest.BarContext) {
 
 			if needsRoll {
 				ctx.CloseSpreadLegWithReason(sp.ID, 0, s.exitPriceForLeg(*leg, contractMap), s.withDeltaReason(s.rollCloseReason(absDelta, pnlPct), currentContract.Delta))
-				if reopened := s.openCallOption(ctx, chain, close, "removed-long", "换仓"); reopened != nil {
+				if reopened := s.openCallOption(ctx, chain, close, s.immediateExecutionTime(now), "removed-long", "换仓"); reopened != nil {
 					updated = append(updated, reopened)
 				}
 				continue
@@ -470,11 +480,6 @@ func (s *turtleTrendSimpStrategy) OnBar(ctx *backtest.BarContext) {
 			currentContract := s.currentContract(leg.Contract, contractMap)
 			markPrice := s.valuationPriceForLeg(*leg, contractMap)
 
-			if s.shouldCloseForExpiry(currentContract, now) {
-				ctx.CloseSpreadLegWithReason(sp.ID, 0, s.exitPriceForLeg(*leg, contractMap), s.withDeltaReason("到期前一天平仓", currentContract.Delta))
-				continue
-			}
-
 			absDelta := math.Abs(currentContract.Delta)
 			pnlPct := sp.LegUnrealizedPnLPct(0, markPrice)
 			needsRoll := false
@@ -487,7 +492,7 @@ func (s *turtleTrendSimpStrategy) OnBar(ctx *backtest.BarContext) {
 
 			if needsRoll {
 				ctx.CloseSpreadLegWithReason(sp.ID, 0, s.exitPriceForLeg(*leg, contractMap), s.withDeltaReason(s.rollCloseReason(absDelta, pnlPct), currentContract.Delta))
-				if reopened := s.openPutOption(ctx, chain, close, "removed-short", "换仓"); reopened != nil {
+				if reopened := s.openPutOption(ctx, chain, close, s.immediateExecutionTime(now), "removed-short", "换仓"); reopened != nil {
 					updated = append(updated, reopened)
 				}
 				continue
@@ -504,6 +509,8 @@ func (s *turtleTrendSimpStrategy) OnBar(ctx *backtest.BarContext) {
 	}
 
 	primary := ctx.PrimaryRef()
+	triggerTime := s.nextHTFExecutionTime(now)
+	s.scheduleExpiryCloses(ctx, now, triggerTime, contractMap)
 
 	// --- Spot trailing-stop management (runs on aligned 8h signal updates) ---
 	if s.longSpotOpen {
@@ -512,12 +519,13 @@ func (s *turtleTrendSimpStrategy) OnBar(ctx *backtest.BarContext) {
 		}
 		if !math.IsNaN(atr) && close < s.longSpotHigh-3*atr {
 			if qty := ctx.Position(primary); qty > 0 {
-				ctx.SellWithNote(primary, qty, "海龟简易-Spot-Long：止损平仓(跌破BTC_max-3ATR)")
+				s.enqueueSpotAction(pendingSpotAction{
+					triggerTime: triggerTime,
+					kind:        spotActionLongClose,
+					qty:         qty,
+					note:        "海龟简易-Spot-Long：止损平仓(跌破BTC_max-3ATR)",
+				})
 			}
-			s.longSpotOpen = false
-			s.longSpotEntryPrice = 0
-			s.longSpotAddCount = 0
-			s.longSpotHigh = 0
 		}
 	}
 	if s.shortSpotOpen {
@@ -526,12 +534,13 @@ func (s *turtleTrendSimpStrategy) OnBar(ctx *backtest.BarContext) {
 		}
 		if !math.IsNaN(atr) && close > s.shortSpotLow+3*atr {
 			if qty := ctx.Position(primary); qty < 0 {
-				ctx.BuyWithNote(primary, -qty, "海龟简易-Spot-Short：止损平仓(突破BTC_min+3ATR)")
+				s.enqueueSpotAction(pendingSpotAction{
+					triggerTime: triggerTime,
+					kind:        spotActionShortClose,
+					qty:         -qty,
+					note:        "海龟简易-Spot-Short：止损平仓(突破BTC_min+3ATR)",
+				})
 			}
-			s.shortSpotOpen = false
-			s.shortSpotEntryPrice = 0
-			s.shortSpotAddCount = 0
-			s.shortSpotLow = 0
 		}
 	}
 
@@ -558,21 +567,20 @@ func (s *turtleTrendSimpStrategy) OnBar(ctx *backtest.BarContext) {
 	shortBreakout := math.Min(dcLower, bbLower) - 0.5*atrSignal
 
 	if allowInitialEntry && close > longBreakout && s.Direction != DirectionShortOnly {
-		if !s.longSpotOpen {
-			// Spot system: open a $100 reference long position.
-			spotQty := 100.0 / close
-			ctx.BuyWithNote(primary, spotQty, "海龟简易-Spot-Long：首仓")
-			s.longSpotOpen = true
-			s.longSpotEntryPrice = close
-			s.longSpotAddCount = 0
-			s.longSpotHigh = close
+		if !s.longSpotOpen && !s.hasPendingSpotAction(spotActionLongOpen, 0) {
+			s.enqueueSpotAction(pendingSpotAction{
+				triggerTime: triggerTime,
+				kind:        spotActionLongOpen,
+				notional:    s.SpotSignalNotional,
+				note:        "海龟简易-Spot-Long：首仓",
+			})
 
 			// Option system: open primary Call position alongside spot entry.
 			if s.countLongSlots() == 0 {
 				s.longAddCount = 0
-				if slot := s.openCallOption(ctx, chain, close, "active-long-0", "首仓"); slot != nil {
+				if slot := s.openCallOption(ctx, chain, close, triggerTime, "active-long-0", "首仓"); slot != nil {
 					s.longSlots[0] = slot
-					s.lastLongEntryPrice = close
+					s.longSpreadEntryPrice = close
 				}
 			}
 		}
@@ -581,7 +589,7 @@ func (s *turtleTrendSimpStrategy) OnBar(ctx *backtest.BarContext) {
 	// Long spot add-on signal: once spot first entry is open, add signal fires
 	// for each +0.75*ATR favorable move from the initial spot entry price.
 	longSpotTargetAddCount := 0
-	if s.longSpotOpen && !math.IsNaN(atr) && atr > 0 && s.longSpotEntryPrice > 0 {
+	if s.longSpotOpen && !s.hasPendingSpotAction(spotActionLongClose, 0) && !math.IsNaN(atr) && atr > 0 && s.longSpotEntryPrice > 0 {
 		longSpotTargetAddCount = int(math.Floor((close - s.longSpotEntryPrice) / (0.75 * atr)))
 		if longSpotTargetAddCount < 0 {
 			longSpotTargetAddCount = 0
@@ -589,36 +597,30 @@ func (s *turtleTrendSimpStrategy) OnBar(ctx *backtest.BarContext) {
 	}
 
 	// Long spot add-ons follow the same 0.75*ATR ladder from initial spot entry.
-	if s.longSpotOpen && !math.IsNaN(atr) && atr > 0 {
+	if s.longSpotOpen && !s.hasPendingSpotAction(spotActionLongClose, 0) && !math.IsNaN(atr) && atr > 0 {
 		targetSpotAdds := longSpotTargetAddCount
 		if targetSpotAdds > 2 {
 			targetSpotAdds = 2
 		}
-		for s.longSpotAddCount < targetSpotAdds {
-			spotQty := 100.0 / close
-			note := "海龟简易-Spot-Long：加仓" + strconv.Itoa(s.longSpotAddCount+1)
-			ctx.BuyWithNote(primary, spotQty, note)
-			s.longSpotAddCount++
+		nextAddCount := s.longSpotAddCount + 1
+		if targetSpotAdds >= nextAddCount && !s.hasPendingSpotAction(spotActionLongAdd, nextAddCount) {
+			s.enqueueSpotAction(pendingSpotAction{
+				triggerTime: triggerTime,
+				kind:        spotActionLongAdd,
+				notional:    s.SpotSignalNotional,
+				note:        "海龟简易-Spot-Long：加仓" + strconv.Itoa(nextAddCount),
+				addCount:    nextAddCount,
+			})
 		}
 	}
 
-	// Long option add-ons: remove self-referential option ladder and only follow
-	// spot add-on signal, with an extra guard that at least one active long slot exists.
-	if s.Direction != DirectionShortOnly && s.longAddCount < 2 && longSpotTargetAddCount > 0 && s.countActiveLongSlots() > 0 {
-		if !math.IsNaN(atr) && atr > 0 {
-			targetAddCount := longSpotTargetAddCount
-			if targetAddCount > 2 {
-				targetAddCount = 2
-			}
-			for s.longAddCount < targetAddCount {
-				slotIdx := s.nextFreeLongSlot()
-				if slotIdx < 0 {
-					break
-				}
-				slot := s.openCallOption(ctx, chain, close, "active-long-add", "加仓")
-				if slot == nil {
-					break
-				}
+	// Long option add-ons are driven by primary-interval close breakouts over
+	// the next ATR ladder anchored to the active option series initial entry.
+	if s.Direction != DirectionShortOnly && s.countActiveLongSlots() > 0 && s.shouldOpenLongSpreadAdd(prevClose, close, atr) {
+		slotIdx := s.nextFreeLongSlot()
+		if slotIdx >= 0 {
+			slot := s.openCallOption(ctx, chain, close, triggerTime, "active-long-add", "加仓")
+			if slot != nil {
 				s.longSlots[slotIdx] = slot
 				s.longAddCount++
 			}
@@ -628,21 +630,20 @@ func (s *turtleTrendSimpStrategy) OnBar(ctx *backtest.BarContext) {
 	// --- Short entry ---
 	// Breakout below prior-bar Min(Donchian lower 20, Bollinger lower 20) - 0.5*ATR
 	if allowInitialEntry && close < shortBreakout && s.Direction != DirectionLongOnly {
-		if !s.shortSpotOpen {
-			// Spot system: open a $100 reference short position.
-			spotQty := 100.0 / close
-			ctx.SellWithNote(primary, spotQty, "海龟简易-Spot-Short：首仓")
-			s.shortSpotOpen = true
-			s.shortSpotEntryPrice = close
-			s.shortSpotAddCount = 0
-			s.shortSpotLow = close
+		if !s.shortSpotOpen && !s.hasPendingSpotAction(spotActionShortOpen, 0) {
+			s.enqueueSpotAction(pendingSpotAction{
+				triggerTime: triggerTime,
+				kind:        spotActionShortOpen,
+				notional:    s.SpotSignalNotional,
+				note:        "海龟简易-Spot-Short：首仓",
+			})
 
 			// Option system: open primary Put position alongside spot entry.
 			if s.countShortSlots() == 0 {
 				s.shortAddCount = 0
-				if slot := s.openPutOption(ctx, chain, close, "active-short-0", "首仓"); slot != nil {
+				if slot := s.openPutOption(ctx, chain, close, triggerTime, "active-short-0", "首仓"); slot != nil {
 					s.shortSlots[0] = slot
-					s.lastShortEntryPrice = close
+					s.shortSpreadEntryPrice = close
 				}
 			}
 		}
@@ -651,7 +652,7 @@ func (s *turtleTrendSimpStrategy) OnBar(ctx *backtest.BarContext) {
 	// Short spot add-on signal: once spot first entry is open, add signal fires
 	// for each -0.75*ATR favorable move from the initial spot entry price.
 	shortSpotTargetAddCount := 0
-	if s.shortSpotOpen && !math.IsNaN(atr) && atr > 0 && s.shortSpotEntryPrice > 0 {
+	if s.shortSpotOpen && !s.hasPendingSpotAction(spotActionShortClose, 0) && !math.IsNaN(atr) && atr > 0 && s.shortSpotEntryPrice > 0 {
 		shortSpotTargetAddCount = int(math.Floor((s.shortSpotEntryPrice - close) / (0.75 * atr)))
 		if shortSpotTargetAddCount < 0 {
 			shortSpotTargetAddCount = 0
@@ -659,44 +660,40 @@ func (s *turtleTrendSimpStrategy) OnBar(ctx *backtest.BarContext) {
 	}
 
 	// Short spot add-ons follow the same 0.75*ATR ladder from initial spot entry.
-	if s.shortSpotOpen && !math.IsNaN(atr) && atr > 0 {
+	if s.shortSpotOpen && !s.hasPendingSpotAction(spotActionShortClose, 0) && !math.IsNaN(atr) && atr > 0 {
 		targetSpotAdds := shortSpotTargetAddCount
 		if targetSpotAdds > 1 {
 			targetSpotAdds = 1
 		}
-		for s.shortSpotAddCount < targetSpotAdds {
-			spotQty := 100.0 / close
-			note := "海龟简易-Spot-Short：加仓" + strconv.Itoa(s.shortSpotAddCount+1)
-			ctx.SellWithNote(primary, spotQty, note)
-			s.shortSpotAddCount++
+		nextAddCount := s.shortSpotAddCount + 1
+		if targetSpotAdds >= nextAddCount && !s.hasPendingSpotAction(spotActionShortAdd, nextAddCount) {
+			s.enqueueSpotAction(pendingSpotAction{
+				triggerTime: triggerTime,
+				kind:        spotActionShortAdd,
+				notional:    s.SpotSignalNotional,
+				note:        "海龟简易-Spot-Short：加仓" + strconv.Itoa(nextAddCount),
+				addCount:    nextAddCount,
+			})
 		}
 	}
 
-	// Short option add-ons: only follow spot add-on signal, with an extra
-	// guard that at least one active short slot exists.
-	if s.Direction != DirectionLongOnly && s.shortAddCount < 1 && shortSpotTargetAddCount > 0 && s.countActiveShortSlots() > 0 {
-		targetAddCount := shortSpotTargetAddCount
-		if targetAddCount > 1 {
-			targetAddCount = 1
-		}
-		for s.shortAddCount < targetAddCount {
-			slotIdx := s.nextFreeShortSlot()
-			if slotIdx < 0 {
-				break
+	// Short option add-ons are driven by primary-interval close breakouts below
+	// the next ATR ladder anchored to the active option series initial entry.
+	if s.Direction != DirectionLongOnly && s.countActiveShortSlots() > 0 && s.shouldOpenShortSpreadAdd(prevClose, close, atr) {
+		slotIdx := s.nextFreeShortSlot()
+		if slotIdx >= 0 {
+			slot := s.openPutOption(ctx, chain, close, triggerTime, "active-short-add", "加仓")
+			if slot != nil {
+				s.shortSlots[slotIdx] = slot
+				s.shortAddCount++
 			}
-			slot := s.openPutOption(ctx, chain, close, "active-short-add", "加仓")
-			if slot == nil {
-				break
-			}
-			s.shortSlots[slotIdx] = slot
-			s.shortAddCount++
 		}
 	}
 }
 
 // openCallOption opens a single Call option per the execution standard.
 // DTE ≈ 35, Delta ≈ 0.33, sized by IV quantile.
-func (s *turtleTrendSimpStrategy) openCallOption(ctx *backtest.BarContext, chain *backtest.OptionsChain, underlyingPrice float64, slotRef, reason string) *slotState {
+func (s *turtleTrendSimpStrategy) openCallOption(ctx *backtest.BarContext, chain *backtest.OptionsChain, underlyingPrice float64, triggerTime time.Time, slotRef, reason string) *slotState {
 	if chain == nil || chain.Len() == 0 {
 		return nil
 	}
@@ -731,19 +728,19 @@ func (s *turtleTrendSimpStrategy) openCallOption(ctx *backtest.BarContext, chain
 	tag = s.withDeltaReason(tag, contract.Delta)
 
 	pendingRef := s.nextPendingRef(slotRef)
-	ctx.ScheduleOpenSpreadWithRef(ctx.Time().Add(time.Nanosecond), []backtest.SpreadLeg{{
+	ctx.ScheduleOpenSpreadWithRef(triggerTime, []backtest.SpreadLeg{{
 		Contract:   contract,
 		Side:       backtest.Buy,
 		Qty:        qty,
 		EntryPrice: entryPrice,
 	}}, tag, pendingRef)
 
-	return &slotState{spreadID: -1, entryPrice: underlyingPrice, pendingRef: pendingRef, pendingBar: ctx.BarIndex()}
+	return &slotState{spreadID: -1, entryPrice: underlyingPrice, pendingRef: pendingRef, pendingTime: triggerTime}
 }
 
 // openPutOption opens a single Put option per the execution standard.
 // DTE ≈ 35, Delta ≈ -0.33, sized by IV quantile.
-func (s *turtleTrendSimpStrategy) openPutOption(ctx *backtest.BarContext, chain *backtest.OptionsChain, underlyingPrice float64, slotRef, reason string) *slotState {
+func (s *turtleTrendSimpStrategy) openPutOption(ctx *backtest.BarContext, chain *backtest.OptionsChain, underlyingPrice float64, triggerTime time.Time, slotRef, reason string) *slotState {
 	if chain == nil || chain.Len() == 0 {
 		return nil
 	}
@@ -778,14 +775,14 @@ func (s *turtleTrendSimpStrategy) openPutOption(ctx *backtest.BarContext, chain 
 	tag = s.withDeltaReason(tag, contract.Delta)
 
 	pendingRef := s.nextPendingRef(slotRef)
-	ctx.ScheduleOpenSpreadWithRef(ctx.Time().Add(time.Nanosecond), []backtest.SpreadLeg{{
+	ctx.ScheduleOpenSpreadWithRef(triggerTime, []backtest.SpreadLeg{{
 		Contract:   contract,
 		Side:       backtest.Buy,
 		Qty:        qty,
 		EntryPrice: entryPrice,
 	}}, tag, pendingRef)
 
-	return &slotState{spreadID: -1, entryPrice: underlyingPrice, pendingRef: pendingRef, pendingBar: ctx.BarIndex()}
+	return &slotState{spreadID: -1, entryPrice: underlyingPrice, pendingRef: pendingRef, pendingTime: triggerTime}
 }
 
 // ivCoefficient computes the position sizing coefficient x based on IV percentile.
@@ -835,8 +832,7 @@ func (s *turtleTrendSimpStrategy) detachLongSeries(_ int) {
 		moved++
 	}
 	s.longSlots = [3]*slotState{}
-	s.longAddCount = 0
-	s.lastLongEntryPrice = 0
+	s.resetLongSeriesTracking()
 }
 
 func (s *turtleTrendSimpStrategy) detachShortSeries(_ int) {
@@ -849,8 +845,17 @@ func (s *turtleTrendSimpStrategy) detachShortSeries(_ int) {
 		moved++
 	}
 	s.shortSlots = [2]*slotState{}
+	s.resetShortSeriesTracking()
+}
+
+func (s *turtleTrendSimpStrategy) resetLongSeriesTracking() {
+	s.longAddCount = 0
+	s.longSpreadEntryPrice = 0
+}
+
+func (s *turtleTrendSimpStrategy) resetShortSeriesTracking() {
 	s.shortAddCount = 0
-	s.lastShortEntryPrice = 0
+	s.shortSpreadEntryPrice = 0
 }
 
 func (s *turtleTrendSimpStrategy) countLongSlots() int {
@@ -911,6 +916,51 @@ func (s *turtleTrendSimpStrategy) nextFreeShortSlot() int {
 	return -1
 }
 
+func (s *turtleTrendSimpStrategy) spreadAddStep(atr float64) float64 {
+	if math.IsNaN(atr) || atr <= 0 {
+		return math.NaN()
+	}
+	return 0.75 * atr
+}
+
+func crossedAbove(prevClose, close, threshold float64) bool {
+	if math.IsNaN(prevClose) || math.IsNaN(close) || math.IsNaN(threshold) {
+		return false
+	}
+	return prevClose <= threshold && close > threshold
+}
+
+func crossedBelow(prevClose, close, threshold float64) bool {
+	if math.IsNaN(prevClose) || math.IsNaN(close) || math.IsNaN(threshold) {
+		return false
+	}
+	return prevClose >= threshold && close < threshold
+}
+
+func (s *turtleTrendSimpStrategy) shouldOpenLongSpreadAdd(prevClose, close, atr float64) bool {
+	if s.longAddCount >= 2 || s.longSpreadEntryPrice <= 0 {
+		return false
+	}
+	step := s.spreadAddStep(atr)
+	if math.IsNaN(step) {
+		return false
+	}
+	threshold := s.longSpreadEntryPrice + float64(s.longAddCount+1)*step
+	return crossedAbove(prevClose, close, threshold)
+}
+
+func (s *turtleTrendSimpStrategy) shouldOpenShortSpreadAdd(prevClose, close, atr float64) bool {
+	if s.shortAddCount >= 1 || s.shortSpreadEntryPrice <= 0 {
+		return false
+	}
+	step := s.spreadAddStep(atr)
+	if math.IsNaN(step) {
+		return false
+	}
+	threshold := s.shortSpreadEntryPrice - float64(s.shortAddCount+1)*step
+	return crossedBelow(prevClose, close, threshold)
+}
+
 func (s *turtleTrendSimpStrategy) consumeHTFSignal(signalIndex float64) bool {
 	if math.IsNaN(signalIndex) {
 		return false
@@ -950,6 +1000,12 @@ func (s *turtleTrendSimpStrategy) resolvePendingSlots(ctx *backtest.BarContext) 
 		}
 		s.shortRemoved = updated
 	}
+	if s.countLongSlots() == 0 {
+		s.resetLongSeriesTracking()
+	}
+	if s.countShortSlots() == 0 {
+		s.resetShortSeriesTracking()
+	}
 }
 
 func (s *turtleTrendSimpStrategy) resolvePendingSlot(ctx *backtest.BarContext, slot *slotState) *slotState {
@@ -959,10 +1015,10 @@ func (s *turtleTrendSimpStrategy) resolvePendingSlot(ctx *backtest.BarContext, s
 	if spread := s.findSpreadByRef(ctx.Spreads(), slot.pendingRef); spread != nil {
 		slot.spreadID = spread.ID
 		slot.pendingRef = ""
-		slot.pendingBar = 0
+		slot.pendingTime = time.Time{}
 		return slot
 	}
-	if ctx.BarIndex() > slot.pendingBar+1 {
+	if ctx.Time().After(slot.pendingTime) {
 		return nil
 	}
 	return slot
@@ -1000,6 +1056,9 @@ func (s *turtleTrendSimpStrategy) applyDefaults() {
 	if s.ValuationPriceMode == backtest.OptionPriceModeUnspecified {
 		s.ValuationPriceMode = pricingDefaults.ValuationMode
 	}
+	if s.SpotSignalNotional <= 0 {
+		s.SpotSignalNotional = turtleTrendSimpSpotSignalNotional
+	}
 	if s.Direction == "" {
 		s.Direction = DirectionBoth
 	}
@@ -1014,6 +1073,137 @@ func (s *turtleTrendSimpStrategy) applyDefaults() {
 
 func (s *slotState) isPending() bool {
 	return s != nil && s.spreadID <= 0 && s.pendingRef != ""
+}
+
+func (s *turtleTrendSimpStrategy) nextHTFExecutionTime(now time.Time) time.Time {
+	return now.Add(htfBarDuration)
+}
+
+func (s *turtleTrendSimpStrategy) immediateExecutionTime(now time.Time) time.Time {
+	return now.Add(time.Nanosecond)
+}
+
+func (s *turtleTrendSimpStrategy) enqueueSpotAction(action pendingSpotAction) {
+	s.pendingSpotActions = append(s.pendingSpotActions, &action)
+}
+
+func (s *turtleTrendSimpStrategy) hasPendingSpotAction(kind spotActionKind, addCount int) bool {
+	for _, action := range s.pendingSpotActions {
+		if action == nil || action.kind != kind {
+			continue
+		}
+		if addCount == 0 || action.addCount == addCount {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *turtleTrendSimpStrategy) resolvePendingSpotActions(ctx *backtest.BarContext) {
+	if len(s.pendingSpotActions) == 0 {
+		return
+	}
+	primary := ctx.PrimaryRef()
+	open := ctx.Open()
+	updated := make([]*pendingSpotAction, 0, len(s.pendingSpotActions))
+	for _, action := range s.pendingSpotActions {
+		if action == nil {
+			continue
+		}
+		if ctx.Time().Before(action.triggerTime) {
+			updated = append(updated, action)
+			continue
+		}
+
+		qty := action.qty
+		if qty <= 0 && action.notional > 0 && !math.IsNaN(open) && open > 0 {
+			qty = action.notional / open
+		}
+		if qty <= 0 {
+			updated = append(updated, action)
+			continue
+		}
+
+		executed := false
+		switch action.kind {
+		case spotActionLongOpen, spotActionLongAdd:
+			executed = ctx.BuyNowWithNote(primary, qty, action.note)
+		case spotActionLongClose:
+			executed = ctx.SellNowWithNote(primary, qty, action.note)
+		case spotActionShortOpen, spotActionShortAdd:
+			executed = ctx.SellNowWithNote(primary, qty, action.note)
+		case spotActionShortClose:
+			executed = ctx.BuyNowWithNote(primary, qty, action.note)
+		}
+		if !executed {
+			updated = append(updated, action)
+			continue
+		}
+
+		switch action.kind {
+		case spotActionLongOpen:
+			s.longSpotOpen = true
+			s.longSpotEntryPrice = open
+			s.longSpotAddCount = 0
+			s.longSpotHigh = open
+		case spotActionLongAdd:
+			s.longSpotOpen = true
+			if action.addCount > s.longSpotAddCount {
+				s.longSpotAddCount = action.addCount
+			}
+			if open > s.longSpotHigh {
+				s.longSpotHigh = open
+			}
+		case spotActionLongClose:
+			s.longSpotOpen = false
+			s.longSpotEntryPrice = 0
+			s.longSpotAddCount = 0
+			s.longSpotHigh = 0
+		case spotActionShortOpen:
+			s.shortSpotOpen = true
+			s.shortSpotEntryPrice = open
+			s.shortSpotAddCount = 0
+			s.shortSpotLow = open
+		case spotActionShortAdd:
+			s.shortSpotOpen = true
+			if action.addCount > s.shortSpotAddCount {
+				s.shortSpotAddCount = action.addCount
+			}
+			if s.shortSpotLow == 0 || open < s.shortSpotLow {
+				s.shortSpotLow = open
+			}
+		case spotActionShortClose:
+			s.shortSpotOpen = false
+			s.shortSpotEntryPrice = 0
+			s.shortSpotAddCount = 0
+			s.shortSpotLow = 0
+		}
+	}
+	s.pendingSpotActions = updated
+}
+
+func (s *turtleTrendSimpStrategy) scheduleExpiryCloses(ctx *backtest.BarContext, now, triggerTime time.Time, contractMap map[string]backtest.OptionContract) {
+	s.scheduleExpiryClosesForSlots(ctx, now, triggerTime, contractMap, s.longSlots[:])
+	s.scheduleExpiryClosesForSlots(ctx, now, triggerTime, contractMap, s.shortSlots[:])
+	s.scheduleExpiryClosesForSlots(ctx, now, triggerTime, contractMap, s.longRemoved)
+	s.scheduleExpiryClosesForSlots(ctx, now, triggerTime, contractMap, s.shortRemoved)
+}
+
+func (s *turtleTrendSimpStrategy) scheduleExpiryClosesForSlots(ctx *backtest.BarContext, now, triggerTime time.Time, contractMap map[string]backtest.OptionContract, slots []*slotState) {
+	for _, slot := range slots {
+		if slot == nil || slot.isPending() {
+			continue
+		}
+		sp := ctx.Spreads().Get(slot.spreadID)
+		if sp == nil || sp.IsFullyClosed() || len(sp.Legs) == 0 || sp.Legs[0].Closed {
+			continue
+		}
+		contract := s.currentContract(sp.Legs[0].Contract, contractMap)
+		if !s.shouldCloseForExpiry(contract, now) {
+			continue
+		}
+		ctx.ScheduleCloseLegOrder(triggerTime, sp.ID, 0, backtest.SpreadOrderMarket, backtest.Sell, math.NaN(), 0, s.withDeltaReason("到期前一天平仓", contract.Delta))
+	}
 }
 
 func (s *turtleTrendSimpStrategy) shouldDebugBar(barIndex int) bool {

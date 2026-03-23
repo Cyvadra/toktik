@@ -51,6 +51,8 @@ type htmlReportView struct {
 	UnderlyingChartNote  string
 	UnderlyingCandleData template.JS
 	UnderlyingMarkerData template.JS
+	HoverColumnsData     template.JS
+	HasHoverColumns      bool
 	EquitySeriesData     template.JS
 	DrawdownSeriesData   template.JS
 	PnLUSDSeriesData     template.JS
@@ -190,6 +192,13 @@ type chartMarker struct {
 	Color    string `json:"color"`
 	Shape    string `json:"shape"`
 	Text     string `json:"text"`
+}
+
+type hoverColumnPayload struct {
+	Source   string           `json:"source"`
+	Label    string           `json:"label"`
+	Decimals int              `json:"decimals"`
+	Values   []chartLinePoint `json:"values"`
 }
 
 type markerKey struct {
@@ -766,6 +775,7 @@ func buildHTMLView(result *backtest.Result, meta HTMLMeta) htmlReportView {
 		NoSpreadRows:         len(result.SpreadPositions) == 0,
 		UnderlyingCandleData: template.JS("[]"),
 		UnderlyingMarkerData: template.JS("[]"),
+		HoverColumnsData:     template.JS("[]"),
 		PnLUSDSeriesData:     template.JS("[]"),
 		ActiveTimeData:       template.JS("[]"),
 		EquitySeriesData:     marshalJS(buildLineSeries(result.Timestamps, result.EquityCurve)),
@@ -822,6 +832,9 @@ func buildHTMLView(result *backtest.Result, meta HTMLMeta) htmlReportView {
 
 	markers, tradeMarkerCount, spreadEventCount := buildUnderlyingMarkers(result)
 	view.UnderlyingMarkerData = marshalJS(markers)
+	hoverColumns := buildHoverColumns(result)
+	view.HoverColumnsData = marshalJS(hoverColumns)
+	view.HasHoverColumns = len(hoverColumns) > 0
 	view.ActiveTimeData = marshalJS(buildActiveTimes(result))
 	view.TradeMarkerCount = tradeMarkerCount
 	view.SpreadEventCount = spreadEventCount
@@ -920,6 +933,7 @@ func buildTradeRows(trades []backtest.Trade, unit string) []tradeRowView {
 func buildSpreadRows(spreads []backtest.SpreadPositionReport, unit string) []spreadRowView {
 	rows := make([]spreadRowView, 0, len(spreads)*2)
 	for _, spread := range spreads {
+		displayTag := stripExecDeltaTagSuffix(spread.Tag)
 		legs := make([]spreadLegRowView, 0, len(spread.Legs))
 		for _, leg := range spread.Legs {
 			expiryOpenDays := leg.Expiration.Sub(leg.EntryTime).Hours() / 24
@@ -951,7 +965,7 @@ func buildSpreadRows(spreads []backtest.SpreadPositionReport, unit string) []spr
 
 		openRow := spreadRowView{
 			ID:          spread.ID,
-			Tag:         spread.Tag,
+			Tag:         displayTag,
 			AnchorID:    openAnchor,
 			EventType:   "OPEN",
 			EventClass:  "bg-sky-500/15 text-sky-200 ring-sky-400/40",
@@ -975,7 +989,7 @@ func buildSpreadRows(spreads []backtest.SpreadPositionReport, unit string) []spr
 		if spread.CloseTime != nil {
 			rows = append(rows, spreadRowView{
 				ID:          spread.ID,
-				Tag:         spread.Tag,
+				Tag:         displayTag,
 				AnchorID:    closeAnchor,
 				EventType:   "CLOSE",
 				EventClass:  "bg-rose-500/15 text-rose-200 ring-rose-400/40",
@@ -1009,6 +1023,29 @@ func buildSpreadRows(spreads []backtest.SpreadPositionReport, unit string) []spr
 	})
 
 	return rows
+}
+
+func stripExecDeltaTagSuffix(tag string) string {
+	tag = strings.TrimSpace(tag)
+	if tag == "" {
+		return ""
+	}
+	parts := strings.Split(tag, " | ")
+	filtered := parts[:0]
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		if strings.HasPrefix(part, "exec_Delta=") {
+			continue
+		}
+		filtered = append(filtered, part)
+	}
+	if len(filtered) == 0 {
+		return tag
+	}
+	return strings.Join(filtered, " | ")
 }
 
 func buildNotes(result *backtest.Result, candleFallback bool) []string {
@@ -1087,6 +1124,29 @@ func buildUnderlyingCandles(result *backtest.Result) ([]chartCandlePoint, bool) 
 		prevClose = closeValue
 	}
 	return candles, usedFallback
+}
+
+func buildHoverColumns(result *backtest.Result) []hoverColumnPayload {
+	if result == nil || len(result.ReportColumns) == 0 || len(result.Timestamps) == 0 || result.Series == nil {
+		return []hoverColumnPayload{}
+	}
+	payload := make([]hoverColumnPayload, 0, len(result.ReportColumns))
+	for _, column := range result.ReportColumns {
+		values := result.Series[column.Source]
+		if len(values) == 0 {
+			continue
+		}
+		payload = append(payload, hoverColumnPayload{
+			Source:   column.Source,
+			Label:    column.Label,
+			Decimals: column.Decimals,
+			Values:   buildLineSeries(result.Timestamps, values),
+		})
+	}
+	if len(payload) == 0 {
+		return []hoverColumnPayload{}
+	}
+	return payload
 }
 
 func buildLineSeries(times []time.Time, values []float64) []chartLinePoint {
@@ -1521,6 +1581,7 @@ const htmlTemplate = `<!DOCTYPE html>
     .section h2 { color: #f1f5f9; font-size: 16px; font-weight: 600; margin-bottom: 12px; }
     .text-up { color: #34d399; }
     .text-down { color: #fbbf24; }
+		.data-window-card { background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.06); border-radius: 10px; padding: 10px 12px; }
   </style>
 </head>
 <body class="text-slate-300 min-h-screen p-4 lg:p-6">
@@ -1633,6 +1694,16 @@ const htmlTemplate = `<!DOCTYPE html>
         </div>
       </div>
       {{ if .UnderlyingChartNote }}<p class="text-xs text-amber-300 mb-3">{{ .UnderlyingChartNote }}</p>{{ end }}
+			<div id="underlying-data-window" class="mb-3 rounded-xl border border-white/8 bg-white/[0.02] p-3">
+				<div class="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+					<div>
+						<div class="text-[11px] mono uppercase tracking-[0.22em] text-teal-400">Data Window</div>
+						<p class="mt-1 text-xs text-slate-400">Hover the candlestick chart to inspect OHLC{{ if .HasHoverColumns }} and strategy columns{{ end }}.</p>
+					</div>
+					<div id="underlying-data-window-time" class="mono text-xs text-slate-400"></div>
+				</div>
+				<div id="underlying-data-window-grid" class="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-6"></div>
+			</div>
       <div class="chart-box p-1">
         <div id="underlying-chart" style="width:100%;height:420px;"></div>
       </div>
@@ -1676,7 +1747,6 @@ const htmlTemplate = `<!DOCTYPE html>
 			<div id="{{ .AnchorID }}" class="mb-4 border border-white/5 rounded-lg overflow-hidden">
 				<div class="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5 bg-white/[0.02] border-b border-white/5">
 					<div class="flex items-center gap-3">
-						<span class="mono text-xs px-2 py-0.5 rounded ring-1 {{ .EventClass }}">{{ .EventType }}</span>
 						<span class="font-medium text-slate-200">#{{ .ID }} {{ .Tag }}</span>
 						<span class="mono text-xs px-2 py-0.5 rounded {{ .StatusClass }}">{{ .Status }}</span>
 					</div>
@@ -1692,6 +1762,7 @@ const htmlTemplate = `<!DOCTYPE html>
             <thead>
               <tr class="text-left text-slate-500 text-xs uppercase border-b border-white/5">
                 <th class="px-4 py-2 font-medium">Symbol</th>
+								<th class="px-4 py-2 font-medium">Event</th>
                 <th class="px-4 py-2 font-medium">Side</th>
                 <th class="px-4 py-2 font-medium">Type</th>
                 <th class="px-4 py-2 font-medium">Strike</th>
@@ -1712,10 +1783,12 @@ const htmlTemplate = `<!DOCTYPE html>
             </thead>
             <tbody>
 							{{ $eventType := .EventType }}
+							{{ $eventClass := .EventClass }}
               {{ range .Legs }}
               <tr class="border-b border-white/[0.03]">
                 <td class="px-4 py-1.5 mono text-slate-300">{{ .Symbol }}</td>
-                <td class="px-4 py-1.5 font-medium {{ .SideClass }}">{{ .Side }}</td>
+								<td class="px-4 py-1.5"><span class="mono text-xs px-2 py-0.5 rounded ring-1 {{ $eventClass }}">{{ $eventType }}</span></td>
+								<td class="px-4 py-1.5 text-slate-300">{{ .Side }}</td>
                 <td class="px-4 py-1.5 text-slate-400">{{ .Type }}</td>
                 <td class="px-4 py-1.5 mono text-slate-300">{{ .StrikePrice }}</td>
                 <td class="px-4 py-1.5 mono text-slate-400">{{ .Expiration }}</td>
@@ -1797,6 +1870,7 @@ const htmlTemplate = `<!DOCTYPE html>
   <script>
     const underlyingCandles = {{ .UnderlyingCandleData }};
     const underlyingMarkers = {{ .UnderlyingMarkerData }};
+	const hoverColumns = {{ .HoverColumnsData }};
     const equitySeries = {{ .EquitySeriesData }};
     const drawdownSeries = {{ .DrawdownSeriesData }};
     const pnlUSDSeries = {{ .PnLUSDSeriesData }};
@@ -1894,6 +1968,88 @@ const htmlTemplate = `<!DOCTYPE html>
 		var pnlPlot = null;
 		var drawdownChart = null;
 		var drawdownPlot = null;
+		var dataWindowGrid = document.getElementById('underlying-data-window-grid');
+		var dataWindowTime = document.getElementById('underlying-data-window-time');
+		var candleByTime = new Map();
+		var hoverColumnMaps = [];
+
+		underlyingCandles.forEach(function(point) {
+			candleByTime.set(point.time, point);
+		});
+		hoverColumnMaps = hoverColumns.map(function(column) {
+			var values = new Map();
+			(column.values || []).forEach(function(point) {
+				values.set(point.time, point.value);
+			});
+			return {
+				label: column.label || column.source,
+				decimals: typeof column.decimals === 'number' ? column.decimals : 2,
+				values: values
+			};
+		});
+
+		function formatTimestamp(unixSeconds) {
+			if (typeof unixSeconds !== 'number') {
+				return 'No active crosshair';
+			}
+			return new Date(unixSeconds * 1000).toLocaleString('en-US', {
+				year: 'numeric',
+				month: '2-digit',
+				day: '2-digit',
+				hour: '2-digit',
+				minute: '2-digit',
+				second: '2-digit',
+				hour12: false
+			});
+		}
+
+		function formatNumber(value, decimals) {
+			if (typeof value !== 'number' || !isFinite(value)) {
+				return 'n/a';
+			}
+			return value.toLocaleString('en-US', {
+				minimumFractionDigits: decimals,
+				maximumFractionDigits: decimals
+			});
+		}
+
+		function appendDataWindowItem(items, label, value) {
+			items.push(
+				'<div class="data-window-card">' +
+				'<div class="text-[11px] mono uppercase tracking-[0.18em] text-slate-500">' + label + '</div>' +
+				'<div class="mt-1 mono text-sm text-slate-100">' + value + '</div>' +
+				'</div>'
+			);
+		}
+
+		function renderDataWindow(unixSeconds) {
+			if (!dataWindowGrid) {
+				return;
+			}
+			var resolvedTime = typeof unixSeconds === 'number' ? unixSeconds : null;
+			if (resolvedTime === null && underlyingCandles.length > 0) {
+				resolvedTime = underlyingCandles[underlyingCandles.length - 1].time;
+			}
+			if (dataWindowTime) {
+				dataWindowTime.textContent = formatTimestamp(resolvedTime);
+			}
+			if (resolvedTime === null) {
+				dataWindowGrid.innerHTML = '<div class="data-window-card mono text-sm text-slate-300">No chart data available.</div>';
+				return;
+			}
+			var candle = candleByTime.get(resolvedTime);
+			var items = [];
+			if (candle) {
+				appendDataWindowItem(items, 'Open', formatNumber(candle.open, 2));
+				appendDataWindowItem(items, 'High', formatNumber(candle.high, 2));
+				appendDataWindowItem(items, 'Low', formatNumber(candle.low, 2));
+				appendDataWindowItem(items, 'Close', formatNumber(candle.close, 2));
+			}
+			hoverColumnMaps.forEach(function(column) {
+				appendDataWindowItem(items, column.label, formatNumber(column.values.get(resolvedTime), column.decimals));
+			});
+			dataWindowGrid.innerHTML = items.join('');
+		}
 
     if (underlyingCandles.length > 0) {
       var pc = createChart('underlying-chart', 420);
@@ -1905,12 +2061,21 @@ const htmlTemplate = `<!DOCTYPE html>
         });
 				cs.setData(underlyingCandles);
 				cs.setMarkers(underlyingMarkers);
+				pc.subscribeCrosshairMove(function(param) {
+					if (!param || param.time === undefined) {
+						renderDataWindow(null);
+						return;
+					}
+					renderDataWindow(Number(param.time));
+				});
         pc.timeScale().fitContent();
 				underlyingChart = pc;
 				underlyingSeries = cs;
         charts.push(pc);
       }
     }
+
+		renderDataWindow(null);
 
     var ec = createChart('equity-chart', 300);
     if (ec) {

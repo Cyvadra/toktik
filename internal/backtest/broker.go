@@ -112,93 +112,17 @@ func (b *Broker) ProcessPending(barIndex int, barTime time.Time) []Trade {
 	var remaining []Order
 
 	for _, o := range b.pending {
-		prices := b.priceFunc(o.Security)
-		open := prices.executionOpen(o.Side, b.config.ExecutionMode)
-
-		if !isValidPrice(open) {
+		trade, filled, valid := b.executeOrderOnBar(o, barIndex, barTime)
+		if !valid {
 			remaining = append(remaining, o)
 			continue
 		}
 
-		var fillPrice float64
-		fillQty := o.Qty
-		filled := false
-
-		switch o.Type {
-		case MarketOrder:
-			fillPrice = b.applySlippage(open, o.Side)
-			filled = true
-
-		case TWAPMarketOrder:
-			slicesLeft := o.TWAPBars
-			if slicesLeft <= 0 {
-				slicesLeft = 1
-			}
-			fillQty = o.Qty / float64(slicesLeft)
-			fillPrice = b.applySlippage(open, o.Side)
-			filled = true
-
-		case LimitOrder:
-			low, high := prices.triggerRange(o.Side, b.config.TriggerMode)
-			if o.Side == Buy && isValidPrice(low) && low <= o.Price {
-				fillPrice = minFloat(open, o.Price)
-				filled = true
-			} else if o.Side == Sell && isValidPrice(high) && high >= o.Price {
-				fillPrice = maxFloat(open, o.Price)
-				filled = true
-			}
-
-		case StopOrder:
-			low, high := prices.triggerRange(o.Side, b.config.TriggerMode)
-			if o.Side == Buy && isValidPrice(high) && high >= o.StopPrice {
-				fillPrice = b.applySlippage(maxFloat(open, o.StopPrice), o.Side)
-				filled = true
-			} else if o.Side == Sell && isValidPrice(low) && low <= o.StopPrice {
-				fillPrice = b.applySlippage(minFloat(open, o.StopPrice), o.Side)
-				filled = true
-			}
-
-		case StopLimitOrder:
-			low, high := prices.triggerRange(o.Side, b.config.TriggerMode)
-			triggered := false
-			if o.Side == Buy && isValidPrice(high) && high >= o.StopPrice {
-				triggered = true
-			} else if o.Side == Sell && isValidPrice(low) && low <= o.StopPrice {
-				triggered = true
-			}
-			if triggered {
-				if o.Side == Buy && isValidPrice(low) && low <= o.Price {
-					fillPrice = minFloat(open, o.Price)
-					filled = true
-				} else if o.Side == Sell && isValidPrice(high) && high >= o.Price {
-					fillPrice = maxFloat(open, o.Price)
-					filled = true
-				}
-			}
-		}
-
 		if filled {
-			commission := b.calcCommission(fillQty, fillPrice)
-			trade := Trade{
-				ID:         b.nextTID,
-				OrderID:    o.ID,
-				Security:   o.Security,
-				Side:       o.Side,
-				Note:       o.Note,
-				Qty:        fillQty,
-				FillPrice:  fillPrice,
-				Commission: commission,
-				Slippage:   abs(fillPrice - open),
-				BarIndex:   barIndex,
-				Timestamp:  barTime,
-			}
-			b.nextTID++
-
-			b.cash += trade.NetAmount()
-			b.positions.Update(trade)
-			fills = append(fills, trade)
+			fills = append(fills, *trade)
 
 			if o.Type == TWAPMarketOrder {
+				fillQty := trade.Qty
 				remainingQty := o.Qty - fillQty
 				remainingBars := o.TWAPBars - 1
 				if remainingQty > 0 && remainingBars > 0 {
@@ -215,6 +139,112 @@ func (b *Broker) ProcessPending(barIndex int, barTime time.Time) []Trade {
 	b.pending = remaining
 	b.trades = append(b.trades, fills...)
 	return fills
+}
+
+// ExecuteOrderNow attempts to fill an order against the current bar immediately.
+// It is used by scheduled security actions that must execute on the trigger bar.
+func (b *Broker) ExecuteOrderNow(o Order, barIndex int, barTime time.Time) (*Trade, bool) {
+	if b.priceFunc == nil {
+		return nil, false
+	}
+	trade, filled, valid := b.executeOrderOnBar(o, barIndex, barTime)
+	if !valid || !filled {
+		return nil, false
+	}
+	b.trades = append(b.trades, *trade)
+	return trade, true
+}
+
+func (b *Broker) executeOrderOnBar(o Order, barIndex int, barTime time.Time) (*Trade, bool, bool) {
+	prices := b.priceFunc(o.Security)
+	open := prices.executionOpen(o.Side, b.config.ExecutionMode)
+	if !isValidPrice(open) {
+		return nil, false, false
+	}
+
+	var fillPrice float64
+	fillQty := o.Qty
+	filled := false
+
+	switch o.Type {
+	case MarketOrder:
+		fillPrice = b.applySlippage(open, o.Side)
+		filled = true
+
+	case TWAPMarketOrder:
+		slicesLeft := o.TWAPBars
+		if slicesLeft <= 0 {
+			slicesLeft = 1
+		}
+		fillQty = o.Qty / float64(slicesLeft)
+		fillPrice = b.applySlippage(open, o.Side)
+		filled = true
+
+	case LimitOrder:
+		low, high := prices.triggerRange(o.Side, b.config.TriggerMode)
+		if o.Side == Buy && isValidPrice(low) && low <= o.Price {
+			fillPrice = minFloat(open, o.Price)
+			filled = true
+		} else if o.Side == Sell && isValidPrice(high) && high >= o.Price {
+			fillPrice = maxFloat(open, o.Price)
+			filled = true
+		}
+
+	case StopOrder:
+		low, high := prices.triggerRange(o.Side, b.config.TriggerMode)
+		if o.Side == Buy && isValidPrice(high) && high >= o.StopPrice {
+			fillPrice = b.applySlippage(maxFloat(open, o.StopPrice), o.Side)
+			filled = true
+		} else if o.Side == Sell && isValidPrice(low) && low <= o.StopPrice {
+			fillPrice = b.applySlippage(minFloat(open, o.StopPrice), o.Side)
+			filled = true
+		}
+
+	case StopLimitOrder:
+		low, high := prices.triggerRange(o.Side, b.config.TriggerMode)
+		triggered := false
+		if o.Side == Buy && isValidPrice(high) && high >= o.StopPrice {
+			triggered = true
+		} else if o.Side == Sell && isValidPrice(low) && low <= o.StopPrice {
+			triggered = true
+		}
+		if triggered {
+			if o.Side == Buy && isValidPrice(low) && low <= o.Price {
+				fillPrice = minFloat(open, o.Price)
+				filled = true
+			} else if o.Side == Sell && isValidPrice(high) && high >= o.Price {
+				fillPrice = maxFloat(open, o.Price)
+				filled = true
+			}
+		}
+	}
+
+	if !filled {
+		return nil, false, true
+	}
+
+	if o.ID == 0 {
+		o.ID = b.nextOID
+		b.nextOID++
+	}
+	commission := b.calcCommission(fillQty, fillPrice)
+	trade := &Trade{
+		ID:         b.nextTID,
+		OrderID:    o.ID,
+		Security:   o.Security,
+		Side:       o.Side,
+		Note:       o.Note,
+		Qty:        fillQty,
+		FillPrice:  fillPrice,
+		Commission: commission,
+		Slippage:   abs(fillPrice - open),
+		BarIndex:   barIndex,
+		Timestamp:  barTime,
+	}
+	b.nextTID++
+	b.cash += trade.NetAmount()
+	b.positions.Update(*trade)
+	return trade, true, true
 }
 
 // Equity returns total account value (cash + unrealized PnL).

@@ -184,6 +184,20 @@ type factorDrivenStrategy struct {
 	seen24    float64
 }
 
+type immediateAndDeferredStrategy struct{}
+
+func (s *immediateAndDeferredStrategy) Name() string { return "immediate-and-deferred" }
+
+func (s *immediateAndDeferredStrategy) Init(_ *SetupContext) error { return nil }
+
+func (s *immediateAndDeferredStrategy) OnBar(ctx *BarContext) {
+	if ctx.BarIndex() != 0 {
+		return
+	}
+	ctx.BuyNowWithNote(ctx.PrimaryRef(), 1, "now")
+	ctx.Buy(ctx.PrimaryRef(), 1)
+}
+
 func (s *factorDrivenStrategy) Name() string { return "factor-driven" }
 
 func (s *factorDrivenStrategy) Init(ctx *SetupContext) error {
@@ -235,5 +249,32 @@ func TestRunWithExternalFactorFeed(t *testing.T) {
 	}
 	if strategy.seen24 != 200 {
 		t.Fatalf("unexpected aligned factor value at bar 24: got %v want 200", strategy.seen24)
+	}
+}
+
+func TestImmediateExecutionUsesCurrentBar(t *testing.T) {
+	engine := NewEngine(Config{InitialCapital: 10000})
+	engine.RegisterDataFeed("test", &stubDataFeed{
+		fields: []string{"open", "high", "low", "close", "volume"},
+	})
+
+	from := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2024, 1, 2, 0, 0, 0, 0, time.UTC)
+
+	result, err := engine.Run(context.Background(), "test", "TEST", "1h", from, to, &immediateAndDeferredStrategy{}, nil)
+	if err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+	if len(result.Trades) != 2 {
+		t.Fatalf("expected 2 trades, got %d", len(result.Trades))
+	}
+	if got := result.Trades[0].Note; got != "now" {
+		t.Fatalf("unexpected first trade note: got %q", got)
+	}
+	if !result.Trades[0].Timestamp.Equal(from) {
+		t.Fatalf("immediate trade timestamp = %v, want %v", result.Trades[0].Timestamp, from)
+	}
+	if want := from.Add(time.Hour); !result.Trades[1].Timestamp.Equal(want) {
+		t.Fatalf("deferred trade timestamp = %v, want %v", result.Trades[1].Timestamp, want)
 	}
 }

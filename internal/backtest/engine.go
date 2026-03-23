@@ -325,13 +325,16 @@ func (e *Engine) replay(prepared *PreparedData, strategy Strategy, params map[st
 
 	nBars := prepared.PrimaryDS.Len
 	equityCurve := make([]float64, nBars)
-	allTrades := make([]Trade, 0)
 
 	spreadTracker := NewSpreadTracker()
 	var scheduledActions []ScheduledAction
 	spreadPricing := DefaultSpreadPricingConfig()
 	if provider, ok := strategy.(SpreadPricingProvider); ok {
 		spreadPricing = provider.SpreadPricingConfig().WithDefaults()
+	}
+	var reportColumns []ReportColumn
+	if provider, ok := strategy.(ReportColumnProvider); ok {
+		reportColumns = provider.ReportColumns()
 	}
 
 	barCtx := &BarContext{
@@ -443,8 +446,7 @@ func (e *Engine) replay(prepared *PreparedData, strategy Strategy, params map[st
 		}
 
 		if i > 0 {
-			fills := broker.ProcessPending(i, prepared.PrimaryDS.Timestamps[i])
-			allTrades = append(allTrades, fills...)
+			broker.ProcessPending(i, prepared.PrimaryDS.Timestamps[i])
 		}
 
 		var contractMap map[string]OptionContract
@@ -495,6 +497,10 @@ func (e *Engine) replay(prepared *PreparedData, strategy Strategy, params map[st
 						if len(legs) > 0 {
 							barCtx.OpenSpreadWithRef(legs, tag, sa.OpenRef)
 						}
+					case ScheduleSecurityOrder:
+						if sa.SecurityOrder.Type == MarketOrder && sa.SecurityOrder.Qty > 0 {
+							broker.ExecuteOrderNow(sa.SecurityOrder, i, prepared.PrimaryDS.Timestamps[i])
+						}
 					case ScheduleCloseLeg:
 						sp := spreadTracker.Get(sa.SpreadID)
 						if sp != nil && sa.LegIndex >= 0 && sa.LegIndex < len(sp.Legs) && !sp.Legs[sa.LegIndex].Closed {
@@ -507,7 +513,7 @@ func (e *Engine) replay(prepared *PreparedData, strategy Strategy, params map[st
 							}
 							closePrice = applySpreadSlippage(closePrice, exitSide, sa.SlippagePct)
 							reason := appendDeltaNote(sa.CloseReason, "exec_", contract.Delta)
-							barCtx.CloseSpreadLegWithReason(sa.SpreadID, sa.LegIndex, closePrice, reason)
+							barCtx.CloseSpreadLegWithReasonAndData(sa.SpreadID, sa.LegIndex, closePrice, reason, sa.CloseCustomData)
 						}
 					case ScheduleCloseSpread:
 						sp := spreadTracker.Get(sa.SpreadID)
@@ -525,7 +531,7 @@ func (e *Engine) replay(prepared *PreparedData, strategy Strategy, params map[st
 								}
 								closePrice = applySpreadSlippage(closePrice, exitSide, sa.SlippagePct)
 								reason := appendDeltaNote(sa.CloseReason, "exec_", contract.Delta)
-								barCtx.CloseSpreadLegWithReason(sa.SpreadID, legIndex, closePrice, reason)
+								barCtx.CloseSpreadLegWithReasonAndData(sa.SpreadID, legIndex, closePrice, reason, sa.CloseCustomData)
 							}
 						}
 					}
@@ -558,12 +564,13 @@ func (e *Engine) replay(prepared *PreparedData, strategy Strategy, params map[st
 
 	result := computeResult(
 		strategy.Name(),
-		allTrades,
+		broker.Trades(),
 		equityCurve,
 		prepared.PrimaryDS.Timestamps,
 		e.config.InitialCapital,
 		e.config.AccountUnit,
 		secColumns[0],
+		reportColumns,
 	)
 
 	result.SpreadSummary = computeSpreadSummary(spreadTracker)

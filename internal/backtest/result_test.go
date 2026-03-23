@@ -86,3 +86,37 @@ func TestResultExportJSONSanitizesNaNAndInf(t *testing.T) {
 		t.Fatalf("decoded trade_overview.net_pnl = %#v, want nil", tradeOverview)
 	}
 }
+
+func TestComputeResultNormalizesReportColumns(t *testing.T) {
+	timestamps := []time.Time{
+		time.Date(2024, time.January, 1, 0, 0, 0, 0, time.UTC),
+		time.Date(2024, time.January, 1, 1, 0, 0, 0, time.UTC),
+	}
+	result := computeResult(
+		"test",
+		nil,
+		[]float64{100, 101},
+		timestamps,
+		100,
+		"BTC",
+		map[string][]float64{
+			"close": {60000, 60100},
+			"atr":   {1000, 1005},
+		},
+		[]ReportColumn{
+			{Source: "atr", Label: "ATR", Decimals: 2},
+			{Source: "missing", Label: "Missing", Decimals: 2},
+			{Source: "close", Decimals: -1},
+		},
+	)
+
+	if len(result.ReportColumns) != 2 {
+		t.Fatalf("len(result.ReportColumns) = %d, want 2", len(result.ReportColumns))
+	}
+	if result.ReportColumns[0].Source != "atr" || result.ReportColumns[0].Label != "ATR" || result.ReportColumns[0].Decimals != 2 {
+		t.Fatalf("unexpected first report column: %#v", result.ReportColumns[0])
+	}
+	if result.ReportColumns[1].Source != "close" || result.ReportColumns[1].Label != "close" || result.ReportColumns[1].Decimals != 0 {
+		t.Fatalf("unexpected second report column: %#v", result.ReportColumns[1])
+	}
+}

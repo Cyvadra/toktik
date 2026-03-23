@@ -37,6 +37,7 @@ type resultJSONExport struct {
 	EquityCurve     []*float64                       `json:"equity_curve"`
 	Timestamps      []time.Time                      `json:"timestamps"`
 	Series          map[string][]*float64            `json:"series,omitempty"`
+	ReportColumns   []ReportColumn                   `json:"report_columns,omitempty"`
 	TradeOverview   *tradeOverviewJSONExport         `json:"trade_overview,omitempty"`
 	EquityAnalysis  *equityAnalysisJSONExport        `json:"equity_analysis,omitempty"`
 	SpreadPositions []spreadPositionReportJSONExport `json:"spread_positions,omitempty"`
@@ -158,6 +159,7 @@ type Result struct {
 	EquityCurve     []float64              `json:"equity_curve"`
 	Timestamps      []time.Time            `json:"timestamps"`
 	Series          map[string][]float64   `json:"series,omitempty"` // indicator series
+	ReportColumns   []ReportColumn         `json:"report_columns,omitempty"`
 	TradeOverview   *TradeOverview         `json:"trade_overview,omitempty"`
 	EquityAnalysis  *EquityAnalysis        `json:"equity_analysis,omitempty"`
 	SpreadPositions []SpreadPositionReport `json:"spread_positions,omitempty"`
@@ -304,6 +306,10 @@ func (r *Result) jsonExport() resultJSONExport {
 		}
 	}
 
+	if len(r.ReportColumns) > 0 {
+		out.ReportColumns = append([]ReportColumn(nil), r.ReportColumns...)
+	}
+
 	if r.TradeOverview != nil {
 		out.TradeOverview = &tradeOverviewJSONExport{
 			RawFills:             r.TradeOverview.RawFills,
@@ -435,6 +441,7 @@ func computeResult(
 	initialCapital float64,
 	accountUnit string,
 	series map[string][]float64,
+	reportColumns []ReportColumn,
 ) *Result {
 	n := len(equityCurve)
 	r := &Result{
@@ -446,6 +453,7 @@ func computeResult(
 		EquityCurve:    equityCurve,
 		Timestamps:     timestamps,
 		Series:         series,
+		ReportColumns:  normalizeReportColumns(reportColumns, series),
 	}
 
 	if n > 0 {
@@ -547,6 +555,39 @@ func computeResult(
 	r.EquityAnalysis = computeEquityAnalysis(equityCurve, timestamps)
 
 	return r
+}
+
+func normalizeReportColumns(columns []ReportColumn, series map[string][]float64) []ReportColumn {
+	if len(columns) == 0 || len(series) == 0 {
+		return nil
+	}
+	filtered := make([]ReportColumn, 0, len(columns))
+	for _, column := range columns {
+		source := strings.TrimSpace(column.Source)
+		if source == "" {
+			continue
+		}
+		if _, ok := series[source]; !ok {
+			continue
+		}
+		label := strings.TrimSpace(column.Label)
+		if label == "" {
+			label = source
+		}
+		decimals := column.Decimals
+		if decimals < 0 {
+			decimals = 0
+		}
+		filtered = append(filtered, ReportColumn{
+			Source:   source,
+			Label:    label,
+			Decimals: decimals,
+		})
+	}
+	if len(filtered) == 0 {
+		return nil
+	}
+	return filtered
 }
 
 func computeTradeOverview(trades []Trade) *TradeOverview {

@@ -15,6 +15,20 @@ type Strategy interface {
 	OnBar(ctx *BarContext)
 }
 
+// ReportColumn declares a primary-series column that should be exposed by
+// backtest outputs for UI display such as the HTML report data window.
+type ReportColumn struct {
+	Source   string `json:"source"`
+	Label    string `json:"label"`
+	Decimals int    `json:"decimals,omitempty"`
+}
+
+// ReportColumnProvider is an optional strategy extension point for exposing
+// strategy-specific per-bar values in reports.
+type ReportColumnProvider interface {
+	ReportColumns() []ReportColumn
+}
+
 // StrategyPreloader is an optional extension point for one-time precomputation.
 //
 // If implemented, Preload is called during Engine.Prepare after indicators are

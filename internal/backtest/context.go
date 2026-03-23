@@ -293,6 +293,66 @@ func (bc *BarContext) SellWithNote(ref SecurityRef, qty float64, note string) {
 	})
 }
 
+// BuyNowWithNote executes a market buy on the current bar.
+func (bc *BarContext) BuyNowWithNote(ref SecurityRef, qty float64, note string) bool {
+	if qty <= 0 {
+		return false
+	}
+	_, ok := bc.broker.ExecuteOrderNow(Order{
+		Security:   ref,
+		Side:       Buy,
+		Type:       MarketOrder,
+		Note:       note,
+		Qty:        qty,
+		SubmitBar:  bc.barIndex,
+		SubmitTime: bc.barTime,
+	}, bc.barIndex, bc.barTime)
+	return ok
+}
+
+// SellNowWithNote executes a market sell on the current bar.
+func (bc *BarContext) SellNowWithNote(ref SecurityRef, qty float64, note string) bool {
+	if qty <= 0 {
+		return false
+	}
+	_, ok := bc.broker.ExecuteOrderNow(Order{
+		Security:   ref,
+		Side:       Sell,
+		Type:       MarketOrder,
+		Note:       note,
+		Qty:        qty,
+		SubmitBar:  bc.barIndex,
+		SubmitTime: bc.barTime,
+	}, bc.barIndex, bc.barTime)
+	return ok
+}
+
+// ScheduleBuyWithNote executes a market buy on the first primary bar at/after triggerTime.
+func (bc *BarContext) ScheduleBuyWithNote(triggerTime time.Time, ref SecurityRef, qty float64, note string) {
+	bc.ScheduleSecurityOrder(triggerTime, Order{
+		Security:   ref,
+		Side:       Buy,
+		Type:       MarketOrder,
+		Note:       note,
+		Qty:        qty,
+		SubmitBar:  bc.barIndex,
+		SubmitTime: bc.barTime,
+	})
+}
+
+// ScheduleSellWithNote executes a market sell on the first primary bar at/after triggerTime.
+func (bc *BarContext) ScheduleSellWithNote(triggerTime time.Time, ref SecurityRef, qty float64, note string) {
+	bc.ScheduleSecurityOrder(triggerTime, Order{
+		Security:   ref,
+		Side:       Sell,
+		Type:       MarketOrder,
+		Note:       note,
+		Qty:        qty,
+		SubmitBar:  bc.barIndex,
+		SubmitTime: bc.barTime,
+	})
+}
+
 // BuyTWAP submits a market buy order sliced evenly across the next N bars.
 func (bc *BarContext) BuyTWAP(ref SecurityRef, qty float64, bars int) {
 	bc.BuyTWAPWithNote(ref, qty, bars, "")
@@ -569,6 +629,12 @@ func (bc *BarContext) CloseSpreadLeg(spreadID, legIndex int, closePrice float64)
 
 // CloseSpreadLegWithReason closes a specific leg of a spread at the given price with a short reason.
 func (bc *BarContext) CloseSpreadLegWithReason(spreadID, legIndex int, closePrice float64, closeReason string) bool {
+	return bc.CloseSpreadLegWithReasonAndData(spreadID, legIndex, closePrice, closeReason, nil)
+}
+
+// CloseSpreadLegWithReasonAndData closes a specific leg of a spread at the given
+// price, attaching custom report data to the close event.
+func (bc *BarContext) CloseSpreadLegWithReasonAndData(spreadID, legIndex int, closePrice float64, closeReason string, closeCustomData []TradeCustomData) bool {
 	if bc.spreadTracker == nil {
 		return false
 	}
@@ -589,7 +655,7 @@ func (bc *BarContext) CloseSpreadLegWithReason(spreadID, legIndex int, closePric
 		// Closing a long: sell to close = cash inflow
 		bc.broker.AdjustCash(amount)
 	}
-	return bc.spreadTracker.CloseLegWithReason(spreadID, legIndex, closePrice, bc.barTime, closeReason)
+	return bc.spreadTracker.CloseLegWithReasonAndData(spreadID, legIndex, closePrice, bc.barTime, closeReason, closeCustomData)
 }
 
 // CloseSpread closes all open legs of a spread using the provided price function.
@@ -706,6 +772,20 @@ func (bc *BarContext) ScheduleOpenSpreadOrderWithRef(triggerTime time.Time, legs
 		OpenLegs:     legsCopy,
 		OpenTag:      tag,
 		OpenRef:      ref,
+	})
+}
+
+// ScheduleSecurityOrder executes an order on the first primary bar at/after triggerTime.
+// Scheduled security orders are filled on the trigger bar rather than being deferred to the next bar.
+func (bc *BarContext) ScheduleSecurityOrder(triggerTime time.Time, order Order) {
+	if bc.scheduledActions == nil {
+		return
+	}
+	orderCopy := order
+	*bc.scheduledActions = append(*bc.scheduledActions, ScheduledAction{
+		TriggerTime:   triggerTime,
+		ActionType:    ScheduleSecurityOrder,
+		SecurityOrder: orderCopy,
 	})
 }
 

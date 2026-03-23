@@ -293,17 +293,35 @@ type OptionsChainProvider interface {
 	AvailableContracts(t time.Time) []OptionContract
 }
 
+// TradeCustomData stores arbitrary key/value metadata for trade or spread
+// lifecycle events so reports can surface strategy-specific annotations.
+type TradeCustomData struct {
+	Key   string `json:"key"`
+	Value string `json:"value"`
+}
+
+func cloneTradeCustomData(items []TradeCustomData) []TradeCustomData {
+	if len(items) == 0 {
+		return nil
+	}
+	cloned := make([]TradeCustomData, len(items))
+	copy(cloned, items)
+	return cloned
+}
+
 // SpreadLeg represents one leg of a multi-leg options position.
 type SpreadLeg struct {
-	Contract    OptionContract
-	Side        Side
-	Qty         float64
-	EntryPrice  float64
-	EntryTime   time.Time
-	Closed      bool
-	ClosePrice  float64
-	CloseTime   time.Time
-	CloseReason string
+	Contract        OptionContract
+	Side            Side
+	Qty             float64
+	EntryPrice      float64
+	EntryTime       time.Time
+	EntryCustomData []TradeCustomData
+	Closed          bool
+	ClosePrice      float64
+	CloseTime       time.Time
+	CloseReason     string
+	CloseCustomData []TradeCustomData
 }
 
 // UnrealizedPnL returns the unrealized PnL for this leg at the given mark price.
@@ -460,6 +478,11 @@ func (st *SpreadTracker) CloseLeg(spreadID, legIndex int, closePrice float64, cl
 
 // CloseLegWithReason marks a specific leg of a spread as closed with a reason.
 func (st *SpreadTracker) CloseLegWithReason(spreadID, legIndex int, closePrice float64, closeTime time.Time, closeReason string) bool {
+	return st.CloseLegWithReasonAndData(spreadID, legIndex, closePrice, closeTime, closeReason, nil)
+}
+
+// CloseLegWithReasonAndData marks a specific leg of a spread as closed with custom report data.
+func (st *SpreadTracker) CloseLegWithReasonAndData(spreadID, legIndex int, closePrice float64, closeTime time.Time, closeReason string, closeCustomData []TradeCustomData) bool {
 	sp := st.Get(spreadID)
 	if sp == nil || legIndex < 0 || legIndex >= len(sp.Legs) {
 		return false
@@ -471,6 +494,7 @@ func (st *SpreadTracker) CloseLegWithReason(spreadID, legIndex int, closePrice f
 	sp.Legs[legIndex].ClosePrice = closePrice
 	sp.Legs[legIndex].CloseTime = closeTime
 	sp.Legs[legIndex].CloseReason = closeReason
+	sp.Legs[legIndex].CloseCustomData = cloneTradeCustomData(closeCustomData)
 	return true
 }
 
@@ -491,10 +515,11 @@ func (st *SpreadTracker) CloseAll(spreadID int, priceFn func(OptionContract) flo
 
 // ScheduledAction represents a time-triggered action for the engine to process.
 type ScheduledAction struct {
-	TriggerTime time.Time
-	SpreadID    int
-	LegIndex    int // -1 means close all legs
-	ActionType  ScheduledActionType
+	TriggerTime   time.Time
+	SpreadID      int
+	LegIndex      int // -1 means close all legs
+	ActionType    ScheduledActionType
+	SecurityOrder Order
 
 	// Trigger behavior for pending spread actions.
 	OrderType    SpreadOrderType
@@ -511,7 +536,8 @@ type ScheduledAction struct {
 	OpenRef  string
 
 	// Close action payload.
-	CloseReason string
+	CloseReason     string
+	CloseCustomData []TradeCustomData
 }
 
 // ScheduledActionType enumerates the kinds of scheduled actions.
@@ -524,6 +550,8 @@ const (
 	ScheduleCloseLeg
 	// ScheduleCloseSpread closes all legs of a spread.
 	ScheduleCloseSpread
+	// ScheduleSecurityOrder executes a security order on the trigger bar.
+	ScheduleSecurityOrder
 )
 
 // SpreadOrderType defines trigger style for scheduled spread actions.

@@ -22,9 +22,9 @@ get_divergence(tf) =>
     price_high = ta.highest(high, 30)
     price_low = ta.lowest(low, 30)
     // 顶背离: 价格创新高，MACD未创新高
-    top_div = ta.highest(high, 5) == price_high and macdLine < ta.highest(macdLine, 30)[1] and vol_condition
+    top_div = ta.highest(high, 3) == price_high and macdLine < ta.highest(macdLine, 30)[1]
     // 底背离: 价格创新低，MACD未创新低
-    bot_div = ta.lowest(low, 5) == price_low and macdLine > ta.lowest(macdLine, 30)[1] and vol_condition
+    bot_div = ta.lowest(low, 3) == price_low and macdLine > ta.lowest(macdLine, 30)[1]
     [top_div, bot_div]
 
 // 获取不同周期的背离信号
@@ -51,10 +51,10 @@ bgcolor(vol_condition ? color.new(color.gray, 95) : na)
 // ———— 交易开仓信号 ————
 
 // 当 rsi（20*10） 大于50，则 在 12h 或24h级别上找  macd或cci 的背离信号，当出现背离信号后出现一根阴线， 则开始建仓  sell call  和 buy put的头寸
-cond_short = ta.barssince(div_wide_top) <= 5 and close < open and rsi_12h > 50
+cond_short = ta.barssince(div_wide_top) <= 5 and close < open and rsi_12h > 50 and vol_condition
 bgcolor(cond_short ? color.new(color.red,90) : na)
 // 当rsi（20*10） 小于50，则在3h 或 6h 级别找 背离信号，建仓 sell call 和buyput 头寸；  选择delta为0.3的看涨期权，每次开仓，计算卖出call 的期权费，期权费中的 0.7，用来买 delta为-0.25的看跌期权，期限都选25天左右到期的
-cond_long = div_quick_bot and rsi_12h < 50
+cond_long = div_quick_bot and rsi_12h < 50 and vol_condition
 bgcolor(cond_long ? color.new(color.green,90) : na)
 
 
