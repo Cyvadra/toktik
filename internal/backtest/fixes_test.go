@@ -64,7 +64,7 @@ func TestComputeTradePnLPartialCloseCommission(t *testing.T) {
 	ref := SecurityRef{Market: "m", Symbol: "s", Interval: "1h", Index: 0}
 
 	trades := []Trade{
-		{Security: ref, Side: Buy, Qty: 2, FillPrice: 100, Commission: 2}, // entry 2 units @ $100, $2 commission
+		{Security: ref, Side: Buy, Qty: 2, FillPrice: 100, Commission: 2},  // entry 2 units @ $100, $2 commission
 		{Security: ref, Side: Sell, Qty: 1, FillPrice: 110, Commission: 1}, // close 1 unit @ $110, $1 commission
 	}
 	// Gross PnL for 1 unit = 10
@@ -77,6 +77,27 @@ func TestComputeTradePnLPartialCloseCommission(t *testing.T) {
 	}
 	if pnls[0] != 8 {
 		t.Fatalf("expected net pnl 8, got %v", pnls[0])
+	}
+}
+
+func TestComputeTradePnLReversalSplitsExitCommission(t *testing.T) {
+	ref := SecurityRef{Market: "m", Symbol: "s", Interval: "1h", Index: 0}
+
+	trades := []Trade{
+		{Security: ref, Side: Buy, Qty: 1, FillPrice: 100, Commission: 1},
+		{Security: ref, Side: Sell, Qty: 2, FillPrice: 110, Commission: 2},
+		{Security: ref, Side: Buy, Qty: 1, FillPrice: 100, Commission: 1},
+	}
+
+	pnls := computeTradePnL(trades)
+	if len(pnls) != 2 {
+		t.Fatalf("expected 2 round trips, got %d", len(pnls))
+	}
+	if pnls[0] != 8 {
+		t.Fatalf("expected first reversal-close pnl 8, got %v", pnls[0])
+	}
+	if pnls[1] != 8 {
+		t.Fatalf("expected second reversal-open pnl 8, got %v", pnls[1])
 	}
 }
 

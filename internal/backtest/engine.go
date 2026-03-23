@@ -608,21 +608,15 @@ type BatchResult struct {
 
 // RunBatch loads data once and replays a strategy with multiple parameter sets
 // in parallel. The factory function must return a fresh Strategy for each run.
+//
+// Parameter sets may change indicator registrations and dependency graphs during
+// Strategy.Init, so each run must prepare its own indicator state. This favors
+// correctness over dataset reuse.
+//
 // nWorkers controls parallelism; if <= 0 it defaults to 1.
 func (e *Engine) RunBatch(ctx context.Context, market, symbol, interval string, from, to time.Time, factory StrategyFactory, paramSets []map[string]interface{}, nWorkers int) ([]BatchResult, error) {
 	if nWorkers <= 0 {
 		nWorkers = 1
-	}
-
-	// Load data once using a throwaway strategy for Init
-	probe := factory()
-	var initParams map[string]interface{}
-	if len(paramSets) > 0 {
-		initParams = paramSets[0]
-	}
-	prepared, err := e.Prepare(ctx, market, symbol, interval, from, to, probe, initParams)
-	if err != nil {
-		return nil, err
 	}
 
 	// Run each parameter set, limited by nWorkers
@@ -638,7 +632,7 @@ func (e *Engine) RunBatch(ctx context.Context, market, symbol, interval string, 
 			defer func() { <-sem }()
 
 			s := factory()
-			res, err := e.replay(prepared, s, params)
+			res, err := e.Run(ctx, market, symbol, interval, from, to, s, params)
 			results[idx] = BatchResult{Params: params, Result: res, Err: err}
 		}(i, ps)
 	}

@@ -44,6 +44,8 @@ func (f *stubDataFeed) Load(_ context.Context, req DataRequest) (*DataSet, error
 
 type trendStrategy struct{}
 
+type parameterizedIndicatorStrategy struct{}
+
 func (s *trendStrategy) Name() string { return "trend" }
 
 func (s *trendStrategy) Init(ctx *SetupContext) error {
@@ -71,6 +73,40 @@ func (s *trendStrategy) OnBar(ctx *BarContext) {
 		ctx.Buy(ctx.primaryRef, 1)
 	} else if price < smaSlow && ctx.Position(ctx.primaryRef) > 0 {
 		ctx.Sell(ctx.primaryRef, 1)
+	}
+}
+
+func (s *parameterizedIndicatorStrategy) Name() string { return "parameterized-indicator" }
+
+func (s *parameterizedIndicatorStrategy) Init(ctx *SetupContext) error {
+	ctx.SetParam("marker", 1)
+	marker, _ := ctx.params["marker"].(int)
+	if marker <= 0 {
+		marker = 1
+	}
+	ctx.Register("marker", Custom([]string{"close"}, func(inputs map[string][]float64) []float64 {
+		closeSeries := inputs["close"]
+		out := make([]float64, len(closeSeries))
+		for i := range out {
+			out[i] = float64(marker)
+		}
+		return out
+	}))
+	return nil
+
+}
+
+func (s *parameterizedIndicatorStrategy) OnBar(ctx *BarContext) {
+	primary := ctx.PrimaryRef()
+	switch ctx.BarIndex() {
+	case 0:
+		if ctx.Ind("marker") < 5 {
+			ctx.Buy(primary, 1)
+		}
+	case 1:
+		if ctx.Position(primary) > 0 {
+			ctx.Sell(primary, 1)
+		}
 	}
 }
 
@@ -150,6 +186,52 @@ func TestRunBatchConsistency(t *testing.T) {
 	if batchResults[0].Result.TotalTrades != directResult.TotalTrades {
 		t.Errorf("TotalTrades mismatch: batch=%d direct=%d",
 			batchResults[0].Result.TotalTrades, directResult.TotalTrades)
+	}
+}
+
+func TestRunBatchRespectsParameterSpecificIndicators(t *testing.T) {
+	engine := NewEngine(Config{InitialCapital: 10000})
+	engine.RegisterDataFeed("test", &stubDataFeed{
+		fields: []string{"open", "high", "low", "close", "volume"},
+	})
+
+	factory := func() Strategy { return &parameterizedIndicatorStrategy{} }
+	from := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2024, 1, 2, 0, 0, 0, 0, time.UTC)
+
+	paramsA := map[string]interface{}{"marker": 3}
+	paramsB := map[string]interface{}{"marker": 7}
+
+	directA, err := engine.Run(context.Background(), "test", "TEST", "1h", from, to, factory(), paramsA)
+	if err != nil {
+		t.Fatalf("direct run A failed: %v", err)
+	}
+	directB, err := engine.Run(context.Background(), "test", "TEST", "1h", from, to, factory(), paramsB)
+	if err != nil {
+		t.Fatalf("direct run B failed: %v", err)
+	}
+	if directA.TotalTrades != 2 {
+		t.Fatalf("direct run A trades=%d, want 2", directA.TotalTrades)
+	}
+	if directB.TotalTrades != 0 {
+		t.Fatalf("direct run B trades=%d, want 0", directB.TotalTrades)
+	}
+
+	batch, err := engine.RunBatch(context.Background(), "test", "TEST", "1h", from, to, factory, []map[string]interface{}{paramsA, paramsB}, 2)
+	if err != nil {
+		t.Fatalf("RunBatch failed: %v", err)
+	}
+	if batch[0].Err != nil {
+		t.Fatalf("batch result A error: %v", batch[0].Err)
+	}
+	if batch[1].Err != nil {
+		t.Fatalf("batch result B error: %v", batch[1].Err)
+	}
+	if batch[0].Result.TotalTrades != directA.TotalTrades {
+		t.Fatalf("batch A trades=%d, want %d", batch[0].Result.TotalTrades, directA.TotalTrades)
+	}
+	if batch[1].Result.TotalTrades != directB.TotalTrades {
+		t.Fatalf("batch B trades=%d, want %d", batch[1].Result.TotalTrades, directB.TotalTrades)
 	}
 }
 
@@ -252,7 +334,7 @@ func TestRunWithExternalFactorFeed(t *testing.T) {
 	}
 }
 
-func TestImmediateExecutionUsesCurrentBar(t *testing.T) {
+func TestImmediateExecutionUsesCurrentBarClose(t *testing.T) {
 	engine := NewEngine(Config{InitialCapital: 10000})
 	engine.RegisterDataFeed("test", &stubDataFeed{
 		fields: []string{"open", "high", "low", "close", "volume"},
@@ -270,6 +352,9 @@ func TestImmediateExecutionUsesCurrentBar(t *testing.T) {
 	}
 	if got := result.Trades[0].Note; got != "now" {
 		t.Fatalf("unexpected first trade note: got %q", got)
+	}
+	if got := result.Trades[0].FillPrice; got != 100.5 {
+		t.Fatalf("immediate trade fill price = %v, want current close 100.5", got)
 	}
 	if !result.Trades[0].Timestamp.Equal(from) {
 		t.Fatalf("immediate trade timestamp = %v, want %v", result.Trades[0].Timestamp, from)

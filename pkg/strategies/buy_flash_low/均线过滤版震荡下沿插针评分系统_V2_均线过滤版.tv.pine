@@ -1,0 +1,110 @@
+
+//@version=5
+strategy("均线过滤版震荡下沿插针评分系统_V2_均线过滤版", overlay=true, max_labels_count=500, max_bars_back=100)
+
+// ==========================================
+// 1. 输入参数
+// ==========================================
+lookback_period  = input.int(20, "基础周期 (CCI/ATR/HL)", minval=1)
+vol_pr_lookback  = input.int(200, "波动率百分位追溯周期", minval=50)
+vol_pr_threshold = input.int(50, "波动率准入百分位", minval=0, maxval=100)
+min_amp_pr       = input.int(66, "形态振幅准入百分位", minval=0, maxval=100)
+score_threshold  = input.int(3, "标准信号触发分值", minval=1, maxval=6)
+strict_score     = input.int(5, "空头排列时触发分值", minval=1, maxval=6)
+
+// ==========================================
+// 2. 市场环境与均线过滤 (Regime & MA Filter)
+// ==========================================
+ma2  = ta.sma(close, 2)
+ma6  = ta.sma(close, 6)
+ma10 = ta.sma(close, 10)
+ma15 = ta.sma(close, 15)
+ma20 = ta.sma(close, 20)
+atr_val = ta.atr(lookback_period)
+buffer  = 0.05 * atr_val
+
+is_bearish = (ma2 < ma6 + buffer) and (ma6 < ma10 + buffer) and (ma10 < ma15 + buffer) and (ma15 < ma20 + buffer)
+
+current_threshold = is_bearish ? strict_score : score_threshold
+
+regime_active = 1
+
+bgcolor(is_bearish ? color.new(color.red, 80) : (regime_active ? color.new(color.red, 95) : na), title="Regime Background")
+
+// ==========================================
+// 3. 支撑边界与形态准入 (Setup & Shape)
+// ==========================================
+l20 = ta.lowest(low, lookback_period)[1]
+atr20 = ta.atr(lookback_period)
+in_bot = low <= (l20 + 0.7 * atr20) and high >= l20
+
+is_pin_shape = close > 0.5 * (high + low)
+current_amp = (high - low) / close
+amp_pr_100 = ta.percentrank(current_amp, 100)
+shape_entry = is_pin_shape and amp_pr_100 > min_amp_pr
+
+// ==========================================
+// 4. 评分引擎（简化，仅使用当前周期数据）
+// ==========================================
+// --- 振幅得分 (Max 2) ---
+float amp_score = 0
+if not na(amp_pr_100)
+    amp_score := amp_score + (amp_pr_100 > 77 ? 1 : 0)
+    amp_score := amp_score + (amp_pr_100 > 90 ? 1 : 0)
+
+// --- 成交量得分 (Max 3) ---
+get_vol_rank(len) =>
+    rank = 1
+    for i = 1 to len
+        if not na(volume[i]) and volume[i] > volume
+            rank := rank + 1
+    rank
+
+vol_rank_10 = get_vol_rank(20)
+vol_rank_20 = get_vol_rank(60)
+vol_rank_100 = get_vol_rank(180)
+vol_ma100 = ta.sma(volume, 100)
+
+float vol_score = 0
+if not na(vol_rank_10) and vol_rank_10 <= 3
+    vol_score := vol_score + 1
+if not na(vol_rank_20) and vol_rank_20 <= 6
+    vol_score := vol_score + 1
+if not na(vol_rank_100) and vol_rank_100 <= 10 and not na(vol_ma100) and volume > 2 * vol_ma100
+    vol_score := vol_score + 1
+
+total_score = amp_score + vol_score
+
+// ==========================================
+// 5. 信号触发与绘图（数据量保护）
+// ==========================================
+buy_signal = bar_index >= 100 and  in_bot and shape_entry and total_score >= current_threshold
+
+
+
+
+var bool flag_first_pos_long = false
+var float highest_since_entry = na
+
+if flag_first_pos_long
+    highest_since_entry := math.max(highest_since_entry, high)
+    if highest_since_entry - close > 2 * atr20
+        strategy.close_all('close')
+        flag_first_pos_long := false
+        highest_since_entry := na
+if (not flag_first_pos_long) and buy_signal
+    strategy.entry('long', strategy.long)
+    flag_first_pos_long := true
+    highest_since_entry := close
+
+
+
+if buy_signal
+    label.new(bar_index, low, text=str.tostring(total_score, "Score: #"), color=color.green, textcolor=color.white, style=label.style_label_up, yloc=yloc.belowbar)
+plotshape(buy_signal, "Buy Signal", shape.triangleup, location.belowbar, color.green, size=size.small)
+
+
+
+// 绘制均线以便观察排列情况 (可选)
+plot(ma2, color=color.new(color.blue, 50), title="MA2")
+plot(ma20, color=color.new(color.red, 50), linewidth=2, title="MA20")

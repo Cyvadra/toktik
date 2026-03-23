@@ -756,9 +756,14 @@ func computeTradePnL(trades []Trade) []float64 {
 			} else {
 				pnl = closeQty * (entry.price - t.FillPrice)
 			}
-			// Subtract close commission plus proportional entry commission
+			// Subtract only the close-side commission attributable to the portion
+			// that actually offsets the existing position, plus proportional entry commission.
 			entryCommission := entry.commission * (closeQty / entry.qty)
-			pnl -= t.Commission + entryCommission
+			closeCommission := t.Commission
+			if t.Qty > 0 && closeQty < t.Qty {
+				closeCommission = t.Commission * (closeQty / t.Qty)
+			}
+			pnl -= closeCommission + entryCommission
 			pnls = append(pnls, pnl)
 
 			remaining := entry.qty - closeQty
@@ -768,7 +773,8 @@ func computeTradePnL(trades []Trade) []float64 {
 			} else {
 				excess := t.Qty - closeQty
 				if excess > 0 {
-					pending[t.Security] = &openEntry{side: t.Side, qty: excess, price: t.FillPrice, commission: t.Commission}
+					entryCommissionRemainder := t.Commission - closeCommission
+					pending[t.Security] = &openEntry{side: t.Side, qty: excess, price: t.FillPrice, commission: entryCommissionRemainder}
 				} else {
 					delete(pending, t.Security)
 				}

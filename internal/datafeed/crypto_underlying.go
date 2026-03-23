@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"math"
 	"time"
 
 	clickhouse "github.com/ClickHouse/clickhouse-go/v2"
@@ -24,7 +25,7 @@ func NewCryptoUnderlyingDataFeed(conn driver.Conn) *CryptoUnderlyingDataFeed {
 
 // Fields returns the list of available fields.
 func (f *CryptoUnderlyingDataFeed) Fields() []string {
-	return []string{"open", "high", "low", "close", "compat_fallback"}
+	return []string{"open", "high", "low", "close", "tick_count", "volume", "compat_fallback"}
 }
 
 // Load fetches the underlying asset's OHLC from options data.
@@ -34,12 +35,13 @@ func (f *CryptoUnderlyingDataFeed) Load(ctx context.Context, req backtest.DataRe
 	interval := req.Interval
 
 	query, degraded, err := buildSpotSourceSQLWithFallback(ctx, f.conn, interval, baseAsset, req.From, req.To)
+	hasNativeVolume := query != ""
 	if err != nil {
 		return nil, fmt.Errorf("resolve underlying source for %s: %w", baseAsset, err)
 	}
 	if query != "" {
-		// Spot source returns 8 columns; project down to the 5 the scan expects.
-		query = fmt.Sprintf(`SELECT timestamp, open, close, high, low FROM (%s) ORDER BY timestamp`, query)
+		// Spot source returns 8 columns; project down to the 6 the scan expects.
+		query = fmt.Sprintf(`SELECT timestamp, open, close, high, low, tick_count FROM (%s) ORDER BY timestamp`, query)
 	} else {
 		query, degraded, err = buildLegacyUnderlyingSeriesSQL(ctx, f.conn, interval, baseAsset, req.From, req.To)
 		if err != nil {
@@ -70,6 +72,7 @@ func (f *CryptoUnderlyingDataFeed) Load(ctx context.Context, req backtest.DataRe
 	highs := make([]float64, 0, 4096)
 	lows := make([]float64, 0, 4096)
 	closes := make([]float64, 0, 4096)
+	tickCounts := make([]float64, 0, 4096)
 	fallbackMode := make([]float64, 0, 4096)
 	fallbackValue := 0.0
 	if degraded {
@@ -80,15 +83,28 @@ func (f *CryptoUnderlyingDataFeed) Load(ctx context.Context, req backtest.DataRe
 		var (
 			ts                         time.Time
 			uopen, uclose, uhigh, ulow float32
+			tickCount                  uint64
 		)
-		if err := rows.Scan(&ts, &uopen, &uclose, &uhigh, &ulow); err != nil {
-			return nil, fmt.Errorf("scan underlying row: %w", err)
+		if hasNativeVolume {
+			if err := rows.Scan(&ts, &uopen, &uclose, &uhigh, &ulow, &tickCount); err != nil {
+				return nil, fmt.Errorf("scan underlying row with volume: %w", err)
+			}
+		} else {
+			if err := rows.Scan(&ts, &uopen, &uclose, &uhigh, &ulow); err != nil {
+				return nil, fmt.Errorf("scan underlying row: %w", err)
+			}
+			tickCount = 0
 		}
 		timestamps = append(timestamps, ts)
 		opens = append(opens, float64(uopen))
 		highs = append(highs, float64(uhigh))
 		lows = append(lows, float64(ulow))
 		closes = append(closes, float64(uclose))
+		if hasNativeVolume {
+			tickCounts = append(tickCounts, float64(tickCount))
+		} else {
+			tickCounts = append(tickCounts, math.NaN())
+		}
 		fallbackMode = append(fallbackMode, fallbackValue)
 	}
 
@@ -98,6 +114,8 @@ func (f *CryptoUnderlyingDataFeed) Load(ctx context.Context, req backtest.DataRe
 	ds.AddColumn("high", highs)
 	ds.AddColumn("low", lows)
 	ds.AddColumn("close", closes)
+	ds.AddColumn("tick_count", tickCounts)
+	ds.AddColumn("volume", tickCounts)
 	ds.AddColumn("compat_fallback", fallbackMode)
 
 	return ds, nil

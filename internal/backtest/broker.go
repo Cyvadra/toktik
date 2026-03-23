@@ -141,8 +141,9 @@ func (b *Broker) ProcessPending(barIndex int, barTime time.Time) []Trade {
 	return fills
 }
 
-// ExecuteOrderNow attempts to fill an order against the current bar immediately.
-// It is used by scheduled security actions that must execute on the trigger bar.
+// ExecuteOrderNow attempts to fill an order against the current bar immediately
+// using the bar open. It is intended for pre-OnBar scheduled actions that
+// trigger at the start of the bar.
 func (b *Broker) ExecuteOrderNow(o Order, barIndex int, barTime time.Time) (*Trade, bool) {
 	if b.priceFunc == nil {
 		return nil, false
@@ -151,6 +152,43 @@ func (b *Broker) ExecuteOrderNow(o Order, barIndex int, barTime time.Time) (*Tra
 	if !valid || !filled {
 		return nil, false
 	}
+	b.trades = append(b.trades, *trade)
+	return trade, true
+}
+
+// ExecuteOrderAtCloseNow attempts to fill an order on the current bar using the
+// current close snapshot. This avoids look-ahead through the bar open when a
+// strategy has already observed the full bar during OnBar.
+func (b *Broker) ExecuteOrderAtCloseNow(o Order, barIndex int, barTime time.Time) (*Trade, bool) {
+	if b.priceFunc == nil {
+		return nil, false
+	}
+	prices := b.priceFunc(o.Security)
+	closePrice := prices.executionClose(o.Side, b.config.ExecutionMode)
+	if !isValidPrice(closePrice) {
+		return nil, false
+	}
+	fillPrice := b.applySlippage(closePrice, o.Side)
+	if o.ID == 0 {
+		o.ID = b.nextOID
+		b.nextOID++
+	}
+	trade := &Trade{
+		ID:         b.nextTID,
+		OrderID:    o.ID,
+		Security:   o.Security,
+		Side:       o.Side,
+		Note:       o.Note,
+		Qty:        o.Qty,
+		FillPrice:  fillPrice,
+		Commission: b.calcCommission(o.Qty, fillPrice),
+		Slippage:   abs(fillPrice - closePrice),
+		BarIndex:   barIndex,
+		Timestamp:  barTime,
+	}
+	b.nextTID++
+	b.cash += trade.NetAmount()
+	b.positions.Update(*trade)
 	b.trades = append(b.trades, *trade)
 	return trade, true
 }
@@ -390,6 +428,16 @@ func (bp BarPrices) executionOpen(side Side, mode ExecutionPriceModel) float64 {
 		return fallbackPrice(bp.BidOpen, bp.Open)
 	}
 	return bp.Open
+}
+
+func (bp BarPrices) executionClose(side Side, mode ExecutionPriceModel) float64 {
+	if mode == ExecutionPriceBidAsk {
+		if side == Buy {
+			return fallbackPrice(bp.AskClose, bp.Close)
+		}
+		return fallbackPrice(bp.BidClose, bp.Close)
+	}
+	return bp.Close
 }
 
 func (bp BarPrices) triggerRange(side Side, mode TriggerPriceMode) (float64, float64) {

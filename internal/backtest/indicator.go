@@ -32,6 +32,14 @@ type MultiIndicator interface {
 	ComputeMulti(baseName string, inputs map[string][]float64) map[string][]float64
 }
 
+// OptionalDepsProvider may be implemented by an Indicator to declare
+// dependencies that are not required to be present. When an optional dep
+// is absent from the data, an all-NaN slice of the data length is injected
+// into the inputs map instead of returning an error.
+type OptionalDepsProvider interface {
+	OptionalDeps() []string
+}
+
 // resolveIndicators computes all registered indicators using topological sort.
 // It modifies the data map in-place, adding computed series.
 func resolveIndicators(registered map[string]Indicator, data map[string][]float64) error {
@@ -53,6 +61,17 @@ func resolveIndicators(registered map[string]Indicator, data map[string][]float6
 				dependents[dep] = append(dependents[dep], name)
 			} else if _, hasData := data[dep]; !hasData {
 				return fmt.Errorf("indicator %q depends on unknown series %q", name, dep)
+			}
+		}
+		// Optional deps: if present and from another indicator, wire them into the
+		// graph so they are computed before this indicator. Missing optional deps
+		// are silently injected as all-NaN at compute time.
+		if op, ok := ind.(OptionalDepsProvider); ok {
+			for _, dep := range op.OptionalDeps() {
+				if _, isIndicator := registered[dep]; isIndicator {
+					inDegree[name]++
+					dependents[dep] = append(dependents[dep], name)
+				}
 			}
 		}
 	}
@@ -103,6 +122,27 @@ func resolveIndicators(registered map[string]Indicator, data map[string][]float6
 						inputs[dep] = col
 					}
 					mu.Unlock()
+				}
+				// Optional deps: inject what exists, or an all-NaN slice.
+				if op, ok := indicator.(OptionalDepsProvider); ok {
+					mu.Lock()
+					n := dataLen(data)
+					mu.Unlock()
+					for _, dep := range op.OptionalDeps() {
+						mu.Lock()
+						if col, ok := data[dep]; ok {
+							inputs[dep] = col
+						} else if col, ok := results[dep]; ok {
+							inputs[dep] = col
+						} else {
+							nan := make([]float64, n)
+							for i := range nan {
+								nan[i] = math.NaN()
+							}
+							inputs[dep] = nan
+						}
+						mu.Unlock()
+					}
 				}
 
 				if mi, ok := indicator.(MultiIndicator); ok {
@@ -1378,6 +1418,35 @@ func (c *customIndicator) Deps() []string { return c.deps }
 
 func (c *customIndicator) Compute(inputs map[string][]float64) []float64 {
 	return c.fn(inputs)
+}
+
+// CustomOptional creates an indicator with both required and optional deps.
+// Required deps cause an error if absent; optional deps are injected as
+// all-NaN slices when absent, allowing the compute function to degrade
+// gracefully.
+func CustomOptional(required, optional []string, fn func(inputs map[string][]float64) []float64) Indicator {
+	return &customOptionalIndicator{required: required, optional: optional, fn: fn}
+}
+
+type customOptionalIndicator struct {
+	required []string
+	optional []string
+	fn       func(inputs map[string][]float64) []float64
+}
+
+func (c *customOptionalIndicator) Deps() []string         { return c.required }
+func (c *customOptionalIndicator) OptionalDeps() []string { return c.optional }
+
+func (c *customOptionalIndicator) Compute(inputs map[string][]float64) []float64 {
+	return c.fn(inputs)
+}
+
+// dataLen returns the length of any series currently in data, or 0.
+func dataLen(data map[string][]float64) int {
+	for _, col := range data {
+		return len(col)
+	}
+	return 0
 }
 
 func computeSMA(src []float64, period int) []float64 {

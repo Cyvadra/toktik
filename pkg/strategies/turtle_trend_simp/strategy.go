@@ -362,7 +362,7 @@ func (s *turtleTrendSimpStrategy) OnBar(ctx *backtest.BarContext) {
 		}
 
 		if needsRoll {
-			ctx.CloseSpreadLegWithReason(sp.ID, 0, s.exitPriceForLeg(*leg, contractMap), s.withDeltaReason(s.rollCloseReason(absDelta, pnlPct), currentContract.Delta))
+			ctx.CloseSpreadLegWithReason(sp.ID, 0, s.exitPriceForLeg(*leg, contractMap), s.rollCloseReason(absDelta, pnlPct))
 			s.longSlots[i] = s.openCallOption(ctx, chain, close, s.immediateExecutionTime(now), "active-long", "换仓")
 		}
 	}
@@ -407,7 +407,7 @@ func (s *turtleTrendSimpStrategy) OnBar(ctx *backtest.BarContext) {
 		}
 
 		if needsRoll {
-			ctx.CloseSpreadLegWithReason(sp.ID, 0, s.exitPriceForLeg(*leg, contractMap), s.withDeltaReason(s.rollCloseReason(absDelta, pnlPct), currentContract.Delta))
+			ctx.CloseSpreadLegWithReason(sp.ID, 0, s.exitPriceForLeg(*leg, contractMap), s.rollCloseReason(absDelta, pnlPct))
 			s.shortSlots[i] = s.openPutOption(ctx, chain, close, s.immediateExecutionTime(now), "active-short", "换仓")
 		}
 	}
@@ -446,7 +446,7 @@ func (s *turtleTrendSimpStrategy) OnBar(ctx *backtest.BarContext) {
 			}
 
 			if needsRoll {
-				ctx.CloseSpreadLegWithReason(sp.ID, 0, s.exitPriceForLeg(*leg, contractMap), s.withDeltaReason(s.rollCloseReason(absDelta, pnlPct), currentContract.Delta))
+				ctx.CloseSpreadLegWithReason(sp.ID, 0, s.exitPriceForLeg(*leg, contractMap), s.rollCloseReason(absDelta, pnlPct))
 				if reopened := s.openCallOption(ctx, chain, close, s.immediateExecutionTime(now), "removed-long", "换仓"); reopened != nil {
 					updated = append(updated, reopened)
 				}
@@ -492,7 +492,7 @@ func (s *turtleTrendSimpStrategy) OnBar(ctx *backtest.BarContext) {
 			}
 
 			if needsRoll {
-				ctx.CloseSpreadLegWithReason(sp.ID, 0, s.exitPriceForLeg(*leg, contractMap), s.withDeltaReason(s.rollCloseReason(absDelta, pnlPct), currentContract.Delta))
+				ctx.CloseSpreadLegWithReason(sp.ID, 0, s.exitPriceForLeg(*leg, contractMap), s.rollCloseReason(absDelta, pnlPct))
 				if reopened := s.openPutOption(ctx, chain, close, s.immediateExecutionTime(now), "removed-short", "换仓"); reopened != nil {
 					updated = append(updated, reopened)
 				}
@@ -726,7 +726,6 @@ func (s *turtleTrendSimpStrategy) openCallOption(ctx *backtest.BarContext, chain
 	if reason != "" {
 		tag += "：" + reason
 	}
-	tag = s.withDeltaReason(tag, contract.Delta)
 
 	pendingRef := s.nextPendingRef(slotRef)
 	ctx.ScheduleOpenSpreadWithRef(triggerTime, []backtest.SpreadLeg{{
@@ -773,7 +772,6 @@ func (s *turtleTrendSimpStrategy) openPutOption(ctx *backtest.BarContext, chain 
 	if reason != "" {
 		tag += "：" + reason
 	}
-	tag = s.withDeltaReason(tag, contract.Delta)
 
 	pendingRef := s.nextPendingRef(slotRef)
 	ctx.ScheduleOpenSpreadWithRef(triggerTime, []backtest.SpreadLeg{{
@@ -1203,7 +1201,7 @@ func (s *turtleTrendSimpStrategy) scheduleExpiryClosesForSlots(ctx *backtest.Bar
 		if !s.shouldCloseForExpiry(contract, now) {
 			continue
 		}
-		ctx.ScheduleCloseLegOrder(triggerTime, sp.ID, 0, backtest.SpreadOrderMarket, backtest.Sell, math.NaN(), 0, s.withDeltaReason("到期前一天平仓", contract.Delta))
+		ctx.ScheduleCloseLegOrder(triggerTime, sp.ID, 0, backtest.SpreadOrderMarket, backtest.Sell, math.NaN(), 0, "到期前一天平仓")
 	}
 }
 
@@ -1219,15 +1217,6 @@ func (s *turtleTrendSimpStrategy) shouldDebugBar(barIndex int) bool {
 
 func (s *turtleTrendSimpStrategy) debugf(format string, args ...interface{}) {
 	_, _ = format, args
-}
-
-func (s *turtleTrendSimpStrategy) withDeltaReason(base string, _ float64) string {
-	// implemented somewhere else
-	return base
-	// if math.IsNaN(delta) {
-	// 	return base
-	// }
-	// return base + " | delta=" + strconv.FormatFloat(delta, 'f', 4, 64)
 }
 
 func parseEnvBool(key string) bool {

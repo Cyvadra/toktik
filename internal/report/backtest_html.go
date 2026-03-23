@@ -23,51 +23,54 @@ type HTMLMeta struct {
 }
 
 type htmlReportView struct {
-	Title                string
-	StrategyName         string
-	Asset                string
-	Interval             string
-	Period               string
-	GeneratedAt          string
-	InitialCapital       string
-	FinalEquity          string
-	NetPnL               string
-	TotalReturn          string
-	AnnualizedReturn     string
-	SharpeRatio          string
-	MaxDrawdown          string
-	TotalFees            string
-	BarsCount            int
-	TradesCount          int
-	SpreadsCount         int
-	TradeMarkerCount     int
-	SpreadEventCount     int
-	EquityMin            string
-	EquityMax            string
-	DrawdownMax          string
-	HasUnderlyingChart   bool
-	UnderlyingPriceMin   string
-	UnderlyingPriceMax   string
-	UnderlyingChartNote  string
-	UnderlyingCandleData template.JS
-	UnderlyingMarkerData template.JS
-	HoverColumnsData     template.JS
-	HasHoverColumns      bool
-	EquitySeriesData     template.JS
-	DrawdownSeriesData   template.JS
-	PnLUSDSeriesData     template.JS
-	ActiveTimeData       template.JS
-	HasPnLUSD            bool
-	PnLUSDMin            string
-	PnLUSDMax            string
-	EquityAnalysis       equityAnalysisView
-	TradeOverview        tradeOverviewView
-	SpreadSummary        *spreadSummaryView
-	Trades               []tradeRowView
-	Spreads              []spreadRowView
-	NoTradeRows          bool
-	NoSpreadRows         bool
-	Notes                []string
+	Title                 string
+	StrategyName          string
+	Asset                 string
+	Interval              string
+	Period                string
+	GeneratedAt           string
+	InitialCapital        string
+	FinalEquity           string
+	NetPnL                string
+	TotalReturn           string
+	AnnualizedReturn      string
+	SharpeRatio           string
+	MaxDrawdown           string
+	TotalFees             string
+	BarsCount             int
+	TradesCount           int
+	SpreadsCount          int
+	TradeMarkerCount      int
+	SpreadEventCount      int
+	EquityMin             string
+	EquityMax             string
+	DrawdownMax           string
+	HasUnderlyingChart    bool
+	HasUnderlyingVolume   bool
+	UnderlyingPriceMin    string
+	UnderlyingPriceMax    string
+	UnderlyingChartNote   string
+	UnderlyingVolumeLabel string
+	UnderlyingCandleData  template.JS
+	UnderlyingVolumeData  template.JS
+	UnderlyingMarkerData  template.JS
+	HoverColumnsData      template.JS
+	HasHoverColumns       bool
+	EquitySeriesData      template.JS
+	DrawdownSeriesData    template.JS
+	PnLUSDSeriesData      template.JS
+	ActiveTimeData        template.JS
+	HasPnLUSD             bool
+	PnLUSDMin             string
+	PnLUSDMax             string
+	EquityAnalysis        equityAnalysisView
+	TradeOverview         tradeOverviewView
+	SpreadSummary         *spreadSummaryView
+	Trades                []tradeRowView
+	Spreads               []spreadRowView
+	NoTradeRows           bool
+	NoSpreadRows          bool
+	Notes                 []string
 }
 
 type combinedHTMLReportView struct {
@@ -184,6 +187,12 @@ type chartCandlePoint struct {
 type chartLinePoint struct {
 	Time  int64   `json:"time"`
 	Value float64 `json:"value"`
+}
+
+type chartHistogramPoint struct {
+	Time  int64   `json:"time"`
+	Value float64 `json:"value"`
+	Color string  `json:"color,omitempty"`
 }
 
 type chartMarker struct {
@@ -774,6 +783,7 @@ func buildHTMLView(result *backtest.Result, meta HTMLMeta) htmlReportView {
 		NoTradeRows:          len(result.Trades) == 0,
 		NoSpreadRows:         len(result.SpreadPositions) == 0,
 		UnderlyingCandleData: template.JS("[]"),
+		UnderlyingVolumeData: template.JS("[]"),
 		UnderlyingMarkerData: template.JS("[]"),
 		HoverColumnsData:     template.JS("[]"),
 		PnLUSDSeriesData:     template.JS("[]"),
@@ -828,6 +838,13 @@ func buildHTMLView(result *backtest.Result, meta HTMLMeta) htmlReportView {
 		if candleFallback {
 			view.UnderlyingChartNote = "OHLC was not fully available in the result series, so candle bodies were reconstructed from close data for visualization."
 		}
+	}
+
+	volumePoints, volumeLabel := buildUnderlyingVolume(result)
+	if len(volumePoints) > 0 {
+		view.HasUnderlyingVolume = true
+		view.UnderlyingVolumeLabel = volumeLabel
+		view.UnderlyingVolumeData = marshalJS(volumePoints)
 	}
 
 	markers, tradeMarkerCount, spreadEventCount := buildUnderlyingMarkers(result)
@@ -1049,7 +1066,7 @@ func stripExecDeltaTagSuffix(tag string) string {
 }
 
 func buildNotes(result *backtest.Result, candleFallback bool) []string {
-	notes := make([]string, 0, 4)
+	notes := make([]string, 0, 6)
 	if len(result.Trades) == 0 && len(result.SpreadPositions) > 0 {
 		notes = append(notes, "This strategy executed through spread tracker legs, so the raw broker trade table is empty while spread lifecycle events are still marked on the price chart.")
 	}
@@ -1059,10 +1076,54 @@ func buildNotes(result *backtest.Result, candleFallback bool) []string {
 	if result.TradeOverview != nil && result.TradeOverview.RoundTrips == 0 && len(result.SpreadPositions) == 0 {
 		notes = append(notes, "No closed round trips were recorded in this run.")
 	}
+	if reportUsesCompatFallback(result) {
+		notes = append(notes, "This report used a compatibility fallback market-data source. Price bars remain usable, but some auxiliary fields may be unavailable or reconstructed.")
+	}
+	if !reportHasUsableVolume(result) {
+		notes = append(notes, "No native volume series was available for this run. Volume-based indicators and hover-window volume fields will appear as n/a.")
+	}
 	if candleFallback {
 		notes = append(notes, "Underlying candles were reconstructed from close data because complete OHLC series were unavailable in the exported result.")
 	}
 	return notes
+}
+
+func reportUsesCompatFallback(result *backtest.Result) bool {
+	if result == nil || result.Series == nil {
+		return false
+	}
+	return seriesHasTruthyFlag(result.Series["compat_fallback"])
+}
+
+func reportHasUsableVolume(result *backtest.Result) bool {
+	if result == nil || result.Series == nil {
+		return false
+	}
+	if seriesHasFiniteValue(result.Series["volume"]) {
+		return true
+	}
+	if seriesHasFiniteValue(result.Series["tick_count"]) {
+		return true
+	}
+	return seriesHasFiniteValue(result.Series["vol_norm"])
+}
+
+func seriesHasTruthyFlag(values []float64) bool {
+	for _, value := range values {
+		if chartValueValid(value) && value != 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func seriesHasFiniteValue(values []float64) bool {
+	for _, value := range values {
+		if chartValueValid(value) {
+			return true
+		}
+	}
+	return false
 }
 
 func buildUnderlyingCandles(result *backtest.Result) ([]chartCandlePoint, bool) {
@@ -1124,6 +1185,73 @@ func buildUnderlyingCandles(result *backtest.Result) ([]chartCandlePoint, bool) 
 		prevClose = closeValue
 	}
 	return candles, usedFallback
+}
+
+func buildUnderlyingVolume(result *backtest.Result) ([]chartHistogramPoint, string) {
+	if result == nil || len(result.Timestamps) == 0 || result.Series == nil {
+		return nil, ""
+	}
+
+	seriesName := ""
+	label := ""
+	switch {
+	case seriesHasFiniteValue(result.Series["volume"]):
+		seriesName = "volume"
+		label = "Volume"
+	case seriesHasFiniteValue(result.Series["tick_count"]):
+		seriesName = "tick_count"
+		label = "Tick Count"
+	case seriesHasFiniteValue(result.Series["vol_norm"]):
+		seriesName = "vol_norm"
+		label = "Volume"
+	default:
+		return nil, ""
+	}
+
+	values := result.Series[seriesName]
+	openSeries := result.Series["open"]
+	closeSeries := result.Series["close"]
+	n := minInt(len(result.Timestamps), len(values))
+	if n == 0 {
+		return nil, ""
+	}
+
+	points := make([]chartHistogramPoint, 0, n)
+	prevClose := math.NaN()
+	if len(closeSeries) > 0 {
+		prevClose = closeSeries[0]
+	}
+	for i := 0; i < n; i++ {
+		value := values[i]
+		if !chartValueValid(value) {
+			continue
+		}
+
+		color := "rgba(34,197,94,0.52)"
+		closeValue := math.NaN()
+		if i < len(closeSeries) && chartValueValid(closeSeries[i]) {
+			closeValue = closeSeries[i]
+		}
+		openValue := math.NaN()
+		if i < len(openSeries) && chartValueValid(openSeries[i]) {
+			openValue = openSeries[i]
+		} else if chartValueValid(prevClose) {
+			openValue = prevClose
+		}
+		if chartValueValid(openValue) && chartValueValid(closeValue) && closeValue < openValue {
+			color = "rgba(249,115,22,0.52)"
+		}
+
+		points = append(points, chartHistogramPoint{
+			Time:  result.Timestamps[i].Unix(),
+			Value: value,
+			Color: color,
+		})
+		if chartValueValid(closeValue) {
+			prevClose = closeValue
+		}
+	}
+	return points, label
 }
 
 func buildHoverColumns(result *backtest.Result) []hoverColumnPayload {
@@ -1698,7 +1826,7 @@ const htmlTemplate = `<!DOCTYPE html>
 				<div class="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
 					<div>
 						<div class="text-[11px] mono uppercase tracking-[0.22em] text-teal-400">Data Window</div>
-						<p class="mt-1 text-xs text-slate-400">Hover the candlestick chart to inspect OHLC{{ if .HasHoverColumns }} and strategy columns{{ end }}.</p>
+						<p class="mt-1 text-xs text-slate-400">Hover the candlestick chart to inspect OHLC{{ if .HasUnderlyingVolume }}, {{ .UnderlyingVolumeLabel }}{{ end }}{{ if .HasHoverColumns }}, and strategy columns{{ end }}.</p>
 					</div>
 					<div id="underlying-data-window-time" class="mono text-xs text-slate-400"></div>
 				</div>
@@ -1706,6 +1834,12 @@ const htmlTemplate = `<!DOCTYPE html>
 			</div>
       <div class="chart-box p-1">
         <div id="underlying-chart" style="width:100%;height:420px;"></div>
+				{{ if .HasUnderlyingVolume }}
+				<div class="mt-1 border-t border-white/8 pt-3">
+					<div class="px-3 pb-1 text-[11px] mono uppercase tracking-[0.18em] text-slate-500">{{ .UnderlyingVolumeLabel }}</div>
+					<div id="underlying-volume-chart" style="width:100%;height:140px;"></div>
+				</div>
+				{{ end }}
       </div>
     </div>
     {{ end }}
@@ -1869,6 +2003,8 @@ const htmlTemplate = `<!DOCTYPE html>
 
   <script>
     const underlyingCandles = {{ .UnderlyingCandleData }};
+		const underlyingVolumeSeries = {{ .UnderlyingVolumeData }};
+		const underlyingVolumeLabel = {{ printf "%q" .UnderlyingVolumeLabel }};
     const underlyingMarkers = {{ .UnderlyingMarkerData }};
 	const hoverColumns = {{ .HoverColumnsData }};
     const equitySeries = {{ .EquitySeriesData }};
@@ -1901,12 +2037,71 @@ const htmlTemplate = `<!DOCTYPE html>
       }
     };
 
+		const utcMonthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+		function padUTC(value) {
+			return String(value).padStart(2, '0');
+		}
+
+		function normalizeUnixSeconds(timeValue) {
+			if (typeof timeValue === 'number' && isFinite(timeValue)) {
+				return timeValue;
+			}
+			if (timeValue && typeof timeValue.timestamp === 'number' && isFinite(timeValue.timestamp)) {
+				return timeValue.timestamp;
+			}
+			if (
+				timeValue &&
+				typeof timeValue.year === 'number' &&
+				typeof timeValue.month === 'number' &&
+				typeof timeValue.day === 'number'
+			) {
+				return Math.floor(Date.UTC(timeValue.year, timeValue.month - 1, timeValue.day) / 1000);
+			}
+			return null;
+		}
+
+		function formatUTCDateTime(timeValue, includeSeconds) {
+			var unixSeconds = normalizeUnixSeconds(timeValue);
+			if (unixSeconds === null) {
+				return '';
+			}
+			var date = new Date(unixSeconds * 1000);
+			var formatted =
+				date.getUTCFullYear() + '-' +
+				padUTC(date.getUTCMonth() + 1) + '-' +
+				padUTC(date.getUTCDate()) + ' ' +
+				padUTC(date.getUTCHours()) + ':' +
+				padUTC(date.getUTCMinutes());
+			if (includeSeconds) {
+				formatted += ':' + padUTC(date.getUTCSeconds());
+			}
+			return formatted + ' UTC';
+		}
+
+		function formatUTCTickLabel(timeValue) {
+			var unixSeconds = normalizeUnixSeconds(timeValue);
+			if (unixSeconds === null) {
+				return '';
+			}
+			var date = new Date(unixSeconds * 1000);
+			if (date.getUTCHours() === 0 && date.getUTCMinutes() === 0 && date.getUTCSeconds() === 0) {
+				return padUTC(date.getUTCDate()) + ' ' + utcMonthNames[date.getUTCMonth()] + " '" + String(date.getUTCFullYear()).slice(-2);
+			}
+			return padUTC(date.getUTCHours()) + ':' + padUTC(date.getUTCMinutes());
+		}
+
     function createChart(id, height) {
       var el = document.getElementById(id);
       if (!el || typeof LightweightCharts === 'undefined') return null;
       var chart = LightweightCharts.createChart(el, Object.assign({
         width: el.clientWidth, height: height,
-        handleScroll: true, handleScale: true
+				handleScroll: true, handleScale: true,
+				localization: {
+					locale: 'en-US',
+					timeFormatter: function(timeValue) { return formatUTCDateTime(timeValue, true); },
+					tickMarkFormatter: function(timeValue) { return formatUTCTickLabel(timeValue); }
+				}
       }, chartTheme));
       if (typeof ResizeObserver !== 'undefined') {
         new ResizeObserver(function() { chart.applyOptions({ width: el.clientWidth }); }).observe(el);
@@ -1944,6 +2139,13 @@ const htmlTemplate = `<!DOCTYPE html>
 			});
 		}
 
+		function filterHistogramSeriesByTimes(series, activeSet, enabled) {
+			if (!enabled || activeSet.size === 0) return series;
+			return series.filter(function(point) {
+				return activeSet.has(point.time);
+			});
+		}
+
     function syncCharts(charts) {
       var syncing = false;
       charts.forEach(function(src) {
@@ -1962,6 +2164,8 @@ const htmlTemplate = `<!DOCTYPE html>
 
 		var underlyingChart = null;
 		var underlyingSeries = null;
+		var underlyingVolumeChart = null;
+		var underlyingVolumePlot = null;
 		var equityChart = null;
 		var equityPlot = null;
 		var pnlChart = null;
@@ -1971,10 +2175,14 @@ const htmlTemplate = `<!DOCTYPE html>
 		var dataWindowGrid = document.getElementById('underlying-data-window-grid');
 		var dataWindowTime = document.getElementById('underlying-data-window-time');
 		var candleByTime = new Map();
+		var volumeByTime = new Map();
 		var hoverColumnMaps = [];
 
 		underlyingCandles.forEach(function(point) {
 			candleByTime.set(point.time, point);
+		});
+		underlyingVolumeSeries.forEach(function(point) {
+			volumeByTime.set(point.time, point.value);
 		});
 		hoverColumnMaps = hoverColumns.map(function(column) {
 			var values = new Map();
@@ -1992,15 +2200,7 @@ const htmlTemplate = `<!DOCTYPE html>
 			if (typeof unixSeconds !== 'number') {
 				return 'No active crosshair';
 			}
-			return new Date(unixSeconds * 1000).toLocaleString('en-US', {
-				year: 'numeric',
-				month: '2-digit',
-				day: '2-digit',
-				hour: '2-digit',
-				minute: '2-digit',
-				second: '2-digit',
-				hour12: false
-			});
+			return formatUTCDateTime(unixSeconds, true);
 		}
 
 		function formatNumber(value, decimals) {
@@ -2045,6 +2245,9 @@ const htmlTemplate = `<!DOCTYPE html>
 				appendDataWindowItem(items, 'Low', formatNumber(candle.low, 2));
 				appendDataWindowItem(items, 'Close', formatNumber(candle.close, 2));
 			}
+			if (volumeByTime.has(resolvedTime)) {
+				appendDataWindowItem(items, underlyingVolumeLabel || 'Volume', formatNumber(volumeByTime.get(resolvedTime), 0));
+			}
 			hoverColumnMaps.forEach(function(column) {
 				appendDataWindowItem(items, column.label, formatNumber(column.values.get(resolvedTime), column.decimals));
 			});
@@ -2074,6 +2277,23 @@ const htmlTemplate = `<!DOCTYPE html>
         charts.push(pc);
       }
     }
+
+		if (underlyingVolumeSeries.length > 0) {
+			var pvc = createChart('underlying-volume-chart', 140);
+			if (pvc) {
+				var pvs = pvc.addHistogramSeries({
+					priceFormat: { type: 'volume' },
+					priceLineVisible: false,
+					lastValueVisible: false,
+					base: 0
+				});
+				pvs.setData(underlyingVolumeSeries);
+				pvc.timeScale().fitContent();
+				underlyingVolumeChart = pvc;
+				underlyingVolumePlot = pvs;
+				charts.push(pvc);
+			}
+		}
 
 		renderDataWindow(null);
 
@@ -2124,6 +2344,9 @@ const htmlTemplate = `<!DOCTYPE html>
 			if (underlyingSeries) {
 				underlyingSeries.setData(filterCandleSeriesByTimes(underlyingCandles, activeSet, useFilter));
 				underlyingSeries.setMarkers(filterMarkerSeriesByTimes(underlyingMarkers, activeSet, useFilter));
+			}
+			if (underlyingVolumePlot) {
+				underlyingVolumePlot.setData(filterHistogramSeriesByTimes(underlyingVolumeSeries, activeSet, useFilter));
 			}
 			if (equityPlot) {
 				equityPlot.setData(filterLineSeriesByTimes(equitySeries, activeSet, useFilter));
@@ -2311,7 +2534,7 @@ const combinedHTMLTemplate = `<!DOCTYPE html>
 										<h3 class="text-2xl font-bold text-white">Underlying Price</h3>
 										<span class="rounded-full border border-steel/30 bg-steel/10 px-3 py-1 font-mono text-[11px] uppercase tracking-[0.2em] text-steel">Candlestick + markers</span>
 									</div>
-									<p class="mt-2 text-sm text-slate-300">Range {{ .Report.UnderlyingPriceMin }} to {{ .Report.UnderlyingPriceMax }}. Buy and sell fills are marked directly on the price bars. Spread open and close events are also annotated when available.</p>
+									<p class="mt-2 text-sm text-slate-300">Range {{ .Report.UnderlyingPriceMin }} to {{ .Report.UnderlyingPriceMax }}. Buy and sell fills are marked directly on the price bars. Spread open and close events are also annotated when available.{{ if .Report.HasUnderlyingVolume }} {{ .Report.UnderlyingVolumeLabel }} bars are shown below the price chart.{{ end }}</p>
 								</div>
 							</div>
 							{{ if .Report.UnderlyingChartNote }}
@@ -2320,6 +2543,12 @@ const combinedHTMLTemplate = `<!DOCTYPE html>
 							<div class="chart-shell mt-5 overflow-hidden rounded-[1.5rem] border border-white/10 px-2 py-2 sm:px-3 sm:py-3">
 								{{ if .Report.HasUnderlyingChart }}
 								<div id="{{ .AnchorID }}-underlying-chart" class="chart-host tall"></div>
+								{{ if .Report.HasUnderlyingVolume }}
+								<div class="mt-3 border-t border-white/10 pt-3">
+									<div class="px-3 pb-1 font-mono text-[11px] uppercase tracking-[0.2em] text-slate-400">{{ .Report.UnderlyingVolumeLabel }}</div>
+									<div id="{{ .AnchorID }}-underlying-volume-chart" class="chart-host"></div>
+								</div>
+								{{ end }}
 								{{ else }}
 								<div class="flex min-h-[20rem] items-center justify-center rounded-[1.25rem] border border-dashed border-white/10 bg-white/[0.03] px-6 text-center text-sm text-slate-300">Underlying OHLC data was not present in the backtest result, so a candlestick chart could not be rendered.</div>
 								{{ end }}
@@ -2545,6 +2774,7 @@ const combinedHTMLTemplate = `<!DOCTYPE html>
 				anchorId: {{ .AnchorID }},
 				hasUnderlyingChart: {{ if .Report.HasUnderlyingChart }}true{{ else }}false{{ end }},
 				underlyingCandles: {{ .Report.UnderlyingCandleData }},
+				underlyingVolume: {{ .Report.UnderlyingVolumeData }},
 				underlyingMarkers: {{ .Report.UnderlyingMarkerData }},
 				equitySeries: {{ .Report.EquitySeriesData }},
 				drawdownSeries: {{ .Report.DrawdownSeriesData }}
@@ -2582,6 +2812,60 @@ const combinedHTMLTemplate = `<!DOCTYPE html>
 			}
 		};
 
+		const utcMonthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+		function padUTC(value) {
+			return String(value).padStart(2, '0');
+		}
+
+		function normalizeUnixSeconds(timeValue) {
+			if (typeof timeValue === 'number' && isFinite(timeValue)) {
+				return timeValue;
+			}
+			if (timeValue && typeof timeValue.timestamp === 'number' && isFinite(timeValue.timestamp)) {
+				return timeValue.timestamp;
+			}
+			if (
+				timeValue &&
+				typeof timeValue.year === 'number' &&
+				typeof timeValue.month === 'number' &&
+				typeof timeValue.day === 'number'
+			) {
+				return Math.floor(Date.UTC(timeValue.year, timeValue.month - 1, timeValue.day) / 1000);
+			}
+			return null;
+		}
+
+		function formatUTCDateTime(timeValue, includeSeconds) {
+			const unixSeconds = normalizeUnixSeconds(timeValue);
+			if (unixSeconds === null) {
+				return '';
+			}
+			const date = new Date(unixSeconds * 1000);
+			let formatted =
+				date.getUTCFullYear() + '-' +
+				padUTC(date.getUTCMonth() + 1) + '-' +
+				padUTC(date.getUTCDate()) + ' ' +
+				padUTC(date.getUTCHours()) + ':' +
+				padUTC(date.getUTCMinutes());
+			if (includeSeconds) {
+				formatted += ':' + padUTC(date.getUTCSeconds());
+			}
+			return formatted + ' UTC';
+		}
+
+		function formatUTCTickLabel(timeValue) {
+			const unixSeconds = normalizeUnixSeconds(timeValue);
+			if (unixSeconds === null) {
+				return '';
+			}
+			const date = new Date(unixSeconds * 1000);
+			if (date.getUTCHours() === 0 && date.getUTCMinutes() === 0 && date.getUTCSeconds() === 0) {
+				return padUTC(date.getUTCDate()) + ' ' + utcMonthNames[date.getUTCMonth()] + " '" + String(date.getUTCFullYear()).slice(-2);
+			}
+			return padUTC(date.getUTCHours()) + ':' + padUTC(date.getUTCMinutes());
+		}
+
 		function createResponsiveChart(containerId, height, extraOptions) {
 			const container = document.getElementById(containerId);
 			if (!container || typeof LightweightCharts === 'undefined') {
@@ -2596,7 +2880,9 @@ const combinedHTMLTemplate = `<!DOCTYPE html>
 						handleScroll: true,
 						handleScale: true,
 						localization: {
-							locale: 'en-US'
+							locale: 'en-US',
+							timeFormatter: function(timeValue) { return formatUTCDateTime(timeValue, true); },
+							tickMarkFormatter: function(timeValue) { return formatUTCTickLabel(timeValue); }
 						}
 					},
 					chartTheme,
@@ -2665,6 +2951,21 @@ const combinedHTMLTemplate = `<!DOCTYPE html>
 					candleSeries.setMarkers(report.underlyingMarkers);
 					priceChart.timeScale().fitContent();
 					charts.push(priceChart);
+				}
+			}
+
+			if (report.underlyingVolume && report.underlyingVolume.length > 0) {
+				const volumeChart = createResponsiveChart(report.anchorId + '-underlying-volume-chart', 180, {});
+				if (volumeChart) {
+					const volumeSeries = volumeChart.addHistogramSeries({
+						priceFormat: { type: 'volume' },
+						priceLineVisible: false,
+						lastValueVisible: false,
+						base: 0
+					});
+					volumeSeries.setData(report.underlyingVolume);
+					volumeChart.timeScale().fitContent();
+					charts.push(volumeChart);
 				}
 			}
 

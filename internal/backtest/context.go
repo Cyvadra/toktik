@@ -298,7 +298,7 @@ func (bc *BarContext) BuyNowWithNote(ref SecurityRef, qty float64, note string) 
 	if qty <= 0 {
 		return false
 	}
-	_, ok := bc.broker.ExecuteOrderNow(Order{
+	_, ok := bc.broker.ExecuteOrderAtCloseNow(Order{
 		Security:   ref,
 		Side:       Buy,
 		Type:       MarketOrder,
@@ -315,7 +315,7 @@ func (bc *BarContext) SellNowWithNote(ref SecurityRef, qty float64, note string)
 	if qty <= 0 {
 		return false
 	}
-	_, ok := bc.broker.ExecuteOrderNow(Order{
+	_, ok := bc.broker.ExecuteOrderAtCloseNow(Order{
 		Security:   ref,
 		Side:       Sell,
 		Type:       MarketOrder,

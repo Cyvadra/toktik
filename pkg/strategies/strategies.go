@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 
 	"github.com/Cyvadra/toktik/internal/backtest"
+	_ "github.com/Cyvadra/toktik/pkg/strategies/buy_flash_low"
 	"github.com/Cyvadra/toktik/pkg/strategies/catalog"
 	_ "github.com/Cyvadra/toktik/pkg/strategies/delta_filter"
 	_ "github.com/Cyvadra/toktik/pkg/strategies/golden_cross"
