@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"math"
 	"os"
+	"sort"
 	"strings"
 	"time"
 )
@@ -498,7 +499,7 @@ func computeResult(
 	r.MaxDrawdownStart = maxDDStart
 	r.MaxDrawdownEnd = maxDDEnd
 
-	// Sharpe ratio (daily returns assumed)
+	// Sharpe ratio – annualised using the actual bar interval inferred from timestamps
 	if n > 1 {
 		returns := make([]float64, n-1)
 		for i := 1; i < n; i++ {
@@ -508,8 +509,8 @@ func computeResult(
 		}
 		mean, stddev := meanStd(returns)
 		if stddev > 0 {
-			// Annualize assuming ~252 trading days
-			r.SharpeRatio = (mean / stddev) * math.Sqrt(252)
+			barsPerYear := inferBarsPerYear(timestamps)
+			r.SharpeRatio = (mean / stddev) * math.Sqrt(barsPerYear)
 		}
 	}
 
@@ -725,9 +726,10 @@ func durationHours(timestamps []time.Time, start, end int) float64 {
 // computeTradePnL pairs entries and exits to compute per-round-trip PnL.
 func computeTradePnL(trades []Trade) []float64 {
 	type openEntry struct {
-		side  Side
-		qty   float64
-		price float64
+		side       Side
+		qty        float64
+		price      float64
+		commission float64 // accumulated entry-side commission
 	}
 
 	// Track pending entries per security
@@ -738,7 +740,7 @@ func computeTradePnL(trades []Trade) []float64 {
 		entry, hasPending := pending[t.Security]
 		if !hasPending {
 			// New entry
-			pending[t.Security] = &openEntry{side: t.Side, qty: t.Qty, price: t.FillPrice}
+			pending[t.Security] = &openEntry{side: t.Side, qty: t.Qty, price: t.FillPrice, commission: t.Commission}
 			continue
 		}
 
@@ -754,16 +756,19 @@ func computeTradePnL(trades []Trade) []float64 {
 			} else {
 				pnl = closeQty * (entry.price - t.FillPrice)
 			}
-			pnl -= t.Commission
+			// Subtract close commission plus proportional entry commission
+			entryCommission := entry.commission * (closeQty / entry.qty)
+			pnl -= t.Commission + entryCommission
 			pnls = append(pnls, pnl)
 
 			remaining := entry.qty - closeQty
 			if remaining > 0 {
 				entry.qty = remaining
+				entry.commission -= entryCommission
 			} else {
 				excess := t.Qty - closeQty
 				if excess > 0 {
-					pending[t.Security] = &openEntry{side: t.Side, qty: excess, price: t.FillPrice}
+					pending[t.Security] = &openEntry{side: t.Side, qty: excess, price: t.FillPrice, commission: t.Commission}
 				} else {
 					delete(pending, t.Security)
 				}
@@ -772,6 +777,7 @@ func computeTradePnL(trades []Trade) []float64 {
 			// Adding to position
 			totalQty := entry.qty + t.Qty
 			entry.price = (entry.price*entry.qty + t.FillPrice*t.Qty) / totalQty
+			entry.commission += t.Commission
 			entry.qty = totalQty
 		}
 	}
@@ -780,22 +786,57 @@ func computeTradePnL(trades []Trade) []float64 {
 }
 
 func meanStd(data []float64) (float64, float64) {
-	if len(data) == 0 {
+	n := len(data)
+	if n == 0 {
 		return 0, 0
 	}
 	sum := 0.0
 	for _, v := range data {
 		sum += v
 	}
-	mean := sum / float64(len(data))
+	mean := sum / float64(n)
+
+	if n < 2 {
+		return mean, 0
+	}
 
 	sumSq := 0.0
 	for _, v := range data {
 		d := v - mean
 		sumSq += d * d
 	}
-	variance := sumSq / float64(len(data))
+	// Use sample standard deviation (÷N-1) per financial convention
+	variance := sumSq / float64(n-1)
 	return mean, math.Sqrt(variance)
+}
+
+// inferBarsPerYear estimates how many bars occur in one calendar year by
+// computing the median inter-bar duration from the timestamp series.
+// Falls back to 252 (daily bars) when the series is too short to measure.
+func inferBarsPerYear(timestamps []time.Time) float64 {
+	if len(timestamps) < 2 {
+		return 252
+	}
+	durs := make([]float64, 0, len(timestamps)-1)
+	for i := 1; i < len(timestamps); i++ {
+		h := timestamps[i].Sub(timestamps[i-1]).Hours()
+		if h > 0 {
+			durs = append(durs, h)
+		}
+	}
+	if len(durs) == 0 {
+		return 252
+	}
+	sort.Float64s(durs)
+	mid := len(durs) / 2
+	var medianHours float64
+	if len(durs)%2 == 0 {
+		medianHours = (durs[mid-1] + durs[mid]) / 2.0
+	} else {
+		medianHours = durs[mid]
+	}
+	const hoursPerYear = 365.25 * 24.0
+	return hoursPerYear / medianHours
 }
 
 func itoa(n int) string {

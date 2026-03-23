@@ -415,13 +415,14 @@ func (sp *SpreadPosition) TimeHeld(now time.Time) time.Duration {
 
 // SpreadTracker manages open spread positions.
 type SpreadTracker struct {
-	spreads []*SpreadPosition
-	nextID  int
+	spreads   []*SpreadPosition
+	spreadMap map[int]*SpreadPosition // O(1) lookup by ID
+	nextID    int
 }
 
 // NewSpreadTracker creates a new tracker.
 func NewSpreadTracker() *SpreadTracker {
-	return &SpreadTracker{nextID: 1}
+	return &SpreadTracker{nextID: 1, spreadMap: make(map[int]*SpreadPosition)}
 }
 
 // Open creates a new spread position and returns its ID.
@@ -442,17 +443,13 @@ func (st *SpreadTracker) OpenWithRef(legs []SpreadLeg, openTime time.Time, openB
 		Ref:      ref,
 	}
 	st.spreads = append(st.spreads, sp)
+	st.spreadMap[id] = sp
 	return id
 }
 
-// Get returns a spread by ID, or nil if not found.
+// Get returns a spread by ID in O(1), or nil if not found.
 func (st *SpreadTracker) Get(id int) *SpreadPosition {
-	for _, sp := range st.spreads {
-		if sp.ID == id {
-			return sp
-		}
-	}
-	return nil
+	return st.spreadMap[id]
 }
 
 // OpenSpreads returns all spreads that have at least one open leg.

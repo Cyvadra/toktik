@@ -606,20 +606,23 @@ func (bc *BarContext) OpenSpreadWithRef(legs []SpreadLeg, tag, ref string) int {
 	if bc.spreadTracker == nil {
 		return 0
 	}
-	// Fill entry time on legs
-	for i := range legs {
-		legs[i].EntryTime = bc.barTime
+	// Work on a copy so the caller's slice is never mutated.
+	legsCopy := make([]SpreadLeg, len(legs))
+	copy(legsCopy, legs)
+	// Fill entry time on the copy
+	for i := range legsCopy {
+		legsCopy[i].EntryTime = bc.barTime
 	}
 	// Record cash impact: selling = cash inflow, buying = cash outflow
-	for i := range legs {
-		amount := legs[i].Qty * legs[i].EntryPrice
-		if legs[i].Side == Sell {
+	for i := range legsCopy {
+		amount := legsCopy[i].Qty * legsCopy[i].EntryPrice
+		if legsCopy[i].Side == Sell {
 			bc.broker.AdjustCash(amount)
 		} else {
 			bc.broker.AdjustCash(-amount)
 		}
 	}
-	return bc.spreadTracker.OpenWithRef(legs, bc.barTime, bc.barIndex, tag, ref)
+	return bc.spreadTracker.OpenWithRef(legsCopy, bc.barTime, bc.barIndex, tag, ref)
 }
 
 // CloseSpreadLeg closes a specific leg of a spread at the given price.

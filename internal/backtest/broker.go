@@ -321,7 +321,10 @@ func (b *Broker) positionMarketValue() float64 {
 	total := 0.0
 	for _, pos := range b.positions.All() {
 		if b.priceFunc != nil {
-			total += pos.Qty * b.markPriceForPosition(pos.Qty, b.priceFunc(pos.Security))
+			mark := b.markPriceForPosition(pos.Qty, b.priceFunc(pos.Security))
+			if isValidPrice(mark) {
+				total += pos.Qty * mark
+			}
 		}
 	}
 	return total
