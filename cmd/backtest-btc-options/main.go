@@ -12,7 +12,7 @@ import (
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/Cyvadra/toktik/internal/backtest"
-	"github.com/Cyvadra/toktik/internal/cryptooptions"
+	appCli "github.com/Cyvadra/toktik/internal/cli"
 	"github.com/Cyvadra/toktik/internal/datafeed"
 	"github.com/Cyvadra/toktik/internal/report"
 	"github.com/Cyvadra/toktik/pkg/feeds"
@@ -21,7 +21,7 @@ import (
 )
 
 func main() {
-	dsn := flag.String("clickhouse-dsn", "clickhouse://localhost:9000/default", "ClickHouse DSN")
+	dsn := flag.String("clickhouse-dsn", appCli.DefaultDSN, "ClickHouse DSN")
 	baseAsset := flag.String("asset", "BTC", "Underlying base asset (e.g. BTC)")
 	interval := flag.String("interval", "1h", "Bar interval for the strategy (e.g. 1h)")
 	fromStr := flag.String("from", "", "Start date YYYY-MM-DD (required)")
@@ -148,9 +148,9 @@ func main() {
 	ctx := context.Background()
 
 	log.Printf("Connecting to ClickHouse: %s", sanitizeDSN(*dsn))
-	conn, err := cryptooptions.ConnectClickHouse(ctx, *dsn)
+	conn, err := appCli.ConnectClickHouse(ctx, *dsn, nil)
 	if err != nil {
-		log.Fatalf("ClickHouse connection failed: %v", err)
+		log.Fatalf("%v", err)
 	}
 
 	factorStore, err := feeds.NewStore(ctx, *dsn)

@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+	appCli "github.com/Cyvadra/toktik/internal/cli"
 	"github.com/Cyvadra/toktik/internal/cryptooptions"
 )
 
@@ -34,7 +35,7 @@ func main() {
 	jsonFile := flag.String("json-file", "btc2023_2025.json", "Path to Julia-exported JSON file (deprecated, use --input-file)")
 	inputFile := flag.String("input-file", "", "Path to input file (.json or .csv). If empty, --json-file is used")
 	inputFormat := flag.String("format", "auto", "Input format: auto|json|csv")
-	dsn := flag.String("clickhouse-dsn", "clickhouse://default:@localhost:9000/default", "ClickHouse DSN")
+	dsn := flag.String("clickhouse-dsn", appCli.DefaultDSN, "ClickHouse DSN")
 	symbol := flag.String("symbol", "BTC", "Spot symbol written to crypto_spot_bar_1m.symbol")
 	priceSource := flag.String("price-source", "julia-json", "Value for crypto_spot_bar_1m.price_source")
 	batchSize := flag.Int("batch-size", 50000, "Rows per INSERT batch")
@@ -59,37 +60,21 @@ func main() {
 
 	ctx := context.Background()
 
-	conn, err := cryptooptions.ConnectClickHouse(ctx, *dsn)
-	if err != nil {
-		log.Fatalf("connect ClickHouse: %v", err)
-	}
-	log.Printf("Connected to ClickHouse")
-
+	var schema *appCli.SchemaInit
 	if *initSchema {
-		if *schemaFile == "" {
-			candidates := []string{
-				"schema/clickhouse/crypto_options.sql",
-				"../schema/clickhouse/crypto_options.sql",
-				"../../schema/clickhouse/crypto_options.sql",
-			}
-			for _, c := range candidates {
-				if _, err := os.Stat(c); err == nil {
-					*schemaFile = c
-					break
-				}
-			}
-			if *schemaFile == "" {
-				log.Fatalf("cannot find schema SQL file, set --schema")
-			}
+		ddlFile, err := appCli.ResolveSchemaFile(*schemaFile, appCli.CryptoOptionsSchemaFile)
+		if err != nil {
+			log.Fatalf("%v", err)
 		}
+		schema = &appCli.SchemaInit{
+			DDLFile:   ddlFile,
+			SpotKline: true,
+		}
+	}
 
-		if err := cryptooptions.InitSchema(ctx, conn, *schemaFile); err != nil {
-			log.Fatalf("init schema: %v", err)
-		}
-		if err := cryptooptions.InitSpotKlineSchema(ctx, conn); err != nil {
-			log.Fatalf("init spot kline schema: %v", err)
-		}
-		log.Printf("Schema initialized")
+	conn, err := appCli.ConnectClickHouse(ctx, *dsn, schema)
+	if err != nil {
+		log.Fatalf("%v", err)
 	}
 
 	if *overwrite {

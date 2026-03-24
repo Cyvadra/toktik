@@ -9,13 +9,14 @@ import (
 	"strings"
 	"time"
 
+	appCli "github.com/Cyvadra/toktik/internal/cli"
 	"github.com/Cyvadra/toktik/internal/cryptooptions"
 )
 
 func main() {
 	from := flag.String("from", "", "Start date in YYYY-MM-DD")
 	to := flag.String("to", "", "End date in YYYY-MM-DD")
-	dsn := flag.String("clickhouse-dsn", "clickhouse://default:@localhost:9000/default", "ClickHouse DSN")
+	dsn := flag.String("clickhouse-dsn", appCli.DefaultDSN, "ClickHouse DSN")
 	baseAsset := flag.String("base-asset", "", "Optional base asset filter, e.g. BTC or ETH")
 	flag.Parse()
 
@@ -34,9 +35,9 @@ func main() {
 	}
 
 	ctx := context.Background()
-	conn, err := cryptooptions.ConnectClickHouse(ctx, *dsn)
+	conn, err := appCli.ConnectClickHouse(ctx, *dsn, nil)
 	if err != nil {
-		log.Fatalf("connect to ClickHouse: %v", err)
+		log.Fatalf("%v", err)
 	}
 
 	missingDays, err := cryptooptions.FindMissingBarDays(ctx, conn, fromDate, toDate, strings.TrimSpace(*baseAsset))

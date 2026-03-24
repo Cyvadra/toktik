@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	appCli "github.com/Cyvadra/toktik/internal/cli"
 	"github.com/Cyvadra/toktik/internal/cryptooptions"
 )
 
@@ -24,7 +25,7 @@ const (
 
 func main() {
 	inputDir := flag.String("input-dir", "", "Directory containing .parquet files")
-	dsn := flag.String("clickhouse-dsn", "clickhouse://default:@localhost:9000/default", "ClickHouse DSN")
+	dsn := flag.String("clickhouse-dsn", appCli.DefaultDSN, "ClickHouse DSN")
 	batchSize := flag.Int("batch-size", 50000, "Rows per INSERT batch")
 	workers := flag.Int("workers", 2, "Number of parallel file importers")
 	schemaFile := flag.String("schema", "", "Path to DDL SQL file (auto-detected if empty)")
@@ -38,45 +39,22 @@ func main() {
 		*workers = 1
 	}
 
-	if *schemaFile == "" {
-		candidates := []string{
-			"schema/clickhouse/crypto_options.sql",
-			"../schema/clickhouse/crypto_options.sql",
-			"../../schema/clickhouse/crypto_options.sql",
-		}
-		for _, c := range candidates {
-			if _, err := os.Stat(c); err == nil {
-				*schemaFile = c
-				break
-			}
-		}
-		if *schemaFile == "" {
-			log.Fatalf("cannot find schema SQL file; specify --schema path")
-		}
+	ddlFile, err := appCli.ResolveSchemaFile(*schemaFile, appCli.CryptoOptionsSchemaFile)
+	if err != nil {
+		log.Fatalf("%v", err)
 	}
 
 	ctx := context.Background()
 
-	conn, err := cryptooptions.ConnectClickHouse(ctx, *dsn)
+	conn, err := appCli.ConnectClickHouse(ctx, *dsn, &appCli.SchemaInit{
+		DDLFile:   ddlFile,
+		Kline:     true,
+		SpotKline: true,
+	})
 	if err != nil {
-		log.Fatalf("connect to ClickHouse: %v", err)
+		log.Fatalf("%v", err)
 	}
-	log.Printf("Connected to ClickHouse")
-
-	if err := cryptooptions.InitSchema(ctx, conn, *schemaFile); err != nil {
-		log.Fatalf("init schema: %v", err)
-	}
-	log.Printf("Schema initialized from %s", *schemaFile)
-
-	if err := cryptooptions.InitKlineSchema(ctx, conn); err != nil {
-		log.Fatalf("init kline schema: %v", err)
-	}
-	log.Printf("K-line materialized views initialized")
-
-	if err := cryptooptions.InitSpotKlineSchema(ctx, conn); err != nil {
-		log.Fatalf("init spot kline schema: %v", err)
-	}
-	log.Printf("Spot K-line materialized views initialized")
+	_ = conn // schema-only; workers open their own connections
 
 	optionFiles, spotFiles, err := collectParquetFiles(*inputDir)
 	if err != nil {

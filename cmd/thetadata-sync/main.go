@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	appCli "github.com/Cyvadra/toktik/internal/cli"
 	"github.com/Cyvadra/toktik/pkg/thetadata"
 )
 
@@ -21,7 +22,7 @@ func main() {
 	endDate := flag.String("end-date", "2026-02-28", "End date (YYYY-MM-DD)")
 	mode := flag.String("mode", "eod", "Sync mode: eod or 5m")
 	baseURL := flag.String("base-url", "http://127.0.0.1:25503", "Theta Data terminal base URL")
-	chDSN := flag.String("clickhouse-dsn", "clickhouse://default:@localhost:9000/default", "ClickHouse DSN")
+	chDSN := flag.String("clickhouse-dsn", appCli.DefaultDSN, "ClickHouse DSN")
 	workers := flag.Int("workers", 4, "Concurrent workers")
 	rateLimit := flag.Float64("rate-limit", 10.0, "Max total requests/sec")
 	progressDir := flag.String("progress-dir", ".thetadata-progress", "Progress tracking directory")
@@ -48,15 +49,8 @@ func main() {
 
 	// Auto-detect schema file.
 	if *schemaFile == "" {
-		for _, c := range []string{
-			"schema/clickhouse/equity_options.sql",
-			"../schema/clickhouse/equity_options.sql",
-			"../../schema/clickhouse/equity_options.sql",
-		} {
-			if _, err := os.Stat(c); err == nil {
-				*schemaFile = c
-				break
-			}
+		if found, findErr := appCli.EquityOptionsSchemaFile(); findErr == nil {
+			*schemaFile = found
 		}
 	}
 

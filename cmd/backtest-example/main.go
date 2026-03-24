@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/Cyvadra/toktik/internal/backtest"
-	"github.com/Cyvadra/toktik/internal/cryptooptions"
+	appCli "github.com/Cyvadra/toktik/internal/cli"
 	"github.com/Cyvadra/toktik/internal/datafeed"
 )
 
@@ -104,7 +104,7 @@ func (s *DeltaFilterStrategy) OnBar(ctx *backtest.BarContext) {
 }
 
 func main() {
-	dsn := flag.String("clickhouse-dsn", "clickhouse://localhost:9000/default", "ClickHouse DSN")
+	dsn := flag.String("clickhouse-dsn", appCli.DefaultDSN, "ClickHouse DSN")
 	symbol := flag.String("symbol", "BTC-3JAN25-100000-C", "Option symbol to backtest")
 	interval := flag.String("interval", "15m", "Bar interval")
 	fromStr := flag.String("from", "2024-12-01", "Start date (YYYY-MM-DD)")
@@ -131,9 +131,9 @@ func main() {
 
 	ctx := context.Background()
 
-	conn, err := cryptooptions.ConnectClickHouse(ctx, *dsn)
+	conn, err := appCli.ConnectClickHouse(ctx, *dsn, nil)
 	if err != nil {
-		log.Fatalf("ClickHouse connection failed: %v", err)
+		log.Fatalf("%v", err)
 	}
 
 	engine := backtest.NewEngine(backtest.Config{

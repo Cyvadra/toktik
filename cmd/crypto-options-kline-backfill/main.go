@@ -9,11 +9,12 @@ import (
 	"strings"
 	"time"
 
+	appCli "github.com/Cyvadra/toktik/internal/cli"
 	"github.com/Cyvadra/toktik/internal/cryptooptions"
 )
 
 func main() {
-	dsn := flag.String("clickhouse-dsn", "clickhouse://default:@localhost:9000/default", "ClickHouse DSN")
+	dsn := flag.String("clickhouse-dsn", appCli.DefaultDSN, "ClickHouse DSN")
 	from := flag.String("from", "", "Optional start date/time (YYYY-MM-DD or RFC3339), inclusive")
 	to := flag.String("to", "", "Optional end date/time (YYYY-MM-DD or RFC3339), exclusive for RFC3339, next-day exclusive for YYYY-MM-DD")
 	baseAsset := flag.String("base-asset", "", "Optional base asset filter, e.g. BTC")
@@ -39,16 +40,12 @@ func main() {
 	}
 
 	ctx := context.Background()
-	conn, err := cryptooptions.ConnectClickHouse(ctx, *dsn)
+	conn, err := appCli.ConnectClickHouse(ctx, *dsn, &appCli.SchemaInit{
+		Kline:     true,
+		SpotKline: true,
+	})
 	if err != nil {
-		log.Fatalf("connect to ClickHouse: %v", err)
-	}
-
-	if err := cryptooptions.InitKlineSchema(ctx, conn); err != nil {
-		log.Fatalf("init option kline schema: %v", err)
-	}
-	if err := cryptooptions.InitSpotKlineSchema(ctx, conn); err != nil {
-		log.Fatalf("init spot kline schema: %v", err)
+		log.Fatalf("%v", err)
 	}
 
 	opts := cryptooptions.KlineBackfillOptions{
