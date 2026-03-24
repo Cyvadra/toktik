@@ -3,13 +3,27 @@ package cli
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/Cyvadra/toktik/internal/cryptooptions"
 )
+
+// SetupLogger configures the default slog logger.
+// If jsonOutput is true a JSON handler is used (suitable for servers);
+// otherwise a text handler is used (suitable for CLI tools).
+func SetupLogger(jsonOutput bool, level slog.Level) {
+	opts := &slog.HandlerOptions{Level: level}
+	var handler slog.Handler
+	if jsonOutput {
+		handler = slog.NewJSONHandler(os.Stderr, opts)
+	} else {
+		handler = slog.NewTextHandler(os.Stderr, opts)
+	}
+	slog.SetDefault(slog.New(handler))
+}
 
 // SchemaInit controls which schema initialization steps to run.
 type SchemaInit struct {
@@ -29,7 +43,7 @@ func ConnectClickHouse(ctx context.Context, dsn string, schema *SchemaInit) (dri
 	if err != nil {
 		return nil, fmt.Errorf("connect to ClickHouse: %w", err)
 	}
-	log.Printf("Connected to ClickHouse")
+	slog.Info("Connected to ClickHouse")
 
 	if schema == nil {
 		return conn, nil
@@ -50,7 +64,7 @@ func ConnectClickHouse(ctx context.Context, dsn string, schema *SchemaInit) (dri
 			return nil, fmt.Errorf("init spot kline schema: %w", err)
 		}
 	}
-	log.Printf("Schema initialized")
+	slog.Info("Schema initialized")
 	return conn, nil
 }
 

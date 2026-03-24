@@ -1,12 +1,11 @@
 package api
 
 import (
-	"github.com/Cyvadra/toktik/internal/service"
 	"github.com/gin-gonic/gin"
 )
 
 // NewRouter builds the Gin engine with all API routes registered.
-func NewRouter(cos *service.CryptoOptionsService) *gin.Engine {
+func NewRouter(cos CryptoOptionsQuerier) *gin.Engine {
 	r := gin.Default()
 	h := NewHandler(cos)
 

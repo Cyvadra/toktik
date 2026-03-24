@@ -3,7 +3,7 @@ package main
 import (
 	"context"
 	"flag"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -21,9 +21,12 @@ func main() {
 	schemaFile := flag.String("schema", "", "Path to DDL SQL file (auto-detected if empty)")
 	flag.Parse()
 
+	appCli.SetupLogger(true, slog.LevelInfo)
+
 	ddlFile, err := appCli.ResolveSchemaFile(*schemaFile, appCli.CryptoOptionsSchemaFile)
 	if err != nil {
-		log.Fatalf("%v", err)
+		slog.Error("resolve schema", "error", err)
+		os.Exit(1)
 	}
 
 	ctx := context.Background()
@@ -34,7 +37,8 @@ func main() {
 		SpotKline: true,
 	})
 	if err != nil {
-		log.Fatalf("%v", err)
+		slog.Error("connect clickhouse", "error", err)
+		os.Exit(1)
 	}
 
 	svc := service.NewCryptoOptionsService(conn)
@@ -51,9 +55,10 @@ func main() {
 
 	// Start server in background
 	go func() {
-		log.Printf("Starting API server on %s", *addr)
+		slog.Info("starting API server", "addr", *addr)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("server error: %v", err)
+			slog.Error("server error", "error", err)
+			os.Exit(1)
 		}
 	}()
 
@@ -61,12 +66,13 @@ func main() {
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
-	log.Println("Shutting down server...")
+	slog.Info("shutting down server")
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
-		log.Fatalf("server forced to shutdown: %v", err)
+		slog.Error("server forced to shutdown", "error", err)
+		os.Exit(1)
 	}
-	log.Println("Server exited")
+	slog.Info("server exited")
 }

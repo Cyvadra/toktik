@@ -3,20 +3,19 @@ package api
 import (
 	"context"
 	"errors"
-	"log"
+	"log/slog"
 	"net/http"
 
 	"github.com/Cyvadra/toktik/internal/dto"
-	"github.com/Cyvadra/toktik/internal/service"
 	"github.com/gin-gonic/gin"
 )
 
 // Handler holds references to service layer dependencies.
 type Handler struct {
-	cryptoOptions *service.CryptoOptionsService
+	cryptoOptions CryptoOptionsQuerier
 }
 
-func NewHandler(cos *service.CryptoOptionsService) *Handler {
+func NewHandler(cos CryptoOptionsQuerier) *Handler {
 	return &Handler{cryptoOptions: cos}
 }
 
@@ -31,7 +30,7 @@ func handleServiceError(c *gin.Context, err error) {
 		c.JSON(http.StatusGatewayTimeout, dto.ErrorResponse{Error: "request timeout"})
 		return
 	}
-	log.Printf("internal error: %v", err)
+	slog.Error("internal error", "error", err)
 	c.JSON(http.StatusInternalServerError, dto.ErrorResponse{Error: "internal server error"})
 }
 
