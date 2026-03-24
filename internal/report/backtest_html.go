@@ -768,7 +768,7 @@ func buildHTMLView(result *backtest.Result, meta HTMLMeta) htmlReportView {
 		Asset:                meta.Asset,
 		Interval:             meta.Interval,
 		Period:               fmt.Sprintf("%s to %s", formatDate(result.StartTime), formatDate(result.EndTime)),
-		GeneratedAt:          meta.GeneratedAt.Format("2006-01-02 15:04:05"),
+		GeneratedAt:          meta.GeneratedAt.UTC().Format("2006-01-02 15:04:05 UTC"),
 		InitialCapital:       amount(result.InitialCapital, result.AccountUnit),
 		FinalEquity:          amount(result.FinalEquity, result.AccountUnit),
 		NetPnL:               signedAmount(result.FinalEquity-result.InitialCapital, result.AccountUnit),
@@ -884,7 +884,7 @@ func buildCombinedHTMLView(results []*backtest.Result, meta HTMLMeta) combinedHT
 		Asset:       meta.Asset,
 		Interval:    meta.Interval,
 		Period:      fmt.Sprintf("%s to %s", formatDate(periodStart), formatDate(periodEnd)),
-		GeneratedAt: meta.GeneratedAt.Format("2006-01-02 15:04:05"),
+		GeneratedAt: meta.GeneratedAt.UTC().Format("2006-01-02 15:04:05 UTC"),
 		Strategies:  strategies,
 	}
 }
@@ -1649,14 +1649,14 @@ func formatDate(value time.Time) string {
 	if value.IsZero() {
 		return "-"
 	}
-	return value.Format("2006-01-02")
+	return value.UTC().Format("2006-01-02")
 }
 
 func formatDateTime(value time.Time) string {
 	if value.IsZero() {
 		return "-"
 	}
-	return value.Format("2006-01-02 15:04")
+	return value.UTC().Format("2006-01-02 15:04 UTC")
 }
 
 func sideClass(side string) string {

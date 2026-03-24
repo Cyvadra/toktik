@@ -211,6 +211,9 @@ func TestWriteBacktestHTMLUsesUTCChartFormatting(t *testing.T) {
 	if !strings.Contains(html, "tickMarkFormatter: function(timeValue) { return formatUTCTickLabel(timeValue); }") {
 		t.Fatalf("expected generated html to override tick mark formatting")
 	}
+	if !strings.Contains(html, " UTC") {
+		t.Fatalf("expected GeneratedAt or other timestamps to include UTC label in html")
+	}
 }
 
 func TestWriteBacktestHTMLIncludesHoverColumnSubplotControls(t *testing.T) {

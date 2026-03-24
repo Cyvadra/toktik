@@ -84,7 +84,7 @@ func buildOverviewView(outputPath string, items []OverviewItem, meta HTMLMeta) o
 		Title:         fmt.Sprintf("%s %s Multi-Strategy Overview", meta.Asset, meta.Interval),
 		Asset:         meta.Asset,
 		Interval:      meta.Interval,
-		GeneratedAt:   meta.GeneratedAt.Format("2006-01-02 15:04:05"),
+		GeneratedAt:   meta.GeneratedAt.UTC().Format("2006-01-02 15:04:05 UTC"),
 		StrategyCount: len(items),
 		Strategies:    make([]overviewStrategyView, 0, len(items)),
 	}
