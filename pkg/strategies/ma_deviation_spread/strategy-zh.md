@@ -41,7 +41,3 @@
 #### **2. Short Call Management (Profit Taking)**
 * **Partial Close:** Close **50%** of the position if floating profit > **70%**.
 * **Full Close:** Close **100%** of the position if floating profit > **88%**.
-
----
-
-**Would you like me to help you draft the PineScript code for the divergence and volatility filters?**
