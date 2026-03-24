@@ -18,9 +18,9 @@ func init() {
 		Groups:  []string{"trend"},
 		Factory: func(cfg catalog.Config) (backtest.Strategy, error) {
 			return &goldenCrossStrategy{
-				fastPeriod: intOrDefault(cfg.FastPeriod, defaultFastPeriod),
-				slowPeriod: intOrDefault(cfg.SlowPeriod, defaultSlowPeriod),
-				entryTWAP:  intOrDefault(cfg.EntryTWAPBars, defaultEntryTWAPBars),
+				fastPeriod: catalog.IntOrDefault(cfg.FastPeriod, defaultFastPeriod),
+				slowPeriod: catalog.IntOrDefault(cfg.SlowPeriod, defaultSlowPeriod),
+				entryTWAP:  catalog.IntOrDefault(cfg.EntryTWAPBars, defaultEntryTWAPBars),
 			}, nil
 		},
 	})
@@ -63,11 +63,4 @@ func (s *goldenCrossStrategy) OnBar(ctx *backtest.BarContext) {
 	if ctx.Ind("sell_signal") == 1 && ctx.Position(primary) > 0 {
 		ctx.ClosePosition(primary)
 	}
-}
-
-func intOrDefault(value, fallback int) int {
-	if value == 0 {
-		return fallback
-	}
-	return value
 }

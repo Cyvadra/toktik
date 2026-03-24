@@ -305,7 +305,7 @@ func importSpotFile(ctx context.Context, dsn, pqPath string, batchSize int) (int
 		return 0, true, nil
 	}
 
-	samples := selectSpotExistenceSamples(bars)
+	samples := selectExistenceSamples(bars)
 	existingSamples, err := cryptooptions.CountExistingSpotBars(ctx, conn, samples)
 	if err != nil {
 		return 0, false, fmt.Errorf("check existing spot bars: %w", err)
@@ -339,7 +339,11 @@ func importSpotFile(ctx context.Context, dsn, pqPath string, batchSize int) (int
 	return rowCount, false, nil
 }
 
-func selectExistenceSamples(bars []cryptooptions.Bar1m) []cryptooptions.Bar1m {
+// selectExistenceSamples picks a random sample of bars from the beginning and
+// end of the slice to use as existence probes against ClickHouse.
+// It is generic over the bar type so the same logic works for both option and
+// spot bars without duplication.
+func selectExistenceSamples[T any](bars []T) []T {
 	if len(bars) == 0 {
 		return nil
 	}
@@ -355,31 +359,7 @@ func selectExistenceSamples(bars []cryptooptions.Bar1m) []cryptooptions.Bar1m {
 		indices = append(indices, 0)
 	}
 
-	samples := make([]cryptooptions.Bar1m, 0, len(indices))
-	for _, idx := range indices {
-		samples = append(samples, bars[idx])
-	}
-
-	return samples
-}
-
-func selectSpotExistenceSamples(bars []cryptooptions.SpotBar1m) []cryptooptions.SpotBar1m {
-	if len(bars) == 0 {
-		return nil
-	}
-
-	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
-	selected := make(map[int]struct{}, sampleCountPerRegion*2)
-	indices := make([]int, 0, sampleCountPerRegion*2)
-
-	indices = append(indices, randomIndices(rng, 0, min(len(bars), sampleWindowSize), sampleCountPerRegion, selected)...)
-	indices = append(indices, randomIndices(rng, max(0, len(bars)-sampleWindowSize), len(bars), sampleCountPerRegion, selected)...)
-
-	if len(indices) == 0 {
-		indices = append(indices, 0)
-	}
-
-	samples := make([]cryptooptions.SpotBar1m, 0, len(indices))
+	samples := make([]T, 0, len(indices))
 	for _, idx := range indices {
 		samples = append(samples, bars[idx])
 	}
@@ -418,18 +398,4 @@ func randomIndices(rng *rand.Rand, start, end, count int, selected map[int]struc
 	}
 
 	return chosen
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
 }

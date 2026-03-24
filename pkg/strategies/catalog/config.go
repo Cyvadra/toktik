@@ -178,6 +178,24 @@ func ConfigFromJSON(raw json.RawMessage) (Config, error) {
 	return cfg, nil
 }
 
+// IntOrDefault returns value if non-zero, otherwise fallback.
+// It is a convenience helper used by strategy factories to apply parameter defaults.
+func IntOrDefault(value, fallback int) int {
+	if value == 0 {
+		return fallback
+	}
+	return value
+}
+
+// FloatOrDefault returns value if non-zero, otherwise fallback.
+// It is a convenience helper used by strategy factories to apply parameter defaults.
+func FloatOrDefault(value, fallback float64) float64 {
+	if value == 0 {
+		return fallback
+	}
+	return value
+}
+
 // ParseOptionPriceMode parses CLI/API values for option pricing modes.
 func ParseOptionPriceMode(value string) (backtest.OptionPriceMode, error) {
 	switch strings.ToLower(strings.TrimSpace(value)) {
