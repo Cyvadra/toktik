@@ -221,20 +221,20 @@ func (b *Broker) executeOrderOnBar(o Order, barIndex int, barTime time.Time) (*T
 	case LimitOrder:
 		low, high := prices.triggerRange(o.Side, b.config.TriggerMode)
 		if o.Side == Buy && isValidPrice(low) && low <= o.Price {
-			fillPrice = minFloat(open, o.Price)
+			fillPrice = min(open, o.Price)
 			filled = true
 		} else if o.Side == Sell && isValidPrice(high) && high >= o.Price {
-			fillPrice = maxFloat(open, o.Price)
+			fillPrice = max(open, o.Price)
 			filled = true
 		}
 
 	case StopOrder:
 		low, high := prices.triggerRange(o.Side, b.config.TriggerMode)
 		if o.Side == Buy && isValidPrice(high) && high >= o.StopPrice {
-			fillPrice = b.applySlippage(maxFloat(open, o.StopPrice), o.Side)
+			fillPrice = b.applySlippage(max(open, o.StopPrice), o.Side)
 			filled = true
 		} else if o.Side == Sell && isValidPrice(low) && low <= o.StopPrice {
-			fillPrice = b.applySlippage(minFloat(open, o.StopPrice), o.Side)
+			fillPrice = b.applySlippage(min(open, o.StopPrice), o.Side)
 			filled = true
 		}
 
@@ -248,10 +248,10 @@ func (b *Broker) executeOrderOnBar(o Order, barIndex int, barTime time.Time) (*T
 		}
 		if triggered {
 			if o.Side == Buy && isValidPrice(low) && low <= o.Price {
-				fillPrice = minFloat(open, o.Price)
+				fillPrice = min(open, o.Price)
 				filled = true
 			} else if o.Side == Sell && isValidPrice(high) && high >= o.Price {
-				fillPrice = maxFloat(open, o.Price)
+				fillPrice = max(open, o.Price)
 				filled = true
 			}
 		}
@@ -404,20 +404,6 @@ func (b *Broker) applySlippage(price float64, side Side) float64 {
 		return price + slip
 	}
 	return price - slip
-}
-
-func maxFloat(a, b float64) float64 {
-	if a > b {
-		return a
-	}
-	return b
-}
-
-func minFloat(a, b float64) float64 {
-	if a < b {
-		return a
-	}
-	return b
 }
 
 func (bp BarPrices) executionOpen(side Side, mode ExecutionPriceModel) float64 {

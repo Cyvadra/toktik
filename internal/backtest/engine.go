@@ -86,6 +86,11 @@ type BatchResult struct {
 // RunBatch replays a strategy with multiple parameter sets in parallel.
 // The factory function must return a fresh Strategy for each run.
 // nWorkers controls parallelism; if <= 0 it defaults to 1.
+//
+// Each parameter set gets its own Prepare+Replay cycle because different
+// params may register different indicators during Init. Raw market data is
+// cached by the underlying DataFeed implementations, so the main cost of
+// repeated Prepare is indicator recomputation — not data reloading.
 func (e *Engine) RunBatch(ctx context.Context, market, symbol, interval string, from, to time.Time, factory StrategyFactory, paramSets []map[string]interface{}, nWorkers int) ([]BatchResult, error) {
 	if nWorkers <= 0 {
 		nWorkers = 1
@@ -103,8 +108,13 @@ func (e *Engine) RunBatch(ctx context.Context, market, symbol, interval string, 
 			defer func() { <-sem }()
 
 			s := factory()
-			res, err := e.Run(ctx, market, symbol, interval, from, to, s, params)
-			results[idx] = BatchResult{Params: params, Result: res, Err: err}
+			prepared, prepErr := e.preparer.Prepare(ctx, market, symbol, interval, from, to, s, params)
+			if prepErr != nil {
+				results[idx] = BatchResult{Params: params, Err: prepErr}
+				return
+			}
+			res, replayErr := e.replayer.Replay(prepared, s, params)
+			results[idx] = BatchResult{Params: params, Result: res, Err: replayErr}
 		}(i, ps)
 	}
 

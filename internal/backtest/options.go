@@ -415,7 +415,8 @@ func (sp *SpreadPosition) TimeHeld(now time.Time) time.Duration {
 
 // SpreadTracker manages open spread positions.
 type SpreadTracker struct {
-	spreads   []*SpreadPosition
+	open      []*SpreadPosition
+	closed    []*SpreadPosition
 	spreadMap map[int]*SpreadPosition // O(1) lookup by ID
 	nextID    int
 }
@@ -442,7 +443,7 @@ func (st *SpreadTracker) OpenWithRef(legs []SpreadLeg, openTime time.Time, openB
 		Tag:      tag,
 		Ref:      ref,
 	}
-	st.spreads = append(st.spreads, sp)
+	st.open = append(st.open, sp)
 	st.spreadMap[id] = sp
 	return id
 }
@@ -454,18 +455,30 @@ func (st *SpreadTracker) Get(id int) *SpreadPosition {
 
 // OpenSpreads returns all spreads that have at least one open leg.
 func (st *SpreadTracker) OpenSpreads() []*SpreadPosition {
-	var result []*SpreadPosition
-	for _, sp := range st.spreads {
-		if !sp.IsFullyClosed() {
-			result = append(result, sp)
-		}
-	}
-	return result
+	return st.open
 }
 
 // All returns all spread positions (open and closed).
 func (st *SpreadTracker) All() []*SpreadPosition {
-	return st.spreads
+	all := make([]*SpreadPosition, 0, len(st.open)+len(st.closed))
+	all = append(all, st.closed...)
+	all = append(all, st.open...)
+	return all
+}
+
+// archiveIfClosed moves a fully-closed spread from the open list to the closed
+// archive. Called internally after close operations.
+func (st *SpreadTracker) archiveIfClosed(sp *SpreadPosition) {
+	if !sp.IsFullyClosed() {
+		return
+	}
+	for i, s := range st.open {
+		if s.ID == sp.ID {
+			st.open = append(st.open[:i], st.open[i+1:]...)
+			st.closed = append(st.closed, sp)
+			return
+		}
+	}
 }
 
 // CloseLeg marks a specific leg of a spread as closed at the given price.
@@ -492,6 +505,7 @@ func (st *SpreadTracker) CloseLegWithReasonAndData(spreadID, legIndex int, close
 	sp.Legs[legIndex].CloseTime = closeTime
 	sp.Legs[legIndex].CloseReason = closeReason
 	sp.Legs[legIndex].CloseCustomData = cloneTradeCustomData(closeCustomData)
+	st.archiveIfClosed(sp)
 	return true
 }
 
@@ -508,6 +522,7 @@ func (st *SpreadTracker) CloseAll(spreadID int, priceFn func(OptionContract) flo
 			sp.Legs[i].CloseTime = closeTime
 		}
 	}
+	st.archiveIfClosed(sp)
 }
 
 // ScheduledAction represents a time-triggered action for the engine to process.

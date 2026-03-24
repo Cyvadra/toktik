@@ -212,3 +212,64 @@ func TestWriteBacktestHTMLUsesUTCChartFormatting(t *testing.T) {
 		t.Fatalf("expected generated html to override tick mark formatting")
 	}
 }
+
+func TestWriteBacktestHTMLIncludesHoverColumnSubplotControls(t *testing.T) {
+	result := &backtest.Result{
+		StrategyName:   "test",
+		StartTime:      time.Date(2024, time.January, 1, 0, 0, 0, 0, time.UTC),
+		EndTime:        time.Date(2024, time.January, 1, 1, 0, 0, 0, time.UTC),
+		BarsCount:      2,
+		InitialCapital: 100,
+		FinalEquity:    101,
+		EquityCurve:    []float64{100, 101},
+		Timestamps: []time.Time{
+			time.Date(2024, time.January, 1, 0, 0, 0, 0, time.UTC),
+			time.Date(2024, time.January, 1, 1, 0, 0, 0, time.UTC),
+		},
+		Series: map[string][]float64{
+			"open":            {60000, 60100},
+			"high":            {60200, 60300},
+			"low":             {59900, 60050},
+			"close":           {60150, 60250},
+			"signal_strength": {0.25, 0.75},
+		},
+		ReportColumns: []backtest.ReportColumn{{
+			Source:   "signal_strength",
+			Label:    "Signal Strength",
+			Decimals: 2,
+		}},
+	}
+
+	outputPath := filepath.Join(t.TempDir(), "report.html")
+	if err := WriteBacktestHTML(outputPath, result, HTMLMeta{}); err != nil {
+		t.Fatalf("WriteBacktestHTML() error = %v", err)
+	}
+
+	htmlBytes, err := os.ReadFile(outputPath)
+	if err != nil {
+		t.Fatalf("os.ReadFile() error = %v", err)
+	}
+	html := string(htmlBytes)
+
+	if !strings.Contains(html, "underlying-feature-panel") {
+		t.Fatalf("expected generated html to include hover column subplot panel")
+	}
+	if !strings.Contains(html, "data-hover-source") {
+		t.Fatalf("expected generated html to include clickable hover column cards")
+	}
+	if !strings.Contains(html, "selectedHoverColumnSources") {
+		t.Fatalf("expected generated html to include multi-select hover column subplot state")
+	}
+	if !strings.Contains(html, "preserveVisibleRanges") {
+		t.Fatalf("expected generated html to preserve x-axis range during hover column updates")
+	}
+	if !strings.Contains(html, "priceScaleId: 'volume'") {
+		t.Fatalf("expected generated html to merge volume histogram into the underlying chart")
+	}
+	if !strings.Contains(html, "feature-legend-value") {
+		t.Fatalf("expected generated html to include live feature legend values")
+	}
+	if !strings.Contains(html, "featureChart.subscribeCrosshairMove") {
+		t.Fatalf("expected generated html to sync subplot hover with the shared data window")
+	}
+}

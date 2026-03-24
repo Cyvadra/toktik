@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/Cyvadra/toktik/internal/backtest"
 	appCli "github.com/Cyvadra/toktik/internal/cli"
 	"github.com/Cyvadra/toktik/internal/datafeed"
@@ -61,6 +60,7 @@ func main() {
 		flag.Usage()
 		os.Exit(1)
 	}
+
 	from, err := time.Parse("2006-01-02", *fromStr)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "invalid --from %q: %v\n", *fromStr, err)
@@ -111,9 +111,21 @@ func main() {
 		fmt.Fprintln(os.Stderr, "error: --long-delta-min must be <= --long-delta-max")
 		os.Exit(1)
 	}
+
 	entryPriceMode := mustParseOptionPriceMode(*spreadEntryPriceMode, "--spread-entry-price-mode")
 	exitPriceMode := mustParseOptionPriceMode(*spreadExitPriceMode, "--spread-exit-price-mode")
 	valuationPriceMode := mustParseOptionPriceMode(*spreadValuationPriceMode, "--spread-valuation-price-mode")
+	commissionModel, err := parseCommissionModel(*commModel)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+
+	tradeDirection, err := parseTradeDirection(*direction)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
 
 	strategyCfg := strategies.DefaultConfig()
 	strategyCfg.PositionSize = *positionSize
@@ -130,14 +142,7 @@ func main() {
 	strategyCfg.ValuationPriceMode = valuationPriceMode
 	strategyCfg.MAPeriod = *maPeriod
 	strategyCfg.PThreshold = *pThreshold
-
-	switch strategies.TradeDirection(strings.ToLower(*direction)) {
-	case strategies.DirectionBoth, strategies.DirectionLongOnly, strategies.DirectionShortOnly:
-		strategyCfg.Direction = strategies.TradeDirection(*direction)
-	default:
-		fmt.Fprintf(os.Stderr, "error: --direction %q is invalid; want both|long_only|short_only\n", *direction)
-		os.Exit(1)
-	}
+	strategyCfg.Direction = tradeDirection
 
 	strats, err := strategies.Resolve(*stratName, strategyCfg)
 	if err != nil {
@@ -166,7 +171,7 @@ func main() {
 	cfg := backtest.Config{
 		InitialCapital:  *capital,
 		AccountUnit:     strings.ToUpper(strings.TrimSpace(*baseAsset)),
-		CommissionModel: parseCommissionModel(*commModel),
+		CommissionModel: commissionModel,
 		CommissionValue: *commValue,
 		SlippagePct:     *slippagePct,
 		ExecutionMode:   backtest.ExecutionPriceCanonical,
@@ -181,11 +186,17 @@ func main() {
 		log.Fatalf("Failed to load options chain: %v", err)
 	}
 
+	// Build the engine once so all strategy runs share the same data feeds.
+	engine := backtest.NewEngine(cfg)
+	engine.RegisterDataFeed("crypto-underlying", datafeed.NewCryptoUnderlyingDataFeed(conn))
+	engine.RegisterFactorFeed("dvol", datafeed.NewFeedFactorBridge("dvol", factorStore))
+	engine.SetOptionsChainProvider(chainProvider)
+
 	results := make([]*backtest.Result, 0, len(strats))
 
 	for i, strat := range strats {
 		log.Printf("--- Running strategy: %s ---", strat.Name())
-		result, runErr := runOne(ctx, conn, factorStore, cfg, *baseAsset, *interval, from, to, strat, chainProvider)
+		result, runErr := engine.Run(ctx, "crypto-underlying", *baseAsset, *interval, from, to, strat, nil)
 		if runErr != nil {
 			log.Fatalf("Backtest failed [%s]: %v", strat.Name(), runErr)
 		}
@@ -199,6 +210,10 @@ func main() {
 
 		if *outputJSON != "" {
 			outPath := resolveOutputPath(*outputJSON, i, len(strats))
+			if prepErr := ensureParentDir(outPath); prepErr != nil {
+				log.Printf("Warning: failed to prepare output directory for %s: %v", outPath, prepErr)
+				continue
+			}
 			if writeErr := result.ExportJSON(outPath); writeErr != nil {
 				log.Printf("Warning: failed to write JSON to %s: %v", outPath, writeErr)
 			} else {
@@ -230,24 +245,6 @@ func main() {
 	}
 }
 
-// runOne wires the engine for a single strategy run and executes it.
-func runOne(
-	ctx context.Context,
-	conn driver.Conn,
-	factorStore *feeds.Store,
-	cfg backtest.Config,
-	baseAsset, interval string,
-	from, to time.Time,
-	strat backtest.Strategy,
-	chainProvider backtest.OptionsChainProvider,
-) (*backtest.Result, error) {
-	engine := backtest.NewEngine(cfg)
-	engine.RegisterDataFeed("crypto-underlying", datafeed.NewCryptoUnderlyingDataFeed(conn))
-	engine.RegisterFactorFeed("dvol", datafeed.NewFeedFactorBridge("dvol", factorStore))
-	engine.SetOptionsChainProvider(chainProvider)
-	return engine.Run(ctx, "crypto-underlying", baseAsset, interval, from, to, strat, nil)
-}
-
 func mustParseOptionPriceMode(value, flagName string) backtest.OptionPriceMode {
 	mode, err := strategies.ParseOptionPriceMode(value)
 	if err != nil {
@@ -259,16 +256,28 @@ func mustParseOptionPriceMode(value, flagName string) backtest.OptionPriceMode {
 }
 
 // parseCommissionModel converts a string flag to the CommissionModel enum.
-func parseCommissionModel(s string) backtest.CommissionModel {
-	switch strings.ToLower(s) {
+func parseCommissionModel(s string) (backtest.CommissionModel, error) {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "none", "":
+		return backtest.CommissionNone, nil
 	case "flat":
-		return backtest.CommissionFlat
+		return backtest.CommissionFlat, nil
 	case "percent":
-		return backtest.CommissionPercent
+		return backtest.CommissionPercent, nil
 	case "per-unit", "perunit":
-		return backtest.CommissionPerUnit
+		return backtest.CommissionPerUnit, nil
 	default:
-		return backtest.CommissionNone
+		return backtest.CommissionNone, fmt.Errorf("--commission-model %q is invalid; want none|flat|percent|per-unit", s)
+	}
+}
+
+func parseTradeDirection(raw string) (strategies.TradeDirection, error) {
+	direction := strategies.TradeDirection(strings.ToLower(strings.TrimSpace(raw)))
+	switch direction {
+	case strategies.DirectionBoth, strategies.DirectionLongOnly, strategies.DirectionShortOnly:
+		return direction, nil
+	default:
+		return strategies.DirectionBoth, fmt.Errorf("--direction %q is invalid; want both|long_only|short_only", raw)
 	}
 }
 
@@ -298,6 +307,14 @@ func resolveOutputPath(base string, index, total int) string {
 		return fmt.Sprintf("%s_%d", base, index+1)
 	}
 	return fmt.Sprintf("%s_%d%s", base[:dot], index+1, base[dot:])
+}
+
+func ensureParentDir(path string) error {
+	dir := filepath.Dir(path)
+	if strings.TrimSpace(dir) == "" || dir == "." {
+		return nil
+	}
+	return os.MkdirAll(dir, 0o755)
 }
 
 func resolveHTMLOutputPath(base, strategyName, asset, interval string, from, to time.Time, index, total int) string {

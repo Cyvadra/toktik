@@ -6,7 +6,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/Cyvadra/toktik/pkg/strategy"
+	"github.com/Cyvadra/toktik/internal/backtest"
 )
 
 // Registration defines how a strategy registers itself in the global registry.
@@ -14,14 +14,14 @@ type Registration struct {
 	Name    string
 	Aliases []string
 	Groups  []string
-	Factory func(Config) (strategy.Strategy, error)
+	Factory func(Config) (backtest.Strategy, error)
 }
 
 type strategySpec struct {
 	name    string
 	aliases []string
 	groups  map[string]struct{}
-	factory func(Config) (strategy.Strategy, error)
+	factory func(Config) (backtest.Strategy, error)
 }
 
 var (
@@ -87,7 +87,7 @@ func Register(reg Registration) {
 
 // Resolve returns one or more strategy instances based on a strategy name,
 // alias, group name, or comma-separated list.
-func Resolve(request string, cfg Config) ([]strategy.Strategy, error) {
+func Resolve(request string, cfg Config) ([]backtest.Strategy, error) {
 	registryMu.RLock()
 	defer registryMu.RUnlock()
 
@@ -96,7 +96,7 @@ func Resolve(request string, cfg Config) ([]strategy.Strategy, error) {
 		parts = []string{defaultStrategyName}
 	}
 
-	out := make([]strategy.Strategy, 0, len(parts))
+	out := make([]backtest.Strategy, 0, len(parts))
 	for _, part := range parts {
 		resolved, err := resolveOneLocked(part, cfg)
 		if err != nil {
@@ -121,7 +121,7 @@ func Available() []string {
 	return names
 }
 
-func resolveOneLocked(name string, cfg Config) ([]strategy.Strategy, error) {
+func resolveOneLocked(name string, cfg Config) ([]backtest.Strategy, error) {
 	key := normalize(name)
 	if key == "" {
 		return nil, fmt.Errorf("empty strategy name")
@@ -145,16 +145,16 @@ func resolveOneLocked(name string, cfg Config) ([]strategy.Strategy, error) {
 	if err != nil {
 		return nil, fmt.Errorf("build strategy %q: %w", mapped, err)
 	}
-	return []strategy.Strategy{built}, nil
+	return []backtest.Strategy{built}, nil
 }
 
-func buildGroupLocked(groupName string, cfg Config) ([]strategy.Strategy, error) {
+func buildGroupLocked(groupName string, cfg Config) ([]backtest.Strategy, error) {
 	groupName = normalize(groupName)
 	if groupName == "" {
 		return nil, fmt.Errorf("empty group name")
 	}
 
-	out := make([]strategy.Strategy, 0)
+	out := make([]backtest.Strategy, 0)
 	for _, name := range orderedStrategies {
 		spec := strategiesByName[name]
 		if spec == nil {

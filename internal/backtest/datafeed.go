@@ -85,3 +85,19 @@ func (ds *DataSet) Slice(startBar, endBar int) *DataSet {
 	}
 	return out
 }
+
+// Clone returns a deep copy of the DataSet.
+func (ds *DataSet) Clone() *DataSet {
+	out := &DataSet{
+		Timestamps: make([]time.Time, ds.Len),
+		Columns:    make(map[string][]float64, len(ds.Columns)),
+		Len:        ds.Len,
+	}
+	copy(out.Timestamps, ds.Timestamps)
+	for name, col := range ds.Columns {
+		dup := make([]float64, len(col))
+		copy(dup, col)
+		out.Columns[name] = dup
+	}
+	return out
+}

@@ -25,6 +25,9 @@ type PreparedData struct {
 type DataPreparer struct {
 	feeds       map[string]DataFeed
 	factorFeeds map[string]FactorFeed
+
+	mu      sync.Mutex
+	dsCache map[DataRequest]*DataSet
 }
 
 // Prepare loads data and computes base indicators for a strategy, returning a
@@ -44,9 +47,8 @@ func (dp *DataPreparer) Prepare(ctx context.Context, market, symbol, interval st
 		return nil, fmt.Errorf("no DataFeed registered for market %q", market)
 	}
 
-	primaryDS, err := primaryFeed.Load(ctx, DataRequest{
-		Market: market, Symbol: symbol, Interval: interval, From: from, To: to,
-	})
+	primaryReq := DataRequest{Market: market, Symbol: symbol, Interval: interval, From: from, To: to}
+	primaryDS, err := dp.loadCached(ctx, primaryFeed, primaryReq)
 	if err != nil {
 		return nil, fmt.Errorf("load primary data: %w", err)
 	}
@@ -79,9 +81,10 @@ func (dp *DataPreparer) Prepare(ctx context.Context, market, symbol, interval st
 			wg.Add(1)
 			go func(idx int, f DataFeed, r SecurityRef) {
 				defer wg.Done()
-				ds, err := f.Load(ctx, DataRequest{
+				req := DataRequest{
 					Market: r.Market, Symbol: r.Symbol, Interval: r.Interval, From: from, To: to,
-				})
+				}
+				ds, err := dp.loadCached(ctx, f, req)
 				results <- secResult{index: idx, ds: ds, err: err}
 			}(i, feed, sec.ref)
 		}
@@ -195,4 +198,30 @@ func (dp *DataPreparer) Prepare(ctx context.Context, market, symbol, interval st
 		Factors:         setupCtx.factors,
 		PrimaryRef:      setupCtx.primaryRef,
 	}, nil
+}
+
+// loadCached returns a cloned DataSet, loading from the feed only on first
+// access for a given DataRequest. Concurrent callers sharing the same request
+// will block until the first load completes.
+func (dp *DataPreparer) loadCached(ctx context.Context, feed DataFeed, req DataRequest) (*DataSet, error) {
+	dp.mu.Lock()
+	if dp.dsCache == nil {
+		dp.dsCache = make(map[DataRequest]*DataSet)
+	}
+	if cached, ok := dp.dsCache[req]; ok {
+		dp.mu.Unlock()
+		return cached.Clone(), nil
+	}
+	dp.mu.Unlock()
+
+	ds, err := feed.Load(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+
+	dp.mu.Lock()
+	dp.dsCache[req] = ds
+	dp.mu.Unlock()
+
+	return ds.Clone(), nil
 }

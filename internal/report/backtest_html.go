@@ -1710,6 +1710,12 @@ const htmlTemplate = `<!DOCTYPE html>
     .text-up { color: #34d399; }
     .text-down { color: #fbbf24; }
 		.data-window-card { background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.06); border-radius: 10px; padding: 10px 12px; }
+		.data-window-card-button { width: 100%; text-align: left; transition: border-color 120ms ease, background 120ms ease, transform 120ms ease; }
+		.data-window-card-button:hover { border-color: rgba(45,212,191,0.32); background: rgba(45,212,191,0.06); }
+		.data-window-card-button.active { border-color: rgba(45,212,191,0.56); background: rgba(20,184,166,0.12); box-shadow: inset 0 0 0 1px rgba(45,212,191,0.24); }
+		.feature-empty-state { border: 1px dashed rgba(255,255,255,0.1); border-radius: 10px; padding: 18px; text-align: center; color: #94a3b8; font-size: 12px; }
+		.feature-legend-swatch { display: inline-block; width: 10px; height: 10px; border-radius: 999px; }
+		.feature-legend-value { color: #f8fafc; }
   </style>
 </head>
 <body class="text-slate-300 min-h-screen p-4 lg:p-6">
@@ -1826,7 +1832,7 @@ const htmlTemplate = `<!DOCTYPE html>
 				<div class="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
 					<div>
 						<div class="text-[11px] mono uppercase tracking-[0.22em] text-teal-400">Data Window</div>
-						<p class="mt-1 text-xs text-slate-400">Hover the candlestick chart to inspect OHLC{{ if .HasUnderlyingVolume }}, {{ .UnderlyingVolumeLabel }}{{ end }}{{ if .HasHoverColumns }}, and strategy columns{{ end }}.</p>
+						<p class="mt-1 text-xs text-slate-400">Hover the candlestick chart to inspect OHLC{{ if .HasUnderlyingVolume }}, {{ .UnderlyingVolumeLabel }}{{ end }}{{ if .HasHoverColumns }}, and strategy columns. Click strategy column cards to toggle them in the subplot{{ end }}.</p>
 					</div>
 					<div id="underlying-data-window-time" class="mono text-xs text-slate-400"></div>
 				</div>
@@ -1834,10 +1840,18 @@ const htmlTemplate = `<!DOCTYPE html>
 			</div>
       <div class="chart-box p-1">
         <div id="underlying-chart" style="width:100%;height:420px;"></div>
-				{{ if .HasUnderlyingVolume }}
-				<div class="mt-1 border-t border-white/8 pt-3">
-					<div class="px-3 pb-1 text-[11px] mono uppercase tracking-[0.18em] text-slate-500">{{ .UnderlyingVolumeLabel }}</div>
-					<div id="underlying-volume-chart" style="width:100%;height:140px;"></div>
+				{{ if .HasHoverColumns }}
+				<div id="underlying-feature-panel" class="mt-1 border-t border-white/8 pt-3 hidden">
+					<div class="flex flex-col gap-3 px-3 pb-2 sm:flex-row sm:items-center sm:justify-between">
+						<div>
+							<div id="underlying-feature-title" class="text-[11px] mono uppercase tracking-[0.18em] text-sky-300">Feature Subplot</div>
+							<p id="underlying-feature-subtitle" class="mt-1 text-xs text-slate-400">Click strategy columns in the data window to plot multiple series below the price chart.</p>
+						</div>
+						<button id="underlying-feature-clear" type="button" class="hidden rounded-md border border-white/10 px-3 py-1.5 text-xs text-slate-300 transition hover:border-white/20 hover:text-white">Clear All</button>
+					</div>
+					<div id="underlying-feature-empty" class="mx-3 mb-3 feature-empty-state mono">No feature selected.</div>
+					<div id="underlying-feature-legend" class="mx-3 mb-3 hidden flex flex-wrap gap-2"></div>
+					<div id="underlying-feature-chart" class="hidden" style="width:100%;height:220px;"></div>
 				</div>
 				{{ end }}
       </div>
@@ -2109,6 +2123,21 @@ const htmlTemplate = `<!DOCTYPE html>
       return chart;
     }
 
+		var chartSyncState = { syncing: false, synced: new WeakSet() };
+
+		function registerSyncedChart(chart) {
+			if (!chart || chartSyncState.synced.has(chart)) return;
+			chartSyncState.synced.add(chart);
+			chart.timeScale().subscribeVisibleLogicalRangeChange(function(range) {
+				if (!range || chartSyncState.syncing) return;
+				chartSyncState.syncing = true;
+				charts.forEach(function(otherChart) {
+					if (otherChart !== chart) otherChart.timeScale().setVisibleLogicalRange(range);
+				});
+				chartSyncState.syncing = false;
+			});
+		}
+
 		function buildActiveTimeSet() {
 			var set = new Set();
 			if (!Array.isArray(activeTimes)) return set;
@@ -2147,15 +2176,7 @@ const htmlTemplate = `<!DOCTYPE html>
 		}
 
     function syncCharts(charts) {
-      var syncing = false;
-      charts.forEach(function(src) {
-        src.timeScale().subscribeVisibleLogicalRangeChange(function(r) {
-          if (!r || syncing) return;
-          syncing = true;
-          charts.forEach(function(t) { if (t !== src) t.timeScale().setVisibleLogicalRange(r); });
-          syncing = false;
-        });
-      });
+			charts.forEach(registerSyncedChart);
     }
 
     var charts = [];
@@ -2164,8 +2185,16 @@ const htmlTemplate = `<!DOCTYPE html>
 
 		var underlyingChart = null;
 		var underlyingSeries = null;
-		var underlyingVolumeChart = null;
 		var underlyingVolumePlot = null;
+		var featureChart = null;
+		var featurePlots = new Map();
+		var featurePanel = document.getElementById('underlying-feature-panel');
+		var featureChartEl = document.getElementById('underlying-feature-chart');
+		var featureEmpty = document.getElementById('underlying-feature-empty');
+		var featureLegend = document.getElementById('underlying-feature-legend');
+		var featureTitle = document.getElementById('underlying-feature-title');
+		var featureSubtitle = document.getElementById('underlying-feature-subtitle');
+		var featureClear = document.getElementById('underlying-feature-clear');
 		var equityChart = null;
 		var equityPlot = null;
 		var pnlChart = null;
@@ -2177,6 +2206,9 @@ const htmlTemplate = `<!DOCTYPE html>
 		var candleByTime = new Map();
 		var volumeByTime = new Map();
 		var hoverColumnMaps = [];
+		var selectedHoverColumnSources = new Set();
+		var currentDataWindowTime = null;
+		var currentIdleFilterEnabled = false;
 
 		underlyingCandles.forEach(function(point) {
 			candleByTime.set(point.time, point);
@@ -2190,11 +2222,19 @@ const htmlTemplate = `<!DOCTYPE html>
 				values.set(point.time, point.value);
 			});
 			return {
+				source: column.source,
 				label: column.label || column.source,
 				decimals: typeof column.decimals === 'number' ? column.decimals : 2,
-				values: values
+				values: values,
+				series: Array.isArray(column.values) ? column.values : []
 			};
 		});
+
+		function selectedHoverColumns() {
+			return hoverColumnMaps.filter(function(column) {
+				return selectedHoverColumnSources.has(column.source);
+			});
+		}
 
 		function formatTimestamp(unixSeconds) {
 			if (typeof unixSeconds !== 'number') {
@@ -2213,13 +2253,184 @@ const htmlTemplate = `<!DOCTYPE html>
 			});
 		}
 
+		function escapeHTML(value) {
+			return String(value)
+				.replace(/&/g, '&amp;')
+				.replace(/</g, '&lt;')
+				.replace(/>/g, '&gt;')
+				.replace(/\"/g, '&quot;')
+				.replace(/'/g, '&#39;');
+		}
+
+		function featureColor(index) {
+			var palette = ['#38bdf8', '#f472b6', '#f59e0b', '#a3e635', '#22d3ee', '#fb7185', '#c084fc', '#facc15'];
+			return palette[index % palette.length];
+		}
+
+		function preserveVisibleRange(chart, callback) {
+			if (!chart) {
+				callback();
+				return;
+			}
+			var visibleRange = chart.timeScale().getVisibleLogicalRange();
+			callback();
+			if (visibleRange) {
+				chart.timeScale().setVisibleLogicalRange(visibleRange);
+			}
+		}
+
+		function preserveVisibleRanges(targetCharts, callback) {
+			var ranges = targetCharts.map(function(chart) {
+				return chart ? chart.timeScale().getVisibleLogicalRange() : null;
+			});
+			callback();
+			targetCharts.forEach(function(chart, index) {
+				if (chart && ranges[index]) {
+					chart.timeScale().setVisibleLogicalRange(ranges[index]);
+				}
+			});
+		}
+
 		function appendDataWindowItem(items, label, value) {
 			items.push(
 				'<div class="data-window-card">' +
-				'<div class="text-[11px] mono uppercase tracking-[0.18em] text-slate-500">' + label + '</div>' +
-				'<div class="mt-1 mono text-sm text-slate-100">' + value + '</div>' +
+				'<div class="text-[11px] mono uppercase tracking-[0.18em] text-slate-500">' + escapeHTML(label) + '</div>' +
+				'<div class="mt-1 mono text-sm text-slate-100">' + escapeHTML(value) + '</div>' +
 				'</div>'
 			);
+		}
+
+		function appendFeatureWindowItem(items, label, value, source, active, color) {
+			items.push(
+				'<button type="button" class="data-window-card data-window-card-button' + (active ? ' active' : '') + '" data-hover-source="' + escapeHTML(source) + '">' +
+				'<div class="flex items-start justify-between gap-3">' +
+				'<div>' +
+				'<div class="text-[11px] mono uppercase tracking-[0.18em] text-slate-500">' + escapeHTML(label) + '</div>' +
+				'<div class="mt-1 mono text-sm text-slate-100">' + escapeHTML(value) + '</div>' +
+				'</div>' +
+				'<div class="flex flex-col items-end gap-1">' +
+				'<span class="feature-legend-swatch" style="background:' + escapeHTML(color) + '"></span>' +
+				'<div class="text-[10px] mono uppercase tracking-[0.18em] ' + (active ? 'text-teal-300' : 'text-slate-500') + '">' + (active ? 'Shown' : 'Add') + '</div>' +
+				'</div>' +
+				'</div>' +
+				'</button>'
+			);
+		}
+
+		function createFeatureChartIfNeeded() {
+			if (!featureChartEl || featureChart) return;
+			featureChart = createChart('underlying-feature-chart', 220);
+			if (!featureChart) return;
+			charts.push(featureChart);
+			registerSyncedChart(featureChart);
+			if (underlyingChart) {
+				var visibleRange = underlyingChart.timeScale().getVisibleLogicalRange();
+				if (visibleRange) featureChart.timeScale().setVisibleLogicalRange(visibleRange);
+				else featureChart.timeScale().fitContent();
+			}
+		}
+
+		function ensureFeaturePlot(source, color) {
+			var plot = featurePlots.get(source);
+			if (plot || !featureChart) {
+				return plot;
+			}
+			plot = featureChart.addLineSeries({
+				color: color,
+				lineWidth: 2,
+				priceLineVisible: false,
+				lastValueVisible: true,
+				crosshairMarkerRadius: 4,
+				crosshairMarkerBorderColor: color,
+				crosshairMarkerBackgroundColor: color
+			});
+			featurePlots.set(source, plot);
+			return plot;
+		}
+
+		function renderFeatureLegend(columns, unixSeconds) {
+			if (!featureLegend) return;
+			if (!columns.length) {
+				featureLegend.classList.add('hidden');
+				featureLegend.innerHTML = '';
+				return;
+			}
+			featureLegend.classList.remove('hidden');
+			featureLegend.innerHTML = columns.map(function(column) {
+				var value = typeof unixSeconds === 'number' ? column.values.get(unixSeconds) : undefined;
+				var decimals = typeof column.decimals === 'number' ? column.decimals : 2;
+				return '<div class="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.03] px-3 py-1 text-xs text-slate-300">' +
+					'<span class="feature-legend-swatch" style="background:' + escapeHTML(featureColor(column.index)) + '"></span>' +
+					'<span class="mono">' + escapeHTML(column.label) + '</span>' +
+					'<span class="mono feature-legend-value">' + escapeHTML(formatNumber(value, decimals)) + '</span>' +
+					'</div>';
+			}).join('');
+		}
+
+		function renderFeatureChart() {
+			if (!featurePanel) return;
+			var selectedColumns = selectedHoverColumns();
+			if (!selectedColumns.length) {
+				featurePanel.classList.add('hidden');
+				if (featureClear) featureClear.classList.add('hidden');
+				if (featureEmpty) featureEmpty.classList.remove('hidden');
+				if (featureLegend) featureLegend.classList.add('hidden');
+				if (featureChartEl) featureChartEl.classList.add('hidden');
+				featurePlots.forEach(function(plot) {
+					if (featureChart) featureChart.removeSeries(plot);
+				});
+				featurePlots.clear();
+				return;
+			}
+
+			featurePanel.classList.remove('hidden');
+			createFeatureChartIfNeeded();
+			if (!featureChart) return;
+
+			preserveVisibleRange(featureChart, function() {
+				var activeSources = new Set(selectedColumns.map(function(column) { return column.source; }));
+				featurePlots.forEach(function(plot, source) {
+					if (!activeSources.has(source)) {
+						featureChart.removeSeries(plot);
+						featurePlots.delete(source);
+					}
+				});
+				selectedColumns.forEach(function(column, index) {
+					var color = featureColor(index);
+					var plot = ensureFeaturePlot(column.source, color);
+					if (!plot) return;
+					plot.applyOptions({
+						color: color,
+						crosshairMarkerBorderColor: color,
+						crosshairMarkerBackgroundColor: color
+					});
+					plot.setData(filterLineSeriesByTimes(column.series, activeSet, currentIdleFilterEnabled));
+				});
+			});
+
+			if (featureTitle) featureTitle.textContent = selectedColumns.length === 1 ? selectedColumns[0].label : 'Feature Subplot · ' + selectedColumns.length + ' series';
+			if (featureSubtitle) featureSubtitle.textContent = selectedColumns.map(function(column) {
+				return column.label + ' (' + column.source + ')';
+			}).join(' · ');
+			renderFeatureLegend(selectedColumns.map(function(column) {
+				return {
+					index: hoverColumnMaps.findIndex(function(candidate) { return candidate.source === column.source; }),
+					label: column.label,
+					decimals: column.decimals,
+					values: column.values,
+				};
+			}), currentDataWindowTime);
+			if (featureClear) featureClear.classList.remove('hidden');
+			if (featureEmpty) featureEmpty.classList.add('hidden');
+			if (featureChartEl) featureChartEl.classList.remove('hidden');
+
+			if (featureChart && !featureChart.__toktikCrosshairBound) {
+				featureChart.__toktikCrosshairBound = true;
+				featureChart.subscribeCrosshairMove(function(param) {
+					if (!param || param.time === undefined) return;
+					renderDataWindow(Number(param.time));
+				});
+			}
 		}
 
 		function renderDataWindow(unixSeconds) {
@@ -2234,9 +2445,11 @@ const htmlTemplate = `<!DOCTYPE html>
 				dataWindowTime.textContent = formatTimestamp(resolvedTime);
 			}
 			if (resolvedTime === null) {
+				currentDataWindowTime = null;
 				dataWindowGrid.innerHTML = '<div class="data-window-card mono text-sm text-slate-300">No chart data available.</div>';
 				return;
 			}
+			currentDataWindowTime = resolvedTime;
 			var candle = candleByTime.get(resolvedTime);
 			var items = [];
 			if (candle) {
@@ -2248,20 +2461,32 @@ const htmlTemplate = `<!DOCTYPE html>
 			if (volumeByTime.has(resolvedTime)) {
 				appendDataWindowItem(items, underlyingVolumeLabel || 'Volume', formatNumber(volumeByTime.get(resolvedTime), 0));
 			}
-			hoverColumnMaps.forEach(function(column) {
-				appendDataWindowItem(items, column.label, formatNumber(column.values.get(resolvedTime), column.decimals));
+			hoverColumnMaps.forEach(function(column, index) {
+				appendFeatureWindowItem(items, column.label, formatNumber(column.values.get(resolvedTime), column.decimals), column.source, selectedHoverColumnSources.has(column.source), featureColor(index));
 			});
 			dataWindowGrid.innerHTML = items.join('');
+			renderFeatureLegend(selectedHoverColumns().map(function(column) {
+				return {
+					index: hoverColumnMaps.findIndex(function(candidate) { return candidate.source === column.source; }),
+					label: column.label,
+					decimals: column.decimals,
+					values: column.values,
+				};
+			}), resolvedTime);
 		}
 
     if (underlyingCandles.length > 0) {
       var pc = createChart('underlying-chart', 420);
       if (pc) {
 				var cs = pc.addCandlestickSeries({
+          priceScaleId: 'right',
           upColor: '#22c55e', downColor: '#f97316',
           wickUpColor: '#22c55e', wickDownColor: '#f97316',
           borderUpColor: '#22c55e', borderDownColor: '#f97316'
         });
+				cs.priceScale().applyOptions({
+					scaleMargins: { top: 0.04, bottom: underlyingVolumeSeries.length > 0 ? 0.24 : 0.06 }
+				});
 				cs.setData(underlyingCandles);
 				cs.setMarkers(underlyingMarkers);
 				pc.subscribeCrosshairMove(function(param) {
@@ -2275,23 +2500,26 @@ const htmlTemplate = `<!DOCTYPE html>
 				underlyingChart = pc;
 				underlyingSeries = cs;
         charts.push(pc);
+				registerSyncedChart(pc);
       }
     }
 
 		if (underlyingVolumeSeries.length > 0) {
-			var pvc = createChart('underlying-volume-chart', 140);
-			if (pvc) {
-				var pvs = pvc.addHistogramSeries({
+			if (underlyingChart) {
+				var pvs = underlyingChart.addHistogramSeries({
+					priceScaleId: 'volume',
 					priceFormat: { type: 'volume' },
 					priceLineVisible: false,
 					lastValueVisible: false,
+					lastPriceAnimation: 0,
 					base: 0
 				});
 				pvs.setData(underlyingVolumeSeries);
-				pvc.timeScale().fitContent();
-				underlyingVolumeChart = pvc;
+				underlyingChart.priceScale('volume').applyOptions({
+					scaleMargins: { top: 0.8, bottom: 0.02 },
+					borderVisible: false
+				});
 				underlyingVolumePlot = pvs;
-				charts.push(pvc);
 			}
 		}
 
@@ -2308,6 +2536,7 @@ const htmlTemplate = `<!DOCTYPE html>
 			equityChart = ec;
 			equityPlot = el;
       charts.push(ec);
+			registerSyncedChart(ec);
     }
 
     if (pnlUSDSeries.length > 0) {
@@ -2322,6 +2551,7 @@ const htmlTemplate = `<!DOCTYPE html>
 				pnlChart = puc;
 				pnlPlot = pul;
         charts.push(puc);
+				registerSyncedChart(puc);
       }
     }
 
@@ -2336,34 +2566,57 @@ const htmlTemplate = `<!DOCTYPE html>
 			drawdownChart = dc;
 			drawdownPlot = dl;
       charts.push(dc);
+			registerSyncedChart(dc);
     }
 
 		function applyIdleFilter(enabled) {
 			var useFilter = enabled && hasActiveFilter;
+			currentIdleFilterEnabled = useFilter;
 
-			if (underlyingSeries) {
-				underlyingSeries.setData(filterCandleSeriesByTimes(underlyingCandles, activeSet, useFilter));
-				underlyingSeries.setMarkers(filterMarkerSeriesByTimes(underlyingMarkers, activeSet, useFilter));
-			}
-			if (underlyingVolumePlot) {
-				underlyingVolumePlot.setData(filterHistogramSeriesByTimes(underlyingVolumeSeries, activeSet, useFilter));
-			}
-			if (equityPlot) {
-				equityPlot.setData(filterLineSeriesByTimes(equitySeries, activeSet, useFilter));
-			}
-			if (pnlPlot) {
-				pnlPlot.setData(filterLineSeriesByTimes(pnlUSDSeries, activeSet, useFilter));
-			}
-			if (drawdownPlot) {
-				drawdownPlot.setData(filterLineSeriesByTimes(drawdownSeries, activeSet, useFilter));
-			}
-
-			charts.forEach(function(chart) {
-				chart.timeScale().fitContent();
+			preserveVisibleRanges(charts.slice(), function() {
+				if (underlyingSeries) {
+					underlyingSeries.setData(filterCandleSeriesByTimes(underlyingCandles, activeSet, useFilter));
+					underlyingSeries.setMarkers(filterMarkerSeriesByTimes(underlyingMarkers, activeSet, useFilter));
+				}
+				if (underlyingVolumePlot) {
+					underlyingVolumePlot.setData(filterHistogramSeriesByTimes(underlyingVolumeSeries, activeSet, useFilter));
+				}
+				if (equityPlot) {
+					equityPlot.setData(filterLineSeriesByTimes(equitySeries, activeSet, useFilter));
+				}
+				if (pnlPlot) {
+					pnlPlot.setData(filterLineSeriesByTimes(pnlUSDSeries, activeSet, useFilter));
+				}
+				if (drawdownPlot) {
+					drawdownPlot.setData(filterLineSeriesByTimes(drawdownSeries, activeSet, useFilter));
+				}
+				renderFeatureChart();
 			});
 		}
 
     if (charts.length > 1) syncCharts(charts);
+
+		if (dataWindowGrid) {
+			dataWindowGrid.addEventListener('click', function(event) {
+				var target = event.target;
+				if (!target || typeof target.closest !== 'function') return;
+				var featureButton = target.closest('[data-hover-source]');
+				if (!featureButton) return;
+				var source = featureButton.getAttribute('data-hover-source');
+				if (selectedHoverColumnSources.has(source)) selectedHoverColumnSources.delete(source);
+				else selectedHoverColumnSources.add(source);
+				renderFeatureChart();
+				renderDataWindow(currentDataWindowTime);
+			});
+		}
+
+		if (featureClear) {
+			featureClear.addEventListener('click', function() {
+				selectedHoverColumnSources.clear();
+				renderFeatureChart();
+				renderDataWindow(currentDataWindowTime);
+			});
+		}
 
 		var toggle = document.getElementById('toggle-ignore-idle');
 		if (toggle) {

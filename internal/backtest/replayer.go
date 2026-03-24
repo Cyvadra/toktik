@@ -135,6 +135,12 @@ func (r *Replayer) Replay(prepared *PreparedData, strategy Strategy, params map[
 	barCtx.factorRefs = factorRefList
 
 	defaultSlipPct := r.config.SlippagePct
+	// Pre-allocate a single contractMap to reuse across bars, avoiding a
+	// per-bar allocation when an OptionsChainProvider is configured.
+	var contractMap map[string]OptionContract
+	if r.chainProvider != nil {
+		contractMap = make(map[string]OptionContract, 256)
+	}
 
 	for i := 0; i < nBars; i++ {
 		barCtx.barIndex = i
@@ -148,10 +154,9 @@ func (r *Replayer) Replay(prepared *PreparedData, strategy Strategy, params map[
 			broker.ProcessPending(i, prepared.PrimaryDS.Timestamps[i])
 		}
 
-		var contractMap map[string]OptionContract
 		if r.chainProvider != nil {
+			clear(contractMap)
 			contracts := r.chainProvider.AvailableContracts(prepared.PrimaryDS.Timestamps[i])
-			contractMap = make(map[string]OptionContract, len(contracts))
 			for _, c := range contracts {
 				contractMap[c.Symbol] = c
 			}
