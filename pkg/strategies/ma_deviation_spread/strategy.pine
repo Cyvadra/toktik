@@ -17,38 +17,57 @@ vol_condition = ratio > vol_threshold
 
 // --- 3. 背离计算函数 (MACD 逻辑) ---
 divergence_logic() =>
-    n_look_ahead = 2
-    body_max = math.max(open, close)
-    body_min = math.min(open, close)
-    // 寻找包含前后确认的 Pivot High / Low，左边 30 根，右边延迟 2 根确认
-    ph = ta.pivothigh(body_max, 30, n_look_ahead)
-    pl = ta.pivotlow(body_min, 30, n_look_ahead)
-    diff = ta.ema(close, 12) - ta.ema(close, 26)
-    var float prev_ph = na
-    var float prev_ph_diff = na
-    var float current_ph = na
-    var float current_ph_diff = na
-    top_div = false
+    // --- MACD ---
+    [dif, dea, hist] = ta.macd(close, 12, 26, 9)
+    // --- Pivot ---
+    ph = ta.pivothigh(high, lookback, lookback)
+    pl = ta.pivotlow(low, lookback, lookback)
+    // --- 状态变量（函数内持久）---
+    var float topPriceBase = na
+    var float topHistBase  = na
+    var float topDifBase   = na
+    var float botPriceBase = na
+    var float botHistBase  = na
+    var float botDifBase   = na
+    var bool flag_top = false
+    var bool flag_bot = false
+    // === 顶背离 ===
     if not na(ph)
-        prev_ph := current_ph
-        prev_ph_diff := current_ph_diff
-        current_ph := ph
-        current_ph_diff := diff[n_look_ahead] // 记录 pivot 高点那根 K 线的 diff 值
-        if not na(prev_ph) and current_ph > prev_ph and current_ph_diff < prev_ph_diff
-            top_div := true
-    var float prev_pl = na
-    var float prev_pl_diff = na
-    var float current_pl = na
-    var float current_pl_diff = na
-    bot_div = false
+        float a_hist = hist[lookback]
+        float a_dif  = dif[lookback]
+        float curPrice = high[lookback]
+        if not na(topPriceBase) and curPrice > topPriceBase
+            bool histDiv = a_hist < topHistBase - 0.5 * math.abs(topHistBase)
+            bool difDiv  = a_dif < topDifBase
+            flag_top := histDiv or difDiv
+        else
+            flag_top := false
+        // 更新基准
+        topPriceBase := curPrice
+        topHistBase  := a_hist
+        topDifBase   := a_dif
+    else
+        flag_top := false
+    // === 底背离 ===
     if not na(pl)
-        prev_pl := current_pl
-        prev_pl_diff := current_pl_diff
-        current_pl := pl
-        current_pl_diff := diff[n_look_ahead] // 记录 pivot 低点那根 K 线的 diff 值
-        if not na(prev_pl) and current_pl < prev_pl and current_pl_diff > prev_pl_diff
-            bot_div := true
-    [top_div, bot_div]
+        float a_hist = hist[lookback]
+        float a_dif  = dif[lookback]
+        float curPrice = low[lookback]
+
+        if not na(botPriceBase) and curPrice < botPriceBase
+            bool histDiv = a_hist > botHistBase + 0.5 * math.abs(botHistBase)
+            bool difDiv  = a_dif > botDifBase
+
+            flag_bot := histDiv or difDiv
+        else
+            flag_bot := false
+        // 更新基准
+        botPriceBase := curPrice
+        botHistBase  := a_hist
+        botDifBase   := a_dif
+    else
+        flag_bot := false
+    [flag_top, flag_bot]
 
 get_divergence(tf) =>
     request.security(syminfo.tickerid, tf, divergence_logic())
@@ -84,10 +103,10 @@ cond_short = ta.barssince(div_wide_top) <= 5 and close < open and rsi_12h > 50 a
 cond_long = div_quick_bot and rsi_12h < 50 and vol_condition
 
 
-bgcolor(div_base_top ? color.new(color.red,90) : na)
-bgcolor(div_base_bot ? color.new(color.green,90) : na)
-bgcolor(div_wide_top ? color.new(color.red,80) : na)
-bgcolor(div_quick_bot ? color.new(color.green,80) : na)
+bgcolor(div_base_top ? color.new(color.red,95) : na)
+bgcolor(div_base_bot ? color.new(color.green,95) : na)
+bgcolor(div_wide_top ? color.new(color.red,75) : na)
+bgcolor(div_quick_bot ? color.new(color.green,75) : na)
 
 
 // 仓位模拟
