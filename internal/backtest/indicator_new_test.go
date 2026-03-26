@@ -98,6 +98,37 @@ func TestVWMA(t *testing.T) {
 	}
 }
 
+func TestEMASeedsFromFirstValueLikeTradingView(t *testing.T) {
+	ind := EMA("x", 3)
+	out := ind.Compute(map[string][]float64{
+		"x": {10, 11, 12, 13},
+	})
+
+	want := []float64{10, 10.5, 11.25, 12.125}
+	for i := range want {
+		if math.Abs(out[i]-want[i]) > 1e-9 {
+			t.Fatalf("unexpected ema at %d: got %v want %v", i, out[i], want[i])
+		}
+	}
+}
+
+func TestEMAHandlesLeadingAndInternalNaNs(t *testing.T) {
+	ind := EMA("x", 3)
+	out := ind.Compute(map[string][]float64{
+		"x": {math.NaN(), math.NaN(), 10, 11, math.NaN(), 13},
+	})
+
+	if !math.IsNaN(out[0]) || !math.IsNaN(out[1]) {
+		t.Fatalf("expected leading NaN values, got %#v", out[:2])
+	}
+	want := []float64{10, 10.5, 10.5, 11.75}
+	for i, idx := range []int{2, 3, 4, 5} {
+		if math.Abs(out[idx]-want[i]) > 1e-9 {
+			t.Fatalf("unexpected ema at %d: got %v want %v", idx, out[idx], want[i])
+		}
+	}
+}
+
 func TestATR(t *testing.T) {
 	ind := ATR(3)
 	out := ind.Compute(map[string][]float64{

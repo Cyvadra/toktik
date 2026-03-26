@@ -104,7 +104,7 @@ func TestComputeResultNormalizesReportColumns(t *testing.T) {
 			"atr":   {1000, 1005},
 		},
 		[]ReportColumn{
-			{Source: "atr", Label: "ATR", Decimals: 2},
+			{Source: "atr", Label: "ATR", Decimals: 2, Overlay: true},
 			{Source: "missing", Label: "Missing", Decimals: 2},
 			{Source: "close", Decimals: -1},
 		},
@@ -113,10 +113,10 @@ func TestComputeResultNormalizesReportColumns(t *testing.T) {
 	if len(result.ReportColumns) != 2 {
 		t.Fatalf("len(result.ReportColumns) = %d, want 2", len(result.ReportColumns))
 	}
-	if result.ReportColumns[0].Source != "atr" || result.ReportColumns[0].Label != "ATR" || result.ReportColumns[0].Decimals != 2 {
+	if result.ReportColumns[0].Source != "atr" || result.ReportColumns[0].Label != "ATR" || result.ReportColumns[0].Decimals != 2 || !result.ReportColumns[0].Overlay {
 		t.Fatalf("unexpected first report column: %#v", result.ReportColumns[0])
 	}
-	if result.ReportColumns[1].Source != "close" || result.ReportColumns[1].Label != "close" || result.ReportColumns[1].Decimals != 0 {
+	if result.ReportColumns[1].Source != "close" || result.ReportColumns[1].Label != "close" || result.ReportColumns[1].Decimals != 0 || result.ReportColumns[1].Overlay {
 		t.Fatalf("unexpected second report column: %#v", result.ReportColumns[1])
 	}
 }

@@ -156,6 +156,7 @@ func normalizeReportColumns(columns []ReportColumn, series map[string][]float64)
 			Source:   source,
 			Label:    label,
 			Decimals: decimals,
+			Overlay:  column.Overlay,
 		})
 	}
 	if len(filtered) == 0 {

@@ -7,6 +7,7 @@ import (
 	_ "github.com/Cyvadra/toktik/pkg/strategies/buy_flash_low"
 	"github.com/Cyvadra/toktik/pkg/strategies/catalog"
 	_ "github.com/Cyvadra/toktik/pkg/strategies/delta_filter"
+	_ "github.com/Cyvadra/toktik/pkg/strategies/ema_atr_spot"
 	_ "github.com/Cyvadra/toktik/pkg/strategies/golden_cross"
 	_ "github.com/Cyvadra/toktik/pkg/strategies/ma_deviation_forum_short_put"
 	_ "github.com/Cyvadra/toktik/pkg/strategies/ma_deviation_spread"

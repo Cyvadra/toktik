@@ -65,6 +65,23 @@ bin/crypto-options-import \
 The importer automatically initializes the ClickHouse schema (tables + materialized views) and performs deduplication sampling to skip already-imported files.
 Default generated windows are: `1m`, `5m`, `15m`, `30m`, `1h`, `2h`, `3h`, `4h`, `6h`, `8h`, `12h`, `1d`.
 
+Import spot bars from a Julia-exported minute JSON plus a 1-hour CSV volume file:
+
+```bash
+go run ./cmd/crypto-spot-import-julia \
+  --json-file btc2023_2025.json \
+  --csv-file BTCUSDT_1h.csv \
+  --symbol BTC \
+  --json-time-offset=-8h \
+  --clickhouse-dsn "clickhouse://default:@localhost:9000/default"
+```
+
+Notes:
+- `crypto-spot-import-julia` uses JSON minute `OHLC` as the price source.
+- Hourly volume comes from the CSV file and is redistributed to each minute using normalized JSON minute volume weights within the same hour.
+- `--json-time-offset` is required when the JSON timestamps and CSV timestamps are expressed in different time bases. For the checked-in `btc2023_2025.json` plus `BTCUSDT_1h.csv` pair, use `--json-time-offset=-8h`.
+- The imported `1m` spot bars feed the higher spot windows through ClickHouse aggregation tables and views.
+
 ### 2. Start the API Server
 
 ```bash
@@ -189,6 +206,7 @@ Notes:
 - `1m` is the base table and will be skipped during backfill.
 - Without `--replace`, intervals with existing rows in the selected scope are skipped to avoid duplicate aggregation states.
 - Add `--replace` to rebuild selected intervals in-range.
+- After re-importing spot `1m` bars, use `--replace` if you need to overwrite existing higher spot windows from the new base data.
 
 ### 7. Sync US Stock Options (Theta Data)
 

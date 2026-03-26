@@ -31,13 +31,29 @@ type juliaSpotJSON struct {
 	Timestamp []json.Number `json:"Timestamp"`
 }
 
+type jsonMinuteBar struct {
+	Timestamp  time.Time
+	Open       float32
+	High       float32
+	Low        float32
+	Close      float32
+	VolumeSeed float64
+}
+
+type volumeRemainder struct {
+	Offset    int
+	Remainder float64
+}
+
 func main() {
-	jsonFile := flag.String("json-file", "btc2023_2025.json", "Path to Julia-exported JSON file (deprecated, use --input-file)")
-	inputFile := flag.String("input-file", "", "Path to input file (.json or .csv). If empty, --json-file is used")
-	inputFormat := flag.String("format", "auto", "Input format: auto|json|csv")
+	jsonFile := flag.String("json-file", "btc2023_2025.json", "Path to JSON file providing 1m OHLC and minute volume weights")
+	csvFile := flag.String("csv-file", "BTCUSDT_1h.csv", "Path to CSV file providing 1h volume totals")
+	inputFile := flag.String("input-file", "", "Deprecated legacy single-source input file (.json or .csv)")
+	inputFormat := flag.String("format", "auto", "Deprecated legacy input format for --input-file: auto|json|csv")
 	dsn := flag.String("clickhouse-dsn", appCli.DefaultDSN, "ClickHouse DSN")
 	symbol := flag.String("symbol", "BTC", "Spot symbol written to crypto_spot_bar_1m.symbol")
-	priceSource := flag.String("price-source", "julia-json", "Value for crypto_spot_bar_1m.price_source")
+	priceSource := flag.String("price-source", "julia-json+csv-volume", "Value for crypto_spot_bar_1m.price_source")
+	jsonTimeOffset := flag.Duration("json-time-offset", 0, "Offset applied to JSON timestamps before merging/import, e.g. -8h")
 	batchSize := flag.Int("batch-size", 50000, "Rows per INSERT batch")
 	overwrite := flag.Bool("overwrite", true, "Delete existing rows for symbol across 1m and all spot interval agg tables before import")
 	initSchema := flag.Bool("init-schema", true, "Initialize base schema + spot kline schema before import")
@@ -46,16 +62,6 @@ func main() {
 
 	if *batchSize < 1 {
 		*batchSize = 50000
-	}
-
-	path := *inputFile
-	if path == "" {
-		path = *jsonFile
-	}
-
-	format, err := resolveInputFormat(path, *inputFormat)
-	if err != nil {
-		log.Fatalf("resolve input format: %v", err)
 	}
 
 	ctx := context.Background()
@@ -89,12 +95,36 @@ func main() {
 		log.Printf("Overwrite enabled: deleted symbol=%s from %d spot tables (1m before=%d rows)", *symbol, affected, beforeCount)
 	}
 
-	log.Printf("Input file: %s (format=%s)", path, format)
 	checkSpotKlineMVStatus(ctx, conn)
 
-	bars, err := loadInputBars(path, format, *symbol, *priceSource)
-	if err != nil {
-		log.Fatalf("load input bars: %v", err)
+	var bars []cryptooptions.SpotBar1m
+	if strings.TrimSpace(*inputFile) != "" {
+		format, err := resolveInputFormat(*inputFile, *inputFormat)
+		if err != nil {
+			log.Fatalf("resolve input format: %v", err)
+		}
+		log.Printf("Legacy single-source import: file=%s format=%s", *inputFile, format)
+		bars, err = loadInputBars(*inputFile, format, *symbol, *priceSource)
+		if err != nil {
+			log.Fatalf("load input bars: %v", err)
+		}
+	} else {
+		if strings.TrimSpace(*jsonFile) == "" {
+			log.Fatalf("json-file is required when --input-file is not set")
+		}
+		if strings.TrimSpace(*csvFile) == "" {
+			log.Printf("CSV file not provided; falling back to JSON-only import")
+			bars, err = parseJSONBars(*jsonFile, *symbol, *priceSource, *jsonTimeOffset)
+			if err != nil {
+				log.Fatalf("load json bars: %v", err)
+			}
+		} else {
+			log.Printf("Dual-source import: json=%s csv=%s", *jsonFile, *csvFile)
+			bars, err = loadMergedInputBars(*jsonFile, *csvFile, *symbol, *priceSource, *jsonTimeOffset)
+			if err != nil {
+				log.Fatalf("load merged input bars: %v", err)
+			}
+		}
 	}
 
 	if len(bars) == 0 {
@@ -125,12 +155,32 @@ func main() {
 func loadInputBars(path, format, symbol, priceSource string) ([]cryptooptions.SpotBar1m, error) {
 	switch format {
 	case "json":
-		return parseJSONBars(path, symbol, priceSource)
+		return parseJSONBars(path, symbol, priceSource, 0)
 	case "csv":
 		return parseCSVBars(path, symbol, priceSource)
 	default:
 		return nil, fmt.Errorf("unsupported format: %s", format)
 	}
+}
+
+func loadMergedInputBars(jsonPath, csvPath, symbol, priceSource string, jsonTimeOffset time.Duration) ([]cryptooptions.SpotBar1m, error) {
+	priceBars, err := parseJSONMinuteBars(jsonPath, jsonTimeOffset)
+	if err != nil {
+		return nil, fmt.Errorf("parse json minute bars: %w", err)
+	}
+
+	hourlyVolumes, err := parseCSVHourlyVolumes(csvPath)
+	if err != nil {
+		return nil, fmt.Errorf("parse csv hourly volumes: %w", err)
+	}
+
+	bars, usedHours, ignoredHours, skippedHours, err := mergeJSONPriceBarsWithCSVVolumes(priceBars, hourlyVolumes, symbol, priceSource)
+	if err != nil {
+		return nil, err
+	}
+
+	log.Printf("Merged %d minute bars across %d overlapping hours with %d CSV hourly rows (%d CSV rows unused, %d JSON hours skipped)", len(bars), usedHours, len(hourlyVolumes), ignoredHours, skippedHours)
+	return bars, nil
 }
 
 func resolveInputFormat(path, requested string) (string, error) {
@@ -206,7 +256,7 @@ func loadJSON(path string) (*juliaSpotJSON, error) {
 	return &p, nil
 }
 
-func parseJSONBars(path, symbol, priceSource string) ([]cryptooptions.SpotBar1m, error) {
+func parseJSONMinuteBars(path string, timeOffset time.Duration) ([]jsonMinuteBar, error) {
 	payload, err := loadJSON(path)
 	if err != nil {
 		return nil, fmt.Errorf("load json: %w", err)
@@ -219,9 +269,15 @@ func parseJSONBars(path, symbol, priceSource string) ([]cryptooptions.SpotBar1m,
 	if len(payload.Timestamp) != len(payload.Open) || len(payload.Timestamp) != len(payload.Low) || len(payload.Timestamp) != len(payload.Close) {
 		log.Printf("[WARN] JSON required arrays have different lengths (Timestamp=%d Open=%d Low=%d Close=%d), truncating to %d", len(payload.Timestamp), len(payload.Open), len(payload.Low), len(payload.Close), n)
 	}
-	log.Printf("Input rows: %d", n)
+	if len(payload.High) > 0 && len(payload.High) < n {
+		log.Printf("[WARN] JSON High shorter than required arrays (High=%d), deriving missing highs from OHLC", len(payload.High))
+	}
+	if len(payload.Volume) > 0 && len(payload.Volume) < n {
+		log.Printf("[WARN] JSON Volume shorter than price arrays (Volume=%d), falling back to zero weights for trailing rows", len(payload.Volume))
+	}
+	log.Printf("JSON minute rows: %d", n)
 
-	bars := make([]cryptooptions.SpotBar1m, 0, n)
+	bars := make([]jsonMinuteBar, 0, n)
 	skipped := 0
 
 	for i := 0; i < n; i++ {
@@ -243,24 +299,22 @@ func parseJSONBars(path, symbol, priceSource string) ([]cryptooptions.SpotBar1m,
 			high = max3(open, low, closeP)
 		}
 
-		tickCount := uint32(1)
+		volumeSeed := 0.0
 		if len(payload.Volume) > i {
-			tickCount = volumeToUInt32(payload.Volume[i])
+			volumeSeed = sanitizeWeightSeed(payload.Volume[i])
 		}
 
-		bars = append(bars, cryptooptions.SpotBar1m{
-			Timestamp:   ts.UTC(),
-			Symbol:      symbol,
-			PriceSource: priceSource,
-			Open:        open,
-			High:        high,
-			Low:         low,
-			Close:       closeP,
-			TickCount:   tickCount,
+		bars = append(bars, jsonMinuteBar{
+			Timestamp:  ts.UTC().Add(timeOffset),
+			Open:       open,
+			High:       high,
+			Low:        low,
+			Close:      closeP,
+			VolumeSeed: volumeSeed,
 		})
 
 		if (i+1)%500000 == 0 {
-			log.Printf("prepared %d rows", i+1)
+			log.Printf("prepared %d JSON minute rows", i+1)
 		}
 	}
 	if skipped > 0 {
@@ -268,6 +322,210 @@ func parseJSONBars(path, symbol, priceSource string) ([]cryptooptions.SpotBar1m,
 	}
 
 	return bars, nil
+}
+
+func parseJSONBars(path, symbol, priceSource string, jsonTimeOffset time.Duration) ([]cryptooptions.SpotBar1m, error) {
+	minuteBars, err := parseJSONMinuteBars(path, jsonTimeOffset)
+	if err != nil {
+		return nil, err
+	}
+
+	bars := make([]cryptooptions.SpotBar1m, 0, len(minuteBars))
+	for i := range minuteBars {
+		bars = append(bars, cryptooptions.SpotBar1m{
+			Timestamp:   minuteBars[i].Timestamp,
+			Symbol:      symbol,
+			PriceSource: priceSource,
+			Open:        minuteBars[i].Open,
+			High:        minuteBars[i].High,
+			Low:         minuteBars[i].Low,
+			Close:       minuteBars[i].Close,
+			TickCount:   volumeToUInt32(minuteBars[i].VolumeSeed),
+		})
+	}
+
+	return bars, nil
+}
+
+func parseCSVHourlyVolumes(path string) (map[int64]float64, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("open csv: %w", err)
+	}
+	defer f.Close()
+
+	r := csv.NewReader(bufio.NewReaderSize(f, 4<<20))
+	r.FieldsPerRecord = -1
+
+	header, err := r.Read()
+	if err != nil {
+		if err == io.EOF {
+			return nil, fmt.Errorf("csv is empty")
+		}
+		return nil, fmt.Errorf("read csv header: %w", err)
+	}
+
+	headerMap := make(map[string]int, len(header))
+	for i, h := range header {
+		norm := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(h, "\ufeff")))
+		headerMap[norm] = i
+	}
+
+	timestampIdx, ok := headerMap["timestamp"]
+	if !ok {
+		return nil, fmt.Errorf("csv missing required column %q", "timestamp")
+	}
+
+	volumeIdx := -1
+	for _, candidate := range []string{"volume_from", "volume", "tick_count"} {
+		if idx, ok := headerMap[candidate]; ok {
+			volumeIdx = idx
+			break
+		}
+	}
+	if volumeIdx < 0 {
+		return nil, fmt.Errorf("csv missing hourly volume column (expected one of volume_from, volume, tick_count)")
+	}
+
+	hourlyVolumes := make(map[int64]float64, 1024)
+	prepared := 0
+	skipped := 0
+	rowNum := 1
+	for {
+		rowNum++
+		rec, err := r.Read()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("read csv row %d: %w", rowNum, err)
+		}
+
+		ts, err := parseCSVTimestamp(csvField(rec, timestampIdx))
+		if err != nil {
+			log.Printf("[WARN] skip hourly row=%d bad timestamp=%q err=%v", rowNum, csvField(rec, timestampIdx), err)
+			skipped++
+			continue
+		}
+
+		volume, err := parseCSVFloat64(csvField(rec, volumeIdx))
+		if err != nil {
+			log.Printf("[WARN] skip hourly row=%d bad volume=%q err=%v", rowNum, csvField(rec, volumeIdx), err)
+			skipped++
+			continue
+		}
+
+		hourTS := ts.UTC().Truncate(time.Hour)
+		if existing, exists := hourlyVolumes[hourTS.Unix()]; exists {
+			return nil, fmt.Errorf("duplicate csv hour %s (existing=%f new=%f)", hourTS.Format(time.RFC3339), existing, volume)
+		}
+		hourlyVolumes[hourTS.Unix()] = volume
+		prepared++
+	}
+
+	log.Printf("CSV hourly volume rows: %d", prepared)
+	if skipped > 0 {
+		log.Printf("[WARN] CSV hourly rows skipped: %d", skipped)
+	}
+
+	return hourlyVolumes, nil
+}
+
+func mergeJSONPriceBarsWithCSVVolumes(priceBars []jsonMinuteBar, hourlyVolumes map[int64]float64, symbol, priceSource string) ([]cryptooptions.SpotBar1m, int, int, int, error) {
+	if len(priceBars) == 0 {
+		return nil, 0, len(hourlyVolumes), 0, nil
+	}
+
+	hourToIndexes := make(map[int64][]int)
+	usedHours := make(map[int64]struct{})
+	for i := range priceBars {
+
+		hourKey := priceBars[i].Timestamp.UTC().Truncate(time.Hour).Unix()
+		hourToIndexes[hourKey] = append(hourToIndexes[hourKey], i)
+	}
+
+	bars := make([]cryptooptions.SpotBar1m, 0, len(priceBars))
+	skippedHours := 0
+	for hourKey, indexes := range hourToIndexes {
+		hourVolume, ok := hourlyVolumes[hourKey]
+		if !ok {
+			skippedHours++
+			continue
+		}
+
+		allocations := allocateHourlyVolume(priceBars, indexes, hourVolume)
+		for offset, index := range indexes {
+			bars = append(bars, cryptooptions.SpotBar1m{
+				Timestamp:   priceBars[index].Timestamp.UTC(),
+				Symbol:      symbol,
+				PriceSource: priceSource,
+				Open:        priceBars[index].Open,
+				High:        priceBars[index].High,
+				Low:         priceBars[index].Low,
+				Close:       priceBars[index].Close,
+				TickCount:   allocations[offset],
+			})
+		}
+		usedHours[hourKey] = struct{}{}
+	}
+
+	ignoredHours := 0
+	for hourKey := range hourlyVolumes {
+		if _, ok := usedHours[hourKey]; !ok {
+			ignoredHours++
+		}
+	}
+	if len(bars) == 0 {
+		return nil, 0, ignoredHours, skippedHours, fmt.Errorf("no overlapping hours between JSON minute bars and CSV hourly volumes")
+	}
+
+	return bars, len(usedHours), ignoredHours, skippedHours, nil
+}
+
+func allocateHourlyVolume(priceBars []jsonMinuteBar, indexes []int, totalVolume float64) []uint32 {
+	allocations := make([]uint32, len(indexes))
+	totalUnits := roundedNonNegativeUInt32(totalVolume)
+	if len(indexes) == 0 || totalUnits == 0 {
+		return allocations
+	}
+
+	weightSum := 0.0
+	for _, index := range indexes {
+		weightSum += sanitizeWeightSeed(priceBars[index].VolumeSeed)
+	}
+
+	useUniformWeights := weightSum <= 0
+	if useUniformWeights {
+		weightSum = float64(len(indexes))
+	}
+
+	remainders := make([]volumeRemainder, 0, len(indexes))
+	remaining := int(totalUnits)
+	for offset, index := range indexes {
+		weight := 1.0 / float64(len(indexes))
+		if !useUniformWeights {
+			weight = sanitizeWeightSeed(priceBars[index].VolumeSeed) / weightSum
+		}
+
+		exact := float64(totalUnits) * weight
+		base := uint32(math.Floor(exact))
+		allocations[offset] = base
+		remaining -= int(base)
+		remainders = append(remainders, volumeRemainder{
+			Offset:    offset,
+			Remainder: exact - float64(base),
+		})
+	}
+
+	sort.SliceStable(remainders, func(i, j int) bool {
+		return remainders[i].Remainder > remainders[j].Remainder
+	})
+
+	for i := 0; i < remaining && i < len(remainders); i++ {
+		allocations[remainders[i].Offset]++
+	}
+
+	return allocations
 }
 
 func parseCSVBars(path, symbol, priceSource string) ([]cryptooptions.SpotBar1m, error) {
@@ -550,12 +808,6 @@ func effectiveLength(p *juliaSpotJSON) (int, error) {
 	if len(p.Close) < n {
 		n = len(p.Close)
 	}
-	if len(p.High) > 0 && len(p.High) < n {
-		n = len(p.High)
-	}
-	if len(p.Volume) > 0 && len(p.Volume) < n {
-		n = len(p.Volume)
-	}
 	return n, nil
 }
 
@@ -589,6 +841,23 @@ func volumeToUInt32(v float64) uint32 {
 		return math.MaxUint32
 	}
 	return uint32(math.Round(v))
+}
+
+func roundedNonNegativeUInt32(v float64) uint32 {
+	if math.IsNaN(v) || math.IsInf(v, 0) || v <= 0 {
+		return 0
+	}
+	if v > float64(math.MaxUint32) {
+		return math.MaxUint32
+	}
+	return uint32(math.Round(v))
+}
+
+func sanitizeWeightSeed(v float64) float64 {
+	if math.IsNaN(v) || math.IsInf(v, 0) || v <= 0 {
+		return 0
+	}
+	return v
 }
 
 func max3(a, b, c float32) float32 {

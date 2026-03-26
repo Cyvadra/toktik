@@ -236,7 +236,7 @@ func (s *smaIndicator) Compute(inputs map[string][]float64) []float64 {
 	return out
 }
 
-// EMA creates an Exponential Moving Average indicator.
+// EMA creates an Exponential Moving Average indicator compatible with TradingView ta.ema.
 func EMA(source string, period int) Indicator {
 	return &emaIndicator{source: source, period: period}
 }
@@ -249,41 +249,7 @@ type emaIndicator struct {
 func (e *emaIndicator) Deps() []string { return []string{e.source} }
 
 func (e *emaIndicator) Compute(inputs map[string][]float64) []float64 {
-	src := inputs[e.source]
-	n := len(src)
-	out := make([]float64, n)
-	k := 2.0 / float64(e.period+1)
-
-	// Seed with SMA of first `period` values
-	sum := 0.0
-	count := 0
-	seedIdx := -1
-	for i := 0; i < n && count < e.period; i++ {
-		if !math.IsNaN(src[i]) {
-			sum += src[i]
-			count++
-			seedIdx = i
-		}
-		out[i] = math.NaN()
-	}
-
-	if count < e.period {
-		// Not enough data
-		for i := 0; i < n; i++ {
-			out[i] = math.NaN()
-		}
-		return out
-	}
-
-	out[seedIdx] = sum / float64(e.period)
-	for i := seedIdx + 1; i < n; i++ {
-		if math.IsNaN(src[i]) {
-			out[i] = out[i-1]
-		} else {
-			out[i] = src[i]*k + out[i-1]*(1-k)
-		}
-	}
-	return out
+	return computeEMA(inputs[e.source], e.period)
 }
 
 // RSI creates a Relative Strength Index indicator.
@@ -439,37 +405,38 @@ func (m *macdIndicator) ComputeMulti(baseName string, inputs map[string][]float6
 	}
 }
 
-// computeEMA is a helper for vectorized EMA computation.
+// computeEMA is a helper for vectorized EMA computation compatible with TradingView ta.ema.
 func computeEMA(src []float64, period int) []float64 {
 	n := len(src)
 	out := make([]float64, n)
-	k := 2.0 / float64(period+1)
-
-	sum := 0.0
-	count := 0
-	seedIdx := -1
-	for i := 0; i < n && count < period; i++ {
-		if !math.IsNaN(src[i]) {
-			sum += src[i]
-			count++
-			seedIdx = i
-		}
-		out[i] = math.NaN()
-	}
-
-	if count < period {
-		for i := 0; i < n; i++ {
+	if period <= 0 {
+		for i := range out {
 			out[i] = math.NaN()
 		}
 		return out
 	}
 
-	out[seedIdx] = sum / float64(period)
-	for i := seedIdx + 1; i < n; i++ {
+	k := 2.0 / float64(period+1)
+	seeded := false
+	for i := 0; i < n; i++ {
 		if math.IsNaN(src[i]) {
-			out[i] = out[i-1]
-		} else {
-			out[i] = src[i]*k + out[i-1]*(1-k)
+			if seeded {
+				out[i] = out[i-1]
+			} else {
+				out[i] = math.NaN()
+			}
+			continue
+		}
+		if !seeded {
+			out[i] = src[i]
+			seeded = true
+			continue
+		}
+		out[i] = src[i]*k + out[i-1]*(1-k)
+	}
+	if !seeded {
+		for i := range out {
+			out[i] = math.NaN()
 		}
 	}
 	return out
@@ -1532,11 +1499,7 @@ func computeRMA(src []float64, period int) []float64 {
 			continue
 		}
 
-		if math.IsNaN(v) {
-			out[i] = out[i-1]
-		} else {
-			out[i] = (out[i-1]*float64(period-1) + v) / float64(period)
-		}
+		out[i] = (out[i-1]*float64(period-1) + v) / float64(period)
 	}
 
 	return out

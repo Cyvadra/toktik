@@ -12,8 +12,6 @@ import (
 const (
 	defaultStrategyName  = "golden-cross"
 	defaultEntryTWAPBars = 1
-	defaultFastPeriod    = 10
-	defaultSlowPeriod    = 50
 )
 
 // TradeDirection restricts which sides of a strategy are active.
@@ -82,8 +80,6 @@ func DefaultConfig() Config {
 		EntryPriceMode:     pricingDefaults.EntryMode,
 		ExitPriceMode:      pricingDefaults.ExitMode,
 		ValuationPriceMode: pricingDefaults.ValuationMode,
-		FastPeriod:         defaultFastPeriod,
-		SlowPeriod:         defaultSlowPeriod,
 		EntryTWAPBars:      defaultEntryTWAPBars,
 		Direction:          DirectionBoth,
 	}

@@ -56,6 +56,7 @@ type htmlReportView struct {
 	UnderlyingMarkerData  template.JS
 	HoverColumnsData      template.JS
 	HasHoverColumns       bool
+	HasFeatureColumns     bool
 	EquitySeriesData      template.JS
 	DrawdownSeriesData    template.JS
 	PnLUSDSeriesData      template.JS
@@ -207,6 +208,7 @@ type hoverColumnPayload struct {
 	Source   string           `json:"source"`
 	Label    string           `json:"label"`
 	Decimals int              `json:"decimals"`
+	Overlay  bool             `json:"overlay,omitempty"`
 	Values   []chartLinePoint `json:"values"`
 }
 
@@ -852,12 +854,22 @@ func buildHTMLView(result *backtest.Result, meta HTMLMeta) htmlReportView {
 	hoverColumns := buildHoverColumns(result)
 	view.HoverColumnsData = marshalJS(hoverColumns)
 	view.HasHoverColumns = len(hoverColumns) > 0
+	view.HasFeatureColumns = hasFeatureColumns(hoverColumns)
 	view.ActiveTimeData = marshalJS(buildActiveTimes(result))
 	view.TradeMarkerCount = tradeMarkerCount
 	view.SpreadEventCount = spreadEventCount
 	view.Notes = buildNotes(result, candleFallback)
 
 	return view
+}
+
+func hasFeatureColumns(columns []hoverColumnPayload) bool {
+	for _, column := range columns {
+		if !column.Overlay {
+			return true
+		}
+	}
+	return false
 }
 
 func buildCombinedHTMLView(results []*backtest.Result, meta HTMLMeta) combinedHTMLReportView {
@@ -1268,6 +1280,7 @@ func buildHoverColumns(result *backtest.Result) []hoverColumnPayload {
 			Source:   column.Source,
 			Label:    column.Label,
 			Decimals: column.Decimals,
+			Overlay:  column.Overlay,
 			Values:   buildLineSeries(result.Timestamps, values),
 		})
 	}
@@ -1832,7 +1845,7 @@ const htmlTemplate = `<!DOCTYPE html>
 				<div class="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
 					<div>
 						<div class="text-[11px] mono uppercase tracking-[0.22em] text-teal-400">Data Window</div>
-						<p class="mt-1 text-xs text-slate-400">Hover the candlestick chart to inspect OHLC{{ if .HasUnderlyingVolume }}, {{ .UnderlyingVolumeLabel }}{{ end }}{{ if .HasHoverColumns }}, and strategy columns. Click strategy column cards to toggle them in the subplot{{ end }}.</p>
+						<p class="mt-1 text-xs text-slate-400">Hover the candlestick chart to inspect OHLC{{ if .HasUnderlyingVolume }}, {{ .UnderlyingVolumeLabel }}{{ end }}{{ if .HasHoverColumns }}, and strategy columns{{ end }}{{ if .HasFeatureColumns }}. Click non-overlay strategy column cards to toggle them in the subplot{{ end }}.</p>
 					</div>
 					<div id="underlying-data-window-time" class="mono text-xs text-slate-400"></div>
 				</div>
@@ -1840,12 +1853,12 @@ const htmlTemplate = `<!DOCTYPE html>
 			</div>
       <div class="chart-box p-1">
         <div id="underlying-chart" style="width:100%;height:420px;"></div>
-				{{ if .HasHoverColumns }}
+				{{ if .HasFeatureColumns }}
 				<div id="underlying-feature-panel" class="mt-1 border-t border-white/8 pt-3 hidden">
 					<div class="flex flex-col gap-3 px-3 pb-2 sm:flex-row sm:items-center sm:justify-between">
 						<div>
 							<div id="underlying-feature-title" class="text-[11px] mono uppercase tracking-[0.18em] text-sky-300">Feature Subplot</div>
-							<p id="underlying-feature-subtitle" class="mt-1 text-xs text-slate-400">Click strategy columns in the data window to plot multiple series below the price chart.</p>
+							<p id="underlying-feature-subtitle" class="mt-1 text-xs text-slate-400">Click non-overlay strategy columns in the data window to plot multiple series below the price chart.</p>
 						</div>
 						<button id="underlying-feature-clear" type="button" class="hidden rounded-md border border-white/10 px-3 py-1.5 text-xs text-slate-300 transition hover:border-white/20 hover:text-white">Clear All</button>
 					</div>
@@ -2186,6 +2199,7 @@ const htmlTemplate = `<!DOCTYPE html>
 		var underlyingChart = null;
 		var underlyingSeries = null;
 		var underlyingVolumePlot = null;
+		var overlayPlots = new Map();
 		var featureChart = null;
 		var featurePlots = new Map();
 		var featurePanel = document.getElementById('underlying-feature-panel');
@@ -2225,6 +2239,7 @@ const htmlTemplate = `<!DOCTYPE html>
 				source: column.source,
 				label: column.label || column.source,
 				decimals: typeof column.decimals === 'number' ? column.decimals : 2,
+				overlay: column.overlay === true,
 				values: values,
 				series: Array.isArray(column.values) ? column.values : []
 			};
@@ -2232,7 +2247,13 @@ const htmlTemplate = `<!DOCTYPE html>
 
 		function selectedHoverColumns() {
 			return hoverColumnMaps.filter(function(column) {
-				return selectedHoverColumnSources.has(column.source);
+				return !column.overlay && selectedHoverColumnSources.has(column.source);
+			});
+		}
+
+		function overlayHoverColumns() {
+			return hoverColumnMaps.filter(function(column) {
+				return column.overlay;
 			});
 		}
 
@@ -2317,6 +2338,23 @@ const htmlTemplate = `<!DOCTYPE html>
 			);
 		}
 
+		function appendOverlayWindowItem(items, label, value, color) {
+			items.push(
+				'<div class="data-window-card">' +
+				'<div class="flex items-start justify-between gap-3">' +
+				'<div>' +
+				'<div class="text-[11px] mono uppercase tracking-[0.18em] text-slate-500">' + escapeHTML(label) + '</div>' +
+				'<div class="mt-1 mono text-sm text-slate-100">' + escapeHTML(value) + '</div>' +
+				'</div>' +
+				'<div class="flex flex-col items-end gap-1">' +
+				'<span class="feature-legend-swatch" style="background:' + escapeHTML(color) + '"></span>' +
+				'<div class="text-[10px] mono uppercase tracking-[0.18em] text-sky-300">Overlay</div>' +
+				'</div>' +
+				'</div>' +
+				'</div>'
+			);
+		}
+
 		function createFeatureChartIfNeeded() {
 			if (!featureChartEl || featureChart) return;
 			featureChart = createChart('underlying-feature-chart', 220);
@@ -2346,6 +2384,50 @@ const htmlTemplate = `<!DOCTYPE html>
 			});
 			featurePlots.set(source, plot);
 			return plot;
+		}
+
+		function ensureOverlayPlot(source, color) {
+			var plot = overlayPlots.get(source);
+			if (plot || !underlyingChart) {
+				return plot;
+			}
+			plot = underlyingChart.addLineSeries({
+				priceScaleId: 'right',
+				color: color,
+				lineWidth: 2,
+				priceLineVisible: false,
+				lastValueVisible: true,
+				crosshairMarkerRadius: 4,
+				crosshairMarkerBorderColor: color,
+				crosshairMarkerBackgroundColor: color
+			});
+			overlayPlots.set(source, plot);
+			return plot;
+		}
+
+		function renderOverlayPlots() {
+			if (!underlyingChart) return;
+			preserveVisibleRange(underlyingChart, function() {
+				var overlayColumns = overlayHoverColumns();
+				var activeSources = new Set(overlayColumns.map(function(column) { return column.source; }));
+				overlayPlots.forEach(function(plot, source) {
+					if (!activeSources.has(source)) {
+						underlyingChart.removeSeries(plot);
+						overlayPlots.delete(source);
+					}
+				});
+				overlayColumns.forEach(function(column, index) {
+					var color = featureColor(index);
+					var plot = ensureOverlayPlot(column.source, color);
+					if (!plot) return;
+					plot.applyOptions({
+						color: color,
+						crosshairMarkerBorderColor: color,
+						crosshairMarkerBackgroundColor: color
+					});
+					plot.setData(filterLineSeriesByTimes(column.series, activeSet, currentIdleFilterEnabled));
+				});
+			});
 		}
 
 		function renderFeatureLegend(columns, unixSeconds) {
@@ -2462,6 +2544,10 @@ const htmlTemplate = `<!DOCTYPE html>
 				appendDataWindowItem(items, underlyingVolumeLabel || 'Volume', formatNumber(volumeByTime.get(resolvedTime), 0));
 			}
 			hoverColumnMaps.forEach(function(column, index) {
+				if (column.overlay) {
+					appendOverlayWindowItem(items, column.label, formatNumber(column.values.get(resolvedTime), column.decimals), featureColor(index));
+					return;
+				}
 				appendFeatureWindowItem(items, column.label, formatNumber(column.values.get(resolvedTime), column.decimals), column.source, selectedHoverColumnSources.has(column.source), featureColor(index));
 			});
 			dataWindowGrid.innerHTML = items.join('');
@@ -2501,6 +2587,7 @@ const htmlTemplate = `<!DOCTYPE html>
 				underlyingSeries = cs;
         charts.push(pc);
 				registerSyncedChart(pc);
+				renderOverlayPlots();
       }
     }
 
@@ -2581,6 +2668,7 @@ const htmlTemplate = `<!DOCTYPE html>
 				if (underlyingVolumePlot) {
 					underlyingVolumePlot.setData(filterHistogramSeriesByTimes(underlyingVolumeSeries, activeSet, useFilter));
 				}
+				renderOverlayPlots();
 				if (equityPlot) {
 					equityPlot.setData(filterLineSeriesByTimes(equitySeries, activeSet, useFilter));
 				}

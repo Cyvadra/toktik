@@ -21,6 +21,7 @@ type ReportColumn struct {
 	Source   string `json:"source"`
 	Label    string `json:"label"`
 	Decimals int    `json:"decimals,omitempty"`
+	Overlay  bool   `json:"overlay,omitempty"`
 }
 
 // ReportColumnProvider is an optional strategy extension point for exposing

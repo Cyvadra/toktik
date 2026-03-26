@@ -51,11 +51,59 @@ func TestBuildHTMLViewIncludesHoverColumns(t *testing.T) {
 	if len(payload) != 2 {
 		t.Fatalf("len(payload) = %d, want 2", len(payload))
 	}
+	if payload[0].Overlay {
+		t.Fatalf("payload[0].Overlay = true, want false")
+	}
 	if payload[0].Label != "Donchian Upper" || len(payload[0].Values) != 2 {
 		t.Fatalf("unexpected first hover column payload: %#v", payload[0])
 	}
 	if payload[1].Label != "ATR" || payload[1].Values[1].Value != 860 {
 		t.Fatalf("unexpected second hover column payload: %#v", payload[1])
+	}
+}
+
+func TestBuildHTMLViewIncludesOverlayColumns(t *testing.T) {
+	result := &backtest.Result{
+		StrategyName:   "test",
+		StartTime:      time.Date(2024, time.January, 1, 0, 0, 0, 0, time.UTC),
+		EndTime:        time.Date(2024, time.January, 1, 1, 0, 0, 0, time.UTC),
+		BarsCount:      2,
+		InitialCapital: 100,
+		FinalEquity:    101,
+		EquityCurve:    []float64{100, 101},
+		Timestamps: []time.Time{
+			time.Date(2024, time.January, 1, 0, 0, 0, 0, time.UTC),
+			time.Date(2024, time.January, 1, 1, 0, 0, 0, time.UTC),
+		},
+		Series: map[string][]float64{
+			"open":     {60000, 60100},
+			"high":     {60200, 60300},
+			"low":      {59900, 60050},
+			"close":    {60150, 60250},
+			"ema_fast": {60100, 60200},
+		},
+		ReportColumns: []backtest.ReportColumn{{
+			Source:   "ema_fast",
+			Label:    "EMA 20",
+			Decimals: 2,
+			Overlay:  true,
+		}},
+	}
+
+	view := buildHTMLView(result, HTMLMeta{})
+	if !view.HasHoverColumns {
+		t.Fatal("view.HasHoverColumns = false, want true")
+	}
+	if view.HasFeatureColumns {
+		t.Fatal("view.HasFeatureColumns = true, want false")
+	}
+
+	var payload []hoverColumnPayload
+	if err := json.Unmarshal([]byte(view.HoverColumnsData), &payload); err != nil {
+		t.Fatalf("json.Unmarshal(HoverColumnsData) error = %v", err)
+	}
+	if len(payload) != 1 || !payload[0].Overlay {
+		t.Fatalf("unexpected overlay payload: %#v", payload)
 	}
 }
 
@@ -274,5 +322,61 @@ func TestWriteBacktestHTMLIncludesHoverColumnSubplotControls(t *testing.T) {
 	}
 	if !strings.Contains(html, "featureChart.subscribeCrosshairMove") {
 		t.Fatalf("expected generated html to sync subplot hover with the shared data window")
+	}
+}
+
+func TestWriteBacktestHTMLIncludesOverlaySeriesSupport(t *testing.T) {
+	result := &backtest.Result{
+		StrategyName:   "test",
+		StartTime:      time.Date(2024, time.January, 1, 0, 0, 0, 0, time.UTC),
+		EndTime:        time.Date(2024, time.January, 1, 1, 0, 0, 0, time.UTC),
+		BarsCount:      2,
+		InitialCapital: 100,
+		FinalEquity:    101,
+		EquityCurve:    []float64{100, 101},
+		Timestamps: []time.Time{
+			time.Date(2024, time.January, 1, 0, 0, 0, 0, time.UTC),
+			time.Date(2024, time.January, 1, 1, 0, 0, 0, time.UTC),
+		},
+		Series: map[string][]float64{
+			"open":     {60000, 60100},
+			"high":     {60200, 60300},
+			"low":      {59900, 60050},
+			"close":    {60150, 60250},
+			"ema_fast": {60100, 60200},
+		},
+		ReportColumns: []backtest.ReportColumn{{
+			Source:   "ema_fast",
+			Label:    "EMA 20",
+			Decimals: 2,
+			Overlay:  true,
+		}},
+	}
+
+	outputPath := filepath.Join(t.TempDir(), "report.html")
+	if err := WriteBacktestHTML(outputPath, result, HTMLMeta{}); err != nil {
+		t.Fatalf("WriteBacktestHTML() error = %v", err)
+	}
+
+	htmlBytes, err := os.ReadFile(outputPath)
+	if err != nil {
+		t.Fatalf("os.ReadFile() error = %v", err)
+	}
+	html := string(htmlBytes)
+
+	if !strings.Contains(html, "var overlayPlots = new Map();") {
+		t.Fatalf("expected generated html to include overlay plot state")
+	}
+	if !strings.Contains(html, "function renderOverlayPlots()") {
+		t.Fatalf("expected generated html to include overlay rendering function")
+	}
+	if !strings.Contains(html, "column.overlay === true") {
+		t.Fatalf("expected generated html to recognize overlay columns in payload")
+	}
+	if !strings.Contains(html, "Overlay</div>") {
+		t.Fatalf("expected generated html to label overlay cards in the data window")
+	}
+	if strings.Contains(html, "<div id=\"underlying-feature-panel\"") {
+		t.Fatalf("did not expect subplot panel when all report columns are overlays")
 	}
 }
