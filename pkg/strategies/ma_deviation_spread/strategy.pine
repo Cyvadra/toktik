@@ -16,18 +16,45 @@ vol_threshold = ta.percentile_linear_interpolation(ratio, 100, 50)
 vol_condition = ratio > vol_threshold
 
 // --- 3. 背离计算函数 (MACD 逻辑) ---
-// 为了简洁，这里以 MACD 为例，你也可以根据需要替换为 CCI
-get_divergence(tf) =>
-    [macdLine, signalLine, _] = request.security(syminfo.tickerid, tf, ta.macd(close, 12, 26, 9))
-    price_high = ta.highest(high, 30)
-    price_low = ta.lowest(low, 30)
-    // 顶背离: 价格创新高，MACD未创新高
-    top_div = ta.highest(high, 3) == price_high and macdLine < ta.highest(macdLine, 30)[1]
-    // 底背离: 价格创新低，MACD未创新低
-    bot_div = ta.lowest(low, 3) == price_low and macdLine > ta.lowest(macdLine, 30)[1]
+divergence_logic() =>
+    n_look_ahead = 2
+    body_max = math.max(open, close)
+    body_min = math.min(open, close)
+    // 寻找包含前后确认的 Pivot High / Low，左边 30 根，右边延迟 2 根确认
+    ph = ta.pivothigh(body_max, 30, n_look_ahead)
+    pl = ta.pivotlow(body_min, 30, n_look_ahead)
+    diff = ta.ema(close, 12) - ta.ema(close, 26)
+    var float prev_ph = na
+    var float prev_ph_diff = na
+    var float current_ph = na
+    var float current_ph_diff = na
+    top_div = false
+    if not na(ph)
+        prev_ph := current_ph
+        prev_ph_diff := current_ph_diff
+        current_ph := ph
+        current_ph_diff := diff[n_look_ahead] // 记录 pivot 高点那根 K 线的 diff 值
+        if not na(prev_ph) and current_ph > prev_ph and current_ph_diff < prev_ph_diff
+            top_div := true
+    var float prev_pl = na
+    var float prev_pl_diff = na
+    var float current_pl = na
+    var float current_pl_diff = na
+    bot_div = false
+    if not na(pl)
+        prev_pl := current_pl
+        prev_pl_diff := current_pl_diff
+        current_pl := pl
+        current_pl_diff := diff[n_look_ahead] // 记录 pivot 低点那根 K 线的 diff 值
+        if not na(prev_pl) and current_pl < prev_pl and current_pl_diff > prev_pl_diff
+            bot_div := true
     [top_div, bot_div]
 
+get_divergence(tf) =>
+    request.security(syminfo.tickerid, tf, divergence_logic())
+
 // 获取不同周期的背离信号
+[div_base_top, div_base_bot] = get_divergence(timeframe.period)
 [div_12h_top, div_12h_bot] = get_divergence("720")
 [div_24h_top, div_24h_bot] = get_divergence("1440")
 [div_3h_top, div_3h_bot] = get_divergence("180")
@@ -52,10 +79,15 @@ bgcolor(vol_condition ? color.new(color.gray, 95) : na)
 
 // 当 rsi（20*10） 大于50，则 在 12h 或24h级别上找  macd或cci 的背离信号，当出现背离信号后出现一根阴线， 则开始建仓  sell call  和 buy put的头寸
 cond_short = ta.barssince(div_wide_top) <= 5 and close < open and rsi_12h > 50 and vol_condition
-bgcolor(cond_short ? color.new(color.red,90) : na)
+
 // 当rsi（20*10） 小于50，则在3h 或 6h 级别找 背离信号，建仓 sell call 和buyput 头寸；  选择delta为0.3的看涨期权，每次开仓，计算卖出call 的期权费，期权费中的 0.7，用来买 delta为-0.25的看跌期权，期限都选25天左右到期的
 cond_long = div_quick_bot and rsi_12h < 50 and vol_condition
-bgcolor(cond_long ? color.new(color.green,90) : na)
+
+
+bgcolor(div_base_top ? color.new(color.red,90) : na)
+bgcolor(div_base_bot ? color.new(color.green,90) : na)
+bgcolor(div_wide_top ? color.new(color.red,80) : na)
+bgcolor(div_quick_bot ? color.new(color.green,80) : na)
 
 
 // 仓位模拟
