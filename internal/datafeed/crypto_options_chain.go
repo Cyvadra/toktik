@@ -83,8 +83,8 @@ LEFT JOIN crypto_options_symbol_meta FINAL
 		ON b.symbol_id = crypto_options_symbol_meta.symbol_id
 %s
 WHERE b.base_asset = {base_asset:String}
-	AND b.timestamp >= parseDateTimeBestEffort({from:String})
-	AND b.timestamp < parseDateTimeBestEffort({to:String})
+	AND b.timestamp >= toDateTime({from:String}, 'UTC')
+	AND b.timestamp < toDateTime({to:String}, 'UTC')
 ORDER BY b.timestamp`,
 		underlyingCloseExpr,
 		optionTableName,
@@ -171,7 +171,7 @@ ORDER BY b.timestamp`,
 			OpenInterest:    float64(openInterest),
 		}
 
-		key := ts.Truncate(resolution).Unix()
+		key := ts.UTC().Truncate(resolution).Unix()
 		byTimestamp[key] = append(byTimestamp[key], contract)
 	}
 
@@ -187,7 +187,7 @@ ORDER BY b.timestamp`,
 
 // AvailableContracts returns all option contracts at the given time.
 func (p *CryptoOptionsChainProvider) AvailableContracts(t time.Time) []backtest.OptionContract {
-	key := t.Truncate(p.resolution).Unix()
+	key := t.UTC().Truncate(p.resolution).Unix()
 	return p.byTimestamp[key]
 }
 

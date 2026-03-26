@@ -135,3 +135,29 @@ func TestFloorTimestamp(t *testing.T) {
 		t.Fatalf("FloorTimestamp got %v, want %v", floored, want)
 	}
 }
+
+func TestFloorTimestampUTCAlignedMultiHourWindows(t *testing.T) {
+	tests := []struct {
+		label string
+		ts    time.Time
+		want  time.Time
+	}{
+		{label: "2h", ts: time.Date(2026, 1, 2, 1, 59, 0, 0, time.UTC), want: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)},
+		{label: "3h", ts: time.Date(2026, 1, 2, 5, 59, 0, 0, time.UTC), want: time.Date(2026, 1, 2, 3, 0, 0, 0, time.UTC)},
+		{label: "4h", ts: time.Date(2026, 1, 2, 7, 59, 0, 0, time.UTC), want: time.Date(2026, 1, 2, 4, 0, 0, 0, time.UTC)},
+		{label: "6h", ts: time.Date(2026, 1, 2, 11, 59, 0, 0, time.UTC), want: time.Date(2026, 1, 2, 6, 0, 0, 0, time.UTC)},
+		{label: "8h", ts: time.Date(2026, 1, 2, 15, 59, 0, 0, time.UTC), want: time.Date(2026, 1, 2, 8, 0, 0, 0, time.UTC)},
+		{label: "12h", ts: time.Date(2026, 1, 2, 23, 59, 0, 0, time.UTC), want: time.Date(2026, 1, 2, 12, 0, 0, 0, time.UTC)},
+		{label: "1d", ts: time.Date(2026, 1, 2, 23, 59, 0, 0, time.UTC), want: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)},
+	}
+
+	for _, tc := range tests {
+		w, err := ParseWindow(tc.label)
+		if err != nil {
+			t.Fatalf("ParseWindow(%q): %v", tc.label, err)
+		}
+		if got := FloorTimestamp(tc.ts, w); !got.Equal(tc.want) {
+			t.Fatalf("FloorTimestamp(%q, %s) = %s, want %s", tc.label, tc.ts.Format(time.RFC3339), got.Format(time.RFC3339), tc.want.Format(time.RFC3339))
+		}
+	}
+}

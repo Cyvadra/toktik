@@ -23,7 +23,7 @@ SETTINGS index_granularity = 8192;
 CREATE TABLE IF NOT EXISTS equity_options_bar_1m
 (
     -- Key columns
-    timestamp              DateTime,
+    timestamp              DateTime('UTC'),
     symbol_id              UInt32,
     base_asset             LowCardinality(String),
 
@@ -76,7 +76,7 @@ SETTINGS index_granularity = 8192;
 -- 1-minute underlying stock/index price bar table
 CREATE TABLE IF NOT EXISTS equity_spot_bar_1m
 (
-    timestamp    DateTime,
+    timestamp    DateTime('UTC'),
     symbol       LowCardinality(String),
     price_source LowCardinality(String),
     open         Float32,

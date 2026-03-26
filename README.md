@@ -27,6 +27,7 @@ make build-api
 make build-convert
 make build-import
 make build-kline-backfill
+make build-kline-migrate-utc
 make build-backtest-btc-options
 
 # Cross-compile
@@ -207,6 +208,26 @@ Notes:
 - Without `--replace`, intervals with existing rows in the selected scope are skipped to avoid duplicate aggregation states.
 - Add `--replace` to rebuild selected intervals in-range.
 - After re-importing spot `1m` bars, use `--replace` if you need to overwrite existing higher spot windows from the new base data.
+
+### 6.5. Migrate K-line Tables to Explicit UTC
+
+If your ClickHouse K-line tables were created before the UTC alignment fix, migrate them with:
+
+```bash
+bin/crypto-options-kline-migrate-utc \
+  --clickhouse-dsn "clickhouse://localhost:9000/default" \
+  --intervals "1m,5m,15m,30m,1h,2h,3h,4h,6h,8h,12h,1d" \
+  --base-asset BTC \
+  --from 2023-01-01 \
+  --to 2025-12-31
+```
+
+Notes:
+- The tool drops and recreates all precomputed crypto K-line aggregate tables, materialized views, and query views.
+- It alters `crypto_options_bar_1m.timestamp` and `crypto_spot_bar_1m.timestamp` to `DateTime('UTC')`.
+- By default it backfills the selected higher intervals from the 1-minute base tables after recreating the schema.
+- Use `--skip-backfill` if you only want the schema migration and will repopulate aggregates later.
+- Use `--dry-run` to inspect the migration plan before executing it.
 
 ### 7. Sync US Stock Options (Theta Data)
 

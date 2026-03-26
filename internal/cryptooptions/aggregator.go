@@ -127,7 +127,7 @@ func (s *spotAccumulator) finalize() {
 }
 
 func (a *Aggregator) Add(tick TickRow) {
-	minuteTS := tick.Timestamp.Truncate(time.Minute)
+	minuteTS := tick.Timestamp.UTC().Truncate(time.Minute)
 	key := aggregatorKey{
 		Symbol:   tick.Symbol,
 		MinuteTS: minuteTS.Unix(),

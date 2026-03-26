@@ -316,10 +316,10 @@ func isRetryableTimeout(err error) bool {
 func optionSourceWhere(from, to time.Time, baseAsset string) string {
 	parts := make([]string, 0, 3)
 	if !from.IsZero() {
-		parts = append(parts, "timestamp >= parseDateTimeBestEffort({from:String})")
+		parts = append(parts, "timestamp >= toDateTime({from:String}, 'UTC')")
 	}
 	if !to.IsZero() {
-		parts = append(parts, "timestamp < parseDateTimeBestEffort({to:String})")
+		parts = append(parts, "timestamp < toDateTime({to:String}, 'UTC')")
 	}
 	if baseAsset != "" {
 		parts = append(parts, "base_asset = {base_asset:String}")
@@ -333,10 +333,10 @@ func optionSourceWhere(from, to time.Time, baseAsset string) string {
 func spotSourceWhere(from, to time.Time, baseAsset string) string {
 	parts := make([]string, 0, 3)
 	if !from.IsZero() {
-		parts = append(parts, "timestamp >= parseDateTimeBestEffort({from:String})")
+		parts = append(parts, "timestamp >= toDateTime({from:String}, 'UTC')")
 	}
 	if !to.IsZero() {
-		parts = append(parts, "timestamp < parseDateTimeBestEffort({to:String})")
+		parts = append(parts, "timestamp < toDateTime({to:String}, 'UTC')")
 	}
 	if baseAsset != "" {
 		parts = append(parts, "symbol = {base_asset:String}")
@@ -378,10 +378,10 @@ func spotSourceArgs(from, to time.Time, baseAsset string) []interface{} {
 func optionAggScopeWhere(from, to time.Time, baseAsset string) string {
 	parts := make([]string, 0, 3)
 	if !from.IsZero() {
-		parts = append(parts, "ts >= parseDateTimeBestEffort({from:String})")
+		parts = append(parts, "ts >= toDateTime({from:String}, 'UTC')")
 	}
 	if !to.IsZero() {
-		parts = append(parts, "ts < parseDateTimeBestEffort({to:String})")
+		parts = append(parts, "ts < toDateTime({to:String}, 'UTC')")
 	}
 	if baseAsset != "" {
 		parts = append(parts, "base_asset = {base_asset:String}")
@@ -395,10 +395,10 @@ func optionAggScopeWhere(from, to time.Time, baseAsset string) string {
 func spotAggScopeWhere(from, to time.Time, baseAsset string) string {
 	parts := make([]string, 0, 3)
 	if !from.IsZero() {
-		parts = append(parts, "ts >= parseDateTimeBestEffort({from:String})")
+		parts = append(parts, "ts >= toDateTime({from:String}, 'UTC')")
 	}
 	if !to.IsZero() {
-		parts = append(parts, "ts < parseDateTimeBestEffort({to:String})")
+		parts = append(parts, "ts < toDateTime({to:String}, 'UTC')")
 	}
 	if baseAsset != "" {
 		parts = append(parts, "symbol = {base_asset:String}")

@@ -31,8 +31,8 @@ func BuildOptionBarSubquery(interval string) (string, error) {
     %s
 FROM crypto_options_bar_1m
 WHERE symbol_id = {symbol_id:UInt32}
-  AND timestamp >= parseDateTimeBestEffort({from:String})
-  AND timestamp < parseDateTimeBestEffort({to:String})`, OptionBarColumns), nil
+  AND timestamp >= toDateTime({from:String}, 'UTC')
+  AND timestamp < toDateTime({to:String}, 'UTC')`, OptionBarColumns), nil
 	}
 
 	if viewName, ok := PrecomputedIntervals[interval]; ok {
@@ -40,8 +40,8 @@ WHERE symbol_id = {symbol_id:UInt32}
     %s
 FROM %s
 WHERE symbol_id = {symbol_id:UInt32}
-  AND timestamp >= parseDateTimeBestEffort({from:String})
-  AND timestamp < parseDateTimeBestEffort({to:String})`, OptionBarColumns, viewName), nil
+  AND timestamp >= toDateTime({from:String}, 'UTC')
+  AND timestamp < toDateTime({to:String}, 'UTC')`, OptionBarColumns, viewName), nil
 	}
 
 	return QueryTimeAggregationSQL(interval)
@@ -55,8 +55,8 @@ func BuildSpotBarSubquery(interval string) (string, error) {
     %s
 FROM crypto_spot_bar_1m
 WHERE symbol = {symbol:String}
-  AND timestamp >= parseDateTimeBestEffort({from:String})
-  AND timestamp < parseDateTimeBestEffort({to:String})`, SpotBarColumns), nil
+  AND timestamp >= toDateTime({from:String}, 'UTC')
+  AND timestamp < toDateTime({to:String}, 'UTC')`, SpotBarColumns), nil
 	}
 
 	if viewName, ok := SpotPrecomputedIntervals[interval]; ok {
@@ -64,8 +64,8 @@ WHERE symbol = {symbol:String}
     %s
 FROM %s
 WHERE symbol = {symbol:String}
-  AND timestamp >= parseDateTimeBestEffort({from:String})
-  AND timestamp < parseDateTimeBestEffort({to:String})`, SpotBarColumns, viewName), nil
+  AND timestamp >= toDateTime({from:String}, 'UTC')
+  AND timestamp < toDateTime({to:String}, 'UTC')`, SpotBarColumns, viewName), nil
 	}
 
 	return QuerySpotAggregationSQL(interval)

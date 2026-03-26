@@ -76,35 +76,35 @@ func optionKlineDDLWithPrefix(prefix string, iv KlineInterval) []string {
 
 	createAgg := fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s
 (
-    ts                           DateTime,
+    ts                           DateTime('UTC'),
     symbol_id                    UInt32,
     base_asset                   LowCardinality(String),
-    mark_open_state              AggregateFunction(argMin, Float32, DateTime),
+    mark_open_state              AggregateFunction(argMin, Float32, DateTime('UTC')),
     mark_high_state              AggregateFunction(max, Float32),
     mark_low_state               AggregateFunction(min, Float32),
-    mark_close_state             AggregateFunction(argMax, Float32, DateTime),
-    last_open_state              AggregateFunction(argMin, Float32, DateTime),
+    mark_close_state             AggregateFunction(argMax, Float32, DateTime('UTC')),
+    last_open_state              AggregateFunction(argMin, Float32, DateTime('UTC')),
     last_high_state              AggregateFunction(max, Float32),
     last_low_state               AggregateFunction(min, Float32),
-    last_close_state             AggregateFunction(argMax, Float32, DateTime),
-    bid_open_state               AggregateFunction(argMin, Float32, DateTime),
+    last_close_state             AggregateFunction(argMax, Float32, DateTime('UTC')),
+    bid_open_state               AggregateFunction(argMin, Float32, DateTime('UTC')),
     bid_high_state               AggregateFunction(max, Float32),
     bid_low_state                AggregateFunction(min, Float32),
-    bid_close_state              AggregateFunction(argMax, Float32, DateTime),
-    ask_open_state               AggregateFunction(argMin, Float32, DateTime),
+    bid_close_state              AggregateFunction(argMax, Float32, DateTime('UTC')),
+    ask_open_state               AggregateFunction(argMin, Float32, DateTime('UTC')),
     ask_high_state               AggregateFunction(max, Float32),
     ask_low_state                AggregateFunction(min, Float32),
-    ask_close_state              AggregateFunction(argMax, Float32, DateTime),
-    mark_iv_open_state           AggregateFunction(argMin, Float32, DateTime),
-    mark_iv_close_state          AggregateFunction(argMax, Float32, DateTime),
-    bid_iv_open_state            AggregateFunction(argMin, Float32, DateTime),
-    ask_iv_open_state            AggregateFunction(argMin, Float32, DateTime),
-    delta_state                  AggregateFunction(argMin, Float32, DateTime),
-    gamma_state                  AggregateFunction(argMin, Float32, DateTime),
-    vega_state                   AggregateFunction(argMin, Float32, DateTime),
-    theta_state                  AggregateFunction(argMin, Float32, DateTime),
-    rho_state                    AggregateFunction(argMin, Float32, DateTime),
-    open_interest_state          AggregateFunction(argMax, Float32, DateTime),
+    ask_close_state              AggregateFunction(argMax, Float32, DateTime('UTC')),
+    mark_iv_open_state           AggregateFunction(argMin, Float32, DateTime('UTC')),
+    mark_iv_close_state          AggregateFunction(argMax, Float32, DateTime('UTC')),
+    bid_iv_open_state            AggregateFunction(argMin, Float32, DateTime('UTC')),
+    ask_iv_open_state            AggregateFunction(argMin, Float32, DateTime('UTC')),
+    delta_state                  AggregateFunction(argMin, Float32, DateTime('UTC')),
+    gamma_state                  AggregateFunction(argMin, Float32, DateTime('UTC')),
+    vega_state                   AggregateFunction(argMin, Float32, DateTime('UTC')),
+    theta_state                  AggregateFunction(argMin, Float32, DateTime('UTC')),
+    rho_state                    AggregateFunction(argMin, Float32, DateTime('UTC')),
+    open_interest_state          AggregateFunction(argMax, Float32, DateTime('UTC')),
     tick_count_state             AggregateFunction(sum, UInt16)
 )
 ENGINE = AggregatingMergeTree()
@@ -200,13 +200,13 @@ func spotKlineDDLWithPrefix(prefix string, iv KlineInterval) []string {
 
 	createAgg := fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s
 (
-    ts                 DateTime,
+    ts                 DateTime('UTC'),
     symbol             LowCardinality(String),
     price_source       LowCardinality(String),
-    open_state         AggregateFunction(argMin, Float32, DateTime),
+    open_state         AggregateFunction(argMin, Float32, DateTime('UTC')),
     high_state         AggregateFunction(max, Float32),
     low_state          AggregateFunction(min, Float32),
-    close_state        AggregateFunction(argMax, Float32, DateTime),
+    close_state        AggregateFunction(argMax, Float32, DateTime('UTC')),
     tick_count_state   AggregateFunction(sum, UInt32)
 )
 ENGINE = AggregatingMergeTree()
@@ -368,8 +368,8 @@ func QueryTimeAggregationSQL(interval string) (string, error) {
         sum(tick_count)                           AS tick_count
 FROM crypto_options_bar_1m
 WHERE symbol_id = {symbol_id:UInt32}
-    AND timestamp >= parseDateTimeBestEffort({from:String})
-    AND timestamp < parseDateTimeBestEffort({to:String})
+    AND timestamp >= toDateTime({from:String}, 'UTC')
+    AND timestamp < toDateTime({to:String}, 'UTC')
 GROUP BY
     toStartOfInterval(timestamp, INTERVAL %s),
     symbol_id,
@@ -396,8 +396,8 @@ func QuerySpotAggregationSQL(interval string) (string, error) {
     sum(tick_count)                           AS tick_count
 FROM crypto_spot_bar_1m
 WHERE symbol = {symbol:String}
-    AND timestamp >= parseDateTimeBestEffort({from:String})
-    AND timestamp < parseDateTimeBestEffort({to:String})
+    AND timestamp >= toDateTime({from:String}, 'UTC')
+    AND timestamp < toDateTime({to:String}, 'UTC')
 GROUP BY
     toStartOfInterval(timestamp, INTERVAL %s),
     symbol
