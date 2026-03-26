@@ -49,7 +49,7 @@ func TestComputeTradePnLIncludesEntryCommission(t *testing.T) {
 		{Security: ref, Side: Sell, Qty: 1, FillPrice: 105, Commission: 1}, // exit:  pay $1
 	}
 	// Gross PnL = 5, total commission = 2 → net = 3
-	pnls := computeTradePnL(trades)
+	pnls := ComputeTradePnL(trades)
 	if len(pnls) != 1 {
 		t.Fatalf("expected 1 round trip, got %d", len(pnls))
 	}
@@ -71,7 +71,7 @@ func TestComputeTradePnLPartialCloseCommission(t *testing.T) {
 	// Proportional entry commission = 2 * (1/2) = 1
 	// Exit commission = 1
 	// Net = 10 - 1 - 1 = 8
-	pnls := computeTradePnL(trades)
+	pnls := ComputeTradePnL(trades)
 	if len(pnls) != 1 {
 		t.Fatalf("expected 1 round trip, got %d", len(pnls))
 	}
@@ -89,7 +89,7 @@ func TestComputeTradePnLReversalSplitsExitCommission(t *testing.T) {
 		{Security: ref, Side: Buy, Qty: 1, FillPrice: 100, Commission: 1},
 	}
 
-	pnls := computeTradePnL(trades)
+	pnls := ComputeTradePnL(trades)
 	if len(pnls) != 2 {
 		t.Fatalf("expected 2 round trips, got %d", len(pnls))
 	}

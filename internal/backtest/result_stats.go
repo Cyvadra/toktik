@@ -50,49 +50,17 @@ func computeResult(
 	}
 
 	// Max drawdown
-	peak := initialCapital
-	ddStart := 0
-	maxDD := 0.0
-	maxDDStart, maxDDEnd := 0, 0
-	for i, eq := range equityCurve {
-		if eq > peak {
-			peak = eq
-			ddStart = i
-		}
-		if peak > 0 {
-			dd := (peak - eq) / peak
-			if dd > maxDD {
-				maxDD = dd
-				maxDDStart = ddStart
-				maxDDEnd = i
-			}
-		}
-	}
-	r.MaxDrawdown = maxDD
-	r.MaxDrawdownStart = maxDDStart
-	r.MaxDrawdownEnd = maxDDEnd
+	r.MaxDrawdown, r.MaxDrawdownStart, r.MaxDrawdownEnd = ComputeMaxDrawdown(equityCurve, initialCapital)
 
 	// Sharpe ratio – annualised using the actual bar interval inferred from timestamps
-	if n > 1 {
-		returns := make([]float64, n-1)
-		for i := 1; i < n; i++ {
-			if equityCurve[i-1] != 0 {
-				returns[i-1] = (equityCurve[i] - equityCurve[i-1]) / equityCurve[i-1]
-			}
-		}
-		mean, stddev := meanStd(returns)
-		if stddev > 0 {
-			barsPerYear := inferBarsPerYear(timestamps)
-			r.SharpeRatio = (mean / stddev) * math.Sqrt(barsPerYear)
-		}
-	}
+	r.SharpeRatio = ComputeSharpe(equityCurve, timestamps)
 
 	// Trade statistics
 	r.TotalTrades = len(trades)
 	if r.TotalTrades > 0 {
 		// Group trades into round trips to compute win/loss
 		// Simple approach: pair consecutive buy/sell on same security
-		pnlByTrade := computeTradePnL(trades)
+		pnlByTrade := ComputeTradePnL(trades)
 		grossWins := 0.0
 		grossLosses := 0.0
 		for _, pnl := range pnlByTrade {
@@ -125,8 +93,8 @@ func computeResult(
 		}
 	}
 
-	r.TradeOverview = computeTradeOverview(trades)
-	r.EquityAnalysis = computeEquityAnalysis(equityCurve, timestamps)
+	r.TradeOverview = ComputeTradeOverview(trades)
+	r.EquityAnalysis = ComputeEquityAnalysis(equityCurve, timestamps)
 
 	return r
 }
@@ -165,7 +133,8 @@ func normalizeReportColumns(columns []ReportColumn, series map[string][]float64)
 	return filtered
 }
 
-func computeTradeOverview(trades []Trade) *TradeOverview {
+// ComputeTradeOverview aggregates raw fill and round-trip level trade metrics.
+func ComputeTradeOverview(trades []Trade) *TradeOverview {
 	overview := &TradeOverview{RawFills: len(trades)}
 	if len(trades) == 0 {
 		return overview
@@ -181,7 +150,7 @@ func computeTradeOverview(trades []Trade) *TradeOverview {
 		overview.AvgCommissionPerFill += trade.Commission
 	}
 
-	pnls := computeTradePnL(trades)
+	pnls := ComputeTradePnL(trades)
 	overview.RoundTrips = len(pnls)
 	for _, pnl := range pnls {
 		overview.NetPnL += pnl
@@ -200,7 +169,8 @@ func computeTradeOverview(trades []Trade) *TradeOverview {
 	return overview
 }
 
-func computeEquityAnalysis(equityCurve []float64, timestamps []time.Time) *EquityAnalysis {
+// ComputeEquityAnalysis captures higher-level diagnostics on the equity curve.
+func ComputeEquityAnalysis(equityCurve []float64, timestamps []time.Time) *EquityAnalysis {
 	if len(equityCurve) == 0 {
 		return nil
 	}
@@ -297,8 +267,10 @@ func durationHours(timestamps []time.Time, start, end int) float64 {
 	return timestamps[end].Sub(timestamps[start]).Hours()
 }
 
-// computeTradePnL pairs entries and exits to compute per-round-trip PnL.
-func computeTradePnL(trades []Trade) []float64 {
+// ComputeTradePnL pairs entries and exits to compute per-round-trip PnL.
+// Entry-side commissions are tracked and subtracted proportionally when a
+// position is partially or fully closed.
+func ComputeTradePnL(trades []Trade) []float64 {
 	type openEntry struct {
 		side       Side
 		qty        float64
@@ -538,4 +510,105 @@ func computeSpreadSummary(tracker *SpreadTracker) *SpreadSummary {
 	}
 
 	return s
+}
+
+// ComputeMaxDrawdown computes max drawdown, start index, and end index from an
+// equity curve. initialCapital is used as the initial high-water mark; if <= 0,
+// the first equity value is used instead.
+func ComputeMaxDrawdown(equity []float64, initialCapital float64) (float64, int, int) {
+	if len(equity) == 0 {
+		return 0, 0, 0
+	}
+	peak := initialCapital
+	if peak <= 0 {
+		peak = equity[0]
+	}
+	ddStart := 0
+	maxDD := 0.0
+	maxDDStart, maxDDEnd := 0, 0
+	for i, eq := range equity {
+		if eq > peak {
+			peak = eq
+			ddStart = i
+		}
+		if peak <= 0 {
+			continue
+		}
+		dd := (peak - eq) / peak
+		if dd > maxDD {
+			maxDD = dd
+			maxDDStart = ddStart
+			maxDDEnd = i
+		}
+	}
+	return maxDD, maxDDStart, maxDDEnd
+}
+
+// ComputeSharpe computes the annualized Sharpe ratio from an equity curve.
+// The bar interval is inferred from timestamps for accurate annualisation.
+func ComputeSharpe(equity []float64, timestamps []time.Time) float64 {
+	n := len(equity)
+	if n <= 1 {
+		return 0
+	}
+	returns := make([]float64, 0, n-1)
+	for i := 1; i < n; i++ {
+		prev := equity[i-1]
+		if prev == 0 {
+			continue
+		}
+		returns = append(returns, (equity[i]-prev)/prev)
+	}
+	if len(returns) == 0 {
+		return 0
+	}
+	mean, stddev := meanStd(returns)
+	if stddev == 0 {
+		return 0
+	}
+	barsPerYear := inferBarsPerYear(timestamps)
+	return (mean / stddev) * math.Sqrt(barsPerYear)
+}
+
+// ApplyTradeSummary recomputes win/loss trade statistics on a Result from its
+// own Trades slice. This is used when trades from multiple results are merged
+// and the summary metrics need to be recalculated from scratch.
+func ApplyTradeSummary(r *Result) {
+	if r == nil {
+		return
+	}
+	r.TotalTrades = len(r.Trades)
+	r.WinningTrades = 0
+	r.LosingTrades = 0
+	r.ProfitFactor = 0
+	r.AvgWin = 0
+	r.AvgLoss = 0
+	r.WinRate = 0
+
+	pnls := ComputeTradePnL(r.Trades)
+	grossWins := 0.0
+	grossLosses := 0.0
+	for _, pnl := range pnls {
+		if pnl > 0 {
+			r.WinningTrades++
+			grossWins += pnl
+		} else if pnl < 0 {
+			r.LosingTrades++
+			grossLosses += -pnl
+		}
+	}
+	if len(pnls) > 0 {
+		r.WinRate = float64(r.WinningTrades) / float64(len(pnls))
+	}
+	if grossLosses > 0 {
+		r.ProfitFactor = grossWins / grossLosses
+	} else if grossWins > 0 {
+		r.ProfitFactor = math.Inf(1)
+	}
+	if r.WinningTrades > 0 {
+		r.AvgWin = grossWins / float64(r.WinningTrades)
+	}
+	if r.LosingTrades > 0 {
+		r.AvgLoss = grossLosses / float64(r.LosingTrades)
+	}
 }
