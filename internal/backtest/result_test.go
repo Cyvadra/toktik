@@ -120,3 +120,77 @@ func TestComputeResultNormalizesReportColumns(t *testing.T) {
 		t.Fatalf("unexpected second report column: %#v", result.ReportColumns[1])
 	}
 }
+
+func TestBuildSpreadPositionReportsIncludesCloseNote(t *testing.T) {
+	tracker := NewSpreadTracker()
+	openTime := time.Date(2024, time.January, 3, 9, 0, 0, 0, time.UTC)
+	closeTime := openTime.Add(48 * time.Hour)
+	contract := OptionContract{
+		Symbol:      "BTC-OPT-C-100",
+		Type:        Call,
+		StrikePrice: 100,
+		Expiration:  openTime.Add(7 * 24 * time.Hour),
+		Delta:       0.3,
+	}
+	spreadID := tracker.Open([]SpreadLeg{{
+		Contract:   contract,
+		Side:       Sell,
+		Qty:        1,
+		EntryPrice: 5,
+		EntryTime:  openTime,
+	}}, openTime, 0, "首仓开仓")
+
+	if !tracker.CloseLegWithReason(spreadID, 0, 2, closeTime, "到期平仓") {
+		t.Fatal("CloseLegWithReason() = false, want true")
+	}
+
+	reports := buildSpreadPositionReports(tracker, closeTime)
+	if len(reports) != 1 {
+		t.Fatalf("len(reports) = %d, want 1", len(reports))
+	}
+	if reports[0].Tag != "首仓开仓" {
+		t.Fatalf("reports[0].Tag = %q, want %q", reports[0].Tag, "首仓开仓")
+	}
+	if reports[0].CloseNote != "到期平仓" {
+		t.Fatalf("reports[0].CloseNote = %q, want %q", reports[0].CloseNote, "到期平仓")
+	}
+}
+
+func TestBuildSpreadPositionReportsIncludesCloseDelta(t *testing.T) {
+	tracker := NewSpreadTracker()
+	openTime := time.Date(2024, time.January, 3, 9, 0, 0, 0, time.UTC)
+	closeTime := openTime.Add(2 * time.Hour)
+	contract := OptionContract{
+		Symbol:      "BTC-OPT-C-100",
+		Type:        Call,
+		StrikePrice: 100,
+		Expiration:  openTime.Add(7 * 24 * time.Hour),
+		Delta:       0.3,
+	}
+	spreadID := tracker.Open([]SpreadLeg{{
+		Contract:   contract,
+		Side:       Sell,
+		Qty:        1,
+		EntryPrice: 5,
+		EntryTime:  openTime,
+	}}, openTime, 0, "首仓开仓")
+
+	closeDelta := "-0.4321"
+	if !tracker.CloseLegWithReasonAndData(spreadID, 0, 2, closeTime, "止盈平仓", []TradeCustomData{{
+		Key:   TradeCustomDataKeyCloseDelta,
+		Value: closeDelta,
+	}}) {
+		t.Fatal("CloseLegWithReasonAndData() = false, want true")
+	}
+
+	reports := buildSpreadPositionReports(tracker, closeTime)
+	if len(reports) != 1 || len(reports[0].Legs) != 1 {
+		t.Fatalf("unexpected reports shape: %#v", reports)
+	}
+	if reports[0].Legs[0].CloseDelta == nil {
+		t.Fatal("reports[0].Legs[0].CloseDelta = nil, want value")
+	}
+	if *reports[0].Legs[0].CloseDelta != -0.4321 {
+		t.Fatalf("*reports[0].Legs[0].CloseDelta = %v, want %v", *reports[0].Legs[0].CloseDelta, -0.4321)
+	}
+}

@@ -2,6 +2,7 @@ package backtest
 
 import (
 	"math"
+	"strconv"
 	"time"
 )
 
@@ -26,6 +27,7 @@ type SetupContext struct {
 	securities []securityRegistration
 	factors    []factorRegistration
 	params     map[string]interface{}
+	warmup     time.Duration
 	nextSecIdx int
 	nextFacIdx int
 }
@@ -100,6 +102,15 @@ func (sc *SetupContext) PrimaryRef() SecurityRef { return sc.primaryRef }
 func (sc *SetupContext) SetParam(name string, defaultValue interface{}) {
 	if _, exists := sc.params[name]; !exists {
 		sc.params[name] = defaultValue
+	}
+}
+
+// SetWarmup requests additional historical data before the user-selected
+// start time so indicators can seed from prior bars. Replay/reporting still
+// start at the requested time boundary.
+func (sc *SetupContext) SetWarmup(d time.Duration) {
+	if d > sc.warmup {
+		sc.warmup = d
 	}
 }
 
@@ -658,7 +669,29 @@ func (bc *BarContext) CloseSpreadLegWithReasonAndData(spreadID, legIndex int, cl
 		// Closing a long: sell to close = cash inflow
 		bc.broker.AdjustCash(amount)
 	}
+	closeCustomData = bc.withCurrentCloseDelta(leg, closeCustomData)
 	return bc.spreadTracker.CloseLegWithReasonAndData(spreadID, legIndex, closePrice, bc.barTime, closeReason, closeCustomData)
+}
+
+func (bc *BarContext) withCurrentCloseDelta(leg *SpreadLeg, items []TradeCustomData) []TradeCustomData {
+	if leg == nil || bc.chainProvider == nil {
+		return items
+	}
+	for _, contract := range bc.chainProvider.AvailableContracts(bc.barTime) {
+		if contract.Symbol != leg.Contract.Symbol || math.IsNaN(contract.Delta) || math.IsInf(contract.Delta, 0) {
+			continue
+		}
+		value := strconv.FormatFloat(contract.Delta, 'f', 4, 64)
+		cloned := cloneTradeCustomData(items)
+		for index := range cloned {
+			if cloned[index].Key == TradeCustomDataKeyCloseDelta {
+				cloned[index].Value = value
+				return cloned
+			}
+		}
+		return append(cloned, TradeCustomData{Key: TradeCustomDataKeyCloseDelta, Value: value})
+	}
+	return items
 }
 
 // CloseSpread closes all open legs of a spread using the provided price function.

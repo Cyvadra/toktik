@@ -300,6 +300,8 @@ type TradeCustomData struct {
 	Value string `json:"value"`
 }
 
+const TradeCustomDataKeyCloseDelta = "close_delta"
+
 func cloneTradeCustomData(items []TradeCustomData) []TradeCustomData {
 	if len(items) == 0 {
 		return nil

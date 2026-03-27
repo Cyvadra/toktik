@@ -3,6 +3,7 @@ package backtest
 import (
 	"math"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -400,6 +401,7 @@ func buildSpreadPositionReports(tracker *SpreadTracker, endTime time.Time) []Spr
 		report := SpreadPositionReport{
 			ID:          spread.ID,
 			Tag:         spread.Tag,
+			CloseNote:   spreadCloseNote(spread),
 			Status:      "open",
 			OpenTime:    spread.OpenTime,
 			NetPremium:  spreadNetPremium(spread),
@@ -438,6 +440,7 @@ func buildSpreadPositionReports(tracker *SpreadTracker, endTime time.Time) []Spr
 				closeAt := leg.CloseTime
 				legReport.ClosePrice = leg.ClosePrice
 				legReport.CloseTime = &closeAt
+				legReport.CloseDelta = tradeCustomDataFloat(leg.CloseCustomData, TradeCustomDataKeyCloseDelta)
 			}
 			report.Legs = append(report.Legs, legReport)
 		}
@@ -462,6 +465,40 @@ func latestSpreadCloseTime(spread *SpreadPosition) *time.Time {
 		return nil
 	}
 	return &latest
+}
+
+func tradeCustomDataFloat(items []TradeCustomData, key string) *float64 {
+	for _, item := range items {
+		if item.Key != key {
+			continue
+		}
+		value, err := strconv.ParseFloat(strings.TrimSpace(item.Value), 64)
+		if err != nil || math.IsNaN(value) || math.IsInf(value, 0) {
+			return nil
+		}
+		return &value
+	}
+	return nil
+}
+
+func spreadCloseNote(spread *SpreadPosition) string {
+	if spread == nil {
+		return ""
+	}
+	seen := make(map[string]struct{}, len(spread.Legs))
+	notes := make([]string, 0, len(spread.Legs))
+	for _, leg := range spread.Legs {
+		note := strings.TrimSpace(leg.CloseReason)
+		if note == "" {
+			continue
+		}
+		if _, ok := seen[note]; ok {
+			continue
+		}
+		seen[note] = struct{}{}
+		notes = append(notes, note)
+	}
+	return strings.Join(notes, " | ")
 }
 
 func spreadNetPremium(spread *SpreadPosition) float64 {

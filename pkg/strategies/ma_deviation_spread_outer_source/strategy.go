@@ -35,6 +35,16 @@ const (
 	entrySignalLayout = "Jan 02, 2006, 15:04"
 	entrySignalPath   = "/home/jason89757/workspace/toktik/signal-list/tmp.txt"
 	callTrancheCount  = 2
+
+	openNoteInitialPut    = "首仓开仓 | 多put保护"
+	openNoteInitialCall1  = "首仓开仓 | 空call分批止盈70%"
+	openNoteInitialCall2  = "首仓开仓 | 空call分批止盈88%"
+	openNoteRolledPut     = "换仓开仓 | 多put保护"
+	closeNoteExpiryCall   = "到期平仓 | 空call"
+	closeNoteTakeProfit70 = "止盈平仓 | 空call 70%"
+	closeNoteTakeProfit88 = "止盈平仓 | 空call 88%"
+	closeNoteExpiryPut    = "到期平仓 | 多put"
+	closeNoteOpenRollback = "开仓回滚"
 )
 
 func init() {
@@ -111,6 +121,7 @@ func (s *strategy) Init(ctx *backtest.SetupContext) error {
 	ctx.SetParam("high_rsi_dte", float64(s.highRSIDTE))
 	ctx.SetParam("low_rsi_dte", float64(s.lowRSIDTE))
 	ctx.SetParam("trail_atr_multiplier", trailATRMultiplier)
+	ctx.SetWarmup(120 * 24 * time.Hour)
 
 	ctx.Register("atr20", backtest.ATR(atrPeriod))
 	ctx.RegisterOn(s.ref12h, "rsi_12h", backtest.RSI("close", rsiPeriod))
@@ -204,7 +215,7 @@ func (s *strategy) tryOpenStructure(ctx *backtest.BarContext, chain *backtest.Op
 		Side:       backtest.Buy,
 		Qty:        putQty,
 		EntryPrice: putEntryPrice,
-	}}, "outer-source-long-put")
+	}}, openNoteInitialPut)
 	if putSpreadID <= 0 {
 		return
 	}
@@ -212,7 +223,7 @@ func (s *strategy) tryOpenStructure(ctx *backtest.BarContext, chain *backtest.Op
 	firstQty := shortQtyTotal / callTrancheCount
 	secondQty := shortQtyTotal - firstQty
 	callQty := [callTrancheCount]float64{firstQty, secondQty}
-	tags := [callTrancheCount]string{"outer-source-short-call-tp70", "outer-source-short-call-tp88"}
+	tags := [callTrancheCount]string{openNoteInitialCall1, openNoteInitialCall2}
 	openedCallIDs := [callTrancheCount]int{}
 
 	for i, qty := range callQty {
@@ -264,13 +275,13 @@ func (s *strategy) manageOpenPositions(ctx *backtest.BarContext, chain *backtest
 		closeReason := ""
 		if contract.DaysToExpiry(now) <= 1 {
 			shouldClose = true
-			closeReason = "short call到期前平仓"
+			closeReason = closeNoteExpiryCall
 		} else if i == 0 && !math.IsNaN(pnlPct) && pnlPct >= defaultCallTakeProfit1 {
 			shouldClose = true
-			closeReason = "short call止盈70%"
+			closeReason = closeNoteTakeProfit70
 		} else if i == 1 && !math.IsNaN(pnlPct) && pnlPct >= defaultCallTakeProfit2 {
 			shouldClose = true
-			closeReason = "short call止盈88%"
+			closeReason = closeNoteTakeProfit88
 		}
 
 		if shouldClose {
@@ -295,7 +306,7 @@ func (s *strategy) manageOpenPositions(ctx *backtest.BarContext, chain *backtest
 
 			if contract.DaysToExpiry(now) <= 1 {
 				closePrice := s.exitPrice(leg, contractMap)
-				if !math.IsNaN(closePrice) && closePrice > 0 && ctx.CloseSpreadLegWithReason(s.putSpreadID, 0, closePrice, "long put到期前平仓") {
+				if !math.IsNaN(closePrice) && closePrice > 0 && ctx.CloseSpreadLegWithReason(s.putSpreadID, 0, closePrice, closeNoteExpiryPut) {
 					s.putSpreadID = 0
 				}
 			} else if absDelta >= defaultPutRollDelta || (!math.IsNaN(pnlPct) && pnlPct >= defaultPutRollProfit) {
@@ -343,7 +354,7 @@ func (s *strategy) reopenPutLeg(ctx *backtest.BarContext, chain *backtest.Option
 		Side:       backtest.Buy,
 		Qty:        qty,
 		EntryPrice: entryPrice,
-	}}, "outer-source-long-put-roll")
+	}}, openNoteRolledPut)
 }
 
 func (s *strategy) handleATRExit(ctx *backtest.BarContext, contractMap map[string]backtest.OptionContract) bool {
@@ -394,10 +405,10 @@ func (s *strategy) rollbackOpenedStructure(ctx *backtest.BarContext, callSpreadI
 		if spreadID <= 0 {
 			continue
 		}
-		ctx.CloseSpreadLegWithReason(spreadID, 0, shortEntryPrice, "open rollback")
+		ctx.CloseSpreadLegWithReason(spreadID, 0, shortEntryPrice, closeNoteOpenRollback)
 	}
 	if putSpreadID > 0 {
-		ctx.CloseSpreadLegWithReason(putSpreadID, 0, putEntryPrice, "open rollback")
+		ctx.CloseSpreadLegWithReason(putSpreadID, 0, putEntryPrice, closeNoteOpenRollback)
 	}
 }
 

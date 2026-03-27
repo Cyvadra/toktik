@@ -65,6 +65,16 @@ func (s *preloadMultiQuantileStrategy) Preload(ctx *PreloadContext) error {
 	})
 }
 
+type warmupStrategy struct{}
+
+func (s *warmupStrategy) Name() string { return "warmup" }
+func (s *warmupStrategy) Init(ctx *SetupContext) error {
+	ctx.SetWarmup(3 * time.Hour)
+	ctx.Register("ma3", SMA("close", 3))
+	return nil
+}
+func (s *warmupStrategy) OnBar(_ *BarContext) {}
+
 func TestPrepareRunsStrategyPreload(t *testing.T) {
 	engine := NewEngine(Config{InitialCapital: 10000})
 	engine.RegisterDataFeed("test", &stubDataFeed{
@@ -140,6 +150,40 @@ func TestPreparePreloadMultiQuantile(t *testing.T) {
 
 	if q80[99] <= q50[99] {
 		t.Fatalf("expected q80 > q50 at first valid bar: q80=%v q50=%v", q80[99], q50[99])
+	}
+}
+
+func TestPrepareWarmupLoadsHistoryButTrimsVisibleWindow(t *testing.T) {
+	engine := NewEngine(Config{InitialCapital: 10000})
+	engine.RegisterDataFeed("test", &stubDataFeed{
+		fields: []string{"open", "high", "low", "close", "volume"},
+	})
+
+	from := time.Date(2024, 1, 1, 3, 0, 0, 0, time.UTC)
+	to := time.Date(2024, 1, 2, 0, 0, 0, 0, time.UTC)
+
+	prepared, err := engine.Prepare(context.Background(), "test", "TEST", "1h", from, to, &warmupStrategy{}, nil)
+	if err != nil {
+		t.Fatalf("Prepare failed: %v", err)
+	}
+
+	if got := prepared.PrimaryDS.Timestamps[0]; !got.Equal(from) {
+		t.Fatalf("unexpected trimmed start time: got %v want %v", got, from)
+	}
+
+	ma3 := prepared.PrimaryDS.Column("ma3")
+	if ma3 == nil {
+		t.Fatalf("expected warmup-prepared indicator column")
+	}
+	if math.IsNaN(ma3[0]) {
+		t.Fatalf("expected first visible bar to use warmup history, got NaN")
+	}
+
+	if prepared.PrimaryDS.Len != 97 {
+		t.Fatalf("unexpected trimmed primary length: got %d want %d", prepared.PrimaryDS.Len, 97)
+	}
+	if len(prepared.AlignMaps) != 1 || prepared.AlignMaps[0] != nil {
+		t.Fatalf("unexpected primary align map after trim: %#v", prepared.AlignMaps)
 	}
 }
 

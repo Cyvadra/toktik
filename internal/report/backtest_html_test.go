@@ -133,8 +133,8 @@ func TestBuildHTMLViewIncludesUnderlyingVolumeHistogram(t *testing.T) {
 	if !view.HasUnderlyingVolume {
 		t.Fatal("view.HasUnderlyingVolume = false, want true")
 	}
-	if view.UnderlyingVolumeLabel != "Volume" {
-		t.Fatalf("view.UnderlyingVolumeLabel = %q, want %q", view.UnderlyingVolumeLabel, "Volume")
+	if view.UnderlyingVolumeLabel != "成交量" {
+		t.Fatalf("view.UnderlyingVolumeLabel = %q, want %q", view.UnderlyingVolumeLabel, "成交量")
 	}
 
 	var payload []chartHistogramPoint
@@ -181,10 +181,10 @@ func TestBuildHTMLViewNotesCompatibilityFallbackAndMissingVolume(t *testing.T) {
 	}
 
 	joined := strings.Join(view.Notes, "\n")
-	if !strings.Contains(joined, "compatibility fallback market-data source") {
+	if !strings.Contains(joined, "兼容性回退市场数据源") {
 		t.Fatalf("expected compatibility fallback note, got %q", joined)
 	}
-	if !strings.Contains(joined, "No native volume series was available") {
+	if !strings.Contains(joined, "没有可用的原生成交量序列") {
 		t.Fatalf("expected missing volume note, got %q", joined)
 	}
 }
@@ -213,7 +213,7 @@ func TestBuildHTMLViewSkipsMissingVolumeNoteWhenVolumeExists(t *testing.T) {
 
 	view := buildHTMLView(result, HTMLMeta{})
 	joined := strings.Join(view.Notes, "\n")
-	if strings.Contains(joined, "No native volume series was available") {
+	if strings.Contains(joined, "没有可用的原生成交量序列") {
 		t.Fatalf("did not expect missing volume note, got %q", joined)
 	}
 }
@@ -373,10 +373,74 @@ func TestWriteBacktestHTMLIncludesOverlaySeriesSupport(t *testing.T) {
 	if !strings.Contains(html, "column.overlay === true") {
 		t.Fatalf("expected generated html to recognize overlay columns in payload")
 	}
-	if !strings.Contains(html, "Overlay</div>") {
+	if !strings.Contains(html, "叠加</div>") {
 		t.Fatalf("expected generated html to label overlay cards in the data window")
 	}
 	if strings.Contains(html, "<div id=\"underlying-feature-panel\"") {
 		t.Fatalf("did not expect subplot panel when all report columns are overlays")
+	}
+}
+
+func TestWriteBacktestHTMLPlacesSpreadOpenTimeBesideHeaderStatus(t *testing.T) {
+	openTime := time.Date(2024, time.January, 2, 3, 4, 0, 0, time.UTC)
+	closeTime := time.Date(2024, time.January, 3, 5, 6, 0, 0, time.UTC)
+	result := &backtest.Result{
+		StrategyName:   "spread-test",
+		StartTime:      openTime,
+		EndTime:        closeTime,
+		BarsCount:      2,
+		InitialCapital: 100,
+		FinalEquity:    102,
+		EquityCurve:    []float64{100, 102},
+		Timestamps:     []time.Time{openTime, closeTime},
+		Series: map[string][]float64{
+			"open":  {70000, 70100},
+			"high":  {70200, 70300},
+			"low":   {69900, 70050},
+			"close": {70150, 70250},
+		},
+		SpreadPositions: []backtest.SpreadPositionReport{{
+			ID:          1,
+			Tag:         "short call spread",
+			Status:      "closed",
+			OpenTime:    openTime,
+			CloseTime:   &closeTime,
+			DaysHeld:    1.08,
+			RealizedPnL: 12.34,
+			Legs: []backtest.SpreadLegReport{{
+				Symbol:      "BTC-20240105-50000-C",
+				Side:        "sell",
+				Type:        backtest.Call,
+				StrikePrice: 50000,
+				Expiration:  time.Date(2024, time.January, 5, 0, 0, 0, 0, time.UTC),
+				Delta:       0.25,
+				Qty:         1,
+				EntryPrice:  10,
+				EntryTime:   openTime,
+				Closed:      true,
+				ClosePrice:  4,
+				CloseTime:   &closeTime,
+				CloseReason: "tp",
+				RealizedPnL: 6,
+			}},
+		}},
+	}
+
+	outputPath := filepath.Join(t.TempDir(), "report.html")
+	if err := WriteBacktestHTML(outputPath, result, HTMLMeta{}); err != nil {
+		t.Fatalf("WriteBacktestHTML() error = %v", err)
+	}
+
+	htmlBytes, err := os.ReadFile(outputPath)
+	if err != nil {
+		t.Fatalf("os.ReadFile() error = %v", err)
+	}
+	html := string(htmlBytes)
+
+	if !strings.Contains(html, "下单 2024-01-02 03:04 UTC") {
+		t.Fatalf("expected generated html to place spread open time in the card header")
+	}
+	if !strings.Contains(html, ">平仓 2024-01-03 05:06 UTC<") {
+		t.Fatalf("expected generated html to keep the close event time in the header meta area")
 	}
 }

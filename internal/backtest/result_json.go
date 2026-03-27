@@ -87,6 +87,7 @@ type equityAnalysisJSONExport struct {
 type spreadPositionReportJSONExport struct {
 	ID          int                         `json:"id"`
 	Tag         string                      `json:"tag"`
+	CloseNote   string                      `json:"close_note,omitempty"`
 	Status      string                      `json:"status"`
 	OpenTime    time.Time                   `json:"open_time"`
 	CloseTime   *time.Time                  `json:"close_time,omitempty"`
@@ -109,6 +110,7 @@ type spreadLegReportJSONExport struct {
 	Closed      bool       `json:"closed"`
 	ClosePrice  *float64   `json:"close_price,omitempty"`
 	CloseTime   *time.Time `json:"close_time,omitempty"`
+	CloseDelta  *float64   `json:"close_delta,omitempty"`
 	CloseReason string     `json:"close_reason,omitempty"`
 	RealizedPnL *float64   `json:"realized_pnl"`
 }
@@ -230,6 +232,7 @@ func (r *Result) jsonExport() resultJSONExport {
 					Closed:      leg.Closed,
 					ClosePrice:  jsonFloat(leg.ClosePrice),
 					CloseTime:   leg.CloseTime,
+					CloseDelta:  leg.CloseDelta,
 					CloseReason: leg.CloseReason,
 					RealizedPnL: jsonFloat(leg.RealizedPnL),
 				}
@@ -238,6 +241,7 @@ func (r *Result) jsonExport() resultJSONExport {
 			out.SpreadPositions[i] = spreadPositionReportJSONExport{
 				ID:          position.ID,
 				Tag:         position.Tag,
+				CloseNote:   position.CloseNote,
 				Status:      position.Status,
 				OpenTime:    position.OpenTime,
 				CloseTime:   position.CloseTime,

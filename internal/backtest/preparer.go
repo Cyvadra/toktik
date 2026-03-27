@@ -42,12 +42,17 @@ func (dp *DataPreparer) Prepare(ctx context.Context, market, symbol, interval st
 		return nil, fmt.Errorf("strategy init: %w", err)
 	}
 
+	loadFrom := from
+	if setupCtx.warmup > 0 {
+		loadFrom = from.Add(-setupCtx.warmup)
+	}
+
 	primaryFeed, ok := dp.feeds[market]
 	if !ok {
 		return nil, fmt.Errorf("no DataFeed registered for market %q", market)
 	}
 
-	primaryReq := DataRequest{Market: market, Symbol: symbol, Interval: interval, From: from, To: to}
+	primaryReq := DataRequest{Market: market, Symbol: symbol, Interval: interval, From: loadFrom, To: to}
 	primaryDS, err := dp.loadCached(ctx, primaryFeed, primaryReq)
 	if err != nil {
 		return nil, fmt.Errorf("load primary data: %w", err)
@@ -82,7 +87,7 @@ func (dp *DataPreparer) Prepare(ctx context.Context, market, symbol, interval st
 			go func(idx int, f DataFeed, r SecurityRef) {
 				defer wg.Done()
 				req := DataRequest{
-					Market: r.Market, Symbol: r.Symbol, Interval: r.Interval, From: from, To: to,
+					Market: r.Market, Symbol: r.Symbol, Interval: r.Interval, From: loadFrom, To: to,
 				}
 				ds, err := dp.loadCached(ctx, f, req)
 				results <- secResult{index: idx, ds: ds, err: err}
@@ -132,7 +137,7 @@ func (dp *DataPreparer) Prepare(ctx context.Context, market, symbol, interval st
 			go func(idx int, f FactorFeed, r FactorRef) {
 				defer wg.Done()
 				ds, err := f.Load(ctx, FactorRequest{
-					Name: r.Name, Interval: r.Interval, From: from, To: to,
+					Name: r.Name, Interval: r.Interval, From: loadFrom, To: to,
 				})
 				results <- factorResult{index: idx, ds: ds, err: err}
 			}(i, feed, factor.ref)
@@ -188,6 +193,17 @@ func (dp *DataPreparer) Prepare(ctx context.Context, market, symbol, interval st
 		}
 	}
 
+	if setupCtx.warmup > 0 {
+		trimmedPrimary, trimmedAlignMaps, trimmedFactorAlignMaps, err := trimPreparedWindow(primaryDS, secDataSets, factorDataSets, setupCtx, from)
+		if err != nil {
+			return nil, err
+		}
+		primaryDS = trimmedPrimary
+		secDataSets[0] = primaryDS
+		alignMaps = trimmedAlignMaps
+		factorAlignMaps = trimmedFactorAlignMaps
+	}
+
 	return &PreparedData{
 		PrimaryDS:       primaryDS,
 		SecDataSets:     secDataSets,
@@ -224,4 +240,37 @@ func (dp *DataPreparer) loadCached(ctx context.Context, feed DataFeed, req DataR
 	dp.mu.Unlock()
 
 	return ds.Clone(), nil
+}
+
+func trimPreparedWindow(primaryDS *DataSet, secDataSets []*DataSet, factorDataSets []*DataSet, setupCtx *SetupContext, from time.Time) (*DataSet, [][]int, [][]int, error) {
+	startBar := 0
+	for startBar < primaryDS.Len && primaryDS.Timestamps[startBar].Before(from) {
+		startBar++
+	}
+	if startBar >= primaryDS.Len {
+		return nil, nil, nil, fmt.Errorf("no data returned for %s/%s/%s at or after requested start", setupCtx.primaryRef.Market, setupCtx.primaryRef.Symbol, setupCtx.primaryRef.Interval)
+	}
+	if startBar == 0 {
+		return primaryDS, buildSecurityAlignMaps(primaryDS, secDataSets, setupCtx), buildFactorAlignMaps(primaryDS, factorDataSets, setupCtx), nil
+	}
+
+	trimmedPrimary := primaryDS.Slice(startBar, primaryDS.Len)
+	return trimmedPrimary, buildSecurityAlignMaps(trimmedPrimary, secDataSets, setupCtx), buildFactorAlignMaps(trimmedPrimary, factorDataSets, setupCtx), nil
+}
+
+func buildSecurityAlignMaps(primaryDS *DataSet, secDataSets []*DataSet, setupCtx *SetupContext) [][]int {
+	alignMaps := make([][]int, len(setupCtx.securities))
+	alignMaps[0] = nil
+	for i := 1; i < len(secDataSets); i++ {
+		alignMaps[i] = alignSeries(primaryDS, secDataSets[i], setupCtx.primaryRef.Interval, setupCtx.securities[i].ref.Interval)
+	}
+	return alignMaps
+}
+
+func buildFactorAlignMaps(primaryDS *DataSet, factorDataSets []*DataSet, setupCtx *SetupContext) [][]int {
+	alignMaps := make([][]int, len(setupCtx.factors))
+	for i := range factorDataSets {
+		alignMaps[i] = alignSeries(primaryDS, factorDataSets[i], setupCtx.primaryRef.Interval, setupCtx.factors[i].ref.Interval)
+	}
+	return alignMaps
 }

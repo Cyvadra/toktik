@@ -94,6 +94,7 @@ func (s *strategy) Init(ctx *backtest.SetupContext) error {
 	ctx.SetParam("divergence_lookback", divergenceLookback)
 	ctx.SetParam("wide_top_bars_valid", s.wideTopBarsValid)
 	ctx.SetParam("trail_atr_multiplier", s.trailATRMultiplier)
+	ctx.SetWarmup(120 * 24 * time.Hour)
 
 	ctx.Register("atr20", backtest.ATR(atrPeriod))
 	ctx.Register("std20", backtest.Custom(

@@ -83,6 +83,7 @@ type EquityAnalysis struct {
 type SpreadPositionReport struct {
 	ID          int               `json:"id"`
 	Tag         string            `json:"tag"`
+	CloseNote   string            `json:"close_note,omitempty"`
 	Status      string            `json:"status"`
 	OpenTime    time.Time         `json:"open_time"`
 	CloseTime   *time.Time        `json:"close_time,omitempty"`
@@ -106,6 +107,7 @@ type SpreadLegReport struct {
 	Closed      bool       `json:"closed"`
 	ClosePrice  float64    `json:"close_price,omitempty"`
 	CloseTime   *time.Time `json:"close_time,omitempty"`
+	CloseDelta  *float64   `json:"close_delta,omitempty"`
 	CloseReason string     `json:"close_reason,omitempty"`
 	RealizedPnL float64    `json:"realized_pnl"`
 }
