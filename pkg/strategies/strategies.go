@@ -11,6 +11,7 @@ import (
 	_ "github.com/Cyvadra/toktik/pkg/strategies/golden_cross"
 	_ "github.com/Cyvadra/toktik/pkg/strategies/ma_deviation_forum_short_put"
 	_ "github.com/Cyvadra/toktik/pkg/strategies/ma_deviation_spread"
+	_ "github.com/Cyvadra/toktik/pkg/strategies/ma_deviation_spread_outer_source"
 	_ "github.com/Cyvadra/toktik/pkg/strategies/sf31_long"
 	_ "github.com/Cyvadra/toktik/pkg/strategies/sf31_short"
 	_ "github.com/Cyvadra/toktik/pkg/strategies/turtle_trend_simp"

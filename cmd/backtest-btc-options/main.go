@@ -25,7 +25,7 @@ func main() {
 	interval := flag.String("interval", "1h", "Bar interval for the strategy (e.g. 1h)")
 	fromStr := flag.String("from", "", "Start date YYYY-MM-DD (required)")
 	toStr := flag.String("to", "", "End date YYYY-MM-DD (required)")
-	capital := flag.Float64("capital", 1.0, "Initial capital in base asset units (e.g. BTC)")
+	capital := flag.Float64("capital", 0, "Initial capital in base asset units (e.g. BTC) (required)")
 	strategyHelp := fmt.Sprintf(
 		"Strategy selector: name, alias, group, or comma list. Available names: %s. Group aliases: both=spread, all=all",
 		strings.Join(strategies.Available(), " | "),
@@ -35,23 +35,23 @@ func main() {
 	commModel := flag.String("commission-model", "none",
 		"Commission model: none | flat | percent | per-unit")
 	commValue := flag.Float64("commission-value", 0, "Commission value")
-	slippagePct := flag.Float64("slippage-pct", 0.0, "Slippage fraction (0 = none)")
+	slippagePct := flag.Float64("slippage-pct", 0, "Slippage fraction (0 = none)")
 	outputJSON := flag.String("output", "", "Optional JSON output file path")
 	outputHTML := flag.String("html-output", "", "Optional HTML report output path (defaults to reports/backtests/<strategy>_<period>.html; multi-strategy runs emit one combined file)")
-	positionSize := flag.Float64("position-size", 1, "Contracts per leg when opening a spread (1 = 1 coin contract per leg, e.g. 1 BTC + 1 BTC)")
-	maxHoldHours := flag.Float64("max-hold-hours", 48, "Maximum holding time in hours")
-	targetExpiryDays := flag.Int("target-expiry-days", 15, "Target days to expiry when selecting contracts")
-	minExpiryDays := flag.Int("min-expiry-days", 7, "Minimum days to expiry when selecting contracts")
-	minPremium := flag.Float64("min-premium", 0.025, "Minimum bid premium required for the short leg")
-	shortDeltaMin := flag.Float64("short-delta-min", 0.4, "Minimum absolute delta for the short leg")
-	shortDeltaMax := flag.Float64("short-delta-max", 0.5, "Maximum absolute delta for the short leg")
-	longDeltaMin := flag.Float64("long-delta-min", 0.1, "Minimum absolute delta for the long leg")
-	longDeltaMax := flag.Float64("long-delta-max", 0.15, "Maximum absolute delta for the long leg")
+	positionSize := flag.Float64("position-size", 0, "Contracts per leg when opening a spread; when unset, the strategy decides")
+	maxHoldHours := flag.Float64("max-hold-hours", 0, "Maximum holding time in hours; when unset, the strategy decides")
+	targetExpiryDays := flag.Int("target-expiry-days", 0, "Target days to expiry when selecting contracts; when unset, the strategy decides")
+	minExpiryDays := flag.Int("min-expiry-days", 0, "Minimum days to expiry when selecting contracts; when unset, the strategy decides")
+	minPremium := flag.Float64("min-premium", 0, "Minimum bid premium required for the short leg; when unset, the strategy decides")
+	shortDeltaMin := flag.Float64("short-delta-min", 0, "Minimum absolute delta for the short leg; when unset, the strategy decides")
+	shortDeltaMax := flag.Float64("short-delta-max", 0, "Maximum absolute delta for the short leg; when unset, the strategy decides")
+	longDeltaMin := flag.Float64("long-delta-min", 0, "Minimum absolute delta for the long leg; when unset, the strategy decides")
+	longDeltaMax := flag.Float64("long-delta-max", 0, "Maximum absolute delta for the long leg; when unset, the strategy decides")
 	spreadEntryPriceMode := flag.String("spread-entry-price-mode", "mark_close", "Spread entry pricing: mark_close or bidask")
 	spreadExitPriceMode := flag.String("spread-exit-price-mode", "mark_close", "Spread exit pricing: mark_close or bidask")
 	spreadValuationPriceMode := flag.String("spread-valuation-price-mode", "mark_close", "Spread mark-to-market pricing: mark_close or bidask")
-	maPeriod := flag.Int("ma-period", 120, "SMA period for MA deviation signal")
-	pThreshold := flag.Float64("p-threshold", 0.15, "MA deviation ratio threshold for signal entry")
+	maPeriod := flag.Int("ma-period", 0, "SMA period for MA deviation signal; when unset, the strategy decides")
+	pThreshold := flag.Float64("p-threshold", 0, "MA deviation ratio threshold for signal entry; when unset, the strategy decides")
 	direction := flag.String("direction", "both", "Trade direction: both | long_only | short_only")
 	flag.Parse()
 
@@ -75,24 +75,24 @@ func main() {
 		fmt.Fprintln(os.Stderr, "error: --from must be before --to")
 		os.Exit(1)
 	}
-	if *positionSize <= 0 {
-		fmt.Fprintln(os.Stderr, "error: --position-size must be > 0")
+	if *capital <= 0 {
+		fmt.Fprintln(os.Stderr, "error: --capital must be > 0")
 		os.Exit(1)
 	}
-	if *maxHoldHours <= 0 {
-		fmt.Fprintln(os.Stderr, "error: --max-hold-hours must be > 0")
+	if *positionSize < 0 {
+		fmt.Fprintln(os.Stderr, "error: --position-size must be >= 0")
 		os.Exit(1)
 	}
-	if *targetExpiryDays <= 0 {
-		fmt.Fprintln(os.Stderr, "error: --target-expiry-days must be >= 1")
+	if *maxHoldHours < 0 {
+		fmt.Fprintln(os.Stderr, "error: --max-hold-hours must be >= 0")
 		os.Exit(1)
 	}
-	if *minExpiryDays <= 0 {
-		fmt.Fprintln(os.Stderr, "error: --min-expiry-days must be >= 1")
+	if *targetExpiryDays < 0 {
+		fmt.Fprintln(os.Stderr, "error: --target-expiry-days must be >= 0")
 		os.Exit(1)
 	}
-	if *targetExpiryDays < *minExpiryDays {
-		fmt.Fprintln(os.Stderr, "error: --target-expiry-days must be >= --min-expiry-days")
+	if *minExpiryDays < 0 {
+		fmt.Fprintln(os.Stderr, "error: --min-expiry-days must be >= 0")
 		os.Exit(1)
 	}
 	if *minPremium < 0 {
@@ -103,11 +103,15 @@ func main() {
 		fmt.Fprintln(os.Stderr, "error: delta bounds must be >= 0")
 		os.Exit(1)
 	}
-	if *shortDeltaMin > *shortDeltaMax {
+	if *targetExpiryDays > 0 && *minExpiryDays > 0 && *targetExpiryDays < *minExpiryDays {
+		fmt.Fprintln(os.Stderr, "error: --target-expiry-days must be >= --min-expiry-days")
+		os.Exit(1)
+	}
+	if *shortDeltaMax > 0 && *shortDeltaMin > *shortDeltaMax {
 		fmt.Fprintln(os.Stderr, "error: --short-delta-min must be <= --short-delta-max")
 		os.Exit(1)
 	}
-	if *longDeltaMin > *longDeltaMax {
+	if *longDeltaMax > 0 && *longDeltaMin > *longDeltaMax {
 		fmt.Fprintln(os.Stderr, "error: --long-delta-min must be <= --long-delta-max")
 		os.Exit(1)
 	}

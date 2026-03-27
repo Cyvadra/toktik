@@ -328,8 +328,8 @@ func (s *strategy) setShiftedAlignedDivergenceColumns(ctx *backtest.PreloadConte
 		return err
 	}
 
-	shiftedTop := shiftSeries(top, 0)
-	shiftedBot := shiftSeries(bot, 0)
+	shiftedTop := top
+	shiftedBot := bot
 	if err := sec.SetColumn("div_top_prev", shiftedTop); err != nil {
 		return err
 	}
@@ -363,7 +363,7 @@ func (s *strategy) setShiftedAlignedNumericColumn(ctx *backtest.PreloadContext, 
 	if err != nil {
 		return err
 	}
-	shifted := shiftSeries(col, math.NaN())
+	shifted := col
 	if err := sec.SetColumn(source+"_prev", shifted); err != nil {
 		return err
 	}

@@ -104,7 +104,7 @@ func (dp *DataPreparer) Prepare(ctx context.Context, market, symbol, interval st
 	alignMaps := make([][]int, len(setupCtx.securities))
 	alignMaps[0] = nil
 	for i := 1; i < len(secDataSets); i++ {
-		alignMaps[i] = alignSeries(primaryDS, secDataSets[i])
+		alignMaps[i] = alignSeries(primaryDS, secDataSets[i], setupCtx.primaryRef.Interval, setupCtx.securities[i].ref.Interval)
 	}
 
 	// Load external factor datasets in parallel
@@ -149,7 +149,7 @@ func (dp *DataPreparer) Prepare(ctx context.Context, market, symbol, interval st
 		}
 
 		for i := range factorDataSets {
-			factorAlignMaps[i] = alignSeries(primaryDS, factorDataSets[i])
+			factorAlignMaps[i] = alignSeries(primaryDS, factorDataSets[i], setupCtx.primaryRef.Interval, setupCtx.factors[i].ref.Interval)
 		}
 	}
 

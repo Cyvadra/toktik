@@ -329,8 +329,8 @@ func TestRunWithExternalFactorFeed(t *testing.T) {
 	if strategy.seen23 != 100 {
 		t.Fatalf("unexpected aligned factor value at bar 23: got %v want 100", strategy.seen23)
 	}
-	if strategy.seen24 != 200 {
-		t.Fatalf("unexpected aligned factor value at bar 24: got %v want 200", strategy.seen24)
+	if strategy.seen24 != 100 {
+		t.Fatalf("unexpected aligned factor value at bar 24: got %v want 100", strategy.seen24)
 	}
 }
 

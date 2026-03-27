@@ -153,7 +153,6 @@ type spreadRowView struct {
 	OpenTime    string
 	CloseTime   string
 	DaysHeld    string
-	NetPremium  string
 	RealizedPnL string
 	StatusClass string
 	Legs        []spreadLegRowView
@@ -708,7 +707,6 @@ func buildSpreadRows(spreads []backtest.SpreadPositionReport, unit string) []spr
 			OpenTime:    formatDateTime(spread.OpenTime),
 			CloseTime:   "-",
 			DaysHeld:    "-",
-			NetPremium:  signedAmount(spread.NetPremium, unit),
 			RealizedPnL: "-",
 			StatusClass: statusClass("open"),
 			Legs:        legs,
@@ -734,7 +732,6 @@ func buildSpreadRows(spreads []backtest.SpreadPositionReport, unit string) []spr
 				OpenTime:    formatDateTime(spread.OpenTime),
 				CloseTime:   formatDateTime(*spread.CloseTime),
 				DaysHeld:    fmt.Sprintf("%.2f d", spread.DaysHeld),
-				NetPremium:  signedAmount(spread.NetPremium, unit),
 				RealizedPnL: signedAmount(spread.RealizedPnL, unit),
 				StatusClass: statusClass(spread.Status),
 				Legs:        legs,
@@ -1617,7 +1614,6 @@ const htmlTemplate = `<!DOCTYPE html>
 					</div>
 					<div class="flex gap-5 text-xs text-slate-400">
 						<span>{{ .EventTime }}</span>
-						<span>Premium <span class="mono text-slate-300">{{ .NetPremium }}</span></span>
 						<span>PnL <span class="mono text-slate-300">{{ .RealizedPnL }}</span></span>
 						{{ if .RelatedLink }}<a class="text-sky-300 hover:text-sky-200 underline underline-offset-2" href="#{{ .RelatedLink }}">{{ .RelatedText }}</a>{{ end }}
 					</div>
@@ -2746,8 +2742,7 @@ const combinedHTMLTemplate = `<!DOCTYPE html>
 											</div>
 											<p class="mt-2 text-sm text-slate-300">Event time {{ .EventTime }} · Opened {{ .OpenTime }} · Closed {{ .CloseTime }} · Held {{ .DaysHeld }}</p>
 										</div>
-										<div class="grid grid-cols-2 gap-4 text-sm lg:text-right">
-											<div><div class="text-slate-400">Net premium</div><div class="font-mono text-white">{{ .NetPremium }}</div></div>
+										<div class="grid grid-cols-1 gap-4 text-sm lg:text-right">
 											<div><div class="text-slate-400">Realized PnL</div><div class="font-mono text-white">{{ .RealizedPnL }}</div></div>
 										</div>
 									</div>
