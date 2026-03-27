@@ -7,43 +7,70 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 )
 
-// ParseOptionCSV reads a Polygon OPRA minute-agg CSV (optionally gzipped) and
-// streams parsed OptionBar1m records into the returned channel.
-// The caller must drain the channel. Any read error is stored in *readErr.
-func ParseOptionCSV(path string) (<-chan OptionBar1m, *error, error) {
+type stackedReadCloser struct {
+	reader  io.Reader
+	closers []io.Closer
+}
+
+func (s *stackedReadCloser) Read(p []byte) (int, error) {
+	return s.reader.Read(p)
+}
+
+func (s *stackedReadCloser) Close() error {
+	var firstErr error
+	for _, closer := range s.closers {
+		if err := closer.Close(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
+}
+
+func openCSVReader(path string) (io.ReadCloser, *csv.Reader, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, nil, fmt.Errorf("open %s: %w", path, err)
 	}
 
-	var reader io.Reader = f
-	if strings.HasSuffix(strings.ToLower(filepath.Ext(path)), ".gz") {
+	var reader io.ReadCloser = f
+	if strings.HasSuffix(strings.ToLower(path), ".gz") {
 		gz, err := gzip.NewReader(f)
 		if err != nil {
 			f.Close()
 			return nil, nil, fmt.Errorf("gzip reader %s: %w", path, err)
 		}
-		reader = gz
+		reader = &stackedReadCloser{reader: gz, closers: []io.Closer{gz, f}}
 	}
 
 	csvReader := csv.NewReader(bufio.NewReaderSize(reader, 4*1024*1024))
 	csvReader.ReuseRecord = true
+	return reader, csvReader, nil
+}
+
+// ParseOptionCSV reads a Polygon OPRA minute-agg CSV (optionally gzipped) and
+// streams parsed OptionBar1m records into the returned channel.
+// The caller must drain the channel. Any read error is stored in *readErr.
+func ParseOptionCSV(path string) (<-chan OptionBar1m, *error, error) {
+	reader, csvReader, err := openCSVReader(path)
+	if err != nil {
+		return nil, nil, err
+	}
 
 	// Read and validate header
 	header, err := csvReader.Read()
 	if err != nil {
-		f.Close()
+		reader.Close()
 		return nil, nil, fmt.Errorf("read header %s: %w", path, err)
 	}
 	colIdx := mapColumns(header)
 	if err := requireColumns(colIdx, "ticker", "volume", "open", "close", "high", "low", "window_start", "transactions"); err != nil {
-		f.Close()
+		reader.Close()
 		return nil, nil, fmt.Errorf("%s: %w", path, err)
 	}
 
@@ -52,7 +79,7 @@ func ParseOptionCSV(path string) (<-chan OptionBar1m, *error, error) {
 
 	go func() {
 		defer close(ch)
-		defer f.Close()
+		defer reader.Close()
 
 		for {
 			record, err := csvReader.Read()
@@ -100,32 +127,19 @@ func ParseOptionCSV(path string) (<-chan OptionBar1m, *error, error) {
 // ParseStockCSV reads a Polygon SIP minute-agg CSV (optionally gzipped) and
 // streams parsed StockBar1m records into the returned channel.
 func ParseStockCSV(path string) (<-chan StockBar1m, *error, error) {
-	f, err := os.Open(path)
+	reader, csvReader, err := openCSVReader(path)
 	if err != nil {
-		return nil, nil, fmt.Errorf("open %s: %w", path, err)
+		return nil, nil, err
 	}
-
-	var reader io.Reader = f
-	if strings.HasSuffix(strings.ToLower(filepath.Ext(path)), ".gz") {
-		gz, err := gzip.NewReader(f)
-		if err != nil {
-			f.Close()
-			return nil, nil, fmt.Errorf("gzip reader %s: %w", path, err)
-		}
-		reader = gz
-	}
-
-	csvReader := csv.NewReader(bufio.NewReaderSize(reader, 4*1024*1024))
-	csvReader.ReuseRecord = true
 
 	header, err := csvReader.Read()
 	if err != nil {
-		f.Close()
+		reader.Close()
 		return nil, nil, fmt.Errorf("read header %s: %w", path, err)
 	}
 	colIdx := mapColumns(header)
 	if err := requireColumns(colIdx, "ticker", "volume", "open", "close", "high", "low", "window_start", "transactions"); err != nil {
-		f.Close()
+		reader.Close()
 		return nil, nil, fmt.Errorf("%s: %w", path, err)
 	}
 
@@ -134,7 +148,7 @@ func ParseStockCSV(path string) (<-chan StockBar1m, *error, error) {
 
 	go func() {
 		defer close(ch)
-		defer f.Close()
+		defer reader.Close()
 
 		for {
 			record, err := csvReader.Read()
@@ -166,6 +180,48 @@ func ParseStockCSV(path string) (<-chan StockBar1m, *error, error) {
 	}()
 
 	return ch, &readErr, nil
+}
+
+// CollectOptionUnderlyings returns the distinct underlyings referenced in an option CSV file.
+func CollectOptionUnderlyings(path string) ([]string, error) {
+	reader, csvReader, err := openCSVReader(path)
+	if err != nil {
+		return nil, err
+	}
+	defer reader.Close()
+
+	header, err := csvReader.Read()
+	if err != nil {
+		return nil, fmt.Errorf("read header %s: %w", path, err)
+	}
+	colIdx := mapColumns(header)
+	if err := requireColumns(colIdx, "ticker"); err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+
+	unique := make(map[string]struct{})
+	for {
+		record, err := csvReader.Read()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("read csv row: %w", err)
+		}
+
+		underlying, _, _, _, err := ParseOptionTicker(record[colIdx["ticker"]])
+		if err != nil {
+			continue
+		}
+		unique[underlying] = struct{}{}
+	}
+
+	underlyings := make([]string, 0, len(unique))
+	for symbol := range unique {
+		underlyings = append(underlyings, symbol)
+	}
+	sort.Strings(underlyings)
+	return underlyings, nil
 }
 
 func mapColumns(header []string) map[string]int {

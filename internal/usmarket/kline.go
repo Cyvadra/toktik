@@ -73,6 +73,13 @@ func optionKlineDDL(iv KlineInterval) []string {
     high_state         AggregateFunction(max, Float32),
     low_state          AggregateFunction(min, Float32),
     close_state        AggregateFunction(argMax, Float32, DateTime('UTC')),
+    underlying_close_state   AggregateFunction(argMax, Float32, DateTime('UTC')),
+    implied_volatility_state AggregateFunction(argMax, Float32, DateTime('UTC')),
+    delta_state        AggregateFunction(argMax, Float32, DateTime('UTC')),
+    gamma_state        AggregateFunction(argMax, Float32, DateTime('UTC')),
+    vega_state         AggregateFunction(argMax, Float32, DateTime('UTC')),
+    theta_state        AggregateFunction(argMax, Float32, DateTime('UTC')),
+    rho_state          AggregateFunction(argMax, Float32, DateTime('UTC')),
     volume_state       AggregateFunction(sum, UInt32),
     transactions_state AggregateFunction(sum, UInt32)
 )
@@ -81,7 +88,19 @@ PARTITION BY toYYYYMM(ts)
 ORDER BY (underlying, symbol, ts)
 SETTINGS index_granularity = 8192`, agg)
 
-	createMV := fmt.Sprintf(`CREATE MATERIALIZED VIEW IF NOT EXISTS %s
+	alterAgg := []string{
+		fmt.Sprintf(`ALTER TABLE %s ADD COLUMN IF NOT EXISTS underlying_close_state AggregateFunction(argMax, Float32, DateTime('UTC')) AFTER close_state`, agg),
+		fmt.Sprintf(`ALTER TABLE %s ADD COLUMN IF NOT EXISTS implied_volatility_state AggregateFunction(argMax, Float32, DateTime('UTC')) AFTER underlying_close_state`, agg),
+		fmt.Sprintf(`ALTER TABLE %s ADD COLUMN IF NOT EXISTS delta_state AggregateFunction(argMax, Float32, DateTime('UTC')) AFTER implied_volatility_state`, agg),
+		fmt.Sprintf(`ALTER TABLE %s ADD COLUMN IF NOT EXISTS gamma_state AggregateFunction(argMax, Float32, DateTime('UTC')) AFTER delta_state`, agg),
+		fmt.Sprintf(`ALTER TABLE %s ADD COLUMN IF NOT EXISTS vega_state AggregateFunction(argMax, Float32, DateTime('UTC')) AFTER gamma_state`, agg),
+		fmt.Sprintf(`ALTER TABLE %s ADD COLUMN IF NOT EXISTS theta_state AggregateFunction(argMax, Float32, DateTime('UTC')) AFTER vega_state`, agg),
+		fmt.Sprintf(`ALTER TABLE %s ADD COLUMN IF NOT EXISTS rho_state AggregateFunction(argMax, Float32, DateTime('UTC')) AFTER theta_state`, agg),
+	}
+
+	dropMV := fmt.Sprintf(`DROP TABLE IF EXISTS %s`, mv)
+
+	createMV := fmt.Sprintf(`CREATE MATERIALIZED VIEW %s
 TO %s
 AS SELECT
     %s AS ts,
@@ -94,6 +113,13 @@ AS SELECT
     maxState(high)                     AS high_state,
     minState(low)                      AS low_state,
     argMaxState(close, timestamp)      AS close_state,
+    argMaxState(underlying_close, timestamp)   AS underlying_close_state,
+    argMaxState(implied_volatility, timestamp) AS implied_volatility_state,
+    argMaxState(delta, timestamp)      AS delta_state,
+    argMaxState(gamma, timestamp)      AS gamma_state,
+    argMaxState(vega, timestamp)       AS vega_state,
+    argMaxState(theta, timestamp)      AS theta_state,
+    argMaxState(rho, timestamp)        AS rho_state,
     sumState(volume)                   AS volume_state,
     sumState(transactions)             AS transactions_state
 FROM %s
@@ -111,12 +137,22 @@ SELECT
     maxMerge(high_state)          AS high,
     minMerge(low_state)           AS low,
     argMaxMerge(close_state)      AS close,
+    argMaxMerge(underlying_close_state)   AS underlying_close,
+    argMaxMerge(implied_volatility_state) AS implied_volatility,
+    argMaxMerge(delta_state)      AS delta,
+    argMaxMerge(gamma_state)      AS gamma,
+    argMaxMerge(vega_state)       AS vega,
+    argMaxMerge(theta_state)      AS theta,
+    argMaxMerge(rho_state)        AS rho,
     sumMerge(volume_state)        AS volume,
     sumMerge(transactions_state)  AS transactions
 FROM %s
 GROUP BY ts, symbol, underlying, option_type, expiration, strike`, view, agg)
 
-	return []string{createAgg, createMV, createView}
+	stmts := []string{createAgg}
+	stmts = append(stmts, alterAgg...)
+	stmts = append(stmts, dropMV, createMV, createView)
+	return stmts
 }
 
 func stockKlineDDL(iv KlineInterval) []string {

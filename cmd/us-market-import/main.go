@@ -23,6 +23,7 @@ func main() {
 	dsn := flag.String("clickhouse-dsn", appCli.DefaultDSN, "ClickHouse DSN")
 	batchSize := flag.Int("batch-size", 100000, "Rows per INSERT batch")
 	workers := flag.Int("workers", 2, "Number of parallel file importers")
+	riskFreeRate := flag.Float64("risk-free-rate", 0.05, "Annualized risk-free rate used for option greeks")
 	schemaFile := flag.String("schema", "", "Path to DDL SQL file (auto-detected if empty)")
 	skipExisting := flag.Bool("skip-existing", true, "Skip files whose date already has data in ClickHouse")
 	flag.Parse()
@@ -60,6 +61,9 @@ func main() {
 	}
 	if err := usmarket.InitSchema(ctx, conn, ddlFile); err != nil {
 		log.Fatalf("init schema: %v", err)
+	}
+	if err := usmarket.EnsureOptionGreeksColumns(ctx, conn); err != nil {
+		log.Fatalf("ensure option greeks columns: %v", err)
 	}
 	log.Println("Base schema initialized")
 
@@ -99,32 +103,7 @@ func main() {
 
 	startTime := time.Now()
 
-	// Import option files
-	for _, csvPath := range optionFiles {
-		wg.Add(1)
-		sem <- struct{}{}
-
-		go func(path string) {
-			defer wg.Done()
-			defer func() { <-sem }()
-
-			rows, wasSkipped, err := importOptionFile(ctx, *dsn, path, *batchSize, *skipExisting)
-			if err != nil {
-				log.Printf("[ERROR] %s: %v", filepath.Base(path), err)
-				atomic.AddInt64(&failed, 1)
-			} else if wasSkipped {
-				n := atomic.AddInt64(&skipped, 1)
-				done := atomic.LoadInt64(&completed)
-				log.Printf("[SKIP] %s (total: %d done, %d skipped / %d)", filepath.Base(path), done, n, totalFiles)
-			} else {
-				atomic.AddInt64(&optionRows, rows)
-				n := atomic.AddInt64(&completed, 1)
-				log.Printf("[DONE] %s: %d rows (%d/%d completed)", filepath.Base(path), rows, n, totalFiles)
-			}
-		}(csvPath)
-	}
-
-	// Import stock files
+	// Import stock files first so option greeks can be derived from underlying bars.
 	for _, csvPath := range stockFiles {
 		wg.Add(1)
 		sem <- struct{}{}
@@ -143,6 +122,31 @@ func main() {
 				log.Printf("[SKIP] %s (total: %d done, %d skipped / %d)", filepath.Base(path), done, n, totalFiles)
 			} else {
 				atomic.AddInt64(&stockRows, rows)
+				n := atomic.AddInt64(&completed, 1)
+				log.Printf("[DONE] %s: %d rows (%d/%d completed)", filepath.Base(path), rows, n, totalFiles)
+			}
+		}(csvPath)
+	}
+
+	// Import option files after stock data is available.
+	for _, csvPath := range optionFiles {
+		wg.Add(1)
+		sem <- struct{}{}
+
+		go func(path string) {
+			defer wg.Done()
+			defer func() { <-sem }()
+
+			rows, wasSkipped, err := importOptionFile(ctx, *dsn, path, *batchSize, *skipExisting, *riskFreeRate)
+			if err != nil {
+				log.Printf("[ERROR] %s: %v", filepath.Base(path), err)
+				atomic.AddInt64(&failed, 1)
+			} else if wasSkipped {
+				n := atomic.AddInt64(&skipped, 1)
+				done := atomic.LoadInt64(&completed)
+				log.Printf("[SKIP] %s (total: %d done, %d skipped / %d)", filepath.Base(path), done, n, totalFiles)
+			} else {
+				atomic.AddInt64(&optionRows, rows)
 				n := atomic.AddInt64(&completed, 1)
 				log.Printf("[DONE] %s: %d rows (%d/%d completed)", filepath.Base(path), rows, n, totalFiles)
 			}
@@ -188,7 +192,7 @@ func extractDateFromFilename(path string) (time.Time, error) {
 	return t.UTC(), nil
 }
 
-func importOptionFile(ctx context.Context, dsn, path string, batchSize int, skipExisting bool) (int64, bool, error) {
+func importOptionFile(ctx context.Context, dsn, path string, batchSize int, skipExisting bool, riskFreeRate float64) (int64, bool, error) {
 	baseName := filepath.Base(path)
 	log.Printf("[START] option %s", baseName)
 	fileStart := time.Now()
@@ -198,18 +202,25 @@ func importOptionFile(ctx context.Context, dsn, path string, batchSize int, skip
 		return 0, false, fmt.Errorf("connect: %w", err)
 	}
 
+	fileDate, err := extractDateFromFilename(path)
+	if err != nil {
+		return 0, false, fmt.Errorf("extract file date: %w", err)
+	}
+	nextDay := fileDate.AddDate(0, 0, 1)
+
 	if skipExisting {
-		fileDate, err := extractDateFromFilename(path)
-		if err == nil {
-			nextDay := fileDate.AddDate(0, 0, 1)
-			count, err := usmarket.CountExistingOptionBars(ctx, conn, fileDate, nextDay)
-			if err != nil {
-				return 0, false, fmt.Errorf("check existing: %w", err)
-			}
-			if count > 0 {
-				return 0, true, nil
-			}
+		count, err := usmarket.CountExistingOptionBars(ctx, conn, fileDate, nextDay)
+		if err != nil {
+			return 0, false, fmt.Errorf("check existing: %w", err)
 		}
+		if count > 0 {
+			return 0, true, nil
+		}
+	}
+
+	stockCloses, err := usmarket.ValidateOptionStockCoverage(ctx, conn, path, fileDate)
+	if err != nil {
+		return 0, false, fmt.Errorf("validate stock coverage: %w", err)
 	}
 
 	barCh, readErr, err := usmarket.ParseOptionCSV(path)
@@ -217,15 +228,20 @@ func importOptionFile(ctx context.Context, dsn, path string, batchSize int, skip
 		return 0, false, fmt.Errorf("parse CSV: %w", err)
 	}
 
-	rows, err := usmarket.InsertOptionBars(ctx, conn, barCh, batchSize)
+	enrichedBarCh, enrichErr := usmarket.EnrichOptionBarsWithGreeks(barCh, stockCloses, usmarket.GreeksConfig{RiskFreeRate: riskFreeRate})
+
+	rows, err := usmarket.InsertOptionBars(ctx, conn, enrichedBarCh, batchSize)
 	if err != nil {
 		return rows, false, fmt.Errorf("insert: %w", err)
 	}
 	if *readErr != nil {
 		return rows, false, fmt.Errorf("read: %w", *readErr)
 	}
+	if *enrichErr != nil {
+		return rows, false, fmt.Errorf("greeks: %w", *enrichErr)
+	}
 
-	log.Printf("[IMPORT] %s: %d option rows in %s", baseName, rows, time.Since(fileStart).Round(time.Second))
+	log.Printf("[IMPORT] %s: %d option rows with greeks in %s", baseName, rows, time.Since(fileStart).Round(time.Second))
 	return rows, false, nil
 }
 

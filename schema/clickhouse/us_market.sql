@@ -21,6 +21,13 @@ CREATE TABLE IF NOT EXISTS us_options_bar_1m
     high         Float32,
     low          Float32,
     close        Float32,
+    underlying_close   Float32,
+    implied_volatility Float32,
+    delta        Float32,
+    gamma        Float32,
+    vega         Float32,
+    theta        Float32,
+    rho          Float32,
     volume       UInt32,
     transactions UInt32
 )

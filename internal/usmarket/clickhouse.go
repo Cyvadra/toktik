@@ -72,7 +72,9 @@ func InitSchema(ctx context.Context, conn driver.Conn, ddlPath string) error {
 
 const optionBarInsertSQL = `INSERT INTO us_options_bar_1m (
 	timestamp, symbol, underlying, option_type, expiration, strike,
-	open, high, low, close, volume, transactions
+	open, high, low, close,
+	underlying_close, implied_volatility, delta, gamma, vega, theta, rho,
+	volume, transactions
 )`
 
 const stockBarInsertSQL = `INSERT INTO us_stocks_bar_1m (
@@ -98,6 +100,13 @@ func InsertOptionBars(ctx context.Context, conn driver.Conn, bars <-chan OptionB
 			bar.Expiration,
 			bar.Strike,
 			bar.Open, bar.High, bar.Low, bar.Close,
+			bar.UnderlyingClose,
+			bar.ImpliedVolatility,
+			bar.Delta,
+			bar.Gamma,
+			bar.Vega,
+			bar.Theta,
+			bar.Rho,
 			bar.Volume,
 			bar.Transactions,
 		); err != nil {
@@ -203,4 +212,68 @@ func CountExistingStockBars(ctx context.Context, conn driver.Conn, from, to time
 		return 0, fmt.Errorf("count existing stock bars: %w", err)
 	}
 	return count, nil
+}
+
+// EnsureOptionGreeksColumns makes the option base table compatible with greek enrichment
+// when the table already existed before these columns were introduced.
+func EnsureOptionGreeksColumns(ctx context.Context, conn driver.Conn) error {
+	stmts := []string{
+		`ALTER TABLE us_options_bar_1m ADD COLUMN IF NOT EXISTS underlying_close Float32 AFTER close`,
+		`ALTER TABLE us_options_bar_1m ADD COLUMN IF NOT EXISTS implied_volatility Float32 AFTER underlying_close`,
+		`ALTER TABLE us_options_bar_1m ADD COLUMN IF NOT EXISTS delta Float32 AFTER implied_volatility`,
+		`ALTER TABLE us_options_bar_1m ADD COLUMN IF NOT EXISTS gamma Float32 AFTER delta`,
+		`ALTER TABLE us_options_bar_1m ADD COLUMN IF NOT EXISTS vega Float32 AFTER gamma`,
+		`ALTER TABLE us_options_bar_1m ADD COLUMN IF NOT EXISTS theta Float32 AFTER vega`,
+		`ALTER TABLE us_options_bar_1m ADD COLUMN IF NOT EXISTS rho Float32 AFTER theta`,
+	}
+
+	for _, stmt := range stmts {
+		if err := conn.Exec(ctx, stmt); err != nil {
+			return fmt.Errorf("ensure option greeks columns: %w", err)
+		}
+	}
+
+	return nil
+}
+
+func LoadStockCloseMap(ctx context.Context, conn driver.Conn, symbols []string, from, to time.Time) (map[stockCloseKey]float64, map[string]struct{}, error) {
+	stockCloses := make(map[stockCloseKey]float64)
+	seenSymbols := make(map[string]struct{}, len(symbols))
+
+	if len(symbols) == 0 {
+		return stockCloses, seenSymbols, nil
+	}
+
+	rows, err := conn.Query(ctx,
+		`SELECT symbol, timestamp, close
+		FROM us_stocks_bar_1m
+		WHERE symbol IN ({symbols:Array(String)})
+		  AND timestamp >= {from:DateTime('UTC')}
+		  AND timestamp < {to:DateTime('UTC')}`,
+		clickhouse.Named("symbols", symbols),
+		clickhouse.Named("from", from),
+		clickhouse.Named("to", to),
+	)
+	if err != nil {
+		return nil, nil, fmt.Errorf("query stock closes: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var (
+			symbol    string
+			timestamp time.Time
+			close     float32
+		)
+		if err := rows.Scan(&symbol, &timestamp, &close); err != nil {
+			return nil, nil, fmt.Errorf("scan stock close row: %w", err)
+		}
+		seenSymbols[symbol] = struct{}{}
+		stockCloses[newStockCloseKey(symbol, timestamp)] = float64(close)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, nil, fmt.Errorf("iterate stock close rows: %w", err)
+	}
+
+	return stockCloses, seenSymbols, nil
 }
