@@ -100,6 +100,15 @@ func EquityOptionsSchemaFile() (string, error) {
 	})
 }
 
+// UsMarketSchemaFile returns the path to the us_market DDL file.
+func UsMarketSchemaFile() (string, error) {
+	return FindSchemaFile([]string{
+		"schema/clickhouse/us_market.sql",
+		"../schema/clickhouse/us_market.sql",
+		"../../schema/clickhouse/us_market.sql",
+	})
+}
+
 // EnvOrDefault returns the value of an environment variable, or the fallback
 // if the variable is empty or unset.
 func EnvOrDefault(key, fallback string) string {

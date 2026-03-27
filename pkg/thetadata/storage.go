@@ -119,6 +119,7 @@ func (s *Store) InsertEODBars(ctx context.Context, root string, date time.Time,
 		symID := cryptooptions.SymbolID(symbolStr)
 
 		exp, _ := time.Parse("2006-01-02", row.Expiration)
+ 		exp = exp.UTC()
 
 		if err := symBatch.Append(
 			symID, symbolStr, root, right,

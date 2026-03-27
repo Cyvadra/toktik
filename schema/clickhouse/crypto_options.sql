@@ -12,7 +12,7 @@ CREATE TABLE IF NOT EXISTS crypto_options_symbol_meta
     base_asset       LowCardinality(String),
     option_type      Enum8('call' = 1, 'put' = 2),
     strike_price     Float32,
-    expiration       DateTime,
+    expiration       DateTime('UTC'),
     underlying_index LowCardinality(String)
 )
 ENGINE = ReplacingMergeTree()

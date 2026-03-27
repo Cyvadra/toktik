@@ -119,7 +119,7 @@ symbol_id, symbol, base_asset, option_type, strike_price, expiration, underlying
 			s.BaseAsset,
 			s.OptionType,
 			s.StrikePrice,
-			s.Expiration,
+			s.Expiration.UTC(),
 			s.UnderlyingIndex,
 		); err != nil {
 			return fmt.Errorf("append symbol %s: %w", s.Symbol, err)
