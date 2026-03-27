@@ -91,15 +91,6 @@ func CryptoOptionsSchemaFile() (string, error) {
 	})
 }
 
-// EquityOptionsSchemaFile returns the path to the equity_options DDL file.
-func EquityOptionsSchemaFile() (string, error) {
-	return FindSchemaFile([]string{
-		"schema/clickhouse/equity_options.sql",
-		"../schema/clickhouse/equity_options.sql",
-		"../../schema/clickhouse/equity_options.sql",
-	})
-}
-
 // UsMarketSchemaFile returns the path to the us_market DDL file.
 func UsMarketSchemaFile() (string, error) {
 	return FindSchemaFile([]string{

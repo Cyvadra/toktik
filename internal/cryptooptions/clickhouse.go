@@ -32,6 +32,58 @@ func InitSchema(ctx context.Context, conn driver.Conn, ddlPath string) error {
 			return fmt.Errorf("exec DDL: %w\nStatement: %s", err, stmt)
 		}
 	}
+	if err := ensureUTCExpirationColumns(ctx, conn); err != nil {
+		return err
+	}
+	return nil
+}
+
+func ensureUTCExpirationColumns(ctx context.Context, conn driver.Conn) error {
+	expectedTypes := map[string]string{
+		"crypto_options_symbol_meta": "DateTime('UTC')",
+	}
+
+	rows, err := conn.Query(ctx, `
+SELECT table, type
+FROM system.columns
+WHERE database = currentDatabase()
+	AND name = 'expiration'
+	AND table IN ('crypto_options_symbol_meta')`)
+	if err != nil {
+		return fmt.Errorf("inspect expiration column types: %w", err)
+	}
+	defer rows.Close()
+
+	seen := make(map[string]struct{}, len(expectedTypes))
+	for rows.Next() {
+		var tableName string
+		var columnType string
+		if err := rows.Scan(&tableName, &columnType); err != nil {
+			return fmt.Errorf("scan expiration column type: %w", err)
+		}
+		seen[tableName] = struct{}{}
+
+		expectedType := expectedTypes[tableName]
+		if columnType == expectedType {
+			continue
+		}
+
+		alterSQL := fmt.Sprintf("ALTER TABLE %s MODIFY COLUMN expiration %s", tableName, expectedType)
+		if err := conn.Exec(ctx, alterSQL); err != nil {
+			return fmt.Errorf("migrate %s expiration column to %s: %w", tableName, expectedType, err)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate expiration column types: %w", err)
+	}
+
+	for tableName := range expectedTypes {
+		if _, ok := seen[tableName]; !ok {
+			continue
+		}
+		log.Printf("[schema] ensured %s.expiration uses UTC", tableName)
+	}
+
 	return nil
 }
 

@@ -246,7 +246,6 @@ GROUP BY ts, symbol`, view, agg)
 
 // InitKlineSchemaForPrefix creates kline aggregation tables and views
 // for both option and spot bars using the specified table prefixes.
-// Example: ("equity_options", "equity_spot") creates equity_options_bar_5m, etc.
 func InitKlineSchemaForPrefix(ctx context.Context, conn driver.Conn, optionsPrefix, spotPrefix string) error {
 	for _, iv := range KlineIntervals {
 		stmts := optionKlineDDLWithPrefix(optionsPrefix, iv)

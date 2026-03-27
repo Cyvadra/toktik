@@ -37,8 +37,6 @@ Thumbs.db
 # Generated reports
 reports/
 
-# thetadata cache
-.thetadata*
 *.json
 *.csv
 *.npy

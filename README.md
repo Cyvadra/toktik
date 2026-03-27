@@ -8,7 +8,7 @@ Quantitative backtesting and market data platform for crypto options trading, bu
 - **Event-driven backtesting engine** — Pine Script-style strategy interface with multi-asset, multi-leg options support, vectorized indicator computation, and realistic broker simulation (slippage, commissions, TWAP)
 - **REST API** — Query historical bars, symbols, greeks, and run backtests with cursor-based pagination
 - **Options spread strategies** — Built-in bull put / bear call spread strategies with MA deviation signals
-- **US stock options sync** — Download and store US equity options data from Theta Data API
+- **US market flatfile import** — Import Polygon US options and stocks minute CSV flatfiles into ClickHouse with precomputed K-line views
 - **HTML reports** — Self-contained backtest reports with equity curves, drawdown charts, and trade markers
 
 ## Prerequisites
@@ -29,6 +29,7 @@ make build-import
 make build-kline-backfill
 make build-kline-migrate-utc
 make build-backtest-btc-options
+make build-us-market-import
 
 # Cross-compile
 make build-win-arm
@@ -229,52 +230,33 @@ Notes:
 - Use `--skip-backfill` if you only want the schema migration and will repopulate aggregates later.
 - Use `--dry-run` to inspect the migration plan before executing it.
 
-### 7. Sync US Stock Options (Theta Data)
+### 7. Import US Market Flatfiles
 
 ```bash
-make build-thetadata-sync
+make build-us-market-import
 
-bin/thetadata-sync \
-  --roots "AAPL,SPY" \
-  --start-date 2024-01-01 \
-  --end-date 2025-01-01 \
-  --mode eod \
-  --base-url "http://127.0.0.1:25503" \
+bin/us-market-import \
+  --options-dir /path/to/polygon/options \
+  --stocks-dir /path/to/polygon/stocks \
   --clickhouse-dsn "clickhouse://localhost:9000/default" \
-  --workers 4 \
-  --rate-limit 5.0
+  --workers 2 \
+  --batch-size 100000
 ```
 
 Or run directly without building:
 
 ```bash
-go run ./cmd/thetadata-sync \
-  --roots "AAPL,SPY" \
-  --start-date 2024-01-01 \
-  --end-date 2025-01-01 \
-  --mode eod \
-  --base-url "http://127.0.0.1:25503" \
+go run ./cmd/us-market-import \
+  --options-dir /path/to/polygon/options \
+  --stocks-dir /path/to/polygon/stocks \
   --clickhouse-dsn "clickhouse://localhost:9000/default"
 ```
 
-For 5-minute intraday OHLC + quote sync:
-
-```bash
-go run ./cmd/thetadata-sync \
-  --roots "AAPL" \
-  --start-date 2025-01-02 \
-  --end-date 2025-01-10 \
-  --mode 5m \
-  --base-url "http://127.0.0.1:25503" \
-  --clickhouse-dsn "clickhouse://localhost:9000/default" \
-  --workers 1 \
-  --rate-limit 1
-```
-
 Notes:
-- Use `--roots "*"` to discover and sync all available option roots.
-- The schema file is auto-detected from `schema/clickhouse/equity_options.sql`; override with `--schema path/to/file.sql` if needed.
-- Progress is stored under `.thetadata-progress/<mode>`, so `eod` and `5m` runs do not skip each other's dates.
+- At least one of `--options-dir` or `--stocks-dir` is required.
+- Input files must be named by trading date, for example `2025-01-02.csv` or `2025-01-02.csv.gz`.
+- The schema file is auto-detected from `schema/clickhouse/us_market.sql`; override with `--schema path/to/file.sql` if needed.
+- Existing dates are skipped by default; pass `--skip-existing=false` to force re-import.
 
 ## Writing Custom Strategies
 
@@ -326,7 +308,7 @@ cmd/
   crypto-options-convert/ CSV.zst → Parquet converter
   crypto-options-import/  Parquet → ClickHouse importer
   crypto-options-missing-days/  Data gap scanner
-  thetadata-sync/         Theta Data API sync tool
+  us-market-import/       Polygon US market flatfile importer
 internal/
   api/                    Gin HTTP handlers & router
   backtest/               Core engine, broker, indicators, options
@@ -337,8 +319,7 @@ internal/
   report/                 HTML report generation
   service/                Business logic layer
   strategies/             Strategy implementations & builder
-pkg/
-  thetadata/              Theta Data API client & pipeline
+  usmarket/               US market CSV parsing and ClickHouse import
 schema/
   clickhouse/             DDL for ClickHouse tables
 ```

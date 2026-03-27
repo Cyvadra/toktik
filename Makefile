@@ -1,11 +1,11 @@
-.PHONY: build-convert build-import build-missing-days build-kline-backfill build-kline-migrate-utc build-api build-backtest-example build-backtest-btc-options build-thetadata-sync build-us-market-import build-all build-win-arm clean
-
 BUILD_DIR := bin
 
 GOFLAGS := -trimpath
 LDFLAGS := -s -w
 
-build-all: build-convert build-import build-missing-days build-kline-backfill build-kline-migrate-utc build-api build-backtest-example build-backtest-btc-options build-thetadata-sync build-us-market-import
+.PHONY: build-convert build-import build-missing-days build-kline-backfill build-kline-migrate-utc build-api build-backtest-example build-backtest-btc-options build-us-market-import build-all build-win-arm clean
+
+build-all: build-convert build-import build-missing-days build-kline-backfill build-kline-migrate-utc build-api build-backtest-example build-backtest-btc-options build-us-market-import
 
 build-convert:
 	@mkdir -p $(BUILD_DIR)
@@ -38,10 +38,6 @@ build-backtest-example:
 build-backtest-btc-options:
 	@mkdir -p $(BUILD_DIR)
 	go build $(GOFLAGS) -ldflags '$(LDFLAGS)' -o $(BUILD_DIR)/backtest-btc-options ./cmd/backtest-btc-options
-
-build-thetadata-sync:
-	@mkdir -p $(BUILD_DIR)
-	go build $(GOFLAGS) -ldflags '$(LDFLAGS)' -o $(BUILD_DIR)/thetadata-sync ./cmd/thetadata-sync
 
 build-us-market-import:
 	@mkdir -p $(BUILD_DIR)
