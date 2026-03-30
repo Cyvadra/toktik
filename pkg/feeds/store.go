@@ -74,6 +74,14 @@ func (s *Store) InsertBars(ctx context.Context, feedName string, w Window, bars 
 	if len(bars) == 0 {
 		return 0, nil
 	}
+
+	bars, err := s.filterExistingBars(ctx, feedName, w, bars)
+	if err != nil {
+		return 0, err
+	}
+	if len(bars) == 0 {
+		return 0, nil
+	}
 	if batchSize <= 0 {
 		batchSize = 5000
 	}
@@ -121,6 +129,90 @@ func (s *Store) InsertBars(ctx context.Context, feedName string, w Window, bars 
 	}
 
 	return total, nil
+}
+
+func (s *Store) filterExistingBars(ctx context.Context, feedName string, w Window, bars []Bar) ([]Bar, error) {
+	type timeRange struct {
+		start time.Time
+		end   time.Time
+	}
+
+	ranges := make(map[string]timeRange)
+	for _, bar := range bars {
+		symbol := strings.ToUpper(bar.Symbol)
+		ts := bar.Timestamp.UTC()
+		current, ok := ranges[symbol]
+		if !ok {
+			ranges[symbol] = timeRange{start: ts, end: ts}
+			continue
+		}
+		if ts.Before(current.start) {
+			current.start = ts
+		}
+		if ts.After(current.end) {
+			current.end = ts
+		}
+		ranges[symbol] = current
+	}
+
+	existing := make(map[string]struct{})
+	for symbol, span := range ranges {
+		timestamps, err := s.queryExistingTimestamps(ctx, feedName, w, symbol, span.start, span.end)
+		if err != nil {
+			return nil, err
+		}
+		for ts := range timestamps {
+			existing[existingBarKey(symbol, ts)] = struct{}{}
+		}
+	}
+
+	return s.filterExistingBarsWithSet(ctx, bars, existing), nil
+}
+
+func (s *Store) filterExistingBarsWithSet(_ context.Context, bars []Bar, existing map[string]struct{}) []Bar {
+	filtered := make([]Bar, 0, len(bars))
+	for _, bar := range bars {
+		key := existingBarKey(strings.ToUpper(bar.Symbol), bar.Timestamp.UTC().UnixMilli())
+		if _, ok := existing[key]; ok {
+			continue
+		}
+		filtered = append(filtered, bar)
+	}
+
+	return filtered
+}
+
+func (s *Store) queryExistingTimestamps(ctx context.Context, feedName string, w Window, symbol string, start, end time.Time) (map[int64]struct{}, error) {
+	table := TableName(feedName, w)
+	query := fmt.Sprintf(
+		"SELECT timestamp FROM %s FINAL WHERE symbol = @symbol AND timestamp >= @start AND timestamp <= @end",
+		table,
+	)
+
+	rows, err := s.conn.Query(ctx, query,
+		clickhouse.Named("symbol", symbol),
+		clickhouse.Named("start", start.UTC()),
+		clickhouse.Named("end", end.UTC()),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query existing timestamps from %s: %w", table, err)
+	}
+	defer rows.Close()
+
+	timestamps := make(map[int64]struct{})
+	for rows.Next() {
+		var ts time.Time
+		if err := rows.Scan(&ts); err != nil {
+			return nil, fmt.Errorf("scan timestamp from %s: %w", table, err)
+		}
+		timestamps[ts.UTC().UnixMilli()] = struct{}{}
+	}
+
+	return timestamps, rows.Err()
+}
+
+func existingBarKey(symbol string, timestampMillis int64) string {
+	return fmt.Sprintf("%s|%d", symbol, timestampMillis)
 }
 
 // QueryBars reads bars from the table for a given feed, window, symbol, and time range.

@@ -121,6 +121,36 @@ func TestComputeResultNormalizesReportColumns(t *testing.T) {
 	}
 }
 
+func TestBuildReportSeriesIncludesFactorColumns(t *testing.T) {
+	primary := map[string][]float64{
+		"close": {60000, 60100},
+		"atr":   {1000, 1005},
+	}
+	factors := []factorRegistration{{
+		ref: FactorRef{Name: "dvol", Interval: "1d", Index: 0},
+	}}
+	factorColumns := []map[string][]float64{{
+		"close":      {50, 51},
+		"dvol":       {50, 51},
+		"dvol_pr_90": {70, 71},
+	}}
+
+	series := buildReportSeries(primary, factorColumns, factors)
+
+	if got := series["close"]; len(got) != 2 || got[0] != 60000 || got[1] != 60100 {
+		t.Fatalf("series[close] = %#v, want primary close series", got)
+	}
+	if got := series["dvol"]; len(got) != 2 || got[0] != 50 || got[1] != 51 {
+		t.Fatalf("series[dvol] = %#v, want factor alias series", got)
+	}
+	if got := series[factorSeriesKey(factors[0].ref, "dvol_pr_90")]; len(got) != 2 || got[0] != 70 || got[1] != 71 {
+		t.Fatalf("series[namespaced factor key] = %#v, want namespaced factor series", got)
+	}
+	if got := series[factorSeriesKey(factors[0].ref, "close")]; len(got) != 2 || got[0] != 50 || got[1] != 51 {
+		t.Fatalf("series[namespaced factor close] = %#v, want namespaced factor close series", got)
+	}
+}
+
 func TestBuildSpreadPositionReportsIncludesCloseNote(t *testing.T) {
 	tracker := NewSpreadTracker()
 	openTime := time.Date(2024, time.January, 3, 9, 0, 0, 0, time.UTC)

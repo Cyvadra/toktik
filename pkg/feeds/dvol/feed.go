@@ -31,7 +31,6 @@ func (f *dvolFeed) Symbols() []string {
 
 func (f *dvolFeed) SourceWindows() []feeds.Window {
 	return []feeds.Window{
-		{Label: "1m", Duration: 60_000_000_000},          // 1 minute
 		{Label: "1h", Duration: 3_600_000_000_000},       // 1 hour
 		{Label: "12h", Duration: 12 * 3_600_000_000_000}, // 12 hours
 		{Label: "1d", Duration: 24 * 3_600_000_000_000},  // 1 day

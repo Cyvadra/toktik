@@ -6,6 +6,37 @@ import (
 	"strings"
 )
 
+func buildReportSeries(primary map[string][]float64, factorColumns []map[string][]float64, factors []factorRegistration) map[string][]float64 {
+	if len(primary) == 0 && len(factorColumns) == 0 {
+		return nil
+	}
+
+	merged := make(map[string][]float64, len(primary))
+	for name, data := range primary {
+		merged[name] = data
+	}
+
+	limit := len(factorColumns)
+	if len(factors) < limit {
+		limit = len(factors)
+	}
+	for i := 0; i < limit; i++ {
+		ref := factors[i].ref
+		for name, data := range factorColumns[i] {
+			if _, exists := merged[name]; !exists {
+				merged[name] = data
+			}
+			merged[factorSeriesKey(ref, name)] = data
+		}
+	}
+
+	return merged
+}
+
+func factorSeriesKey(ref FactorRef, name string) string {
+	return "factor." + ref.Name + "." + ref.Interval + "." + name
+}
+
 // Replayer runs the bar-by-bar strategy execution loop on prepared data.
 type Replayer struct {
 	config        Config
@@ -273,7 +304,7 @@ func (r *Replayer) Replay(prepared *PreparedData, strategy Strategy, params map[
 		prepared.PrimaryDS.Timestamps,
 		r.config.InitialCapital,
 		r.config.AccountUnit,
-		secColumns[0],
+		buildReportSeries(secColumns[0], factorColumns, prepared.Factors),
 		reportColumns,
 	)
 

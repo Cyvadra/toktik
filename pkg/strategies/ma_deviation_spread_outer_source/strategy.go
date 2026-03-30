@@ -173,9 +173,9 @@ func (s *strategy) tryOpenStructure(ctx *backtest.BarContext, chain *backtest.Op
 	}
 
 	targetDTE := s.targetExpiryDays(ctx.Ind("rsi_12h_prev"))
-	nearestDTEs := nearestExpiryDTEs(chain, ctx.Time(), targetDTE, 2)
-	fmt.Printf("[%s] entry option selection: target DTE=%d, nearest DTEs=%s\n", ctx.Time().Format(time.RFC3339), targetDTE, formatNearestDTEs(nearestDTEs))
-	shortCall := s.selectShortCall(chain, targetDTE)
+	withinDTEs := expiryDTEsWithin(chain, ctx.Time(), s.lowRSIDTE, s.highRSIDTE)
+	fmt.Printf("[%s] entry option selection: target DTE=%d, within DTEs=%s\n", ctx.Time().Format(time.RFC3339), targetDTE, formatDTEs(withinDTEs))
+	shortCall := s.selectShortCall(chain)
 	if shortCall == nil {
 		return
 	}
@@ -194,7 +194,7 @@ func (s *strategy) tryOpenStructure(ctx *backtest.BarContext, chain *backtest.Op
 		return
 	}
 
-	longPut := s.selectLongPut(chain, shortCall, targetDTE)
+	longPut := s.selectLongPut(chain, shortCall)
 	if longPut == nil {
 		return
 	}
@@ -332,9 +332,8 @@ func (s *strategy) reopenPutLeg(ctx *backtest.BarContext, chain *backtest.Option
 		return
 	}
 
-	targetDTE := s.targetExpiryDays(ctx.Ind("rsi_12h_prev"))
 	shortCall := s.activeShortCallContract(ctx)
-	longPut := s.selectLongPut(chain, shortCall, targetDTE)
+	longPut := s.selectLongPut(chain, shortCall)
 	if longPut == nil {
 		return
 	}
@@ -412,11 +411,11 @@ func (s *strategy) rollbackOpenedStructure(ctx *backtest.BarContext, callSpreadI
 	}
 }
 
-func (s *strategy) selectShortCall(chain *backtest.OptionsChain, targetDTE int) *backtest.OptionContract {
+func (s *strategy) selectShortCall(chain *backtest.OptionsChain) *backtest.OptionContract {
 	if chain == nil || chain.Len() == 0 {
 		return nil
 	}
-	filtered := chain.Calls().ExpiryNearest(targetDTE)
+	filtered := chain.Calls().ExpiryRange(s.lowRSIDTE, s.highRSIDTE)
 	if filtered.Len() == 0 {
 		return nil
 	}
@@ -431,11 +430,11 @@ func (s *strategy) selectShortCall(chain *backtest.OptionsChain, targetDTE int) 
 	return nil
 }
 
-func (s *strategy) selectLongPut(chain *backtest.OptionsChain, refCall *backtest.OptionContract, targetDTE int) *backtest.OptionContract {
+func (s *strategy) selectLongPut(chain *backtest.OptionsChain, refCall *backtest.OptionContract) *backtest.OptionContract {
 	if chain == nil || chain.Len() == 0 {
 		return nil
 	}
-	filtered := chain.Puts()
+	filtered := chain.Puts().ExpiryRange(s.lowRSIDTE, s.highRSIDTE)
 	if refCall != nil {
 		matched := filtered.SameExpiry(refCall)
 		if matched.Len() > 0 {
@@ -443,10 +442,7 @@ func (s *strategy) selectLongPut(chain *backtest.OptionsChain, refCall *backtest
 		}
 	}
 	if filtered.Len() == 0 {
-		filtered = chain.Puts().ExpiryNearest(targetDTE)
-		if filtered.Len() == 0 {
-			return nil
-		}
+		return nil
 	}
 	sorted := filtered.SortByDelta(defaultLongPutDelta)
 	for i := range sorted {
@@ -656,8 +652,8 @@ func shiftSeries(src []float64, headValue float64) []float64 {
 	return out
 }
 
-func nearestExpiryDTEs(chain *backtest.OptionsChain, now time.Time, targetDTE, limit int) []float64 {
-	if chain == nil || chain.Len() == 0 || limit <= 0 {
+func expiryDTEsWithin(chain *backtest.OptionsChain, now time.Time, minDTE, maxDTE int) []float64 {
+	if chain == nil || chain.Len() == 0 {
 		return nil
 	}
 
@@ -666,8 +662,13 @@ func nearestExpiryDTEs(chain *backtest.OptionsChain, now time.Time, targetDTE, l
 		dte        float64
 	}
 
+	filtered := chain.ExpiryRange(minDTE, maxDTE)
+	if filtered.Len() == 0 {
+		return nil
+	}
+
 	unique := make(map[int64]expiryInfo)
-	for _, contract := range chain.Contracts() {
+	for _, contract := range filtered.Contracts() {
 		key := contract.Expiration.UTC().Unix()
 		if _, exists := unique[key]; exists {
 			continue
@@ -684,26 +685,20 @@ func nearestExpiryDTEs(chain *backtest.OptionsChain, now time.Time, targetDTE, l
 	}
 
 	sort.Slice(expiries, func(i, j int) bool {
-		diffI := math.Abs(expiries[i].dte - float64(targetDTE))
-		diffJ := math.Abs(expiries[j].dte - float64(targetDTE))
-		if diffI != diffJ {
-			return diffI < diffJ
+		if expiries[i].dte != expiries[j].dte {
+			return expiries[i].dte < expiries[j].dte
 		}
 		return expiries[i].expiration.Before(expiries[j].expiration)
 	})
 
-	if limit > len(expiries) {
-		limit = len(expiries)
-	}
-
-	out := make([]float64, 0, limit)
-	for i := 0; i < limit; i++ {
+	out := make([]float64, 0, len(expiries))
+	for i := 0; i < len(expiries); i++ {
 		out = append(out, expiries[i].dte)
 	}
 	return out
 }
 
-func formatNearestDTEs(dtes []float64) string {
+func formatDTEs(dtes []float64) string {
 	if len(dtes) == 0 {
 		return "[]"
 	}
