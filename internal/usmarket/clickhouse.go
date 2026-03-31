@@ -248,11 +248,11 @@ func LoadStockCloseMap(ctx context.Context, conn driver.Conn, symbols []string, 
 		`SELECT symbol, timestamp, close
 		FROM us_stocks_bar_1m
 		WHERE symbol IN ({symbols:Array(String)})
-		  AND timestamp >= {from:DateTime('UTC')}
-		  AND timestamp < {to:DateTime('UTC')}`,
+		  AND timestamp >= toDateTime({from:String}, 'UTC')
+		  AND timestamp < toDateTime({to:String}, 'UTC')`,
 		clickhouse.Named("symbols", symbols),
-		clickhouse.Named("from", from),
-		clickhouse.Named("to", to),
+		clickhouse.Named("from", clickHouseTimeParam(from)),
+		clickhouse.Named("to", clickHouseTimeParam(to)),
 	)
 	if err != nil {
 		return nil, nil, fmt.Errorf("query stock closes: %w", err)
@@ -276,4 +276,8 @@ func LoadStockCloseMap(ctx context.Context, conn driver.Conn, symbols []string, 
 	}
 
 	return stockCloses, seenSymbols, nil
+}
+
+func clickHouseTimeParam(t time.Time) string {
+	return t.UTC().Format("2006-01-02 15:04:05")
 }
