@@ -577,9 +577,10 @@ type ScheduledAction struct {
 	SlippagePct float64
 
 	// Open action payload.
-	OpenLegs []SpreadLeg
-	OpenTag  string
-	OpenRef  string
+	OpenLegs    []SpreadLeg
+	OpenTag     string
+	OpenRef     string
+	OpenGroupID int
 
 	// Close action payload.
 	CloseReason     string

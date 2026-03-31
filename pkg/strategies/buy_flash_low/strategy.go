@@ -14,6 +14,7 @@ package buyflashlow
 
 import (
 	"math"
+	"strconv"
 	"time"
 
 	"github.com/Cyvadra/toktik/internal/backtest"
@@ -90,10 +91,13 @@ type buyFlashLowStrategy struct {
 	takeProfit2      float64
 
 	// runtime state
-	highestSinceEntry float64
-	optionSpreadIDs   [2]int
-	dvolFactor        backtest.FactorRef
-	positionGroupID   int
+	highestSinceEntry  float64
+	optionSpreadIDs    [2]int
+	pendingOptionRefs  [2]string
+	pendingOptionTimes [2]time.Time
+	dvolFactor         backtest.FactorRef
+	positionGroupID    int
+	nextPendingRefID   int
 }
 
 func (s *buyFlashLowStrategy) Name() string { return "BuyFlashLow" }
@@ -322,6 +326,7 @@ func (s *buyFlashLowStrategy) OnBar(ctx *backtest.BarContext) {
 	if ctx.BarIndex() < 100 {
 		return
 	}
+	s.resolvePendingShortPutOpens(ctx)
 
 	primary := ctx.PrimaryRef()
 	high := ctx.High()
@@ -537,6 +542,15 @@ func (s *buyFlashLowStrategy) manageOpenShortPuts(ctx *backtest.BarContext, now 
 
 		active = true
 	}
+	for i, ref := range s.pendingOptionRefs {
+		if ref != "" {
+			active = true
+			if !s.pendingOptionTimes[i].IsZero() && ctx.Time().After(s.pendingOptionTimes[i]) {
+				s.pendingOptionRefs[i] = ""
+				s.pendingOptionTimes[i] = time.Time{}
+			}
+		}
+	}
 	if !active {
 		s.closeGroup(ctx, s.positionGroupID)
 	}
@@ -544,6 +558,10 @@ func (s *buyFlashLowStrategy) manageOpenShortPuts(ctx *backtest.BarContext, now 
 }
 
 func (s *buyFlashLowStrategy) openShortPutTranches(ctx *backtest.BarContext, chain *backtest.OptionsChain) {
+	triggerTime := ctx.NextBarTime()
+	if triggerTime.IsZero() {
+		return
+	}
 	if chain == nil || chain.Len() == 0 {
 		return
 	}
@@ -582,16 +600,16 @@ func (s *buyFlashLowStrategy) openShortPutTranches(ctx *backtest.BarContext, cha
 		if tranche.qty <= 0 {
 			continue
 		}
-		spreadID := s.openSpreadInGroup(ctx, []backtest.SpreadLeg{{
+		pendingRef := s.nextPendingOptionRef()
+		ctx.ScheduleOpenSpreadInGroupWithRef(triggerTime, []backtest.SpreadLeg{{
 			Contract:   *contract,
 			Side:       backtest.Sell,
 			Qty:        tranche.qty,
 			EntryPrice: entryPrice,
-		}}, tranche.tag, groupID)
-		if spreadID > 0 {
-			s.optionSpreadIDs[i] = spreadID
-			opened = true
-		}
+		}}, tranche.tag, pendingRef, groupID)
+		s.pendingOptionRefs[i] = pendingRef
+		s.pendingOptionTimes[i] = triggerTime
+		opened = true
 	}
 
 	if !opened {
@@ -631,6 +649,37 @@ func (s *buyFlashLowStrategy) openSpreadInGroup(ctx *backtest.BarContext, legs [
 		return spreadID
 	}
 	return ctx.OpenSpread(legs, tag)
+}
+
+func (s *buyFlashLowStrategy) resolvePendingShortPutOpens(ctx *backtest.BarContext) {
+	tracker := ctx.Spreads()
+	if tracker == nil {
+		return
+	}
+	for i, ref := range s.pendingOptionRefs {
+		if ref == "" {
+			continue
+		}
+		resolved := false
+		for _, spread := range tracker.All() {
+			if spread != nil && spread.Ref == ref {
+				s.optionSpreadIDs[i] = spread.ID
+				s.pendingOptionRefs[i] = ""
+				s.pendingOptionTimes[i] = time.Time{}
+				resolved = true
+				break
+			}
+		}
+		if !resolved && !s.pendingOptionTimes[i].IsZero() && ctx.Time().After(s.pendingOptionTimes[i]) {
+			s.pendingOptionRefs[i] = ""
+			s.pendingOptionTimes[i] = time.Time{}
+		}
+	}
+}
+
+func (s *buyFlashLowStrategy) nextPendingOptionRef() string {
+	s.nextPendingRefID++
+	return s.Name() + "/short-put/" + strconv.Itoa(s.nextPendingRefID)
 }
 
 func (s *buyFlashLowStrategy) selectShortPut(chain *backtest.OptionsChain) *backtest.OptionContract {

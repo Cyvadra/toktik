@@ -148,6 +148,7 @@ func (r *Replayer) Replay(prepared *PreparedData, strategy Strategy, params map[
 	}
 
 	barCtx := &BarContext{
+		barTimes:           prepared.PrimaryDS.Timestamps,
 		primary:            secColumns[0],
 		securities:         accessors,
 		factors:            factorAccessors,
@@ -237,7 +238,14 @@ func (r *Replayer) Replay(prepared *PreparedData, strategy Strategy, params map[
 							}
 						}
 						if len(legs) > 0 {
-							barCtx.OpenSpreadWithRef(legs, tag, sa.OpenRef)
+							if sa.OpenGroupID > 0 {
+								spreadID := barCtx.OpenSpreadInGroupWithRef(legs, tag, sa.OpenRef, sa.OpenGroupID)
+								if spreadID > 0 && barCtx.SpreadGroups() != nil {
+									barCtx.SpreadGroups().AddSpread(sa.OpenGroupID, spreadID)
+								}
+							} else {
+								barCtx.OpenSpreadWithRef(legs, tag, sa.OpenRef)
+							}
 						}
 					case ScheduleSecurityOrder:
 						if sa.SecurityOrder.Type == MarketOrder && (sa.SecurityOrder.Qty > 0 || sa.SecurityOrder.Notional > 0) {

@@ -179,6 +179,7 @@ func (sa *SecurityAccessor) resolveIndex(barsAgo int) int {
 type BarContext struct {
 	barIndex   int
 	barTime    time.Time
+	barTimes   []time.Time
 	primary    map[string][]float64 // primary columns + indicators
 	securities []*SecurityAccessor  // index 0 = primary, 1+ = additional
 	factors    []*SecurityAccessor  // external factors, independent of security universe
@@ -200,6 +201,15 @@ func (bc *BarContext) BarIndex() int { return bc.barIndex }
 
 // Time returns the current bar's timestamp.
 func (bc *BarContext) Time() time.Time { return bc.barTime }
+
+// NextBarTime returns the next primary bar timestamp, or zero if the current
+// bar is the last replayable primary bar.
+func (bc *BarContext) NextBarTime() time.Time {
+	if bc.barIndex+1 < 0 || bc.barIndex+1 >= len(bc.barTimes) {
+		return time.Time{}
+	}
+	return bc.barTimes[bc.barIndex+1]
+}
 
 // --- Primary field shortcuts ---
 
@@ -822,6 +832,11 @@ func (bc *BarContext) SpreadGroups() *SpreadGroupTracker {
 // OpenSpreadInGroup opens a multi-leg spread position belonging to a spread group.
 // Returns the spread ID for later reference.
 func (bc *BarContext) OpenSpreadInGroup(legs []SpreadLeg, tag string, groupID int) int {
+	return bc.OpenSpreadInGroupWithRef(legs, tag, "", groupID)
+}
+
+// OpenSpreadInGroupWithRef opens a multi-leg spread position belonging to a spread group with an internal execution ref.
+func (bc *BarContext) OpenSpreadInGroupWithRef(legs []SpreadLeg, tag, ref string, groupID int) int {
 	if bc.spreadTracker == nil {
 		return 0
 	}
@@ -838,7 +853,7 @@ func (bc *BarContext) OpenSpreadInGroup(legs []SpreadLeg, tag string, groupID in
 			bc.broker.AdjustCash(-amount)
 		}
 	}
-	return bc.spreadTracker.OpenFull(legsCopy, bc.barTime, bc.barIndex, tag, "", groupID)
+	return bc.spreadTracker.OpenFull(legsCopy, bc.barTime, bc.barIndex, tag, ref, groupID)
 }
 
 // --- Scheduled actions ---
@@ -910,6 +925,26 @@ func (bc *BarContext) ScheduleOpenSpreadWithRef(triggerTime time.Time, legs []Sp
 	bc.ScheduleOpenSpreadOrderWithRef(triggerTime, legs, tag, ref, SpreadOrderMarket, Buy, math.NaN(), 0)
 }
 
+// ScheduleOpenSpreadInGroupWithRef schedules opening a spread in an existing group at/after triggerTime.
+func (bc *BarContext) ScheduleOpenSpreadInGroupWithRef(triggerTime time.Time, legs []SpreadLeg, tag, ref string, groupID int) {
+	if bc.scheduledActions == nil {
+		return
+	}
+	legsCopy := make([]SpreadLeg, len(legs))
+	copy(legsCopy, legs)
+	*bc.scheduledActions = append(*bc.scheduledActions, ScheduledAction{
+		TriggerTime:  triggerTime,
+		ActionType:   ScheduleOpenSpread,
+		OrderType:    SpreadOrderMarket,
+		TriggerSide:  Buy,
+		TriggerPrice: math.NaN(),
+		OpenLegs:     legsCopy,
+		OpenTag:      tag,
+		OpenRef:      ref,
+		OpenGroupID:  groupID,
+	})
+}
+
 // ScheduleOpenSpreadOrder schedules opening a spread with trigger semantics.
 // triggerSide follows standard order semantics: Buy triggers on upward moves; Sell on downward moves.
 func (bc *BarContext) ScheduleOpenSpreadOrder(triggerTime time.Time, legs []SpreadLeg, tag string, orderType SpreadOrderType, triggerSide Side, triggerPrice, slippagePct float64) {
@@ -933,6 +968,7 @@ func (bc *BarContext) ScheduleOpenSpreadOrderWithRef(triggerTime time.Time, legs
 		OpenLegs:     legsCopy,
 		OpenTag:      tag,
 		OpenRef:      ref,
+		OpenGroupID:  0,
 	})
 }
 
