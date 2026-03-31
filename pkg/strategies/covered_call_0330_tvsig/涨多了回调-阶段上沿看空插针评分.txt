@@ -32,7 +32,7 @@
 
     - Bought PUT (换仓):
 
-        - trigger condition: abs(delta) >= 0.5, or profit > 50%
+        - trigger condition: abs(delta) >= 0.5, or profit > 30%
 
         - close current PUT position, and re-open "BUY CALL" position, with same "option-selection" method, and 80% amount. 每次换仓，开仓金额递减，首仓7BTC，首次换仓7*0.8BTC，二次换仓7*0.64BTC，以此类推。
 

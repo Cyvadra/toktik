@@ -45,7 +45,7 @@ const (
 
 	// protective-leg roll triggers
 	protRollDeltaLimit  = 0.50 // abs(delta) ≥ 0.5
-	protRollProfitLimit = 0.50 // unrealised profit ≥ 50%
+	protRollProfitLimit = 0.30 // unrealised profit ≥ 30%
 
 	expiryCloseLeadDays = 1 // close 1 day before expiry
 
@@ -95,7 +95,7 @@ func init() {
 //	  • 1× protective PUT  (buy delta~-0.25)
 //	    DTE ~35±10 days, initial 7 BTC
 //
-//	Protective-leg roll: when abs(delta) ≥ 0.5 OR unrealised profit ≥ 50%
+//	Protective-leg roll: when abs(delta) ≥ 0.5 OR unrealised profit ≥ 30%
 //	  close current leg, reopen as BUY CALL (same DTE/|delta| params), 80% amount.
 //
 //	Stop-loss: if any open call spread close cost reaches >= 2x its entry credit,
