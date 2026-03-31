@@ -64,7 +64,7 @@ func MissingStockSymbols(expected []string, seen map[string]struct{}) []string {
 }
 
 // ValidateOptionStockCoverage ensures the required stock bars exist before option import starts.
-func ValidateOptionStockCoverage(ctx context.Context, conn driver.Conn, optionPath string, fileDate time.Time) (map[stockCloseKey]float64, error) {
+func ValidateOptionStockCoverage(ctx context.Context, conn driver.Conn, optionPath string, marketDate time.Time) (map[stockCloseKey]float64, error) {
 	underlyings, err := CollectOptionUnderlyings(optionPath)
 	if err != nil {
 		return nil, fmt.Errorf("scan option underlyings: %w", err)
@@ -73,14 +73,13 @@ func ValidateOptionStockCoverage(ctx context.Context, conn driver.Conn, optionPa
 		return nil, fmt.Errorf("no valid option tickers found in %s", optionPath)
 	}
 
-	nextDay := fileDate.AddDate(0, 0, 1)
-	stockCloses, seenSymbols, err := LoadStockCloseMap(ctx, conn, underlyings, fileDate, nextDay)
+	stockCloses, seenSymbols, err := LoadStockCloseMap(ctx, conn, underlyings, marketDate)
 	if err != nil {
 		return nil, err
 	}
 
 	if missing := MissingStockSymbols(underlyings, seenSymbols); len(missing) > 0 {
-		return nil, fmt.Errorf("missing stock data for %s: %v", fileDate.Format("2006-01-02"), missing)
+		return nil, fmt.Errorf("missing stock data for %s: %v", marketDate.Format("2006-01-02"), missing)
 	}
 
 	return stockCloses, nil

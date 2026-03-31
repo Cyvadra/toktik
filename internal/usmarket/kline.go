@@ -9,24 +9,56 @@ import (
 )
 
 // KlineInterval defines a K-line aggregation interval.
+// Sub-hour intervals use natural time alignment (which aligns to 09:30 ET since
+// that minute is on a 5m/15m/30m boundary in UTC).
+// Hourly and multi-hour intervals use session_open offset bucketing so bars
+// start at 09:30, 10:30, ... rather than UTC whole hours.
+// Daily interval groups by market_date.
 type KlineInterval struct {
-	Suffix   string // table name suffix, e.g. "5m", "1h", "1d"
-	TimeFunc string // ClickHouse expression applied to `timestamp`
+	Suffix  string // table name suffix, e.g. "5m", "1h", "1d"
+	Seconds int    // interval in seconds; 0 means daily
 }
 
 // KlineIntervals lists all pre-computed K-line intervals.
 var KlineIntervals = []KlineInterval{
-	{Suffix: "5m", TimeFunc: "toStartOfFiveMinutes(timestamp)"},
-	{Suffix: "15m", TimeFunc: "toStartOfFifteenMinutes(timestamp)"},
-	{Suffix: "30m", TimeFunc: "toStartOfInterval(timestamp, INTERVAL 30 minute)"},
-	{Suffix: "1h", TimeFunc: "toStartOfHour(timestamp)"},
-	{Suffix: "2h", TimeFunc: "toStartOfInterval(timestamp, INTERVAL 2 hour)"},
-	{Suffix: "4h", TimeFunc: "toStartOfInterval(timestamp, INTERVAL 4 hour)"},
-	{Suffix: "1d", TimeFunc: "toStartOfDay(timestamp)"},
+	{Suffix: "5m", Seconds: 300},
+	{Suffix: "15m", Seconds: 900},
+	{Suffix: "30m", Seconds: 1800},
+	{Suffix: "1h", Seconds: 3600},
+	{Suffix: "2h", Seconds: 7200},
+	{Suffix: "4h", Seconds: 14400},
+	{Suffix: "1d", Seconds: 0},
+}
+
+// klineTimeFunc returns the ClickHouse expression used to compute the bucket
+// timestamp for a given interval.
+func klineTimeFunc(iv KlineInterval) string {
+	if iv.Seconds == 0 {
+		// Daily: bucket = midnight UTC of the market_date
+		return "toDateTime(market_date, 'UTC')"
+	}
+	if iv.Seconds < 3600 {
+		// Sub-hour: natural time alignment (09:30 ET is on a 5/15/30m boundary in UTC)
+		switch iv.Seconds {
+		case 300:
+			return "toStartOfFiveMinutes(timestamp)"
+		case 900:
+			return "toStartOfFifteenMinutes(timestamp)"
+		default:
+			return fmt.Sprintf("toStartOfInterval(timestamp, INTERVAL %d second)", iv.Seconds)
+		}
+	}
+	// Session-aligned: offset from session_open
+	// bucket = session_open + floor((ts - session_open) / interval) * interval
+	return fmt.Sprintf(
+		"toDateTime(toUnixTimestamp(session_open) + intDiv(toUnixTimestamp(timestamp) - toUnixTimestamp(session_open), %d) * %d, 'UTC')",
+		iv.Seconds, iv.Seconds,
+	)
 }
 
 // InitOptionKlineSchema creates AggregatingMergeTree tables, materialized views,
 // and query views for US option bars at every interval.
+// All kline MVs filter to regular-session bars only.
 func InitOptionKlineSchema(ctx context.Context, conn driver.Conn) error {
 	for _, iv := range KlineIntervals {
 		stmts := optionKlineDDL(iv)
@@ -60,6 +92,7 @@ func optionKlineDDL(iv KlineInterval) []string {
 	agg := "us_options_bar_" + iv.Suffix + "_agg"
 	mv := "us_options_bar_" + iv.Suffix + "_mv"
 	view := "us_options_bar_" + iv.Suffix
+	timeFunc := klineTimeFunc(iv)
 
 	createAgg := fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s
 (
@@ -88,16 +121,6 @@ PARTITION BY toYYYYMM(ts)
 ORDER BY (underlying, symbol, ts)
 SETTINGS index_granularity = 8192`, agg)
 
-	alterAgg := []string{
-		fmt.Sprintf(`ALTER TABLE %s ADD COLUMN IF NOT EXISTS underlying_close_state AggregateFunction(argMax, Float32, DateTime('UTC')) AFTER close_state`, agg),
-		fmt.Sprintf(`ALTER TABLE %s ADD COLUMN IF NOT EXISTS implied_volatility_state AggregateFunction(argMax, Float32, DateTime('UTC')) AFTER underlying_close_state`, agg),
-		fmt.Sprintf(`ALTER TABLE %s ADD COLUMN IF NOT EXISTS delta_state AggregateFunction(argMax, Float32, DateTime('UTC')) AFTER implied_volatility_state`, agg),
-		fmt.Sprintf(`ALTER TABLE %s ADD COLUMN IF NOT EXISTS gamma_state AggregateFunction(argMax, Float32, DateTime('UTC')) AFTER delta_state`, agg),
-		fmt.Sprintf(`ALTER TABLE %s ADD COLUMN IF NOT EXISTS vega_state AggregateFunction(argMax, Float32, DateTime('UTC')) AFTER gamma_state`, agg),
-		fmt.Sprintf(`ALTER TABLE %s ADD COLUMN IF NOT EXISTS theta_state AggregateFunction(argMax, Float32, DateTime('UTC')) AFTER vega_state`, agg),
-		fmt.Sprintf(`ALTER TABLE %s ADD COLUMN IF NOT EXISTS rho_state AggregateFunction(argMax, Float32, DateTime('UTC')) AFTER theta_state`, agg),
-	}
-
 	dropMV := fmt.Sprintf(`DROP TABLE IF EXISTS %s`, mv)
 
 	createMV := fmt.Sprintf(`CREATE MATERIALIZED VIEW %s
@@ -123,7 +146,8 @@ AS SELECT
     sumState(volume)                   AS volume_state,
     sumState(transactions)             AS transactions_state
 FROM %s
-GROUP BY ts, symbol, underlying, option_type, expiration, strike`, mv, agg, iv.TimeFunc, base)
+WHERE is_regular_session = 1
+GROUP BY ts, symbol, underlying, option_type, expiration, strike`, mv, agg, timeFunc, base)
 
 	createView := fmt.Sprintf(`CREATE OR REPLACE VIEW %s AS
 SELECT
@@ -149,10 +173,7 @@ SELECT
 FROM %s
 GROUP BY ts, symbol, underlying, option_type, expiration, strike`, view, agg)
 
-	stmts := []string{createAgg}
-	stmts = append(stmts, alterAgg...)
-	stmts = append(stmts, dropMV, createMV, createView)
-	return stmts
+	return []string{createAgg, dropMV, createMV, createView}
 }
 
 func stockKlineDDL(iv KlineInterval) []string {
@@ -160,6 +181,7 @@ func stockKlineDDL(iv KlineInterval) []string {
 	agg := "us_stocks_bar_" + iv.Suffix + "_agg"
 	mv := "us_stocks_bar_" + iv.Suffix + "_mv"
 	view := "us_stocks_bar_" + iv.Suffix
+	timeFunc := klineTimeFunc(iv)
 
 	createAgg := fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s
 (
@@ -177,7 +199,9 @@ PARTITION BY toYYYYMM(ts)
 ORDER BY (symbol, ts)
 SETTINGS index_granularity = 8192`, agg)
 
-	createMV := fmt.Sprintf(`CREATE MATERIALIZED VIEW IF NOT EXISTS %s
+	dropMV := fmt.Sprintf(`DROP TABLE IF EXISTS %s`, mv)
+
+	createMV := fmt.Sprintf(`CREATE MATERIALIZED VIEW %s
 TO %s
 AS SELECT
     %s AS ts,
@@ -189,7 +213,8 @@ AS SELECT
     sumState(volume)                   AS volume_state,
     sumState(transactions)             AS transactions_state
 FROM %s
-GROUP BY ts, symbol`, mv, agg, iv.TimeFunc, base)
+WHERE is_regular_session = 1
+GROUP BY ts, symbol`, mv, agg, timeFunc, base)
 
 	createView := fmt.Sprintf(`CREATE OR REPLACE VIEW %s AS
 SELECT
@@ -204,5 +229,5 @@ SELECT
 FROM %s
 GROUP BY ts, symbol`, view, agg)
 
-	return []string{createAgg, createMV, createView}
+	return []string{createAgg, dropMV, createMV, createView}
 }

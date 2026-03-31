@@ -74,11 +74,13 @@ const optionBarInsertSQL = `INSERT INTO us_options_bar_1m (
 	timestamp, symbol, underlying, option_type, expiration, strike,
 	open, high, low, close,
 	underlying_close, implied_volatility, delta, gamma, vega, theta, rho,
-	volume, transactions
+	volume, transactions,
+	market_date, session_kind, is_regular_session, session_open, session_seq
 )`
 
 const stockBarInsertSQL = `INSERT INTO us_stocks_bar_1m (
-	timestamp, symbol, open, high, low, close, volume, transactions
+	timestamp, symbol, open, high, low, close, volume, transactions,
+	market_date, session_kind, is_regular_session, session_open, session_seq
 )`
 
 // InsertOptionBars batch-inserts option bars from a channel into us_options_bar_1m.
@@ -109,6 +111,11 @@ func InsertOptionBars(ctx context.Context, conn driver.Conn, bars <-chan OptionB
 			bar.Rho,
 			bar.Volume,
 			bar.Transactions,
+			bar.MarketDate,
+			bar.SessionKind,
+			bar.IsRegularSession,
+			bar.SessionOpen,
+			bar.SessionSeq,
 		); err != nil {
 			return totalRows, fmt.Errorf("append option row: %w", err)
 		}
@@ -157,6 +164,11 @@ func InsertStockBars(ctx context.Context, conn driver.Conn, bars <-chan StockBar
 			bar.Open, bar.High, bar.Low, bar.Close,
 			bar.Volume,
 			bar.Transactions,
+			bar.MarketDate,
+			bar.SessionKind,
+			bar.IsRegularSession,
+			bar.SessionOpen,
+			bar.SessionSeq,
 		); err != nil {
 			return totalRows, fmt.Errorf("append stock row: %w", err)
 		}
@@ -188,12 +200,12 @@ func InsertStockBars(ctx context.Context, conn driver.Conn, bars <-chan StockBar
 	return totalRows, nil
 }
 
-// CountExistingOptionBars checks if option data already exists for a given date range.
-func CountExistingOptionBars(ctx context.Context, conn driver.Conn, from, to time.Time) (uint64, error) {
+// CountExistingOptionBars checks if option data already exists for a given market date.
+func CountExistingOptionBars(ctx context.Context, conn driver.Conn, marketDate time.Time) (uint64, error) {
 	var count uint64
 	err := conn.QueryRow(ctx,
-		`SELECT count() FROM us_options_bar_1m WHERE timestamp >= ? AND timestamp < ?`,
-		from, to,
+		`SELECT count() FROM us_options_bar_1m WHERE market_date = ?`,
+		marketDate,
 	).Scan(&count)
 	if err != nil {
 		return 0, fmt.Errorf("count existing option bars: %w", err)
@@ -201,12 +213,12 @@ func CountExistingOptionBars(ctx context.Context, conn driver.Conn, from, to tim
 	return count, nil
 }
 
-// CountExistingStockBars checks if stock data already exists for a given date range.
-func CountExistingStockBars(ctx context.Context, conn driver.Conn, from, to time.Time) (uint64, error) {
+// CountExistingStockBars checks if stock data already exists for a given market date.
+func CountExistingStockBars(ctx context.Context, conn driver.Conn, marketDate time.Time) (uint64, error) {
 	var count uint64
 	err := conn.QueryRow(ctx,
-		`SELECT count() FROM us_stocks_bar_1m WHERE timestamp >= ? AND timestamp < ?`,
-		from, to,
+		`SELECT count() FROM us_stocks_bar_1m WHERE market_date = ?`,
+		marketDate,
 	).Scan(&count)
 	if err != nil {
 		return 0, fmt.Errorf("count existing stock bars: %w", err)
@@ -236,7 +248,8 @@ func EnsureOptionGreeksColumns(ctx context.Context, conn driver.Conn) error {
 	return nil
 }
 
-func LoadStockCloseMap(ctx context.Context, conn driver.Conn, symbols []string, from, to time.Time) (map[stockCloseKey]float64, map[string]struct{}, error) {
+// LoadStockCloseMap loads all stock closes for a given market date.
+func LoadStockCloseMap(ctx context.Context, conn driver.Conn, symbols []string, marketDate time.Time) (map[stockCloseKey]float64, map[string]struct{}, error) {
 	stockCloses := make(map[stockCloseKey]float64)
 	seenSymbols := make(map[string]struct{}, len(symbols))
 
@@ -248,11 +261,9 @@ func LoadStockCloseMap(ctx context.Context, conn driver.Conn, symbols []string, 
 		`SELECT symbol, timestamp, close
 		FROM us_stocks_bar_1m
 		WHERE symbol IN ({symbols:Array(String)})
-		  AND timestamp >= toDateTime({from:String}, 'UTC')
-		  AND timestamp < toDateTime({to:String}, 'UTC')`,
+		  AND market_date = {market_date:Date}`,
 		clickhouse.Named("symbols", symbols),
-		clickhouse.Named("from", clickHouseTimeParam(from)),
-		clickhouse.Named("to", clickHouseTimeParam(to)),
+		clickhouse.Named("market_date", marketDate),
 	)
 	if err != nil {
 		return nil, nil, fmt.Errorf("query stock closes: %w", err)
@@ -276,8 +287,4 @@ func LoadStockCloseMap(ctx context.Context, conn driver.Conn, symbols []string, 
 	}
 
 	return stockCloses, seenSymbols, nil
-}
-
-func clickHouseTimeParam(t time.Time) string {
-	return t.UTC().Format("2006-01-02 15:04:05")
 }

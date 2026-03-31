@@ -23,6 +23,12 @@ type OptionBar1m struct {
 	Rho               float32
 	Volume            uint32
 	Transactions      uint32
+	// Session metadata
+	MarketDate       time.Time // trading date in America/New_York
+	SessionKind      string    // premarket | regular | postmarket | closed
+	IsRegularSession uint8
+	SessionOpen      time.Time // regular session open (UTC) for this market_date
+	SessionSeq       uint16    // minute index within regular session (0-based)
 }
 
 // StockBar1m is a 1-minute bar for a US equity stock from Polygon SIP data.
@@ -35,4 +41,10 @@ type StockBar1m struct {
 	Close        float32
 	Volume       uint32
 	Transactions uint32
+	// Session metadata
+	MarketDate       time.Time
+	SessionKind      string
+	IsRegularSession uint8
+	SessionOpen      time.Time
+	SessionSeq       uint16
 }

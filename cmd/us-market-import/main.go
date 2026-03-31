@@ -67,6 +67,18 @@ func main() {
 	}
 	log.Println("Base schema initialized")
 
+	if err := usmarket.EnsureSessionColumns(ctx, conn); err != nil {
+		log.Fatalf("ensure session columns: %v", err)
+	}
+	if err := usmarket.InitSessionCalendar(ctx, conn, 2003, 2035); err != nil {
+		log.Fatalf("init session calendar: %v", err)
+	}
+	sessions, err := usmarket.LoadSessionMap(ctx, conn)
+	if err != nil {
+		log.Fatalf("load session map: %v", err)
+	}
+	log.Printf("Session calendar loaded (%d entries)", len(sessions))
+
 	if err := usmarket.InitOptionKlineSchema(ctx, conn); err != nil {
 		log.Fatalf("init option kline schema: %v", err)
 	}
@@ -112,7 +124,7 @@ func main() {
 			defer wg.Done()
 			defer func() { <-sem }()
 
-			rows, wasSkipped, err := importStockFile(ctx, *dsn, path, *batchSize, *skipExisting)
+			rows, wasSkipped, err := importStockFile(ctx, *dsn, path, *batchSize, *skipExisting, sessions)
 			if err != nil {
 				log.Printf("[ERROR] %s: %v", filepath.Base(path), err)
 				atomic.AddInt64(&failed, 1)
@@ -137,7 +149,7 @@ func main() {
 			defer wg.Done()
 			defer func() { <-sem }()
 
-			rows, wasSkipped, err := importOptionFile(ctx, *dsn, path, *batchSize, *skipExisting, *riskFreeRate)
+			rows, wasSkipped, err := importOptionFile(ctx, *dsn, path, *batchSize, *skipExisting, *riskFreeRate, sessions)
 			if err != nil {
 				log.Printf("[ERROR] %s: %v", filepath.Base(path), err)
 				atomic.AddInt64(&failed, 1)
@@ -192,7 +204,7 @@ func extractDateFromFilename(path string) (time.Time, error) {
 	return t.UTC(), nil
 }
 
-func importOptionFile(ctx context.Context, dsn, path string, batchSize int, skipExisting bool, riskFreeRate float64) (int64, bool, error) {
+func importOptionFile(ctx context.Context, dsn, path string, batchSize int, skipExisting bool, riskFreeRate float64, sessions usmarket.SessionMap) (int64, bool, error) {
 	baseName := filepath.Base(path)
 	log.Printf("[START] option %s", baseName)
 	fileStart := time.Now()
@@ -202,14 +214,13 @@ func importOptionFile(ctx context.Context, dsn, path string, batchSize int, skip
 		return 0, false, fmt.Errorf("connect: %w", err)
 	}
 
-	fileDate, err := extractDateFromFilename(path)
+	marketDate, err := extractDateFromFilename(path)
 	if err != nil {
-		return 0, false, fmt.Errorf("extract file date: %w", err)
+		return 0, false, fmt.Errorf("extract market date: %w", err)
 	}
-	nextDay := fileDate.AddDate(0, 0, 1)
 
 	if skipExisting {
-		count, err := usmarket.CountExistingOptionBars(ctx, conn, fileDate, nextDay)
+		count, err := usmarket.CountExistingOptionBars(ctx, conn, marketDate)
 		if err != nil {
 			return 0, false, fmt.Errorf("check existing: %w", err)
 		}
@@ -218,7 +229,7 @@ func importOptionFile(ctx context.Context, dsn, path string, batchSize int, skip
 		}
 	}
 
-	stockCloses, err := usmarket.ValidateOptionStockCoverage(ctx, conn, path, fileDate)
+	stockCloses, err := usmarket.ValidateOptionStockCoverage(ctx, conn, path, marketDate)
 	if err != nil {
 		return 0, false, fmt.Errorf("validate stock coverage: %w", err)
 	}
@@ -228,7 +239,8 @@ func importOptionFile(ctx context.Context, dsn, path string, batchSize int, skip
 		return 0, false, fmt.Errorf("parse CSV: %w", err)
 	}
 
-	enrichedBarCh, enrichErr := usmarket.EnrichOptionBarsWithGreeks(barCh, stockCloses, usmarket.GreeksConfig{RiskFreeRate: riskFreeRate})
+	sessionedBarCh := usmarket.EnrichOptionBarsWithSession(barCh, sessions)
+	enrichedBarCh, enrichErr := usmarket.EnrichOptionBarsWithGreeks(sessionedBarCh, stockCloses, usmarket.GreeksConfig{RiskFreeRate: riskFreeRate})
 
 	rows, err := usmarket.InsertOptionBars(ctx, conn, enrichedBarCh, batchSize)
 	if err != nil {
@@ -245,7 +257,7 @@ func importOptionFile(ctx context.Context, dsn, path string, batchSize int, skip
 	return rows, false, nil
 }
 
-func importStockFile(ctx context.Context, dsn, path string, batchSize int, skipExisting bool) (int64, bool, error) {
+func importStockFile(ctx context.Context, dsn, path string, batchSize int, skipExisting bool, sessions usmarket.SessionMap) (int64, bool, error) {
 	baseName := filepath.Base(path)
 	log.Printf("[START] stock %s", baseName)
 	fileStart := time.Now()
@@ -256,10 +268,9 @@ func importStockFile(ctx context.Context, dsn, path string, batchSize int, skipE
 	}
 
 	if skipExisting {
-		fileDate, err := extractDateFromFilename(path)
+		marketDate, err := extractDateFromFilename(path)
 		if err == nil {
-			nextDay := fileDate.AddDate(0, 0, 1)
-			count, err := usmarket.CountExistingStockBars(ctx, conn, fileDate, nextDay)
+			count, err := usmarket.CountExistingStockBars(ctx, conn, marketDate)
 			if err != nil {
 				return 0, false, fmt.Errorf("check existing: %w", err)
 			}
@@ -274,7 +285,9 @@ func importStockFile(ctx context.Context, dsn, path string, batchSize int, skipE
 		return 0, false, fmt.Errorf("parse CSV: %w", err)
 	}
 
-	rows, err := usmarket.InsertStockBars(ctx, conn, barCh, batchSize)
+	sessionedBarCh := usmarket.EnrichStockBarsWithSession(barCh, sessions)
+
+	rows, err := usmarket.InsertStockBars(ctx, conn, sessionedBarCh, batchSize)
 	if err != nil {
 		return rows, false, fmt.Errorf("insert: %w", err)
 	}
