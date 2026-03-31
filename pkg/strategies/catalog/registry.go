@@ -14,6 +14,7 @@ type Registration struct {
 	Name    string
 	Aliases []string
 	Groups  []string
+	Profile StrategyProfile
 	Factory func(Config) (backtest.Strategy, error)
 }
 
@@ -21,7 +22,16 @@ type strategySpec struct {
 	name    string
 	aliases []string
 	groups  map[string]struct{}
+	profile StrategyProfile
 	factory func(Config) (backtest.Strategy, error)
+}
+
+// ResolvedStrategy keeps the built strategy alongside its registration profile.
+type ResolvedStrategy struct {
+	CanonicalName string
+	Strategy      backtest.Strategy
+	Profile       StrategyProfile
+	Runtime       StrategyRuntimeProfile
 }
 
 var (
@@ -79,6 +89,7 @@ func TryRegister(reg Registration) error {
 		name:    name,
 		aliases: nil,
 		groups:  groups,
+		profile: reg.Profile.Normalized(),
 		factory: reg.Factory,
 	}
 	strategiesByName[name] = spec
@@ -103,6 +114,19 @@ func TryRegister(reg Registration) error {
 // Resolve returns one or more strategy instances based on a strategy name,
 // alias, group name, or comma-separated list.
 func Resolve(request string, cfg Config) ([]backtest.Strategy, error) {
+	detailed, err := ResolveDetailed(request, cfg, "")
+	if err != nil {
+		return nil, err
+	}
+	out := make([]backtest.Strategy, 0, len(detailed))
+	for _, item := range detailed {
+		out = append(out, item.Strategy)
+	}
+	return out, nil
+}
+
+// ResolveDetailed returns strategy instances together with their profile data.
+func ResolveDetailed(request string, cfg Config, baseAsset string) ([]ResolvedStrategy, error) {
 	registryMu.RLock()
 	defer registryMu.RUnlock()
 
@@ -111,9 +135,9 @@ func Resolve(request string, cfg Config) ([]backtest.Strategy, error) {
 		parts = []string{defaultStrategyName}
 	}
 
-	out := make([]backtest.Strategy, 0, len(parts))
+	out := make([]ResolvedStrategy, 0, len(parts))
 	for _, part := range parts {
-		resolved, err := resolveOneLocked(part, cfg)
+		resolved, err := resolveOneLocked(part, cfg, baseAsset)
 		if err != nil {
 			return nil, err
 		}
@@ -136,7 +160,7 @@ func Available() []string {
 	return names
 }
 
-func resolveOneLocked(name string, cfg Config) ([]backtest.Strategy, error) {
+func resolveOneLocked(name string, cfg Config, baseAsset string) ([]ResolvedStrategy, error) {
 	key := normalize(name)
 	if key == "" {
 		return nil, fmt.Errorf("empty strategy name")
@@ -149,7 +173,7 @@ func resolveOneLocked(name string, cfg Config) ([]backtest.Strategy, error) {
 
 	if strings.HasPrefix(mapped, "@group:") {
 		groupName := strings.TrimPrefix(mapped, "@group:")
-		return buildGroupLocked(groupName, cfg)
+		return buildGroupLocked(groupName, cfg, baseAsset)
 	}
 
 	spec, exists := strategiesByName[mapped]
@@ -160,16 +184,23 @@ func resolveOneLocked(name string, cfg Config) ([]backtest.Strategy, error) {
 	if err != nil {
 		return nil, fmt.Errorf("build strategy %q: %w", mapped, err)
 	}
-	return []backtest.Strategy{built}, nil
+	runtime := buildRuntimeProfile(mapped, spec.profile, baseAsset)
+	runtime.DisplayName = built.Name()
+	return []ResolvedStrategy{{
+		CanonicalName: mapped,
+		Strategy:      built,
+		Profile:       spec.profile,
+		Runtime:       runtime,
+	}}, nil
 }
 
-func buildGroupLocked(groupName string, cfg Config) ([]backtest.Strategy, error) {
+func buildGroupLocked(groupName string, cfg Config, baseAsset string) ([]ResolvedStrategy, error) {
 	groupName = normalize(groupName)
 	if groupName == "" {
 		return nil, fmt.Errorf("empty group name")
 	}
 
-	out := make([]backtest.Strategy, 0)
+	out := make([]ResolvedStrategy, 0)
 	for _, name := range orderedStrategies {
 		spec := strategiesByName[name]
 		if spec == nil {
@@ -182,7 +213,14 @@ func buildGroupLocked(groupName string, cfg Config) ([]backtest.Strategy, error)
 		if err != nil {
 			return nil, fmt.Errorf("build strategy %q: %w", name, err)
 		}
-		out = append(out, built)
+		runtime := buildRuntimeProfile(name, spec.profile, baseAsset)
+		runtime.DisplayName = built.Name()
+		out = append(out, ResolvedStrategy{
+			CanonicalName: name,
+			Strategy:      built,
+			Profile:       spec.profile,
+			Runtime:       runtime,
+		})
 	}
 
 	if len(out) == 0 {

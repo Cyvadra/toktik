@@ -57,8 +57,59 @@ func TestBuildHTMLViewIncludesHoverColumns(t *testing.T) {
 	if payload[0].Label != "Donchian Upper" || len(payload[0].Values) != 2 {
 		t.Fatalf("unexpected first hover column payload: %#v", payload[0])
 	}
-	if payload[1].Label != "ATR" || payload[1].Values[1].Value != 860 {
+	if payload[1].Label != "ATR" || payload[1].Values[1].Value == nil || *payload[1].Values[1].Value != 860 {
 		t.Fatalf("unexpected second hover column payload: %#v", payload[1])
+	}
+}
+
+func TestBuildHTMLViewPreservesLeadingWhitespaceForFeatureSeries(t *testing.T) {
+	result := &backtest.Result{
+		StrategyName:   "test",
+		StartTime:      time.Date(2024, time.January, 1, 0, 0, 0, 0, time.UTC),
+		EndTime:        time.Date(2024, time.January, 1, 2, 0, 0, 0, time.UTC),
+		BarsCount:      3,
+		InitialCapital: 100,
+		FinalEquity:    101,
+		EquityCurve:    []float64{100, 100.5, 101},
+		Timestamps: []time.Time{
+			time.Date(2024, time.January, 1, 0, 0, 0, 0, time.UTC),
+			time.Date(2024, time.January, 1, 1, 0, 0, 0, time.UTC),
+			time.Date(2024, time.January, 1, 2, 0, 0, 0, time.UTC),
+		},
+		Series: map[string][]float64{
+			"open":    {60000, 60100, 60200},
+			"high":    {60200, 60300, 60400},
+			"low":     {59900, 60050, 60150},
+			"close":   {60150, 60250, 60350},
+			"feature": {math.NaN(), math.NaN(), 42},
+		},
+		ReportColumns: []backtest.ReportColumn{{
+			Source:   "feature",
+			Label:    "Feature",
+			Decimals: 1,
+		}},
+	}
+
+	view := buildHTMLView(result, HTMLMeta{})
+
+	var payload []hoverColumnPayload
+	if err := json.Unmarshal([]byte(view.HoverColumnsData), &payload); err != nil {
+		t.Fatalf("json.Unmarshal(HoverColumnsData) error = %v", err)
+	}
+	if len(payload) != 1 {
+		t.Fatalf("len(payload) = %d, want 1", len(payload))
+	}
+	if len(payload[0].Values) != len(result.Timestamps) {
+		t.Fatalf("len(payload[0].Values) = %d, want %d", len(payload[0].Values), len(result.Timestamps))
+	}
+	if payload[0].Values[0].Value != nil || payload[0].Values[1].Value != nil {
+		t.Fatalf("expected leading whitespace points, got %#v", payload[0].Values)
+	}
+	if payload[0].Values[2].Value == nil || *payload[0].Values[2].Value != 42 {
+		t.Fatalf("unexpected final feature point: %#v", payload[0].Values[2])
+	}
+	if payload[0].Values[0].Time != result.Timestamps[0].Unix() || payload[0].Values[1].Time != result.Timestamps[1].Unix() {
+		t.Fatalf("expected whitespace points to retain original timestamps, got %#v", payload[0].Values)
 	}
 }
 
@@ -629,11 +680,11 @@ func TestWriteBacktestHTMLIncludesSpreadGroupSections(t *testing.T) {
 				}},
 			},
 			{
-				ID:          2,
-				Tag:         "standalone",
-				Status:      "open",
-				OpenTime:    openTime.Add(24 * time.Hour),
-				DaysHeld:    6,
+				ID:       2,
+				Tag:      "standalone",
+				Status:   "open",
+				OpenTime: openTime.Add(24 * time.Hour),
+				DaysHeld: 6,
 				Legs: []backtest.SpreadLegReport{{
 					Symbol:      "BTC-20240112-52000-P",
 					Side:        "buy",

@@ -26,6 +26,7 @@ func init() {
 		Name:    defaultStrategyName,
 		Aliases: []string{defaultStrategyAlias1, defaultStrategyAlias2},
 		Groups:  []string{"trend", "spot"},
+		Profile: catalog.StrategyProfile{RegularTrade: catalog.RegularTradeMaterial},
 		Factory: func(cfg catalog.Config) (backtest.Strategy, error) {
 			fastPeriod := catalog.IntOrDefault(cfg.FastPeriod, defaultFastPeriod)
 			slowPeriod := catalog.IntOrDefault(cfg.SlowPeriod, defaultSlowPeriod)
@@ -137,8 +138,8 @@ func (s *strategy) OnBar(ctx *backtest.BarContext) {
 	}
 
 	stopPrice := s.highestSinceEntry - s.atrMultiplier*atr
-	if !math.IsNaN(stopPrice) && ctx.Low() <= stopPrice {
-		ctx.ClosePositionStopNowWithNote(primary, stopPrice, 0.005, "ema trend intrabar stop")
+	if shouldQueueTrailExit(ctx.Low(), stopPrice) {
+		ctx.ClosePosition(primary)
 		s.highestSinceEntry = math.NaN()
 	}
 }
@@ -161,6 +162,13 @@ func shouldExitTrend(closePrice, emaFast, emaSlow float64) bool {
 		return false
 	}
 	return closePrice < emaFast && emaFast < emaSlow
+}
+
+func shouldQueueTrailExit(lowPrice, stopPrice float64) bool {
+	if math.IsNaN(lowPrice) || math.IsNaN(stopPrice) {
+		return false
+	}
+	return lowPrice <= stopPrice
 }
 
 func positionSizeFromBudget(cash, equity, price, positionPct float64) float64 {

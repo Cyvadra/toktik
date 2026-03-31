@@ -47,6 +47,7 @@ func init() {
 		Name:    strategyName,
 		Aliases: []string{strategyAlias},
 		Groups:  []string{"options", "spread", "timed"},
+		Profile: catalog.StrategyProfile{UsesOptions: true, RegularTrade: catalog.RegularTradeNone},
 		Factory: func(cfg catalog.Config) (backtest.Strategy, error) {
 			signals, err := loadSignals(signalCSVPath)
 			if err != nil {

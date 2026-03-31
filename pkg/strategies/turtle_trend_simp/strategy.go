@@ -15,6 +15,7 @@ func init() {
 		Name:    "turtle-trend-simp",
 		Aliases: []string{"turtle_trend_simp", "turtle-trend"},
 		Groups:  []string{"trend", "single-leg"},
+		Profile: catalog.StrategyProfile{UsesOptions: true, RegularTrade: catalog.RegularTradeSignalOnly},
 		Factory: func(cfg catalog.Config) (backtest.Strategy, error) {
 			return &turtleTrendSimpStrategy{
 				EntryPriceMode:     cfg.EntryPriceMode,

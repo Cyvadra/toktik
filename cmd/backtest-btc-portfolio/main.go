@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+
 	"github.com/Cyvadra/toktik/internal/backtest"
 	appCli "github.com/Cyvadra/toktik/internal/cli"
 	"github.com/Cyvadra/toktik/internal/datafeed"
@@ -27,19 +29,17 @@ func main() {
 	interval := flag.String("interval", "1h", "Bar interval for the strategy (e.g. 1h)")
 	fromStr := flag.String("from", "", "Start date YYYY-MM-DD (required)")
 	toStr := flag.String("to", "", "End date YYYY-MM-DD (required)")
-	capital := flag.Float64("capital", 0, "Initial capital in base asset units (e.g. BTC) (required)")
+	capital := flag.Float64("capital", 0, "Initial capital. Regular-only strategies interpret it as USD; options-led strategies interpret it as BTC. (required)")
 	strategyHelp := fmt.Sprintf(
 		"Strategy selector: name, alias, group, or comma list. Available names: %s. Group aliases: both=spread, all=all",
 		strings.Join(strategies.Available(), " | "),
 	)
-	stratName := flag.String("strategy", "both",
-		strategyHelp)
-	commModel := flag.String("commission-model", "none",
-		"Commission model: none | flat | percent | per-unit")
+	stratName := flag.String("strategy", "both", strategyHelp)
+	commModel := flag.String("commission-model", "none", "Commission model: none | flat | percent | per-unit")
 	commValue := flag.Float64("commission-value", 0, "Commission value")
 	slippagePct := flag.Float64("slippage-pct", 0, "Slippage fraction (0 = none)")
 	outputJSON := flag.String("output", "", "Optional JSON output file path")
-	outputHTML := flag.String("html-output", "", "Optional HTML report output path (defaults to reports/backtests/<strategy>_<period>.html; multi-strategy runs emit one combined file)")
+	outputHTML := flag.String("html-output", "", "Optional HTML report output path (single strategy: detail report; multi-strategy: overview page with adjacent detail pages)")
 	positionSize := flag.Float64("position-size", 0, "Contracts per leg when opening a spread; when unset, the strategy decides")
 	maxHoldHours := flag.Float64("max-hold-hours", 0, "Maximum holding time in hours; when unset, the strategy decides")
 	targetExpiryDays := flag.Int("target-expiry-days", 0, "Target days to expiry when selecting contracts; when unset, the strategy decides")
@@ -150,7 +150,7 @@ func main() {
 	strategyCfg.PThreshold = *pThreshold
 	strategyCfg.Direction = tradeDirection
 
-	strats, err := strategies.Resolve(*stratName, strategyCfg)
+	resolved, err := strategies.ResolveDetailed(*stratName, strategyCfg, *baseAsset)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "strategy resolve failed: %v\n", err)
 		os.Exit(1)
@@ -179,38 +179,46 @@ func main() {
 		}
 	}()
 
-	cfg := backtest.Config{
-		InitialCapital:  *capital,
-		AccountUnit:     strings.ToUpper(strings.TrimSpace(*baseAsset)),
-		CommissionModel: commissionModel,
-		CommissionValue: *commValue,
-		SlippagePct:     *slippagePct,
-		ExecutionMode:   backtest.ExecutionPriceCanonical,
-		ValuationMode:   backtest.ValuationPriceClose,
-		TriggerMode:     backtest.TriggerPriceCanonical,
-	}
-
-	log.Printf("Loading options chain for %s (%s) [%s → %s]...",
-		*baseAsset, *interval, from.Format("2006-01-02"), to.Format("2006-01-02"))
-	chainProvider, err := datafeed.NewCryptoOptionsChainProvider(ctx, conn, *baseAsset, *interval, from, to)
-	if err != nil {
-		log.Fatalf("Failed to load options chain: %v", err)
-	}
-
-	// Build the engine once so all strategy runs share the same data feeds.
-	engine := backtest.NewEngine(cfg)
-	engine.RegisterDataFeed("crypto-underlying", datafeed.NewCryptoUnderlyingDataFeed(conn))
-	engine.RegisterFactorFeed("dvol", datafeed.NewFeedFactorBridge("dvol", factorStore))
-	engine.SetOptionsChainProvider(chainProvider)
-
-	results := make([]*backtest.Result, 0, len(strats))
-
-	for i, strat := range strats {
-		log.Printf("--- Running strategy: %s ---", strat.Name())
-		result, runErr := engine.Run(ctx, "crypto-underlying", *baseAsset, *interval, from, to, strat, nil)
-		if runErr != nil {
-			log.Fatalf("Backtest failed [%s]: %v", strat.Name(), runErr)
+	var chainProvider backtest.OptionsChainProvider
+	if strategiesNeedOptions(resolved) {
+		log.Printf("Loading options chain for %s (%s) [%s → %s]...",
+			*baseAsset, *interval, from.Format("2006-01-02"), to.Format("2006-01-02"))
+		chainProvider, err = datafeed.NewCryptoOptionsChainProvider(ctx, conn, *baseAsset, *interval, from, to)
+		if err != nil {
+			log.Fatalf("Failed to load options chain: %v", err)
 		}
+	}
+
+	results := make([]*backtest.Result, 0, len(resolved))
+	overviewItems := make([]report.OverviewItem, 0, len(resolved))
+	htmlMeta := report.HTMLMeta{
+		Asset:       *baseAsset,
+		Interval:    *interval,
+		GeneratedAt: time.Now(),
+	}
+
+	for index, item := range resolved {
+		cfg := backtest.Config{
+			InitialCapital:  *capital,
+			AccountUnit:     item.Runtime.CapitalUnit,
+			CommissionModel: commissionModel,
+			CommissionValue: *commValue,
+			SlippagePct:     *slippagePct,
+			ExecutionMode:   backtest.ExecutionPriceCanonical,
+			ValuationMode:   backtest.ValuationPriceClose,
+			TriggerMode:     backtest.TriggerPriceCanonical,
+		}
+
+		engine := newEngine(cfg, conn, factorStore, chainProvider, item.Profile.UsesOptions)
+
+		log.Printf("--- Running strategy: %s [%s, %s] ---", item.Strategy.Name(), item.Runtime.ProfileLabel, strings.ToUpper(item.Runtime.CapitalUnit))
+		result, runErr := engine.Run(ctx, "crypto-underlying", *baseAsset, *interval, from, to, item.Strategy, nil)
+		if runErr != nil {
+			log.Fatalf("Backtest failed [%s]: %v", item.Strategy.Name(), runErr)
+		}
+		result.CapitalMode = strings.ToUpper(item.Runtime.CapitalUnit)
+		result.CapitalProfile = item.Runtime.ProfileLabel
+		result.CapitalNote = item.Runtime.CapitalExplanation
 		results = append(results, result)
 
 		fmt.Println()
@@ -220,40 +228,54 @@ func main() {
 		}
 
 		if *outputJSON != "" {
-			outPath := resolveOutputPath(*outputJSON, i, len(strats))
+			outPath := resolveOutputPath(*outputJSON, index, len(resolved))
 			if prepErr := ensureParentDir(outPath); prepErr != nil {
 				log.Printf("Warning: failed to prepare output directory for %s: %v", outPath, prepErr)
-				continue
-			}
-			if writeErr := result.ExportJSON(outPath); writeErr != nil {
+			} else if writeErr := result.ExportJSON(outPath); writeErr != nil {
 				log.Printf("Warning: failed to write JSON to %s: %v", outPath, writeErr)
 			} else {
 				log.Printf("Results written to %s", outPath)
 			}
 		}
-	}
 
-	htmlMeta := report.HTMLMeta{
-		Asset:       *baseAsset,
-		Interval:    *interval,
-		GeneratedAt: time.Now(),
-	}
-	if len(results) == 1 {
-		htmlPath := resolveHTMLOutputPath(*outputHTML, results[0].StrategyName, *baseAsset, *interval, from, to, 0, 1)
-		if writeErr := report.WriteBacktestHTML(htmlPath, results[0], htmlMeta); writeErr != nil {
+		htmlPath := resolveHTMLOutputPath(*outputHTML, result.StrategyName, *baseAsset, *interval, from, to, index, len(resolved))
+		if writeErr := report.WriteBacktestHTML(htmlPath, result, htmlMeta); writeErr != nil {
 			log.Printf("Warning: failed to write HTML report to %s: %v", htmlPath, writeErr)
 		} else {
 			log.Printf("HTML report written to %s", htmlPath)
+			overviewItems = append(overviewItems, report.OverviewItem{Result: result, HTMLPath: htmlPath})
 		}
+	}
+
+	if len(results) == 1 {
 		return
 	}
 
-	htmlPath := resolveCombinedHTMLOutputPath(*outputHTML, *stratName, *baseAsset, *interval, from, to)
-	if writeErr := report.WriteCombinedBacktestHTML(htmlPath, results, htmlMeta); writeErr != nil {
-		log.Printf("Warning: failed to write combined HTML report to %s: %v", htmlPath, writeErr)
+	overviewPath := resolveOverviewHTMLOutputPath(*outputHTML, *stratName, *baseAsset, *interval, from, to)
+	if writeErr := report.WriteBacktestOverviewHTML(overviewPath, overviewItems, htmlMeta); writeErr != nil {
+		log.Printf("Warning: failed to write overview HTML report to %s: %v", overviewPath, writeErr)
 	} else {
-		log.Printf("Combined HTML report written to %s", htmlPath)
+		log.Printf("Overview HTML report written to %s", overviewPath)
 	}
+}
+
+func newEngine(cfg backtest.Config, conn driver.Conn, factorStore *feeds.Store, chainProvider backtest.OptionsChainProvider, usesOptions bool) *backtest.Engine {
+	engine := backtest.NewEngine(cfg)
+	engine.RegisterDataFeed("crypto-underlying", datafeed.NewCryptoUnderlyingDataFeed(conn))
+	engine.RegisterFactorFeed("dvol", datafeed.NewFeedFactorBridge("dvol", factorStore))
+	if usesOptions && chainProvider != nil {
+		engine.SetOptionsChainProvider(chainProvider)
+	}
+	return engine
+}
+
+func strategiesNeedOptions(items []strategies.ResolvedStrategy) bool {
+	for _, item := range items {
+		if item.Profile.UsesOptions {
+			return true
+		}
+	}
+	return false
 }
 
 func mustParseOptionPriceMode(value, flagName string) backtest.OptionPriceMode {
@@ -266,7 +288,6 @@ func mustParseOptionPriceMode(value, flagName string) backtest.OptionPriceMode {
 	return mode
 }
 
-// parseCommissionModel converts a string flag to the CommissionModel enum.
 func parseCommissionModel(s string) (backtest.CommissionModel, error) {
 	switch strings.ToLower(strings.TrimSpace(s)) {
 	case "none", "":
@@ -292,7 +313,6 @@ func parseTradeDirection(raw string) (strategies.TradeDirection, error) {
 	}
 }
 
-// printSpreadSummary prints a human-readable options spread summary.
 func printSpreadSummary(s *backtest.SpreadSummary, unit string) {
 	fmt.Printf("Spread Summary:\n")
 	fmt.Printf("  Total spreads:    %d\n", s.TotalSpreads)
@@ -308,7 +328,6 @@ func printSpreadSummary(s *backtest.SpreadSummary, unit string) {
 	fmt.Printf("  Total spread PnL: %.4f %s\n", s.TotalPnL, unit)
 }
 
-// resolveOutputPath appends an index suffix when multiple strategies share one output flag.
 func resolveOutputPath(base string, index, total int) string {
 	if total == 1 {
 		return base
@@ -376,13 +395,13 @@ func resolveHTMLOutputPath(base, strategyName, asset, interval string, from, to 
 	return filepath.Join(defaultBacktestHTMLDir, fileName)
 }
 
-func resolveCombinedHTMLOutputPath(base, strategyName, asset, interval string, from, to time.Time) string {
+func resolveOverviewHTMLOutputPath(base, strategyName, asset, interval string, from, to time.Time) string {
 	if strings.TrimSpace(base) != "" {
 		return base
 	}
 	name := slugify(strategyName)
 	if name == "" {
-		name = "combined"
+		name = "overview"
 	}
 	fileName := fmt.Sprintf(
 		"%s_%s_%s_%s_%s.html",
@@ -405,7 +424,6 @@ func slugify(value string) string {
 	return strings.Trim(value, "-")
 }
 
-// sanitizeDSN redacts any password from the DSN before logging.
 func sanitizeDSN(dsn string) string {
 	if at := strings.Index(dsn, "@"); at >= 0 {
 		if scheme := strings.Index(dsn, "://"); scheme >= 0 {

@@ -51,6 +51,7 @@ func init() {
 		Name:    "buy-flash-low",
 		Aliases: []string{"buy_flash_low"},
 		Groups:  []string{"momentum", "single-leg"},
+		Profile: catalog.StrategyProfile{UsesOptions: true, RegularTrade: catalog.RegularTradeSignalOnly},
 		Factory: func(cfg catalog.Config) (backtest.Strategy, error) {
 			return &buyFlashLowStrategy{
 				EntryPriceMode:     cfg.EntryPriceMode,

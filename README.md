@@ -28,7 +28,7 @@ make build-convert
 make build-import
 make build-kline-backfill
 make build-kline-migrate-utc
-make build-backtest-btc-options
+make build-backtest-btc-portfolio
 make build-us-market-import
 
 # Cross-compile
@@ -148,9 +148,9 @@ bin/backtest-example \
   --capital 1.0
 ```
 
-**BTC options spread strategy:**
+**BTC portfolio backtest strategy:**
 ```bash
-bin/backtest-btc-options \
+bin/backtest-btc-portfolio \
   --clickhouse-dsn "clickhouse://localhost:9000/default" \
   --asset BTC \
   --interval 1h \
@@ -166,9 +166,14 @@ bin/backtest-btc-options \
   --html-output report.html
 ```
 
+`--capital` is interpreted per strategy profile:
+- Regular-only strategies use `USD`.
+- Options-led strategies, or strategies whose spot leg is only a signal-sized sidecar, use `BTC`.
+- Multi-strategy runs emit one overview HTML plus one detail page per strategy so mixed denomination runs remain readable.
+
 **BTC forum-style short put strategy:**
 ```bash
-bin/backtest-btc-options \
+bin/backtest-btc-portfolio \
   --clickhouse-dsn "clickhouse://localhost:9000/default" \
   --asset BTC \
   --interval 1h \
@@ -303,7 +308,7 @@ Order types: `Buy`, `Sell`, `BuyTWAP`, `ClosePosition`, plus direct `Broker` acc
 ```
 cmd/
   api-server/             REST API server
-  backtest-btc-options/   BTC options spread backtester
+  backtest-btc-portfolio/ BTC spot/options portfolio backtester
   backtest-example/       Simple strategy examples
   crypto-options-convert/ CSV.zst → Parquet converter
   crypto-options-import/  Parquet → ClickHouse importer

@@ -14,6 +14,9 @@ type resultJSONExport struct {
 	InitialCapital   *float64 `json:"initial_capital"`
 	FinalEquity      *float64 `json:"final_equity"`
 	AccountUnit      string   `json:"account_unit,omitempty"`
+	CapitalMode      string   `json:"capital_mode,omitempty"`
+	CapitalProfile   string   `json:"capital_profile,omitempty"`
+	CapitalNote      string   `json:"capital_note,omitempty"`
 	TotalReturn      *float64 `json:"total_return"`
 	AnnualizedReturn *float64 `json:"annualized_return"`
 	SharpeRatio      *float64 `json:"sharpe_ratio"`
@@ -138,6 +141,9 @@ func (r *Result) jsonExport() resultJSONExport {
 		InitialCapital:   jsonFloat(r.InitialCapital),
 		FinalEquity:      jsonFloat(r.FinalEquity),
 		AccountUnit:      r.AccountUnit,
+		CapitalMode:      r.CapitalMode,
+		CapitalProfile:   r.CapitalProfile,
+		CapitalNote:      r.CapitalNote,
 		TotalReturn:      jsonFloat(r.TotalReturn),
 		AnnualizedReturn: jsonFloat(r.AnnualizedReturn),
 		SharpeRatio:      jsonFloat(r.SharpeRatio),

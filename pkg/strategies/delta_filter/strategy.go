@@ -9,8 +9,9 @@ const defaultEntryTWAPBars = 1
 
 func init() {
 	catalog.Register(catalog.Registration{
-		Name:   "delta-filter",
-		Groups: []string{"signal"},
+		Name:    "delta-filter",
+		Groups:  []string{"signal"},
+		Profile: catalog.StrategyProfile{RegularTrade: catalog.RegularTradeMaterial},
 		Factory: func(cfg catalog.Config) (backtest.Strategy, error) {
 			return &deltaFilterStrategy{entryTWAP: catalog.IntOrDefault(cfg.EntryTWAPBars, defaultEntryTWAPBars)}, nil
 		},

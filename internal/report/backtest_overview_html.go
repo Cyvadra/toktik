@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/Cyvadra/toktik/internal/backtest"
@@ -36,6 +37,8 @@ type overviewReportView struct {
 type overviewStrategyView struct {
 	Name           string
 	HTMLLink       string
+	CapitalMode    string
+	CapitalProfile string
 	FinalEquity    string
 	NetPnL         string
 	TotalReturn    string
@@ -139,6 +142,8 @@ func buildOverviewView(outputPath string, items []OverviewItem, meta HTMLMeta) o
 		view.Strategies = append(view.Strategies, overviewStrategyView{
 			Name:           result.StrategyName,
 			HTMLLink:       link,
+			CapitalMode:    fallbackText(strings.TrimSpace(result.CapitalMode), strings.TrimSpace(result.AccountUnit)),
+			CapitalProfile: fallbackText(strings.TrimSpace(result.CapitalProfile), "未标注"),
 			FinalEquity:    amount(result.FinalEquity, result.AccountUnit),
 			NetPnL:         signedAmount(result.FinalEquity-result.InitialCapital, result.AccountUnit),
 			TotalReturn:    pct(result.TotalReturn),
@@ -265,7 +270,7 @@ const overviewHTMLTemplate = `<!DOCTYPE html>
           <div class="max-w-3xl">
             <p class="font-mono text-xs uppercase tracking-[0.3em] text-tide/80">Strategy Overview</p>
             <h1 class="mt-3 text-3xl font-extrabold tracking-tight text-white sm:text-5xl">{{ .Asset }} {{ .Interval }} Multi-Run Dashboard</h1>
-            <p class="mt-4 text-sm leading-6 text-slate-300 sm:text-base">{{ .Period }}. This overview compares strategy outcomes side by side and links to each detailed HTML report.</p>
+			<p class="mt-4 text-sm leading-6 text-slate-300 sm:text-base">{{ .Period }}. This overview compares strategy outcomes side by side, and each row keeps its own capital denomination so spot-only and options-led runs can coexist safely.</p>
           </div>
           <div class="grid gap-3 text-sm text-slate-300 sm:grid-cols-2">
             <div class="rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
@@ -334,6 +339,8 @@ const overviewHTMLTemplate = `<!DOCTYPE html>
               <thead class="bg-canvas/90 text-left text-slate-400">
                 <tr>
                   <th class="px-4 py-3 font-medium">Strategy</th>
+				  <th class="px-4 py-3 font-medium">Capital</th>
+				  <th class="px-4 py-3 font-medium">Profile</th>
                   <th class="px-4 py-3 font-medium">Final Equity</th>
                   <th class="px-4 py-3 font-medium">Net PnL</th>
                   <th class="px-4 py-3 font-medium">Return</th>
@@ -351,6 +358,8 @@ const overviewHTMLTemplate = `<!DOCTYPE html>
                 {{ range .Strategies }}
                 <tr>
                   <td class="px-4 py-3 font-semibold text-white">{{ .Name }}</td>
+									<td class="px-4 py-3 font-mono text-slate-200">{{ .CapitalMode }}</td>
+									<td class="px-4 py-3 text-slate-200">{{ .CapitalProfile }}</td>
                   <td class="px-4 py-3 font-mono text-slate-200">{{ .FinalEquity }}</td>
                   <td class="px-4 py-3 font-mono text-slate-200">{{ .NetPnL }}</td>
                   <td class="px-4 py-3 font-mono {{ .ReturnClass }}">{{ .TotalReturn }}</td>

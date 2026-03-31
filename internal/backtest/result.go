@@ -18,6 +18,9 @@ type Result struct {
 	InitialCapital   float64 `json:"initial_capital"`
 	FinalEquity      float64 `json:"final_equity"`
 	AccountUnit      string  `json:"account_unit,omitempty"`
+	CapitalMode      string  `json:"capital_mode,omitempty"`
+	CapitalProfile   string  `json:"capital_profile,omitempty"`
+	CapitalNote      string  `json:"capital_note,omitempty"`
 	TotalReturn      float64 `json:"total_return"` // as fraction, e.g. 0.15 = 15%
 	AnnualizedReturn float64 `json:"annualized_return"`
 	SharpeRatio      float64 `json:"sharpe_ratio"`
@@ -159,9 +162,24 @@ func (r *Result) ExportJSON(path string) error {
 // Summary returns a compact text summary of the result.
 func (r *Result) Summary() string {
 	unit := strings.TrimSpace(r.AccountUnit)
+	capitalMode := ""
+	if strings.TrimSpace(r.CapitalMode) != "" {
+		capitalMode = "Capital Mode:      " + strings.TrimSpace(r.CapitalMode) + "\n"
+	}
+	capitalProfile := ""
+	if strings.TrimSpace(r.CapitalProfile) != "" {
+		capitalProfile = "Capital Profile:   " + strings.TrimSpace(r.CapitalProfile) + "\n"
+	}
+	capitalNote := ""
+	if strings.TrimSpace(r.CapitalNote) != "" {
+		capitalNote = "Capital Note:      " + strings.TrimSpace(r.CapitalNote) + "\n"
+	}
 	return "Strategy:          " + r.StrategyName + "\n" +
 		"Period:            " + r.StartTime.Format("2006-01-02") + " to " + r.EndTime.Format("2006-01-02") + "\n" +
 		"Bars:              " + itoa(r.BarsCount) + "\n" +
+		capitalMode +
+		capitalProfile +
+		capitalNote +
 		"Initial Capital:   " + formatSummaryAmount(r.InitialCapital, unit) + "\n" +
 		"Final Equity:      " + formatSummaryAmount(r.FinalEquity, unit) + "\n" +
 		"Total Return:      " + pct(r.TotalReturn) + "\n" +

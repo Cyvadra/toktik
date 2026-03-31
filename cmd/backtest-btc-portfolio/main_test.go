@@ -185,3 +185,17 @@ func TestClearHTMLFiles(t *testing.T) {
 		}
 	})
 }
+
+func TestStrategiesNeedOptions(t *testing.T) {
+	t.Parallel()
+
+	items := []strategies.ResolvedStrategy{{Profile: strategies.StrategyProfile{RegularTrade: strategies.RegularTradeMaterial}}}
+	if strategiesNeedOptions(items) {
+		t.Fatalf("strategiesNeedOptions() = true, want false")
+	}
+
+	items = append(items, strategies.ResolvedStrategy{Profile: strategies.StrategyProfile{UsesOptions: true}})
+	if !strategiesNeedOptions(items) {
+		t.Fatalf("strategiesNeedOptions() = false, want true")
+	}
+}

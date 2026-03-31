@@ -16,6 +16,7 @@ func init() {
 		Name:    "golden-cross",
 		Aliases: []string{"golden_cross"},
 		Groups:  []string{"trend"},
+		Profile: catalog.StrategyProfile{RegularTrade: catalog.RegularTradeMaterial},
 		Factory: func(cfg catalog.Config) (backtest.Strategy, error) {
 			return &goldenCrossStrategy{
 				fastPeriod: catalog.IntOrDefault(cfg.FastPeriod, defaultFastPeriod),

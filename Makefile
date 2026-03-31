@@ -3,9 +3,9 @@ BUILD_DIR := bin
 GOFLAGS := -trimpath
 LDFLAGS := -s -w
 
-.PHONY: build-convert build-import build-missing-days build-kline-backfill build-kline-migrate-utc build-api build-backtest-example build-backtest-btc-options build-us-market-import build-all build-win-arm clean
+.PHONY: build-convert build-import build-missing-days build-kline-backfill build-kline-migrate-utc build-api build-backtest-example build-backtest-btc-portfolio build-us-market-import build-all build-win-arm clean
 
-build-all: build-convert build-import build-missing-days build-kline-backfill build-kline-migrate-utc build-api build-backtest-example build-backtest-btc-options build-us-market-import
+build-all: build-convert build-import build-missing-days build-kline-backfill build-kline-migrate-utc build-api build-backtest-example build-backtest-btc-portfolio build-us-market-import
 
 build-convert:
 	@mkdir -p $(BUILD_DIR)
@@ -35,9 +35,9 @@ build-backtest-example:
 	@mkdir -p $(BUILD_DIR)
 	go build $(GOFLAGS) -ldflags '$(LDFLAGS)' -o $(BUILD_DIR)/backtest-example ./cmd/backtest-example
 
-build-backtest-btc-options:
+build-backtest-btc-portfolio:
 	@mkdir -p $(BUILD_DIR)
-	go build $(GOFLAGS) -ldflags '$(LDFLAGS)' -o $(BUILD_DIR)/backtest-btc-options ./cmd/backtest-btc-options
+	go build $(GOFLAGS) -ldflags '$(LDFLAGS)' -o $(BUILD_DIR)/backtest-btc-portfolio ./cmd/backtest-btc-portfolio
 
 build-us-market-import:
 	@mkdir -p $(BUILD_DIR)

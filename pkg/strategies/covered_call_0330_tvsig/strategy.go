@@ -75,6 +75,7 @@ func init() {
 		Name:    strategyName,
 		Aliases: []string{strategyAlias},
 		Groups:  []string{"options", "spread", "timed"},
+		Profile: catalog.StrategyProfile{UsesOptions: true, RegularTrade: catalog.RegularTradeNone},
 		Factory: func(cfg catalog.Config) (backtest.Strategy, error) {
 			return &strategy{
 				EntryPriceMode:     cfg.EntryPriceMode,

@@ -18,11 +18,21 @@ import (
 // Re-export catalog types for existing callers.
 type Config = catalog.Config
 type TradeDirection = catalog.TradeDirection
+type RegularTradeMode = catalog.RegularTradeMode
+type StrategyProfile = catalog.StrategyProfile
+type StrategyRuntimeProfile = catalog.StrategyRuntimeProfile
+type ResolvedStrategy = catalog.ResolvedStrategy
+type CapitalMode = catalog.CapitalMode
 
 const (
-	DirectionBoth      = catalog.DirectionBoth
-	DirectionLongOnly  = catalog.DirectionLongOnly
-	DirectionShortOnly = catalog.DirectionShortOnly
+	DirectionBoth          = catalog.DirectionBoth
+	DirectionLongOnly      = catalog.DirectionLongOnly
+	DirectionShortOnly     = catalog.DirectionShortOnly
+	RegularTradeNone       = catalog.RegularTradeNone
+	RegularTradeSignalOnly = catalog.RegularTradeSignalOnly
+	RegularTradeMaterial   = catalog.RegularTradeMaterial
+	CapitalModeUSD         = catalog.CapitalModeUSD
+	CapitalModeBaseAsset   = catalog.CapitalModeBaseAsset
 )
 
 func DefaultConfig() Config {
@@ -43,6 +53,10 @@ func Build(strategyName string, params json.RawMessage) (backtest.Strategy, erro
 
 func Resolve(request string, cfg Config) ([]backtest.Strategy, error) {
 	return catalog.Resolve(request, cfg)
+}
+
+func ResolveDetailed(request string, cfg Config, baseAsset string) ([]ResolvedStrategy, error) {
+	return catalog.ResolveDetailed(request, cfg, baseAsset)
 }
 
 func Available() []string {

@@ -29,6 +29,9 @@ type htmlReportView struct {
 	Interval              string
 	Period                string
 	GeneratedAt           string
+	CapitalMode           string
+	CapitalProfile        string
+	CapitalNote           string
 	InitialCapital        string
 	FinalEquity           string
 	NetPnL                string
@@ -64,6 +67,7 @@ type htmlReportView struct {
 	HasPnLUSD             bool
 	PnLUSDMin             string
 	PnLUSDMax             string
+	PnLUSDNote            string
 	EquityAnalysis        equityAnalysisView
 	TradeOverview         tradeOverviewView
 	SpreadSummary         *spreadSummaryView
@@ -164,21 +168,21 @@ type spreadRowView struct {
 }
 
 type spreadGroupView struct {
-	ID           int
-	Tag          string
-	AnchorID     string
-	Status       string
-	StatusClass  string
-	OpenTime     string
-	CloseTime    string
-	InitAmount   string
-	DecayFactor  string
-	RollCount    string
-	TotalPnL     string
-	SpreadCount  int
-	EventCount   int
-	eventUnix    int64
-	Spreads      []spreadRowView
+	ID          int
+	Tag         string
+	AnchorID    string
+	Status      string
+	StatusClass string
+	OpenTime    string
+	CloseTime   string
+	InitAmount  string
+	DecayFactor string
+	RollCount   string
+	TotalPnL    string
+	SpreadCount int
+	EventCount  int
+	eventUnix   int64
+	Spreads     []spreadRowView
 }
 
 type spreadLegRowView struct {
@@ -209,8 +213,8 @@ type chartCandlePoint struct {
 }
 
 type chartLinePoint struct {
-	Time  int64   `json:"time"`
-	Value float64 `json:"value"`
+	Time  int64    `json:"time"`
+	Value *float64 `json:"value,omitempty"`
 }
 
 type chartHistogramPoint struct {
@@ -498,6 +502,9 @@ func buildHTMLView(result *backtest.Result, meta HTMLMeta) htmlReportView {
 		Interval:             meta.Interval,
 		Period:               fmt.Sprintf("%s 至 %s", formatDate(result.StartTime), formatDate(result.EndTime)),
 		GeneratedAt:          meta.GeneratedAt.UTC().Format("2006-01-02 15:04:05 UTC"),
+		CapitalMode:          fallbackText(strings.TrimSpace(result.CapitalMode), strings.TrimSpace(result.AccountUnit)),
+		CapitalProfile:       fallbackText(strings.TrimSpace(result.CapitalProfile), "未标注"),
+		CapitalNote:          fallbackText(strings.TrimSpace(result.CapitalNote), "-capital 按账户单位解释。"),
 		InitialCapital:       amount(result.InitialCapital, result.AccountUnit),
 		FinalEquity:          amount(result.FinalEquity, result.AccountUnit),
 		NetPnL:               signedAmount(result.FinalEquity-result.InitialCapital, result.AccountUnit),
@@ -529,8 +536,16 @@ func buildHTMLView(result *backtest.Result, meta HTMLMeta) htmlReportView {
 	if closeSeries, ok := result.Series["close"]; ok && len(closeSeries) > 0 {
 		n := minInt(len(result.Timestamps), minInt(len(result.EquityCurve), len(closeSeries)))
 		pnlUSD := make([]float64, n)
-		for i := 0; i < n; i++ {
-			pnlUSD[i] = (result.EquityCurve[i] - result.InitialCapital) * closeSeries[i]
+		if strings.EqualFold(strings.TrimSpace(result.AccountUnit), "USD") {
+			for i := 0; i < n; i++ {
+				pnlUSD[i] = result.EquityCurve[i] - result.InitialCapital
+			}
+			view.PnLUSDNote = "账户本身按 USD 计价，因此该曲线直接展示权益减去初始资金。"
+		} else {
+			for i := 0; i < n; i++ {
+				pnlUSD[i] = (result.EquityCurve[i] - result.InitialCapital) * closeSeries[i]
+			}
+			view.PnLUSDNote = "该曲线按（权益 − 初始资金）× BTC 价格换算为 USD。"
 		}
 		view.HasPnLUSD = true
 		view.PnLUSDSeriesData = marshalJS(buildLineSeries(result.Timestamps[:n], pnlUSD))
@@ -1219,7 +1234,7 @@ func buildHoverColumns(result *backtest.Result) []hoverColumnPayload {
 			Label:    column.Label,
 			Decimals: column.Decimals,
 			Overlay:  column.Overlay,
-			Values:   buildLineSeries(result.Timestamps, values),
+			Values:   buildTimeAlignedLineSeries(result.Timestamps, values),
 		})
 	}
 	if len(payload) == 0 {
@@ -1238,10 +1253,28 @@ func buildLineSeries(times []time.Time, values []float64) []chartLinePoint {
 		if !chartValueValid(values[i]) {
 			continue
 		}
+		value := values[i]
 		points = append(points, chartLinePoint{
 			Time:  times[i].Unix(),
-			Value: values[i],
+			Value: &value,
 		})
+	}
+	return points
+}
+
+func buildTimeAlignedLineSeries(times []time.Time, values []float64) []chartLinePoint {
+	n := minInt(len(times), len(values))
+	if n == 0 {
+		return []chartLinePoint{}
+	}
+	points := make([]chartLinePoint, 0, n)
+	for i := 0; i < n; i++ {
+		point := chartLinePoint{Time: times[i].Unix()}
+		if chartValueValid(values[i]) {
+			value := values[i]
+			point.Value = &value
+		}
+		points = append(points, point)
 	}
 	return points
 }
@@ -1785,6 +1818,23 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
     </header>
 
 	<div class="section">
+	  <div class="grid gap-3 lg:grid-cols-3">
+		<div class="rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3">
+		  <div class="text-xs mono uppercase tracking-widest text-slate-400">资金计价</div>
+		  <div class="mt-2 text-lg font-semibold text-white">{{ .CapitalMode }}</div>
+		</div>
+		<div class="rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3">
+		  <div class="text-xs mono uppercase tracking-widest text-slate-400">策略画像</div>
+		  <div class="mt-2 text-lg font-semibold text-white">{{ .CapitalProfile }}</div>
+		</div>
+		<div class="rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3">
+		  <div class="text-xs mono uppercase tracking-widest text-slate-400">解释</div>
+		  <div class="mt-2 text-sm text-slate-200">{{ .CapitalNote }}</div>
+		</div>
+	  </div>
+	</div>
+
+	<div class="section">
 	  <div class="flex flex-wrap items-center justify-between gap-3">
 		<div>
 		  <h2 class="!mb-1">图表时间轴</h2>
@@ -1927,7 +1977,7 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
     {{ if .HasPnLUSD }}
     <div class="section">
 	<h2>盈亏曲线（USD）</h2>
-	<p class="text-xs text-slate-400 mb-3">范围 {{ .PnLUSDMin }} 至 {{ .PnLUSDMax }} · （权益 − 初始资金）× BTC 价格</p>
+	<p class="text-xs text-slate-400 mb-3">范围 {{ .PnLUSDMin }} 至 {{ .PnLUSDMax }} · {{ .PnLUSDNote }}</p>
       <div class="chart-box p-1">
         <div id="pnl-usd-chart" style="width:100%;height:300px;"></div>
       </div>
@@ -2185,7 +2235,6 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
 				return activeSet.has(point.time);
 			});
 		}
-
 		function filterCandleSeriesByTimes(series, activeSet, enabled) {
 			if (!enabled || activeSet.size === 0) return series;
 			return series.filter(function(point) {
