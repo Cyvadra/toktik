@@ -44,4 +44,4 @@
 
     Stop loss:
 
-        - 若 Sold CALL 当前价格较开仓价翻倍，视为止损，平仓整个订单组
+        - 若 (price_sold_call - price_bought_call) 当前价差较开仓价差翻倍，视为止损，平仓整个订单组

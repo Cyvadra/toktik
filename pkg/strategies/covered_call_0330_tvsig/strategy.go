@@ -65,7 +65,7 @@ const (
 	closeNoteExpiryProt   = "到期平仓 | 保护仓"
 	closeNoteTP1Call      = "止盈40% | 空call spread 60%盈利"
 	closeNoteTP2Call      = "止盈全仓 | 空call spread 85%盈利"
-	closeNoteStopLossCall = "止损全仓 | Sold CALL价格翻倍"
+	closeNoteStopLossCall = "止损全仓 | CALL spread价差翻倍"
 	closeNoteRollProt     = "换仓 | 平保护仓"
 	closeNoteOpenRollback = "开仓回滚"
 )
@@ -98,7 +98,7 @@ func init() {
 //	Protective-leg roll: when abs(delta) ≥ 0.5 OR unrealised profit ≥ 50%
 //	  close current leg, reopen as BUY CALL (same DTE/|delta| params), 80% amount.
 //
-//	Stop-loss: if any open sold CALL marks at >= 2x its entry price,
+//	Stop-loss: if any open call spread close cost reaches >= 2x its entry credit,
 //	  close the whole order group.
 //
 //	expiry close: all legs are closed 1 day before expiry.
@@ -313,14 +313,17 @@ func (s *strategy) managePositions(ctx *backtest.BarContext, chain *backtest.Opt
 			continue
 		}
 
-		// Group stop-loss: if the short call doubles from its entry price,
+		// Group stop-loss: if the call spread close cost doubles from entry credit,
 		// close every remaining leg in the current order group.
-		if !sellLeg.Closed {
+		if !sellLeg.Closed && !buyLeg.Closed {
 			sellMark := s.ValuationPriceMode.ExitPrice(backtest.Sell, sellContract)
-			if soldCallHitStopLoss(sellLeg.EntryPrice, sellMark) {
-				fmt.Printf("[%s] call tranche %d stop-loss: sell=%s entry=%.6f mark=%.6f threshold=%.6f\n",
-					now.Format(time.RFC3339), i, sellContract.Symbol, sellLeg.EntryPrice, sellMark,
-					sellLeg.EntryPrice*callStopLossPriceMultiple)
+			buyMark := s.ValuationPriceMode.ExitPrice(backtest.Buy, buyContract)
+			entryCredit := sellLeg.EntryPrice - buyLeg.EntryPrice
+			currentCloseCost := sellMark - buyMark
+			if callSpreadHitStopLoss(entryCredit, currentCloseCost) {
+				fmt.Printf("[%s] call tranche %d stop-loss: sell=%s buy=%s entryCredit=%.6f closeCost=%.6f threshold=%.6f\n",
+					now.Format(time.RFC3339), i, sellContract.Symbol, buyContract.Symbol, entryCredit, currentCloseCost,
+					entryCredit*callStopLossPriceMultiple)
 				s.closeEntireOrderGroup(ctx, contractMap, closeNoteStopLossCall)
 				return false
 			}
@@ -718,11 +721,12 @@ func protRollReason(absDelta, pnlPct float64) string {
 	}
 }
 
-func soldCallHitStopLoss(entryPrice, markPrice float64) bool {
-	if entryPrice <= 0 || math.IsNaN(markPrice) || math.IsInf(markPrice, 0) {
+func callSpreadHitStopLoss(entryCredit, closeCost float64) bool {
+	if entryCredit <= 0 || math.IsNaN(closeCost) || math.IsInf(closeCost, 0) {
 		return false
 	}
-	return markPrice >= entryPrice*callStopLossPriceMultiple
+	return closeCost >= entryCredit*callStopLossPriceMultiple
+
 }
 
 // pickFirstWithPrice returns the first contract in candidates that has a valid

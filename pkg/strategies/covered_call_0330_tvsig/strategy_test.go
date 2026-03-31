@@ -189,22 +189,22 @@ func TestProtRollReason(t *testing.T) {
 	}
 }
 
-func TestSoldCallHitStopLoss(t *testing.T) {
+func TestCallSpreadHitStopLoss(t *testing.T) {
 	tests := []struct {
-		name       string
-		entryPrice float64
-		markPrice  float64
-		want       bool
+		name        string
+		entryCredit float64
+		closeCost   float64
+		want        bool
 	}{
-		{name: "below threshold", entryPrice: 1.2, markPrice: 2.39, want: false},
-		{name: "at threshold", entryPrice: 1.2, markPrice: 2.4, want: true},
-		{name: "above threshold", entryPrice: 1.2, markPrice: 2.8, want: true},
-		{name: "nan mark", entryPrice: 1.2, markPrice: math.NaN(), want: false},
-		{name: "invalid entry", entryPrice: 0, markPrice: 2.4, want: false},
+		{name: "below threshold", entryCredit: 1.2, closeCost: 2.39, want: false},
+		{name: "at threshold", entryCredit: 1.2, closeCost: 2.4, want: true},
+		{name: "above threshold", entryCredit: 1.2, closeCost: 2.8, want: true},
+		{name: "nan close cost", entryCredit: 1.2, closeCost: math.NaN(), want: false},
+		{name: "invalid entry credit", entryCredit: 0, closeCost: 2.4, want: false},
 	}
 
 	for _, tt := range tests {
-		if got := soldCallHitStopLoss(tt.entryPrice, tt.markPrice); got != tt.want {
+		if got := callSpreadHitStopLoss(tt.entryCredit, tt.closeCost); got != tt.want {
 			t.Fatalf("%s: got %v want %v", tt.name, got, tt.want)
 		}
 	}
