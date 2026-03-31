@@ -214,6 +214,19 @@ func (ch *OptionsChain) ExpiryRange(minDays, maxDays int) *OptionsChain {
 	return ch.ExpiryMin(minDays).ExpiryMax(maxDays)
 }
 
+// ExpiryNextMonth returns contracts expiring in the next calendar month.
+func (ch *OptionsChain) ExpiryNextMonth() *OptionsChain {
+	loc := ch.now.Location()
+	nowLocal := ch.now.In(loc)
+	start := time.Date(nowLocal.Year(), nowLocal.Month()+1, 1, 0, 0, 0, 0, loc)
+	end := start.AddDate(0, 1, 0)
+
+	return ch.filter(func(c *OptionContract) bool {
+		expiryLocal := c.Expiration.In(loc)
+		return !expiryLocal.Before(start) && expiryLocal.Before(end)
+	})
+}
+
 // DeltaRange returns contracts whose delta falls within [minDelta, maxDelta].
 func (ch *OptionsChain) DeltaRange(minDelta, maxDelta float64) *OptionsChain {
 	return ch.filter(func(c *OptionContract) bool {
@@ -301,6 +314,7 @@ type TradeCustomData struct {
 }
 
 const TradeCustomDataKeyCloseDelta = "close_delta"
+const TradeCustomDataKeyCloseTriggerTime = "close_trigger_time"
 
 func cloneTradeCustomData(items []TradeCustomData) []TradeCustomData {
 	if len(items) == 0 {
@@ -309,6 +323,17 @@ func cloneTradeCustomData(items []TradeCustomData) []TradeCustomData {
 	cloned := make([]TradeCustomData, len(items))
 	copy(cloned, items)
 	return cloned
+}
+
+func upsertTradeCustomData(items []TradeCustomData, key, value string) []TradeCustomData {
+	cloned := cloneTradeCustomData(items)
+	for index := range cloned {
+		if cloned[index].Key == key {
+			cloned[index].Value = value
+			return cloned
+		}
+	}
+	return append(cloned, TradeCustomData{Key: key, Value: value})
 }
 
 // SpreadLeg represents one leg of a multi-leg options position.
@@ -356,6 +381,7 @@ type SpreadPosition struct {
 	OpenBar  int
 	Tag      string // user-defined label (e.g. "bull-put-spread")
 	Ref      string // internal reference for strategy-level tracking of delayed executions
+	GroupID  int    // spread group ID (0 = ungrouped)
 }
 
 // IsFullyClosed returns true if all legs are closed.
@@ -435,6 +461,11 @@ func (st *SpreadTracker) Open(legs []SpreadLeg, openTime time.Time, openBar int,
 
 // OpenWithRef creates a new spread position and returns its ID.
 func (st *SpreadTracker) OpenWithRef(legs []SpreadLeg, openTime time.Time, openBar int, tag, ref string) int {
+	return st.OpenFull(legs, openTime, openBar, tag, ref, 0)
+}
+
+// OpenFull creates a new spread position with all fields and returns its ID.
+func (st *SpreadTracker) OpenFull(legs []SpreadLeg, openTime time.Time, openBar int, tag, ref string, groupID int) int {
 	id := st.nextID
 	st.nextID++
 	sp := &SpreadPosition{
@@ -444,6 +475,7 @@ func (st *SpreadTracker) OpenWithRef(legs []SpreadLeg, openTime time.Time, openB
 		OpenBar:  openBar,
 		Tag:      tag,
 		Ref:      ref,
+		GroupID:  groupID,
 	}
 	st.open = append(st.open, sp)
 	st.spreadMap[id] = sp

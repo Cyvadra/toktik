@@ -4,9 +4,10 @@ import (
 	"fmt"
 	"math"
 	"strings"
+	"time"
 )
 
-func buildReportSeries(primary map[string][]float64, factorColumns []map[string][]float64, factors []factorRegistration) map[string][]float64 {
+func buildReportSeries(primary map[string][]float64, primaryLen int, factorColumns []map[string][]float64, factorAlignMaps [][]int, factors []factorRegistration) map[string][]float64 {
 	if len(primary) == 0 && len(factorColumns) == 0 {
 		return nil
 	}
@@ -23,10 +24,14 @@ func buildReportSeries(primary map[string][]float64, factorColumns []map[string]
 	for i := 0; i < limit; i++ {
 		ref := factors[i].ref
 		for name, data := range factorColumns[i] {
-			if _, exists := merged[name]; !exists {
-				merged[name] = data
+			aligned := data
+			if i < len(factorAlignMaps) && factorAlignMaps[i] != nil {
+				aligned = alignColumn(data, factorAlignMaps[i], primaryLen)
 			}
-			merged[factorSeriesKey(ref, name)] = data
+			if _, exists := merged[name]; !exists {
+				merged[name] = aligned
+			}
+			merged[factorSeriesKey(ref, name)] = aligned
 		}
 	}
 
@@ -131,6 +136,7 @@ func (r *Replayer) Replay(prepared *PreparedData, strategy Strategy, params map[
 	equityCurve := make([]float64, nBars)
 
 	spreadTracker := NewSpreadTracker()
+	spreadGroupTracker := NewSpreadGroupTracker()
 	var scheduledActions []ScheduledAction
 	spreadPricing := DefaultSpreadPricingConfig()
 	if provider, ok := strategy.(SpreadPricingProvider); ok {
@@ -142,15 +148,16 @@ func (r *Replayer) Replay(prepared *PreparedData, strategy Strategy, params map[
 	}
 
 	barCtx := &BarContext{
-		primary:          secColumns[0],
-		securities:       accessors,
-		factors:          factorAccessors,
-		broker:           broker,
-		params:           setupCtx.params,
-		primaryRef:       prepared.PrimaryRef,
-		chainProvider:    r.chainProvider,
-		spreadTracker:    spreadTracker,
-		scheduledActions: &scheduledActions,
+		primary:            secColumns[0],
+		securities:         accessors,
+		factors:            factorAccessors,
+		broker:             broker,
+		params:             setupCtx.params,
+		primaryRef:         prepared.PrimaryRef,
+		chainProvider:      r.chainProvider,
+		spreadTracker:      spreadTracker,
+		spreadGroupTracker: spreadGroupTracker,
+		scheduledActions:   &scheduledActions,
 	}
 
 	secRefList := make([]SecurityRef, len(prepared.Securities))
@@ -248,7 +255,8 @@ func (r *Replayer) Replay(prepared *PreparedData, strategy Strategy, params map[
 							}
 							closePrice = applySlippage(closePrice, exitSide, sa.SlippagePct, defaultSlipPct)
 							reason := appendDeltaNote(sa.CloseReason, "exec_", contract.Delta)
-							barCtx.CloseSpreadLegWithReasonAndData(sa.SpreadID, sa.LegIndex, closePrice, reason, sa.CloseCustomData)
+							closeCustomData := upsertTradeCustomData(sa.CloseCustomData, TradeCustomDataKeyCloseTriggerTime, sa.TriggerTime.UTC().Format(time.RFC3339Nano))
+							barCtx.CloseSpreadLegWithReasonAndData(sa.SpreadID, sa.LegIndex, closePrice, reason, closeCustomData)
 						}
 					case ScheduleCloseSpread:
 						sp := spreadTracker.Get(sa.SpreadID)
@@ -266,7 +274,8 @@ func (r *Replayer) Replay(prepared *PreparedData, strategy Strategy, params map[
 								}
 								closePrice = applySlippage(closePrice, exitSide, sa.SlippagePct, defaultSlipPct)
 								reason := appendDeltaNote(sa.CloseReason, "exec_", contract.Delta)
-								barCtx.CloseSpreadLegWithReasonAndData(sa.SpreadID, legIndex, closePrice, reason, sa.CloseCustomData)
+								closeCustomData := upsertTradeCustomData(sa.CloseCustomData, TradeCustomDataKeyCloseTriggerTime, sa.TriggerTime.UTC().Format(time.RFC3339Nano))
+								barCtx.CloseSpreadLegWithReasonAndData(sa.SpreadID, legIndex, closePrice, reason, closeCustomData)
 							}
 						}
 					}
@@ -304,12 +313,13 @@ func (r *Replayer) Replay(prepared *PreparedData, strategy Strategy, params map[
 		prepared.PrimaryDS.Timestamps,
 		r.config.InitialCapital,
 		r.config.AccountUnit,
-		buildReportSeries(secColumns[0], factorColumns, prepared.Factors),
+		buildReportSeries(secColumns[0], prepared.PrimaryDS.Len, factorColumns, prepared.FactorAlignMaps, prepared.Factors),
 		reportColumns,
 	)
 
 	result.SpreadSummary = computeSpreadSummary(spreadTracker)
 	result.SpreadPositions = buildSpreadPositionReports(spreadTracker, result.EndTime)
+	result.SpreadGroups = buildSpreadGroupReports(spreadGroupTracker, spreadTracker, result.EndTime)
 
 	return result, nil
 }

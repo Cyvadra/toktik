@@ -1,0 +1,47 @@
+
+# 开仓： 卖 call 买 put
+
+按照第三方开仓信号（UTC）进行开仓
+
+期权(spread)订单组合:
+
+    Sell CALL (x2):
+
+        - 2 call spreads, DTE around 25 days, ± 8 days
+        - 卖 call; delta near 0.35
+        - 买 call; delta near 0.1
+        - num_shares = 10 / (price_sell_call - price_buy_call)
+        - total open amount: 10 BTC
+
+    Buy PUT (x1):
+
+        - DTE around 35 days, ± 10 days
+        - delta near -0.25
+        - total open amount: 7 BTC
+
+以上为一组订单。每次开仓，以这三个订单为整体。 （止盈、平仓等逻辑，仍独立）
+
+
+# 止盈
+
+    - Sold CALL:
+
+        - 盈利60%，平仓两条call订单的40%仓位（剩60%）
+
+        - 盈利85%，平仓整个订单组
+
+    - Bought PUT (换仓):
+
+        - trigger condition: abs(delta) >= 0.5, or profit > 50%
+
+        - close current PUT position, and re-open "BUY CALL" position, with same "option-selection" method, and 80% amount. 每次换仓，开仓金额递减，首仓7BTC，首次换仓7*0.8BTC，二次换仓7*0.64BTC，以此类推。
+
+# 平仓
+
+    Normal:
+
+        - 到期前一日平仓
+
+    Stop loss:
+
+        - 若 Sold CALL 当前价格较开仓价翻倍，视为止损，平仓整个订单组

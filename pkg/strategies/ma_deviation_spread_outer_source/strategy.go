@@ -1,9 +1,11 @@
 package madeviationspread
 
 import (
+	"encoding/csv"
 	"fmt"
 	"math"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -31,10 +33,12 @@ const (
 	rsiPeriod              = 200
 	trailATRMultiplier     = 3.0
 
-	interval12h       = "12h"
-	entrySignalLayout = "Jan 02, 2006, 15:04"
-	entrySignalPath   = "/home/jason89757/workspace/toktik/signal-list/tmp.txt"
-	callTrancheCount  = 2
+	interval12h           = "12h"
+	entrySignalTimeLayout = "2006/1/2 15:04"
+	entrySignalPath       = "pkg/strategies/ma_deviation_spread_outer_source/SF18_RE_Bearish_Divergence_Only_BINANCE_BTCUSD_2026-03-30.csv"
+	callTrancheCount      = 2
+	positionGroupTag      = "ma-deviation-outer-source"
+	positionGroupDecay    = 1.0
 
 	openNoteInitialPut    = "首仓开仓 | 多put保护"
 	openNoteInitialCall1  = "首仓开仓 | 空call分批止盈70%"
@@ -87,6 +91,7 @@ type strategy struct {
 	lowestSinceEntry float64
 	callSpreadIDs    [callTrancheCount]int
 	putSpreadID      int
+	positionGroupID  int
 
 	ref12h backtest.SecurityRef
 }
@@ -210,13 +215,16 @@ func (s *strategy) tryOpenStructure(ctx *backtest.BarContext, chain *backtest.Op
 		return
 	}
 
-	putSpreadID := ctx.OpenSpread([]backtest.SpreadLeg{{
+	groupID := s.openPositionGroup(ctx)
+
+	putSpreadID := s.openSpread(ctx, []backtest.SpreadLeg{{
 		Contract:   *longPut,
 		Side:       backtest.Buy,
 		Qty:        putQty,
 		EntryPrice: putEntryPrice,
-	}}, openNoteInitialPut)
+	}}, openNoteInitialPut, groupID)
 	if putSpreadID <= 0 {
+		s.closePositionGroup(ctx, groupID)
 		return
 	}
 
@@ -230,14 +238,14 @@ func (s *strategy) tryOpenStructure(ctx *backtest.BarContext, chain *backtest.Op
 		if qty <= 0 {
 			continue
 		}
-		spreadID := ctx.OpenSpread([]backtest.SpreadLeg{{
+		spreadID := s.openSpread(ctx, []backtest.SpreadLeg{{
 			Contract:   *shortCall,
 			Side:       backtest.Sell,
 			Qty:        qty,
 			EntryPrice: shortEntryPrice,
-		}}, tags[i])
+		}}, tags[i], groupID)
 		if spreadID <= 0 {
-			s.rollbackOpenedStructure(ctx, openedCallIDs, putSpreadID, shortEntryPrice, putEntryPrice)
+			s.rollbackOpenedStructure(ctx, openedCallIDs, putSpreadID, shortEntryPrice, putEntryPrice, groupID)
 			return
 		}
 		openedCallIDs[i] = spreadID
@@ -247,6 +255,7 @@ func (s *strategy) tryOpenStructure(ctx *backtest.BarContext, chain *backtest.Op
 		s.callSpreadIDs[i] = openedCallIDs[i]
 	}
 	s.putSpreadID = putSpreadID
+	s.positionGroupID = groupID
 
 	s.lowestSinceEntry = ctx.Low()
 }
@@ -319,7 +328,11 @@ func (s *strategy) manageOpenPositions(ctx *backtest.BarContext, chain *backtest
 		}
 	}
 
-	return active || s.hasOpenCallSpread(ctx) || s.hasOpenPutSpread(ctx)
+	stillActive := active || s.hasOpenCallSpread(ctx) || s.hasOpenPutSpread(ctx)
+	if !stillActive {
+		s.closePositionGroup(ctx, s.positionGroupID)
+	}
+	return stillActive
 }
 
 func (s *strategy) reopenPutLeg(ctx *backtest.BarContext, chain *backtest.OptionsChain) {
@@ -348,12 +361,20 @@ func (s *strategy) reopenPutLeg(ctx *backtest.BarContext, chain *backtest.Option
 		return
 	}
 
-	s.putSpreadID = ctx.OpenSpread([]backtest.SpreadLeg{{
+	putSpreadID := s.openSpread(ctx, []backtest.SpreadLeg{{
 		Contract:   *longPut,
 		Side:       backtest.Buy,
 		Qty:        qty,
 		EntryPrice: entryPrice,
-	}}, openNoteRolledPut)
+	}}, openNoteRolledPut, s.positionGroupID)
+	if putSpreadID <= 0 {
+		return
+	}
+
+	s.putSpreadID = putSpreadID
+	if s.positionGroupID > 0 && ctx.SpreadGroups() != nil {
+		ctx.SpreadGroups().IncrementRoll(s.positionGroupID)
+	}
 }
 
 func (s *strategy) handleATRExit(ctx *backtest.BarContext, contractMap map[string]backtest.OptionContract) bool {
@@ -399,7 +420,7 @@ func (s *strategy) handleATRExit(ctx *backtest.BarContext, contractMap map[strin
 	return closedAny
 }
 
-func (s *strategy) rollbackOpenedStructure(ctx *backtest.BarContext, callSpreadIDs [callTrancheCount]int, putSpreadID int, shortEntryPrice, putEntryPrice float64) {
+func (s *strategy) rollbackOpenedStructure(ctx *backtest.BarContext, callSpreadIDs [callTrancheCount]int, putSpreadID int, shortEntryPrice, putEntryPrice float64, groupID int) {
 	for _, spreadID := range callSpreadIDs {
 		if spreadID <= 0 {
 			continue
@@ -409,6 +430,7 @@ func (s *strategy) rollbackOpenedStructure(ctx *backtest.BarContext, callSpreadI
 	if putSpreadID > 0 {
 		ctx.CloseSpreadLegWithReason(putSpreadID, 0, putEntryPrice, closeNoteOpenRollback)
 	}
+	s.closePositionGroup(ctx, groupID)
 }
 
 func (s *strategy) selectShortCall(chain *backtest.OptionsChain) *backtest.OptionContract {
@@ -610,6 +632,36 @@ func (s *strategy) allowsEntry() bool {
 	return s.direction == "" || s.direction == catalog.DirectionBoth || s.direction == catalog.DirectionShortOnly
 }
 
+func (s *strategy) openPositionGroup(ctx *backtest.BarContext) int {
+	if ctx.SpreadGroups() == nil {
+		return 0
+	}
+	return ctx.SpreadGroups().Open(positionGroupTag, s.positionSize, positionGroupDecay, ctx.Time())
+}
+
+func (s *strategy) closePositionGroup(ctx *backtest.BarContext, groupID int) {
+	if groupID <= 0 {
+		return
+	}
+	if ctx.SpreadGroups() != nil {
+		ctx.SpreadGroups().Close(groupID)
+	}
+	if s.positionGroupID == groupID {
+		s.positionGroupID = 0
+	}
+}
+
+func (s *strategy) openSpread(ctx *backtest.BarContext, legs []backtest.SpreadLeg, tag string, groupID int) int {
+	if groupID > 0 && ctx.SpreadGroups() != nil {
+		spreadID := ctx.OpenSpreadInGroup(legs, tag, groupID)
+		if spreadID > 0 {
+			ctx.SpreadGroups().AddSpread(groupID, spreadID)
+		}
+		return spreadID
+	}
+	return ctx.OpenSpread(legs, tag)
+}
+
 func buildEntrySignalSeries(timestamps []time.Time, entryTimes map[int64]struct{}) []float64 {
 	out := make([]float64, len(timestamps))
 	for i, ts := range timestamps {
@@ -621,25 +673,106 @@ func buildEntrySignalSeries(timestamps []time.Time, entryTimes map[int64]struct{
 }
 
 func loadEntrySignalTimes(path string) (map[int64]struct{}, error) {
-	raw, err := os.ReadFile(path)
+	resolvedPath, err := resolveSignalFilePath(path)
 	if err != nil {
-		return nil, fmt.Errorf("read entry signal file %s: %w", path, err)
+		return nil, err
 	}
 
+	f, err := os.Open(resolvedPath)
+	if err != nil {
+		return nil, fmt.Errorf("open entry signal file %s: %w", resolvedPath, err)
+	}
+	defer f.Close()
+
+	reader := csv.NewReader(f)
+	records, err := reader.ReadAll()
+	if err != nil {
+		return nil, fmt.Errorf("parse entry signal csv %s: %w", resolvedPath, err)
+	}
+	if len(records) == 0 {
+		return map[int64]struct{}{}, nil
+	}
+
+	columns := csvColumnIndex(records[0])
+	timeIndex, ok := columns["日期和时间"]
+	if !ok {
+		return nil, fmt.Errorf("entry signal csv %s missing 日期和时间 column", resolvedPath)
+	}
+	typeIndex, hasType := columns["类型"]
+	signalIndex, hasSignal := columns["信号"]
+	if !hasType && !hasSignal {
+		return nil, fmt.Errorf("entry signal csv %s missing 类型/信号 columns", resolvedPath)
+	}
+
+	utc8 := time.FixedZone("UTC+8", 8*3600)
+
 	entryTimes := make(map[int64]struct{})
-	for lineNo, line := range strings.Split(string(raw), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
+	for rowIndex, record := range records[1:] {
+		if timeIndex >= len(record) {
 			continue
 		}
-		ts, err := time.ParseInLocation(entrySignalLayout, line, time.UTC)
-		if err != nil {
-			return nil, fmt.Errorf("parse entry signal line %d (%q): %w", lineNo+1, line, err)
+		if !isEntrySignalRecord(record, typeIndex, hasType, signalIndex, hasSignal) {
+			continue
 		}
-		entryTimes[ts.Unix()] = struct{}{}
+
+		dateStr := strings.TrimSpace(record[timeIndex])
+		if dateStr == "" {
+			continue
+		}
+
+		ts, err := time.ParseInLocation(entrySignalTimeLayout, dateStr, utc8)
+		if err != nil {
+			return nil, fmt.Errorf("parse entry signal row %d (%q): %w", rowIndex+2, dateStr, err)
+		}
+		entryTimes[ts.UTC().Unix()] = struct{}{}
 	}
 
 	return entryTimes, nil
+}
+
+func resolveSignalFilePath(path string) (string, error) {
+	if _, err := os.Stat(path); err == nil {
+		return path, nil
+	}
+
+	wd, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("get working directory for signal file %s: %w", path, err)
+	}
+
+	resolvedPath := filepath.Join(wd, path)
+	if _, err := os.Stat(resolvedPath); err == nil {
+		return resolvedPath, nil
+	}
+
+	return "", fmt.Errorf("entry signal file not found: %s", path)
+}
+
+func csvColumnIndex(header []string) map[string]int {
+	columns := make(map[string]int, len(header))
+	for index, name := range header {
+		normalized := strings.TrimSpace(strings.TrimPrefix(name, "\ufeff"))
+		columns[normalized] = index
+	}
+	return columns
+}
+
+func isEntrySignalRecord(record []string, typeIndex int, hasType bool, signalIndex int, hasSignal bool) bool {
+	if hasType && typeIndex < len(record) {
+		entryType := strings.TrimSpace(strings.ToLower(record[typeIndex]))
+		if strings.Contains(entryType, "进场") || strings.Contains(entryType, "开仓") || strings.Contains(entryType, "entry") || strings.Contains(entryType, "open") {
+			return true
+		}
+	}
+
+	if hasSignal && signalIndex < len(record) {
+		signal := strings.TrimSpace(strings.ToLower(record[signalIndex]))
+		if strings.Contains(signal, "做空") || strings.Contains(signal, "bearish") || strings.Contains(signal, "divergence") {
+			return true
+		}
+	}
+
+	return false
 }
 
 func shiftSeries(src []float64, headValue float64) []float64 {

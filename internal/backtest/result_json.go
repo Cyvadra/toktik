@@ -38,6 +38,7 @@ type resultJSONExport struct {
 	TradeOverview   *tradeOverviewJSONExport         `json:"trade_overview,omitempty"`
 	EquityAnalysis  *equityAnalysisJSONExport        `json:"equity_analysis,omitempty"`
 	SpreadPositions []spreadPositionReportJSONExport `json:"spread_positions,omitempty"`
+	SpreadGroups    []SpreadGroupReport              `json:"spread_groups,omitempty"`
 
 	SpreadSummary *spreadSummaryJSONExport `json:"spread_summary,omitempty"`
 }
@@ -85,34 +86,37 @@ type equityAnalysisJSONExport struct {
 }
 
 type spreadPositionReportJSONExport struct {
-	ID          int                         `json:"id"`
-	Tag         string                      `json:"tag"`
-	CloseNote   string                      `json:"close_note,omitempty"`
-	Status      string                      `json:"status"`
-	OpenTime    time.Time                   `json:"open_time"`
-	CloseTime   *time.Time                  `json:"close_time,omitempty"`
-	DaysHeld    *float64                    `json:"days_held"`
-	NetPremium  *float64                    `json:"net_premium"`
-	RealizedPnL *float64                    `json:"realized_pnl"`
-	Legs        []spreadLegReportJSONExport `json:"legs"`
+	ID               int                         `json:"id"`
+	Tag              string                      `json:"tag"`
+	CloseNote        string                      `json:"close_note,omitempty"`
+	Status           string                      `json:"status"`
+	OpenTime         time.Time                   `json:"open_time"`
+	CloseTriggerTime *time.Time                  `json:"close_trigger_time,omitempty"`
+	CloseTime        *time.Time                  `json:"close_time,omitempty"`
+	DaysHeld         *float64                    `json:"days_held"`
+	NetPremium       *float64                    `json:"net_premium"`
+	RealizedPnL      *float64                    `json:"realized_pnl"`
+	GroupID          int                         `json:"group_id,omitempty"`
+	Legs             []spreadLegReportJSONExport `json:"legs"`
 }
 
 type spreadLegReportJSONExport struct {
-	Symbol      string     `json:"symbol"`
-	Side        string     `json:"side"`
-	Type        OptionType `json:"type"`
-	StrikePrice *float64   `json:"strike_price"`
-	Expiration  time.Time  `json:"expiration"`
-	Delta       *float64   `json:"delta"`
-	Qty         *float64   `json:"qty"`
-	EntryPrice  *float64   `json:"entry_price"`
-	EntryTime   time.Time  `json:"entry_time"`
-	Closed      bool       `json:"closed"`
-	ClosePrice  *float64   `json:"close_price,omitempty"`
-	CloseTime   *time.Time `json:"close_time,omitempty"`
-	CloseDelta  *float64   `json:"close_delta,omitempty"`
-	CloseReason string     `json:"close_reason,omitempty"`
-	RealizedPnL *float64   `json:"realized_pnl"`
+	Symbol           string     `json:"symbol"`
+	Side             string     `json:"side"`
+	Type             OptionType `json:"type"`
+	StrikePrice      *float64   `json:"strike_price"`
+	Expiration       time.Time  `json:"expiration"`
+	Delta            *float64   `json:"delta"`
+	Qty              *float64   `json:"qty"`
+	EntryPrice       *float64   `json:"entry_price"`
+	EntryTime        time.Time  `json:"entry_time"`
+	Closed           bool       `json:"closed"`
+	ClosePrice       *float64   `json:"close_price,omitempty"`
+	CloseTriggerTime *time.Time `json:"close_trigger_time,omitempty"`
+	CloseTime        *time.Time `json:"close_time,omitempty"`
+	CloseDelta       *float64   `json:"close_delta,omitempty"`
+	CloseReason      string     `json:"close_reason,omitempty"`
+	RealizedPnL      *float64   `json:"realized_pnl"`
 }
 
 type spreadSummaryJSONExport struct {
@@ -220,37 +224,44 @@ func (r *Result) jsonExport() resultJSONExport {
 			legs := make([]spreadLegReportJSONExport, len(position.Legs))
 			for j, leg := range position.Legs {
 				legs[j] = spreadLegReportJSONExport{
-					Symbol:      leg.Symbol,
-					Side:        leg.Side,
-					Type:        leg.Type,
-					StrikePrice: jsonFloat(leg.StrikePrice),
-					Expiration:  leg.Expiration,
-					Delta:       jsonFloat(leg.Delta),
-					Qty:         jsonFloat(leg.Qty),
-					EntryPrice:  jsonFloat(leg.EntryPrice),
-					EntryTime:   leg.EntryTime,
-					Closed:      leg.Closed,
-					ClosePrice:  jsonFloat(leg.ClosePrice),
-					CloseTime:   leg.CloseTime,
-					CloseDelta:  leg.CloseDelta,
-					CloseReason: leg.CloseReason,
-					RealizedPnL: jsonFloat(leg.RealizedPnL),
+					Symbol:           leg.Symbol,
+					Side:             leg.Side,
+					Type:             leg.Type,
+					StrikePrice:      jsonFloat(leg.StrikePrice),
+					Expiration:       leg.Expiration,
+					Delta:            jsonFloat(leg.Delta),
+					Qty:              jsonFloat(leg.Qty),
+					EntryPrice:       jsonFloat(leg.EntryPrice),
+					EntryTime:        leg.EntryTime,
+					Closed:           leg.Closed,
+					ClosePrice:       jsonFloat(leg.ClosePrice),
+					CloseTriggerTime: leg.CloseTriggerTime,
+					CloseTime:        leg.CloseTime,
+					CloseDelta:       leg.CloseDelta,
+					CloseReason:      leg.CloseReason,
+					RealizedPnL:      jsonFloat(leg.RealizedPnL),
 				}
 			}
 
 			out.SpreadPositions[i] = spreadPositionReportJSONExport{
-				ID:          position.ID,
-				Tag:         position.Tag,
-				CloseNote:   position.CloseNote,
-				Status:      position.Status,
-				OpenTime:    position.OpenTime,
-				CloseTime:   position.CloseTime,
-				DaysHeld:    jsonFloat(position.DaysHeld),
-				NetPremium:  jsonFloat(position.NetPremium),
-				RealizedPnL: jsonFloat(position.RealizedPnL),
-				Legs:        legs,
+				ID:               position.ID,
+				Tag:              position.Tag,
+				CloseNote:        position.CloseNote,
+				Status:           position.Status,
+				OpenTime:         position.OpenTime,
+				CloseTriggerTime: position.CloseTriggerTime,
+				CloseTime:        position.CloseTime,
+				DaysHeld:         jsonFloat(position.DaysHeld),
+				NetPremium:       jsonFloat(position.NetPremium),
+				RealizedPnL:      jsonFloat(position.RealizedPnL),
+				GroupID:          position.GroupID,
+				Legs:             legs,
 			}
 		}
+	}
+
+	if len(r.SpreadGroups) > 0 {
+		out.SpreadGroups = append([]SpreadGroupReport(nil), r.SpreadGroups...)
 	}
 
 	if r.SpreadSummary != nil {

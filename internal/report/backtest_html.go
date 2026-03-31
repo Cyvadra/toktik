@@ -67,6 +67,8 @@ type htmlReportView struct {
 	EquityAnalysis        equityAnalysisView
 	TradeOverview         tradeOverviewView
 	SpreadSummary         *spreadSummaryView
+	SpreadGroups          []spreadGroupView
+	UngroupedSpreads      []spreadRowView
 	Trades                []tradeRowView
 	Spreads               []spreadRowView
 	NoTradeRows           bool
@@ -140,40 +142,62 @@ type tradeRowView struct {
 }
 
 type spreadRowView struct {
-	ID          int
-	Tag         string
-	AnchorID    string
-	EventType   string
-	EventClass  string
-	EventTime   string
-	RelatedLink string
-	RelatedText string
-	eventUnix   int64
-	Status      string
-	OpenTime    string
-	CloseTime   string
-	DaysHeld    string
-	RealizedPnL string
-	StatusClass string
-	Legs        []spreadLegRowView
+	ID              int
+	Tag             string
+	GroupID         int
+	AnchorID        string
+	EventType       string
+	EventClass      string
+	EventTime       string
+	HeaderTimeLabel string
+	HeaderTime      string
+	RelatedLink     string
+	RelatedText     string
+	eventUnix       int64
+	Status          string
+	OpenTime        string
+	CloseTime       string
+	DaysHeld        string
+	RealizedPnL     string
+	StatusClass     string
+	Legs            []spreadLegRowView
+}
+
+type spreadGroupView struct {
+	ID           int
+	Tag          string
+	AnchorID     string
+	Status       string
+	StatusClass  string
+	OpenTime     string
+	CloseTime    string
+	InitAmount   string
+	DecayFactor  string
+	RollCount    string
+	TotalPnL     string
+	SpreadCount  int
+	EventCount   int
+	eventUnix    int64
+	Spreads      []spreadRowView
 }
 
 type spreadLegRowView struct {
-	Symbol      string
-	Side        string
-	Type        string
-	StrikePrice string
-	Expiration  string
-	OpenSelect  string
-	Qty         string
-	EntryPrice  string
-	EntryAmount string
-	EntryTime   string
-	ClosePrice  string
-	CloseTime   string
-	CloseReason string
-	RealizedPnL string
-	SideClass   string
+	Symbol         string
+	Side           string
+	Type           string
+	StrikePrice    string
+	Expiration     string
+	OpenSelect     string
+	Qty            string
+	EntryPrice     string
+	EntryAmount    string
+	EntryTime      string
+	ClosePrice     string
+	CloseTimeLabel string
+	CloseTime      string
+	CloseReason    string
+	RealizedPnL    string
+	SideClass      string
 }
 
 type chartCandlePoint struct {
@@ -519,6 +543,7 @@ func buildHTMLView(result *backtest.Result, meta HTMLMeta) htmlReportView {
 	view.EquityAnalysis = buildEquityAnalysisView(result.EquityAnalysis, result.AccountUnit)
 	view.Trades = buildTradeRows(result.Trades, result.AccountUnit)
 	view.Spreads = buildSpreadRows(result.SpreadPositions, result.AccountUnit)
+	view.SpreadGroups, view.UngroupedSpreads = buildSpreadGroupViews(result.SpreadGroups, result.SpreadPositions, result.AccountUnit)
 
 	if result.SpreadSummary != nil {
 		s := result.SpreadSummary
@@ -670,24 +695,29 @@ func buildSpreadRows(spreads []backtest.SpreadPositionReport, unit string) []spr
 		legs := make([]spreadLegRowView, 0, len(spread.Legs))
 		for _, leg := range spread.Legs {
 			expiryOpenDays := leg.Expiration.Sub(leg.EntryTime).Hours() / 24
+			closeTimeLabel := "平仓时间"
 			legView := spreadLegRowView{
-				Symbol:      leg.Symbol,
-				Side:        translateSide(leg.Side),
-				Type:        translateOptionType(string(leg.Type)),
-				StrikePrice: currency(leg.StrikePrice),
-				Expiration:  formatDate(leg.Expiration),
-				OpenSelect:  expiryOpenDelta(expiryOpenDays, leg.Delta),
-				Qty:         decimal(leg.Qty),
-				EntryPrice:  amount4(leg.EntryPrice, unit),
-				EntryAmount: amount4(leg.Qty*leg.EntryPrice, unit),
-				EntryTime:   formatDateTime(leg.EntryTime),
-				ClosePrice:  nullableAmount4(leg.ClosePrice, leg.Closed, unit),
-				CloseTime:   "-",
-				CloseReason: fallbackText(strings.TrimSpace(leg.CloseReason), "-"),
-				RealizedPnL: signedAmount(leg.RealizedPnL, unit),
-				SideClass:   sideClass(leg.Side),
+				Symbol:         leg.Symbol,
+				Side:           translateSide(leg.Side),
+				Type:           translateOptionType(string(leg.Type)),
+				StrikePrice:    currency(leg.StrikePrice),
+				Expiration:     formatDate(leg.Expiration),
+				OpenSelect:     expiryOpenDelta(expiryOpenDays, leg.Delta),
+				Qty:            decimal(leg.Qty),
+				EntryPrice:     amount4(leg.EntryPrice, unit),
+				EntryAmount:    amount4(leg.Qty*leg.EntryPrice, unit),
+				EntryTime:      formatDateTime(leg.EntryTime),
+				ClosePrice:     nullableAmount4(leg.ClosePrice, leg.Closed, unit),
+				CloseTimeLabel: closeTimeLabel,
+				CloseTime:      "-",
+				CloseReason:    fallbackText(strings.TrimSpace(leg.CloseReason), "-"),
+				RealizedPnL:    signedAmount(leg.RealizedPnL, unit),
+				SideClass:      sideClass(leg.Side),
 			}
-			if leg.CloseTime != nil {
+			if leg.CloseTriggerTime != nil {
+				legView.CloseTimeLabel = "平仓触发时间"
+				legView.CloseTime = formatDateTime(*leg.CloseTriggerTime)
+			} else if leg.CloseTime != nil {
 				legView.CloseTime = formatDateTime(*leg.CloseTime)
 			}
 			legs = append(legs, legView)
@@ -697,20 +727,23 @@ func buildSpreadRows(spreads []backtest.SpreadPositionReport, unit string) []spr
 		closeAnchor := fmt.Sprintf("spread-%d-close", spread.ID)
 
 		openRow := spreadRowView{
-			ID:          spread.ID,
-			Tag:         displayTag,
-			AnchorID:    openAnchor,
-			EventType:   "OPEN",
-			EventClass:  "bg-sky-500/15 text-sky-200 ring-sky-400/40",
-			EventTime:   formatDateTime(spread.OpenTime),
-			Status:      "已开仓",
-			eventUnix:   spread.OpenTime.Unix(),
-			OpenTime:    formatDateTime(spread.OpenTime),
-			CloseTime:   "-",
-			DaysHeld:    "-",
-			RealizedPnL: "-",
-			StatusClass: statusClass("open"),
-			Legs:        legs,
+			ID:              spread.ID,
+			Tag:             displayTag,
+			GroupID:         spread.GroupID,
+			AnchorID:        openAnchor,
+			EventType:       "OPEN",
+			EventClass:      "bg-sky-500/15 text-sky-200 ring-sky-400/40",
+			EventTime:       formatDateTime(spread.OpenTime),
+			HeaderTimeLabel: "下单",
+			HeaderTime:      formatDateTime(spread.OpenTime),
+			Status:          "已开仓",
+			eventUnix:       spread.OpenTime.Unix(),
+			OpenTime:        formatDateTime(spread.OpenTime),
+			CloseTime:       "-",
+			DaysHeld:        "-",
+			RealizedPnL:     "-",
+			StatusClass:     statusClass("open"),
+			Legs:            legs,
 		}
 		if spread.CloseTime != nil {
 			openRow.RelatedLink = closeAnchor
@@ -720,26 +753,37 @@ func buildSpreadRows(spreads []backtest.SpreadPositionReport, unit string) []spr
 
 		if spread.CloseTime != nil {
 			closeTag := displayTag
+			closeEventTime := spread.CloseTime
+			closeHeaderLabel := "平仓时间"
+			closeHeaderTime := formatDateTime(*spread.CloseTime)
+			if spread.CloseTriggerTime != nil {
+				closeEventTime = spread.CloseTriggerTime
+				closeHeaderLabel = "平仓触发"
+				closeHeaderTime = formatDateTime(*spread.CloseTriggerTime)
+			}
 			if strings.TrimSpace(displayCloseNote) != "" {
 				closeTag = displayCloseNote
 			}
 			rows = append(rows, spreadRowView{
-				ID:          spread.ID,
-				Tag:         closeTag,
-				AnchorID:    closeAnchor,
-				EventType:   "CLOSE",
-				EventClass:  "bg-rose-500/15 text-rose-200 ring-rose-400/40",
-				EventTime:   formatDateTime(*spread.CloseTime),
-				RelatedLink: openAnchor,
-				RelatedText: "跳转到开仓",
-				Status:      translateSpreadStatus(spread.Status),
-				eventUnix:   spread.CloseTime.Unix(),
-				OpenTime:    formatDateTime(spread.OpenTime),
-				CloseTime:   formatDateTime(*spread.CloseTime),
-				DaysHeld:    fmt.Sprintf("%.2f 天", spread.DaysHeld),
-				RealizedPnL: signedAmount(spread.RealizedPnL, unit),
-				StatusClass: statusClass(spread.Status),
-				Legs:        legs,
+				ID:              spread.ID,
+				Tag:             closeTag,
+				GroupID:         spread.GroupID,
+				AnchorID:        closeAnchor,
+				EventType:       "CLOSE",
+				EventClass:      "bg-rose-500/15 text-rose-200 ring-rose-400/40",
+				EventTime:       formatDateTime(*closeEventTime),
+				HeaderTimeLabel: closeHeaderLabel,
+				HeaderTime:      closeHeaderTime,
+				RelatedLink:     openAnchor,
+				RelatedText:     "跳转到开仓",
+				Status:          translateSpreadStatus(spread.Status),
+				eventUnix:       closeEventTime.Unix(),
+				OpenTime:        formatDateTime(spread.OpenTime),
+				CloseTime:       closeHeaderTime,
+				DaysHeld:        fmt.Sprintf("%.2f 天", spread.DaysHeld),
+				RealizedPnL:     signedAmount(spread.RealizedPnL, unit),
+				StatusClass:     statusClass(spread.Status),
+				Legs:            legs,
 			})
 		}
 	}
@@ -758,6 +802,194 @@ func buildSpreadRows(spreads []backtest.SpreadPositionReport, unit string) []spr
 	})
 
 	return rows
+}
+
+func buildSpreadGroupViews(groups []backtest.SpreadGroupReport, spreads []backtest.SpreadPositionReport, unit string) ([]spreadGroupView, []spreadRowView) {
+	if len(spreads) == 0 {
+		return nil, nil
+	}
+
+	spreadMap := make(map[int]backtest.SpreadPositionReport, len(spreads))
+	groupSpreads := make(map[int][]backtest.SpreadPositionReport)
+	ungrouped := make([]backtest.SpreadPositionReport, 0, len(spreads))
+	for _, spread := range spreads {
+		spreadMap[spread.ID] = spread
+		if spread.GroupID > 0 {
+			groupSpreads[spread.GroupID] = append(groupSpreads[spread.GroupID], spread)
+			continue
+		}
+		ungrouped = append(ungrouped, spread)
+	}
+
+	groupReports := make(map[int]backtest.SpreadGroupReport, len(groups))
+	for _, group := range groups {
+		groupReports[group.ID] = group
+		if _, exists := groupSpreads[group.ID]; !exists {
+			groupSpreads[group.ID] = nil
+		}
+	}
+
+	views := make([]spreadGroupView, 0, len(groupSpreads))
+	for groupID, groupedSpreads := range groupSpreads {
+		if groupID <= 0 {
+			continue
+		}
+
+		report, hasReport := groupReports[groupID]
+		orderedSpreads := orderedGroupedSpreads(report, groupedSpreads, spreadMap)
+		rows := buildSpreadRows(orderedSpreads, unit)
+
+		openTime := earliestSpreadOpenTime(orderedSpreads)
+		if hasReport && !report.OpenTime.IsZero() {
+			openTime = report.OpenTime
+		}
+		closeTime := latestSpreadCloseTimeReport(orderedSpreads)
+		if hasReport && report.CloseTime != nil {
+			closeTime = report.CloseTime
+		}
+		totalPnL := totalGroupedSpreadPnL(orderedSpreads)
+		status := groupedSpreadStatus(report, orderedSpreads)
+		view := spreadGroupView{
+			ID:          groupID,
+			Tag:         groupedSpreadTag(report, groupID),
+			AnchorID:    fmt.Sprintf("spread-group-%d", groupID),
+			Status:      translateSpreadStatus(status),
+			StatusClass: statusClass(status),
+			OpenTime:    formatDateTime(openTime),
+			CloseTime:   nullableTime(closeTime),
+			InitAmount:  groupedInitAmount(report, unit),
+			DecayFactor: groupedDecayFactor(report),
+			RollCount:   groupedRollCount(report),
+			TotalPnL:    signedAmount(totalPnL, unit),
+			SpreadCount: len(orderedSpreads),
+			EventCount:  len(rows),
+			Spreads:     rows,
+		}
+		if !openTime.IsZero() {
+			view.eventUnix = openTime.Unix()
+		}
+		views = append(views, view)
+	}
+
+	sort.Slice(views, func(i, j int) bool {
+		if views[i].eventUnix != views[j].eventUnix {
+			return views[i].eventUnix < views[j].eventUnix
+		}
+		return views[i].ID < views[j].ID
+	})
+
+	return views, buildSpreadRows(ungrouped, unit)
+}
+
+func orderedGroupedSpreads(report backtest.SpreadGroupReport, spreads []backtest.SpreadPositionReport, spreadMap map[int]backtest.SpreadPositionReport) []backtest.SpreadPositionReport {
+	if len(spreads) == 0 {
+		return nil
+	}
+
+	ordered := make([]backtest.SpreadPositionReport, 0, len(spreads))
+	seen := make(map[int]struct{}, len(spreads))
+	for _, spreadID := range report.SpreadIDs {
+		spread, ok := spreadMap[spreadID]
+		if !ok || spread.GroupID != report.ID {
+			continue
+		}
+		ordered = append(ordered, spread)
+		seen[spread.ID] = struct{}{}
+	}
+	for _, spread := range spreads {
+		if _, ok := seen[spread.ID]; ok {
+			continue
+		}
+		ordered = append(ordered, spread)
+	}
+
+	sort.Slice(ordered, func(i, j int) bool {
+		if ordered[i].OpenTime.Equal(ordered[j].OpenTime) {
+			return ordered[i].ID < ordered[j].ID
+		}
+		return ordered[i].OpenTime.Before(ordered[j].OpenTime)
+	})
+	return ordered
+}
+
+func earliestSpreadOpenTime(spreads []backtest.SpreadPositionReport) time.Time {
+	var earliest time.Time
+	for _, spread := range spreads {
+		if earliest.IsZero() || spread.OpenTime.Before(earliest) {
+			earliest = spread.OpenTime
+		}
+	}
+	return earliest
+}
+
+func latestSpreadCloseTimeReport(spreads []backtest.SpreadPositionReport) *time.Time {
+	var latest time.Time
+	found := false
+	for _, spread := range spreads {
+		if spread.CloseTime != nil && (!found || spread.CloseTime.After(latest)) {
+			latest = *spread.CloseTime
+			found = true
+		}
+	}
+	if !found {
+		return nil
+	}
+	return &latest
+}
+
+func totalGroupedSpreadPnL(spreads []backtest.SpreadPositionReport) float64 {
+	total := 0.0
+	for _, spread := range spreads {
+		total += spread.RealizedPnL
+	}
+	return total
+}
+
+func groupedSpreadStatus(report backtest.SpreadGroupReport, spreads []backtest.SpreadPositionReport) string {
+	if strings.TrimSpace(report.Status) != "" {
+		return report.Status
+	}
+	if len(spreads) == 0 {
+		return "open"
+	}
+	for _, spread := range spreads {
+		if !strings.EqualFold(spread.Status, "closed") {
+			return "open"
+		}
+	}
+	return "closed"
+}
+
+func groupedSpreadTag(report backtest.SpreadGroupReport, groupID int) string {
+	if strings.TrimSpace(report.Tag) != "" {
+		return report.Tag
+	}
+	return fmt.Sprintf("spread-group-%d", groupID)
+}
+
+func groupedInitAmount(report backtest.SpreadGroupReport, unit string) string {
+	if report.InitAmount == 0 {
+		return "-"
+	}
+	return amount4(report.InitAmount, unit)
+}
+
+func groupedDecayFactor(report backtest.SpreadGroupReport) string {
+	if report.DecayFactor == 0 {
+		return "-"
+	}
+	return decimal(report.DecayFactor)
+}
+
+func groupedRollCount(report backtest.SpreadGroupReport) string {
+	return integer(report.RollCount)
+}
+
+func nullableTime(value *time.Time) string {
+	if value == nil || value.IsZero() {
+		return "-"
+	}
+	return formatDateTime(*value)
 }
 
 func stripExecDeltaTagSuffix(tag string) string {
@@ -1445,7 +1677,75 @@ func slugToken(value string) string {
 	return value
 }
 
-const htmlTemplate = `<!DOCTYPE html>
+const htmlTemplate = `{{ define "classicSpreadEventCard" }}
+<div id="{{ .AnchorID }}" class="mb-4 border border-white/5 rounded-lg overflow-hidden">
+	<div class="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5 bg-white/[0.02] border-b border-white/5">
+		<div class="flex items-center gap-3">
+			<span class="font-medium text-slate-200">#{{ .ID }} {{ .Tag }}</span>
+			{{ if gt .GroupID 0 }}<span class="mono text-xs px-2 py-0.5 rounded bg-violet-500/15 text-violet-300 ring-1 ring-violet-400/30">组 #{{ .GroupID }}</span>{{ end }}
+			<span class="mono text-xs px-2 py-0.5 rounded {{ .StatusClass }}">{{ .Status }}</span>
+			<span class="mono text-xs text-slate-400">{{ .HeaderTimeLabel }} {{ .HeaderTime }}</span>
+		</div>
+		<div class="flex gap-5 text-xs text-slate-400">
+			{{ if ne .EventTime .HeaderTime }}<span>{{ if eq .EventType "OPEN" }}开仓{{ else }}平仓{{ end }} {{ .EventTime }}</span>{{ end }}
+			<span>盈亏 <span class="mono text-slate-300">{{ .RealizedPnL }}</span></span>
+			{{ if .RelatedLink }}<a class="text-sky-300 hover:text-sky-200 underline underline-offset-2" href="#{{ .RelatedLink }}">{{ .RelatedText }}</a>{{ end }}
+		</div>
+	</div>
+	<div class="overflow-x-auto">
+		<table class="w-full text-sm">
+			<thead>
+				<tr class="text-left text-slate-500 text-xs uppercase border-b border-white/5">
+					<th class="px-4 py-2 font-medium">合约</th>
+					<th class="px-4 py-2 font-medium">事件</th>
+					<th class="px-4 py-2 font-medium">方向</th>
+					<th class="px-4 py-2 font-medium">类型</th>
+					<th class="px-4 py-2 font-medium">行权价</th>
+					<th class="px-4 py-2 font-medium">到期日</th>
+					{{ if eq .EventType "OPEN" }}
+					<th class="px-4 py-2 font-medium">筛选条件</th>
+					<th class="px-4 py-2 font-medium">数量</th>
+					<th class="px-4 py-2 font-medium">入场价格</th>
+					<th class="px-4 py-2 font-medium">入场金额</th>
+					{{ else }}
+					<th class="px-4 py-2 font-medium">数量</th>
+					<th class="px-4 py-2 font-medium">平仓价格</th>
+					<th class="px-4 py-2 font-medium">{{ if .Legs }}{{ (index .Legs 0).CloseTimeLabel }}{{ else }}平仓时间{{ end }}</th>
+					<th class="px-4 py-2 font-medium">平仓原因</th>
+					<th class="px-4 py-2 font-medium">单腿盈亏</th>
+					{{ end }}
+				</tr>
+			</thead>
+			<tbody>
+				{{ $eventType := .EventType }}
+				{{ $eventClass := .EventClass }}
+				{{ range .Legs }}
+				<tr class="border-b border-white/[0.03]">
+					<td class="px-4 py-1.5 mono text-slate-300">{{ .Symbol }}</td>
+					<td class="px-4 py-1.5"><span class="mono text-xs px-2 py-0.5 rounded ring-1 {{ $eventClass }}">{{ if eq $eventType "OPEN" }}开仓{{ else }}平仓{{ end }}</span></td>
+					<td class="px-4 py-1.5 text-slate-300">{{ .Side }}</td>
+					<td class="px-4 py-1.5 text-slate-400">{{ .Type }}</td>
+					<td class="px-4 py-1.5 mono text-slate-300">{{ .StrikePrice }}</td>
+					<td class="px-4 py-1.5 mono text-slate-400">{{ .Expiration }}</td>
+					{{ if eq $eventType "OPEN" }}
+					<td class="px-4 py-1.5 mono text-slate-300">{{ .OpenSelect }}</td>
+					<td class="px-4 py-1.5 mono text-slate-300">{{ .Qty }}</td>
+					<td class="px-4 py-1.5 mono text-slate-300">{{ .EntryPrice }}</td>
+					<td class="px-4 py-1.5 mono text-slate-300">{{ .EntryAmount }}</td>
+					{{ else }}
+					<td class="px-4 py-1.5 mono text-slate-300">{{ .Qty }}</td>
+					<td class="px-4 py-1.5 mono text-slate-400">{{ .ClosePrice }}</td>
+					<td class="px-4 py-1.5 mono text-slate-400">{{ .CloseTime }}</td>
+					<td class="px-4 py-1.5 text-slate-300">{{ .CloseReason }}</td>
+					<td class="px-4 py-1.5 mono text-slate-300">{{ .RealizedPnL }}</td>
+					{{ end }}
+				</tr>
+				{{ end }}
+			</tbody>
+		</table>
+	</div>
+</div>
+{{ end }}<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8" />
@@ -1649,74 +1949,48 @@ const htmlTemplate = `<!DOCTYPE html>
 				<span class="mono text-xs text-slate-400">{{ .SpreadsCount }} 个持仓 · {{ len .Spreads }} 个事件</span>
       </div>
 			<p class="text-xs text-slate-400 mb-4">开仓和平仓会拆分为独立事件，并按时间排序。可使用跳转链接在同一价差的两个事件之间切换。</p>
-      {{ range .Spreads }}
-			<div id="{{ .AnchorID }}" class="mb-4 border border-white/5 rounded-lg overflow-hidden">
-				<div class="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5 bg-white/[0.02] border-b border-white/5">
-					<div class="flex items-center gap-3">
-						<span class="font-medium text-slate-200">#{{ .ID }} {{ .Tag }}</span>
-						<span class="mono text-xs px-2 py-0.5 rounded {{ .StatusClass }}">{{ .Status }}</span>
-						<span class="mono text-xs text-slate-400">下单 {{ .OpenTime }}</span>
+			{{ if .SpreadGroups }}
+			<div class="space-y-5 mb-5">
+				{{ range .SpreadGroups }}
+				<div id="{{ .AnchorID }}" class="border border-white/5 rounded-xl overflow-hidden bg-white/[0.02]">
+					<div class="px-4 py-3 border-b border-white/5 bg-white/[0.03]">
+						<div class="flex flex-wrap items-center justify-between gap-3">
+							<div class="flex flex-wrap items-center gap-3">
+								<span class="font-medium text-slate-100">组 #{{ .ID }} {{ .Tag }}</span>
+								<span class="mono text-xs px-2 py-0.5 rounded {{ .StatusClass }}">{{ .Status }}</span>
+								<span class="mono text-xs text-slate-400">开组 {{ .OpenTime }}</span>
+								{{ if ne .CloseTime "-" }}<span class="mono text-xs text-slate-400">闭组 {{ .CloseTime }}</span>{{ end }}
+							</div>
+							<div class="flex flex-wrap gap-5 text-xs text-slate-400">
+								<span>{{ .SpreadCount }} 个持仓</span>
+								<span>{{ .EventCount }} 个事件</span>
+								<span>滚仓 {{ .RollCount }} 次</span>
+								<span>初始资金 <span class="mono text-slate-300">{{ .InitAmount }}</span></span>
+								<span>衰减 <span class="mono text-slate-300">{{ .DecayFactor }}</span></span>
+								<span>组盈亏 <span class="mono text-slate-200">{{ .TotalPnL }}</span></span>
+							</div>
+						</div>
 					</div>
-					<div class="flex gap-5 text-xs text-slate-400">
-						{{ if ne .EventTime .OpenTime }}<span>{{ if eq .EventType "OPEN" }}开仓{{ else }}平仓{{ end }} {{ .EventTime }}</span>{{ end }}
-						<span>盈亏 <span class="mono text-slate-300">{{ .RealizedPnL }}</span></span>
-						{{ if .RelatedLink }}<a class="text-sky-300 hover:text-sky-200 underline underline-offset-2" href="#{{ .RelatedLink }}">{{ .RelatedText }}</a>{{ end }}
+					<div class="p-4 space-y-4">
+						{{ range .Spreads }}
+						{{ template "classicSpreadEventCard" . }}
+						{{ end }}
 					</div>
 				</div>
-        <div class="overflow-x-auto">
-          <table class="w-full text-sm">
-            <thead>
-              <tr class="text-left text-slate-500 text-xs uppercase border-b border-white/5">
-							<th class="px-4 py-2 font-medium">合约</th>
-							<th class="px-4 py-2 font-medium">事件</th>
-                <th class="px-4 py-2 font-medium">方向</th>
-                <th class="px-4 py-2 font-medium">类型</th>
-                <th class="px-4 py-2 font-medium">行权价</th>
-                <th class="px-4 py-2 font-medium">到期日</th>
-								{{ if eq .EventType "OPEN" }}
-								<th class="px-4 py-2 font-medium">筛选条件</th>
-								<th class="px-4 py-2 font-medium">数量</th>
-								<th class="px-4 py-2 font-medium">入场价格</th>
-				<th class="px-4 py-2 font-medium">入场金额</th>
-								{{ else }}
-								<th class="px-4 py-2 font-medium">数量</th>
-								<th class="px-4 py-2 font-medium">平仓价格</th>
-								<th class="px-4 py-2 font-medium">平仓时间</th>
-				<th class="px-4 py-2 font-medium">平仓原因</th>
-								<th class="px-4 py-2 font-medium">单腿盈亏</th>
-								{{ end }}
-              </tr>
-            </thead>
-            <tbody>
-							{{ $eventType := .EventType }}
-							{{ $eventClass := .EventClass }}
-              {{ range .Legs }}
-              <tr class="border-b border-white/[0.03]">
-                <td class="px-4 py-1.5 mono text-slate-300">{{ .Symbol }}</td>
-								<td class="px-4 py-1.5"><span class="mono text-xs px-2 py-0.5 rounded ring-1 {{ $eventClass }}">{{ if eq $eventType "OPEN" }}开仓{{ else }}平仓{{ end }}</span></td>
-								<td class="px-4 py-1.5 text-slate-300">{{ .Side }}</td>
-                <td class="px-4 py-1.5 text-slate-400">{{ .Type }}</td>
-                <td class="px-4 py-1.5 mono text-slate-300">{{ .StrikePrice }}</td>
-                <td class="px-4 py-1.5 mono text-slate-400">{{ .Expiration }}</td>
-								{{ if eq $eventType "OPEN" }}
-								<td class="px-4 py-1.5 mono text-slate-300">{{ .OpenSelect }}</td>
-								<td class="px-4 py-1.5 mono text-slate-300">{{ .Qty }}</td>
-								<td class="px-4 py-1.5 mono text-slate-300">{{ .EntryPrice }}</td>
-				<td class="px-4 py-1.5 mono text-slate-300">{{ .EntryAmount }}</td>
-								{{ else }}
-								<td class="px-4 py-1.5 mono text-slate-300">{{ .Qty }}</td>
-								<td class="px-4 py-1.5 mono text-slate-400">{{ .ClosePrice }}</td>
-								<td class="px-4 py-1.5 mono text-slate-400">{{ .CloseTime }}</td>
-				<td class="px-4 py-1.5 text-slate-300">{{ .CloseReason }}</td>
-								<td class="px-4 py-1.5 mono text-slate-300">{{ .RealizedPnL }}</td>
-								{{ end }}
-              </tr>
-              {{ end }}
-            </tbody>
-          </table>
-        </div>
-      </div>
-      {{ end }}
+				{{ end }}
+			</div>
+			{{ end }}
+			{{ if .UngroupedSpreads }}
+			<div>
+				<div class="flex items-center justify-between mb-3">
+					<h3 class="text-sm font-medium text-slate-200">未分组持仓</h3>
+					<span class="mono text-xs text-slate-400">{{ len .UngroupedSpreads }} 个事件</span>
+				</div>
+				{{ range .UngroupedSpreads }}
+				{{ template "classicSpreadEventCard" . }}
+				{{ end }}
+			</div>
+			{{ end }}
     </div>
     {{ end }}
 
@@ -2466,7 +2740,73 @@ const htmlTemplate = `<!DOCTYPE html>
 </body>
 </html>`
 
-const combinedHTMLTemplate = `<!DOCTYPE html>
+const combinedHTMLTemplate = `{{ define "combinedSpreadEventCard" }}
+<article id="{{ .AnchorID }}" class="overflow-hidden rounded-2xl border border-white/10 bg-white/[0.03]">
+	<div class="flex flex-col gap-3 border-b border-white/10 px-4 py-4 lg:flex-row lg:items-center lg:justify-between">
+		<div>
+			<div class="flex flex-wrap items-center gap-3">
+				<span class="rounded-full px-2.5 py-1 text-[11px] font-mono ring-1 {{ .EventClass }}">{{ if eq .EventType "OPEN" }}开仓{{ else }}平仓{{ end }}</span>
+				<h4 class="text-lg font-bold text-white">#{{ .ID }} {{ .Tag }}</h4>
+				<span class="rounded-full px-2.5 py-1 text-[11px] font-mono ring-1 {{ .StatusClass }}">{{ .Status }}</span>
+				{{ if .RelatedLink }}<a href="#{{ .RelatedLink }}" class="font-mono text-xs text-steel underline underline-offset-2 hover:text-white">{{ .RelatedText }}</a>{{ end }}
+			</div>
+			<p class="mt-2 text-sm text-slate-300">事件时间 {{ .EventTime }} · 开仓 {{ .OpenTime }} · 平仓 {{ .CloseTime }} · 持有 {{ .DaysHeld }}</p>
+		</div>
+		<div class="grid grid-cols-1 gap-4 text-sm lg:text-right">
+			<div><div class="text-slate-400">已实现盈亏</div><div class="font-mono text-white">{{ .RealizedPnL }}</div></div>
+		</div>
+	</div>
+	<div class="overflow-auto">
+		<table class="min-w-full divide-y divide-white/10 text-sm">
+			<thead class="bg-canvas/60 text-left text-slate-400">
+				<tr>
+					<th class="px-4 py-3 font-medium">合约</th>
+					<th class="px-4 py-3 font-medium">方向</th>
+					<th class="px-4 py-3 font-medium">类型</th>
+					<th class="px-4 py-3 font-medium">行权价</th>
+					<th class="px-4 py-3 font-medium">到期日</th>
+					{{ if eq .EventType "OPEN" }}
+					<th class="px-4 py-3 font-medium">筛选条件</th>
+					<th class="px-4 py-3 font-medium">数量</th>
+					<th class="px-4 py-3 font-medium">入场价格</th>
+					<th class="px-4 py-3 font-medium">入场金额</th>
+					{{ else }}
+					<th class="px-4 py-3 font-medium">数量</th>
+					<th class="px-4 py-3 font-medium">平仓价格</th>
+					<th class="px-4 py-3 font-medium">{{ if .Legs }}{{ (index .Legs 0).CloseTimeLabel }}{{ else }}平仓时间{{ end }}</th>
+					<th class="px-4 py-3 font-medium">平仓原因</th>
+					<th class="px-4 py-3 font-medium">单腿盈亏</th>
+					{{ end }}
+				</tr>
+			</thead>
+			<tbody class="divide-y divide-white/5">
+				{{ $eventType := .EventType }}
+				{{ range .Legs }}
+				<tr>
+					<td class="px-4 py-3 font-mono text-slate-200">{{ .Symbol }}</td>
+					<td class="px-4 py-3 font-semibold {{ .SideClass }}">{{ .Side }}</td>
+					<td class="px-4 py-3 text-slate-200">{{ .Type }}</td>
+					<td class="px-4 py-3 font-mono text-slate-200">{{ .StrikePrice }}</td>
+					<td class="px-4 py-3 font-mono text-slate-300">{{ .Expiration }}</td>
+					{{ if eq $eventType "OPEN" }}
+					<td class="px-4 py-3 font-mono text-slate-300">{{ .OpenSelect }}</td>
+					<td class="px-4 py-3 font-mono text-slate-200">{{ .Qty }}</td>
+					<td class="px-4 py-3 font-mono text-slate-200">{{ .EntryPrice }}</td>
+					<td class="px-4 py-3 font-mono text-slate-200">{{ .EntryAmount }}</td>
+					{{ else }}
+					<td class="px-4 py-3 font-mono text-slate-200">{{ .Qty }}</td>
+					<td class="px-4 py-3 font-mono text-slate-300">{{ .ClosePrice }}</td>
+					<td class="px-4 py-3 font-mono text-slate-300">{{ .CloseTime }}</td>
+					<td class="px-4 py-3 text-slate-300">{{ .CloseReason }}</td>
+					<td class="px-4 py-3 font-mono text-white">{{ .RealizedPnL }}</td>
+					{{ end }}
+				</tr>
+				{{ end }}
+			</tbody>
+		</table>
+	</div>
+</article>
+{{ end }}<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 	<meta charset="UTF-8" />
@@ -2775,72 +3115,46 @@ const combinedHTMLTemplate = `<!DOCTYPE html>
 							{{ else }}
 							<p class="mt-3 text-sm text-slate-300">开仓和平仓会按时间顺序分别列出。可使用跳转链接在同一价差的两个事件之间切换。</p>
 							<div class="mt-5 space-y-4">
-								{{ range .Report.Spreads }}
-								<article id="{{ .AnchorID }}" class="overflow-hidden rounded-2xl border border-white/10 bg-white/[0.03]">
-									<div class="flex flex-col gap-3 border-b border-white/10 px-4 py-4 lg:flex-row lg:items-center lg:justify-between">
-										<div>
-											<div class="flex flex-wrap items-center gap-3">
-												<span class="rounded-full px-2.5 py-1 text-[11px] font-mono ring-1 {{ .EventClass }}">{{ if eq .EventType "OPEN" }}开仓{{ else }}平仓{{ end }}</span>
-												<h4 class="text-lg font-bold text-white">#{{ .ID }} {{ .Tag }}</h4>
-												<span class="rounded-full px-2.5 py-1 text-[11px] font-mono ring-1 {{ .StatusClass }}">{{ .Status }}</span>
-												{{ if .RelatedLink }}<a href="#{{ .RelatedLink }}" class="font-mono text-xs text-steel underline underline-offset-2 hover:text-white">{{ .RelatedText }}</a>{{ end }}
+								{{ if .Report.SpreadGroups }}
+								{{ range .Report.SpreadGroups }}
+								<section id="{{ .AnchorID }}" class="overflow-hidden rounded-2xl border border-white/10 bg-white/[0.03]">
+									<div class="border-b border-white/10 px-4 py-4">
+										<div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+											<div>
+												<div class="flex flex-wrap items-center gap-3">
+													<h4 class="text-lg font-bold text-white">组 #{{ .ID }} {{ .Tag }}</h4>
+													<span class="rounded-full px-2.5 py-1 text-[11px] font-mono ring-1 {{ .StatusClass }}">{{ .Status }}</span>
+												</div>
+												<p class="mt-2 text-sm text-slate-300">开组 {{ .OpenTime }} · 闭组 {{ .CloseTime }} · {{ .SpreadCount }} 个持仓 · {{ .EventCount }} 个事件</p>
 											</div>
-											<p class="mt-2 text-sm text-slate-300">事件时间 {{ .EventTime }} · 开仓 {{ .OpenTime }} · 平仓 {{ .CloseTime }} · 持有 {{ .DaysHeld }}</p>
-										</div>
-										<div class="grid grid-cols-1 gap-4 text-sm lg:text-right">
-											<div><div class="text-slate-400">已实现盈亏</div><div class="font-mono text-white">{{ .RealizedPnL }}</div></div>
+											<div class="grid grid-cols-2 gap-4 text-sm lg:text-right">
+												<div><div class="text-slate-400">初始资金</div><div class="font-mono text-white">{{ .InitAmount }}</div></div>
+												<div><div class="text-slate-400">组盈亏</div><div class="font-mono text-white">{{ .TotalPnL }}</div></div>
+												<div><div class="text-slate-400">滚仓次数</div><div class="font-mono text-white">{{ .RollCount }}</div></div>
+												<div><div class="text-slate-400">衰减系数</div><div class="font-mono text-white">{{ .DecayFactor }}</div></div>
+											</div>
 										</div>
 									</div>
-									<div class="overflow-auto">
-										<table class="min-w-full divide-y divide-white/10 text-sm">
-											<thead class="bg-canvas/60 text-left text-slate-400">
-												<tr>
-													<th class="px-4 py-3 font-medium">合约</th>
-													<th class="px-4 py-3 font-medium">方向</th>
-													<th class="px-4 py-3 font-medium">类型</th>
-													<th class="px-4 py-3 font-medium">行权价</th>
-													<th class="px-4 py-3 font-medium">到期日</th>
-													{{ if eq .EventType "OPEN" }}
-													<th class="px-4 py-3 font-medium">筛选条件</th>
-													<th class="px-4 py-3 font-medium">数量</th>
-													<th class="px-4 py-3 font-medium">入场价格</th>
-													<th class="px-4 py-3 font-medium">入场金额</th>
-													{{ else }}
-													<th class="px-4 py-3 font-medium">数量</th>
-													<th class="px-4 py-3 font-medium">平仓价格</th>
-													<th class="px-4 py-3 font-medium">平仓时间</th>
-													<th class="px-4 py-3 font-medium">平仓原因</th>
-													<th class="px-4 py-3 font-medium">单腿盈亏</th>
-													{{ end }}
-												</tr>
-											</thead>
-											<tbody class="divide-y divide-white/5">
-												{{ $eventType := .EventType }}
-												{{ range .Legs }}
-												<tr>
-													<td class="px-4 py-3 font-mono text-slate-200">{{ .Symbol }}</td>
-													<td class="px-4 py-3 font-semibold {{ .SideClass }}">{{ .Side }}</td>
-													<td class="px-4 py-3 text-slate-200">{{ .Type }}</td>
-													<td class="px-4 py-3 font-mono text-slate-200">{{ .StrikePrice }}</td>
-													<td class="px-4 py-3 font-mono text-slate-300">{{ .Expiration }}</td>
-													{{ if eq $eventType "OPEN" }}
-													<td class="px-4 py-3 font-mono text-slate-300">{{ .OpenSelect }}</td>
-													<td class="px-4 py-3 font-mono text-slate-200">{{ .Qty }}</td>
-													<td class="px-4 py-3 font-mono text-slate-200">{{ .EntryPrice }}</td>
-													<td class="px-4 py-3 font-mono text-slate-200">{{ .EntryAmount }}</td>
-													{{ else }}
-													<td class="px-4 py-3 font-mono text-slate-200">{{ .Qty }}</td>
-													<td class="px-4 py-3 font-mono text-slate-300">{{ .ClosePrice }}</td>
-													<td class="px-4 py-3 font-mono text-slate-300">{{ .CloseTime }}</td>
-													<td class="px-4 py-3 text-slate-300">{{ .CloseReason }}</td>
-													<td class="px-4 py-3 font-mono text-white">{{ .RealizedPnL }}</td>
-													{{ end }}
-												</tr>
-												{{ end }}
-											</tbody>
-										</table>
+									<div class="space-y-4 p-4">
+										{{ range .Spreads }}
+										{{ template "combinedSpreadEventCard" . }}
+										{{ end }}
 									</div>
-								</article>
+								</section>
+								{{ end }}
+								{{ end }}
+								{{ if .Report.UngroupedSpreads }}
+								<div>
+									<div class="mb-3 flex items-center justify-between">
+										<h4 class="text-base font-bold text-white">未分组持仓</h4>
+										<span class="rounded-full border border-white/10 bg-white/5 px-3 py-1 font-mono text-xs text-slate-300">{{ len .Report.UngroupedSpreads }} 个事件</span>
+									</div>
+									<div class="space-y-4">
+										{{ range .Report.UngroupedSpreads }}
+										{{ template "combinedSpreadEventCard" . }}
+										{{ end }}
+									</div>
+								</div>
 								{{ end }}
 							</div>
 							{{ end }}

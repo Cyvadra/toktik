@@ -1,6 +1,7 @@
 package main
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -99,6 +100,88 @@ func TestEnsureParentDir(t *testing.T) {
 		path := filepath.Join(root, "a", "b", "result.json")
 		if err := ensureParentDir(path); err != nil {
 			t.Fatalf("ensureParentDir(%q) unexpected error: %v", path, err)
+		}
+	})
+}
+
+func TestResolveHTMLTargetDir(t *testing.T) {
+	t.Parallel()
+
+	t.Run("default directory", func(t *testing.T) {
+		t.Parallel()
+		if got := resolveHTMLTargetDir(""); got != defaultBacktestHTMLDir {
+			t.Fatalf("resolveHTMLTargetDir(\"\") = %q, want %q", got, defaultBacktestHTMLDir)
+		}
+	})
+
+	t.Run("custom file path uses parent", func(t *testing.T) {
+		t.Parallel()
+		path := filepath.Join("custom", "reports", "result.html")
+		want := filepath.Join("custom", "reports")
+		if got := resolveHTMLTargetDir(path); got != want {
+			t.Fatalf("resolveHTMLTargetDir(%q) = %q, want %q", path, got, want)
+		}
+	})
+
+	t.Run("bare filename uses cwd", func(t *testing.T) {
+		t.Parallel()
+		if got := resolveHTMLTargetDir("result.html"); got != "." {
+			t.Fatalf("resolveHTMLTargetDir(result.html) = %q, want .", got)
+		}
+	})
+}
+
+func TestClearHTMLFiles(t *testing.T) {
+	t.Parallel()
+
+	t.Run("missing directory is ignored", func(t *testing.T) {
+		t.Parallel()
+		missing := filepath.Join(t.TempDir(), "missing")
+		if err := clearHTMLFiles(missing); err != nil {
+			t.Fatalf("clearHTMLFiles(%q) unexpected error: %v", missing, err)
+		}
+	})
+
+	t.Run("removes only html files in target directory", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		htmlPath := filepath.Join(root, "report.html")
+		htmlUpperPath := filepath.Join(root, "summary.HTML")
+		jsonPath := filepath.Join(root, "result.json")
+		nestedDir := filepath.Join(root, "nested")
+		nestedHTMLPath := filepath.Join(nestedDir, "keep.html")
+
+		if err := os.WriteFile(htmlPath, []byte("html"), 0o644); err != nil {
+			t.Fatalf("WriteFile(%q) unexpected error: %v", htmlPath, err)
+		}
+		if err := os.WriteFile(htmlUpperPath, []byte("html"), 0o644); err != nil {
+			t.Fatalf("WriteFile(%q) unexpected error: %v", htmlUpperPath, err)
+		}
+		if err := os.WriteFile(jsonPath, []byte("json"), 0o644); err != nil {
+			t.Fatalf("WriteFile(%q) unexpected error: %v", jsonPath, err)
+		}
+		if err := os.MkdirAll(nestedDir, 0o755); err != nil {
+			t.Fatalf("MkdirAll(%q) unexpected error: %v", nestedDir, err)
+		}
+		if err := os.WriteFile(nestedHTMLPath, []byte("nested"), 0o644); err != nil {
+			t.Fatalf("WriteFile(%q) unexpected error: %v", nestedHTMLPath, err)
+		}
+
+		if err := clearHTMLFiles(root); err != nil {
+			t.Fatalf("clearHTMLFiles(%q) unexpected error: %v", root, err)
+		}
+
+		if _, err := os.Stat(htmlPath); !os.IsNotExist(err) {
+			t.Fatalf("expected %q to be removed, stat err = %v", htmlPath, err)
+		}
+		if _, err := os.Stat(htmlUpperPath); !os.IsNotExist(err) {
+			t.Fatalf("expected %q to be removed, stat err = %v", htmlUpperPath, err)
+		}
+		if _, err := os.Stat(jsonPath); err != nil {
+			t.Fatalf("expected %q to remain, stat err = %v", jsonPath, err)
+		}
+		if _, err := os.Stat(nestedHTMLPath); err != nil {
+			t.Fatalf("expected nested file %q to remain, stat err = %v", nestedHTMLPath, err)
 		}
 	})
 }

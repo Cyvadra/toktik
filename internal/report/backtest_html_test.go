@@ -383,6 +383,7 @@ func TestWriteBacktestHTMLIncludesOverlaySeriesSupport(t *testing.T) {
 
 func TestWriteBacktestHTMLPlacesSpreadOpenTimeBesideHeaderStatus(t *testing.T) {
 	openTime := time.Date(2024, time.January, 2, 3, 4, 0, 0, time.UTC)
+	triggerTime := time.Date(2024, time.January, 3, 4, 30, 0, 0, time.UTC)
 	closeTime := time.Date(2024, time.January, 3, 5, 6, 0, 0, time.UTC)
 	result := &backtest.Result{
 		StrategyName:   "spread-test",
@@ -400,28 +401,30 @@ func TestWriteBacktestHTMLPlacesSpreadOpenTimeBesideHeaderStatus(t *testing.T) {
 			"close": {70150, 70250},
 		},
 		SpreadPositions: []backtest.SpreadPositionReport{{
-			ID:          1,
-			Tag:         "short call spread",
-			Status:      "closed",
-			OpenTime:    openTime,
-			CloseTime:   &closeTime,
-			DaysHeld:    1.08,
-			RealizedPnL: 12.34,
+			ID:               1,
+			Tag:              "short call spread",
+			Status:           "closed",
+			OpenTime:         openTime,
+			CloseTriggerTime: &triggerTime,
+			CloseTime:        &closeTime,
+			DaysHeld:         1.08,
+			RealizedPnL:      12.34,
 			Legs: []backtest.SpreadLegReport{{
-				Symbol:      "BTC-20240105-50000-C",
-				Side:        "sell",
-				Type:        backtest.Call,
-				StrikePrice: 50000,
-				Expiration:  time.Date(2024, time.January, 5, 0, 0, 0, 0, time.UTC),
-				Delta:       0.25,
-				Qty:         1,
-				EntryPrice:  10,
-				EntryTime:   openTime,
-				Closed:      true,
-				ClosePrice:  4,
-				CloseTime:   &closeTime,
-				CloseReason: "tp",
-				RealizedPnL: 6,
+				Symbol:           "BTC-20240105-50000-C",
+				Side:             "sell",
+				Type:             backtest.Call,
+				StrikePrice:      50000,
+				Expiration:       time.Date(2024, time.January, 5, 0, 0, 0, 0, time.UTC),
+				Delta:            0.25,
+				Qty:              1,
+				EntryPrice:       10,
+				EntryTime:        openTime,
+				Closed:           true,
+				ClosePrice:       4,
+				CloseTriggerTime: &triggerTime,
+				CloseTime:        &closeTime,
+				CloseReason:      "tp",
+				RealizedPnL:      6,
 			}},
 		}},
 	}
@@ -440,7 +443,231 @@ func TestWriteBacktestHTMLPlacesSpreadOpenTimeBesideHeaderStatus(t *testing.T) {
 	if !strings.Contains(html, "下单 2024-01-02 03:04 UTC") {
 		t.Fatalf("expected generated html to place spread open time in the card header")
 	}
-	if !strings.Contains(html, ">平仓 2024-01-03 05:06 UTC<") {
-		t.Fatalf("expected generated html to keep the close event time in the header meta area")
+	if !strings.Contains(html, "平仓触发 2024-01-03 04:30 UTC") {
+		t.Fatalf("expected generated html to show the close trigger time in the close card header")
+	}
+	if strings.Contains(html, "下单 2024-01-02 03:04 UTC</span></div><div class=\"flex gap-5 text-xs text-slate-400\"><span>盈亏") {
+		t.Fatalf("did not expect close cards to keep showing the original order time in the header")
+	}
+	if !strings.Contains(html, "平仓触发时间") {
+		t.Fatalf("expected generated html to relabel leg close time column to close trigger time when available")
+	}
+}
+
+func TestBuildHTMLViewGroupsRelatedSpreads(t *testing.T) {
+	openTime := time.Date(2024, time.January, 2, 3, 4, 0, 0, time.UTC)
+	closeTime := time.Date(2024, time.January, 9, 3, 4, 0, 0, time.UTC)
+	result := &backtest.Result{
+		StrategyName:   "spread-group-test",
+		StartTime:      openTime,
+		EndTime:        closeTime,
+		BarsCount:      2,
+		InitialCapital: 100,
+		FinalEquity:    104,
+		EquityCurve:    []float64{100, 104},
+		Timestamps:     []time.Time{openTime, closeTime},
+		Series: map[string][]float64{
+			"open":  {70000, 70100},
+			"high":  {70200, 70300},
+			"low":   {69900, 70050},
+			"close": {70150, 70250},
+		},
+		SpreadGroups: []backtest.SpreadGroupReport{{
+			ID:          7,
+			Tag:         "bull-call",
+			SpreadIDs:   []int{11, 12},
+			InitAmount:  2,
+			DecayFactor: 0.8,
+			RollCount:   1,
+			TotalPnL:    6,
+			Status:      "closed",
+			OpenTime:    openTime,
+			CloseTime:   &closeTime,
+		}},
+		SpreadPositions: []backtest.SpreadPositionReport{
+			{
+				ID:          11,
+				Tag:         "开仓|first",
+				Status:      "closed",
+				OpenTime:    openTime,
+				CloseTime:   &closeTime,
+				DaysHeld:    7,
+				RealizedPnL: 2,
+				GroupID:     7,
+				Legs: []backtest.SpreadLegReport{{
+					Symbol:      "BTC-20240105-50000-C",
+					Side:        "buy",
+					Type:        backtest.Call,
+					StrikePrice: 50000,
+					Expiration:  time.Date(2024, time.January, 5, 0, 0, 0, 0, time.UTC),
+					Delta:       0.33,
+					Qty:         1,
+					EntryPrice:  10,
+					EntryTime:   openTime,
+					Closed:      true,
+					ClosePrice:  12,
+					CloseTime:   &closeTime,
+					RealizedPnL: 2,
+				}},
+			},
+			{
+				ID:          12,
+				Tag:         "换仓|second",
+				Status:      "open",
+				OpenTime:    openTime.Add(24 * time.Hour),
+				DaysHeld:    6,
+				RealizedPnL: 4,
+				GroupID:     7,
+				Legs: []backtest.SpreadLegReport{{
+					Symbol:      "BTC-20240112-52000-C",
+					Side:        "sell",
+					Type:        backtest.Call,
+					StrikePrice: 52000,
+					Expiration:  time.Date(2024, time.January, 12, 0, 0, 0, 0, time.UTC),
+					Delta:       0.10,
+					Qty:         1,
+					EntryPrice:  6,
+					EntryTime:   openTime.Add(24 * time.Hour),
+					Closed:      false,
+				}},
+			},
+			{
+				ID:          13,
+				Tag:         "standalone",
+				Status:      "open",
+				OpenTime:    openTime.Add(48 * time.Hour),
+				DaysHeld:    5,
+				RealizedPnL: 0,
+				Legs: []backtest.SpreadLegReport{{
+					Symbol:      "BTC-20240119-53000-P",
+					Side:        "buy",
+					Type:        backtest.Put,
+					StrikePrice: 53000,
+					Expiration:  time.Date(2024, time.January, 19, 0, 0, 0, 0, time.UTC),
+					Delta:       -0.2,
+					Qty:         1,
+					EntryPrice:  8,
+					EntryTime:   openTime.Add(48 * time.Hour),
+					Closed:      false,
+				}},
+			},
+		},
+	}
+
+	view := buildHTMLView(result, HTMLMeta{})
+	if len(view.SpreadGroups) != 1 {
+		t.Fatalf("len(view.SpreadGroups) = %d, want 1", len(view.SpreadGroups))
+	}
+	if view.SpreadGroups[0].ID != 7 {
+		t.Fatalf("view.SpreadGroups[0].ID = %d, want 7", view.SpreadGroups[0].ID)
+	}
+	if view.SpreadGroups[0].SpreadCount != 2 {
+		t.Fatalf("view.SpreadGroups[0].SpreadCount = %d, want 2", view.SpreadGroups[0].SpreadCount)
+	}
+	if len(view.SpreadGroups[0].Spreads) != 3 {
+		t.Fatalf("len(view.SpreadGroups[0].Spreads) = %d, want 3", len(view.SpreadGroups[0].Spreads))
+	}
+	if len(view.UngroupedSpreads) != 1 {
+		t.Fatalf("len(view.UngroupedSpreads) = %d, want 1", len(view.UngroupedSpreads))
+	}
+}
+
+func TestWriteBacktestHTMLIncludesSpreadGroupSections(t *testing.T) {
+	openTime := time.Date(2024, time.January, 2, 3, 4, 0, 0, time.UTC)
+	closeTime := time.Date(2024, time.January, 9, 3, 4, 0, 0, time.UTC)
+	result := &backtest.Result{
+		StrategyName:   "spread-group-html",
+		StartTime:      openTime,
+		EndTime:        closeTime,
+		BarsCount:      2,
+		InitialCapital: 100,
+		FinalEquity:    101,
+		EquityCurve:    []float64{100, 101},
+		Timestamps:     []time.Time{openTime, closeTime},
+		Series: map[string][]float64{
+			"open":  {70000, 70100},
+			"high":  {70200, 70300},
+			"low":   {69900, 70050},
+			"close": {70150, 70250},
+		},
+		SpreadGroups: []backtest.SpreadGroupReport{{
+			ID:          3,
+			Tag:         "bull-call",
+			SpreadIDs:   []int{1},
+			InitAmount:  2,
+			DecayFactor: 0.8,
+			RollCount:   0,
+			TotalPnL:    1,
+			Status:      "closed",
+			OpenTime:    openTime,
+			CloseTime:   &closeTime,
+		}},
+		SpreadPositions: []backtest.SpreadPositionReport{
+			{
+				ID:          1,
+				Tag:         "grouped-spread",
+				Status:      "closed",
+				OpenTime:    openTime,
+				CloseTime:   &closeTime,
+				DaysHeld:    7,
+				RealizedPnL: 1,
+				GroupID:     3,
+				Legs: []backtest.SpreadLegReport{{
+					Symbol:      "BTC-20240105-50000-C",
+					Side:        "buy",
+					Type:        backtest.Call,
+					StrikePrice: 50000,
+					Expiration:  time.Date(2024, time.January, 5, 0, 0, 0, 0, time.UTC),
+					Delta:       0.33,
+					Qty:         1,
+					EntryPrice:  10,
+					EntryTime:   openTime,
+					Closed:      true,
+					ClosePrice:  11,
+					CloseTime:   &closeTime,
+					RealizedPnL: 1,
+				}},
+			},
+			{
+				ID:          2,
+				Tag:         "standalone",
+				Status:      "open",
+				OpenTime:    openTime.Add(24 * time.Hour),
+				DaysHeld:    6,
+				Legs: []backtest.SpreadLegReport{{
+					Symbol:      "BTC-20240112-52000-P",
+					Side:        "buy",
+					Type:        backtest.Put,
+					StrikePrice: 52000,
+					Expiration:  time.Date(2024, time.January, 12, 0, 0, 0, 0, time.UTC),
+					Delta:       -0.2,
+					Qty:         1,
+					EntryPrice:  8,
+					EntryTime:   openTime.Add(24 * time.Hour),
+					Closed:      false,
+				}},
+			},
+		},
+	}
+
+	outputPath := filepath.Join(t.TempDir(), "grouped-report.html")
+	if err := WriteBacktestHTML(outputPath, result, HTMLMeta{}); err != nil {
+		t.Fatalf("WriteBacktestHTML() error = %v", err)
+	}
+
+	htmlBytes, err := os.ReadFile(outputPath)
+	if err != nil {
+		t.Fatalf("os.ReadFile() error = %v", err)
+	}
+	html := string(htmlBytes)
+
+	if !strings.Contains(html, "组 #3 bull-call") {
+		t.Fatalf("expected generated html to include spread group header")
+	}
+	if !strings.Contains(html, "未分组持仓") {
+		t.Fatalf("expected generated html to include ungrouped spread section")
+	}
+	if !strings.Contains(html, "grouped-spread") || !strings.Contains(html, "standalone") {
+		t.Fatalf("expected generated html to include both grouped and ungrouped spread tags")
 	}
 }

@@ -6,14 +6,12 @@ import (
 	"github.com/Cyvadra/toktik/internal/backtest"
 	_ "github.com/Cyvadra/toktik/pkg/strategies/buy_flash_low"
 	"github.com/Cyvadra/toktik/pkg/strategies/catalog"
+	_ "github.com/Cyvadra/toktik/pkg/strategies/covered_call_0330_tvsig"
 	_ "github.com/Cyvadra/toktik/pkg/strategies/delta_filter"
+	_ "github.com/Cyvadra/toktik/pkg/strategies/dual_spreads_btc_volatility"
 	_ "github.com/Cyvadra/toktik/pkg/strategies/ema_atr_spot"
 	_ "github.com/Cyvadra/toktik/pkg/strategies/golden_cross"
-	_ "github.com/Cyvadra/toktik/pkg/strategies/ma_deviation_forum_short_put"
-	_ "github.com/Cyvadra/toktik/pkg/strategies/ma_deviation_spread"
 	_ "github.com/Cyvadra/toktik/pkg/strategies/ma_deviation_spread_outer_source"
-	_ "github.com/Cyvadra/toktik/pkg/strategies/sf31_long"
-	_ "github.com/Cyvadra/toktik/pkg/strategies/sf31_short"
 	_ "github.com/Cyvadra/toktik/pkg/strategies/turtle_trend_simp"
 )
 

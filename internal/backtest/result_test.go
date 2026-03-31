@@ -135,7 +135,8 @@ func TestBuildReportSeriesIncludesFactorColumns(t *testing.T) {
 		"dvol_pr_90": {70, 71},
 	}}
 
-	series := buildReportSeries(primary, factorColumns, factors)
+	alignMaps := [][]int{nil}
+	series := buildReportSeries(primary, 2, factorColumns, alignMaps, factors)
 
 	if got := series["close"]; len(got) != 2 || got[0] != 60000 || got[1] != 60100 {
 		t.Fatalf("series[close] = %#v, want primary close series", got)
@@ -148,6 +149,25 @@ func TestBuildReportSeriesIncludesFactorColumns(t *testing.T) {
 	}
 	if got := series[factorSeriesKey(factors[0].ref, "close")]; len(got) != 2 || got[0] != 50 || got[1] != 51 {
 		t.Fatalf("series[namespaced factor close] = %#v, want namespaced factor close series", got)
+	}
+}
+
+func TestBuildReportSeriesAlignsFactorColumnsToPrimaryBars(t *testing.T) {
+	primary := map[string][]float64{
+		"close": {60000, 60100, 60200, 60300},
+	}
+	factors := []factorRegistration{{
+		ref: FactorRef{Name: "dvol", Interval: "1d", Index: 0},
+	}}
+	factorColumns := []map[string][]float64{{
+		"close": {50, 51},
+	}}
+	alignMaps := [][]int{{0, 0, 1, 1}}
+
+	series := buildReportSeries(primary, 4, factorColumns, alignMaps, factors)
+
+	if got := series[factorSeriesKey(factors[0].ref, "close")]; len(got) != 4 || got[0] != 50 || got[1] != 50 || got[2] != 51 || got[3] != 51 {
+		t.Fatalf("series[namespaced factor close] = %#v, want aligned factor series", got)
 	}
 }
 
@@ -222,5 +242,50 @@ func TestBuildSpreadPositionReportsIncludesCloseDelta(t *testing.T) {
 	}
 	if *reports[0].Legs[0].CloseDelta != -0.4321 {
 		t.Fatalf("*reports[0].Legs[0].CloseDelta = %v, want %v", *reports[0].Legs[0].CloseDelta, -0.4321)
+	}
+}
+
+func TestBuildSpreadPositionReportsIncludesCloseTriggerTime(t *testing.T) {
+	tracker := NewSpreadTracker()
+	openTime := time.Date(2024, time.January, 3, 9, 0, 0, 0, time.UTC)
+	triggerTime := openTime.Add(90 * time.Minute)
+	closeTime := triggerTime.Add(30 * time.Minute)
+	contract := OptionContract{
+		Symbol:      "BTC-OPT-C-100",
+		Type:        Call,
+		StrikePrice: 100,
+		Expiration:  openTime.Add(7 * 24 * time.Hour),
+		Delta:       0.3,
+	}
+	spreadID := tracker.Open([]SpreadLeg{{
+		Contract:   contract,
+		Side:       Sell,
+		Qty:        1,
+		EntryPrice: 5,
+		EntryTime:  openTime,
+	}}, openTime, 0, "首仓开仓")
+
+	if !tracker.CloseLegWithReasonAndData(spreadID, 0, 2, closeTime, "换仓平仓", []TradeCustomData{{
+		Key:   TradeCustomDataKeyCloseTriggerTime,
+		Value: triggerTime.Format(time.RFC3339Nano),
+	}}) {
+		t.Fatal("CloseLegWithReasonAndData() = false, want true")
+	}
+
+	reports := buildSpreadPositionReports(tracker, closeTime)
+	if len(reports) != 1 || len(reports[0].Legs) != 1 {
+		t.Fatalf("unexpected reports shape: %#v", reports)
+	}
+	if reports[0].CloseTriggerTime == nil {
+		t.Fatal("reports[0].CloseTriggerTime = nil, want value")
+	}
+	if !reports[0].CloseTriggerTime.Equal(triggerTime) {
+		t.Fatalf("reports[0].CloseTriggerTime = %v, want %v", *reports[0].CloseTriggerTime, triggerTime)
+	}
+	if reports[0].Legs[0].CloseTriggerTime == nil {
+		t.Fatal("reports[0].Legs[0].CloseTriggerTime = nil, want value")
+	}
+	if !reports[0].Legs[0].CloseTriggerTime.Equal(triggerTime) {
+		t.Fatalf("reports[0].Legs[0].CloseTriggerTime = %v, want %v", *reports[0].Legs[0].CloseTriggerTime, triggerTime)
 	}
 }

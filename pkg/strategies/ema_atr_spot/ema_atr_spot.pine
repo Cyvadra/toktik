@@ -5,11 +5,17 @@ fastLen = input.int(20, "Fast EMA", minval=1)
 slowLen = input.int(50, "Slow EMA", minval=2)
 atrLen = input.int(14, "ATR Length", minval=1)
 atrMult = input.float(2.0, "ATR Multiple", minval=0.1, step=0.1)
+volLen = input.int(20, "Volume SMA Length", minval=1)
+volMult = input.float(1.2, "Volume Ratio Threshold", minval=0.1, step=0.1)
 
 emaFast = ta.ema(close, fastLen)
 emaSlow = ta.ema(close, slowLen)
+volSMA = ta.sma(volume, volLen)
+volRatio = volume / volSMA
+
 atrVal = ta.atr(atrLen)
-longSignal = ta.crossover(emaFast, emaSlow)
+crossover = ta.crossover(emaFast, emaSlow)
+longSignal = crossover and close > open and close > emaFast and emaFast > emaSlow and volRatio >= volMult
 
 var float highestSinceEntry = na
 if strategy.position_size <= 0
@@ -21,11 +27,13 @@ if longSignal and strategy.position_size <= 0
     strategy.entry("Long", strategy.long)
 
 trailStop = strategy.position_size > 0 and not na(highestSinceEntry) ? highestSinceEntry - atrVal * atrMult : na
-exitSignal = strategy.position_size > 0 and not na(trailStop) and low <= trailStop
-if exitSignal
-    strategy.close("Long", comment="Trail Exit")
+trendExit = strategy.position_size > 0 and close < emaFast and emaFast < emaSlow
+exitSignal = strategy.position_size > 0 and ((not na(trailStop) and low <= trailStop) or trendExit)
 
-plot(emaFast, title="EMA 20", color=color.new(color.orange, 0), linewidth=2)
-plot(emaSlow, title="EMA 50", color=color.new(color.blue, 0), linewidth=2)
+if exitSignal
+    strategy.close("Long", comment=trendExit ? "Trend Exit" : "Trail Exit")
+
+plot(emaFast, title="EMA Fast", color=color.new(color.orange, 0), linewidth=2)
+plot(emaSlow, title="EMA Slow", color=color.new(color.blue, 0), linewidth=2)
 plot(trailStop, title="ATR Trail Stop", color=color.new(color.red, 0), linewidth=2, style=plot.style_linebr)
-plotshape(longSignal, title="Long Signal", style=shape.triangleup, location=location.belowbar, size=size.tiny, color=color.new(color.green, 0), text="Long")
+plotshape(longSignal, title="Long Signal", style=shape.triangleup, location=location.belowbar, size=size.tiny, color=color.new(color.green, 0), text="LongConfirmed")

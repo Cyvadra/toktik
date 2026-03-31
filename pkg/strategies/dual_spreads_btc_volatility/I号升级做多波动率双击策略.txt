@@ -1,0 +1,58 @@
+# I号升级做多波动率双击策略
+
+strategy name: dual_spreads_btc_volatility
+
+## 策略开仓点信号
+
+使用 `pkg/strategies/dual_spreads_btc_volatility/another_format_utc8.csv` 中的，加仓与开仓信号；
+直接按信号时间开仓，注意文件中的日期为UTC+8时区；
+即lowercase之后，包含"init"，即为首仓；包含"add"，即为加仓；
+忽略csv中的平仓信号。有init/add就开，不考虑既有持仓。
+同一根K线上，最多开仓或加仓一次。
+
+首仓额外过滤条件： 收到开仓信号后，查询当前DVOL，不得大于前90根DVOL历史值的66分位，否则忽略开仓信号。
+
+初始资金： 100 BTC
+
+仅交易spreads
+
+## 期权开仓/加仓
+
+amount_base = 2.0 BTC;
+选取期限在40天内，最接近40天的call期权。
+找到 delta 最接近 0.33 的期权A，记录权利金 price2buy；
+找到 delta 最接近 0.1 的期权B，记录权利金 price2sell；
+计算 n = amount_base / (price2buy - price2sell)
+买入 n 份的期权A，并卖出 n 份的期权B；
+
+每次开仓或加仓，都按这种方式进行，两个订单为一组。
+
+
+## 换仓
+
+### 触发条件（或）
+
+- (price2buy - price2sell) 相对于开仓时，上涨50% （按mark计）
+
+- 订单组中的多头腿A delta >= 0.5
+
+### 换仓系数
+
+订单组每次换仓，投入金额衰减，按上次投入的80%，进行换仓的开仓；
+
+例如 首仓2BTC ==> 换仓1.6BTC ==> 再次换仓时1.28BTC
+
+### 换仓方法
+
+平仓对应的订单组（buy call + sell call的组合，两单都平仓）
+
+然后按"开仓/加仓"方法，选择并建立新的仓位。注意投入金额衰减。
+
+## 期权平仓
+
+期权到期前一日平仓。
+
+## 注意事项
+
+必要时，修改回测系统模块，以及html模板等，以便更好地支持和展示“期权订单组”、“换仓”等概念。
+

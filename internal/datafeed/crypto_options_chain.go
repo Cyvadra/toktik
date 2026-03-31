@@ -22,6 +22,49 @@ type CryptoOptionsChainProvider struct {
 	resolution time.Duration
 }
 
+// symbolMetaRecord holds the immutable metadata fields for a single option contract.
+type symbolMetaRecord struct {
+	symbol     string
+	optionType string
+	strike     float32
+	expiration time.Time
+}
+
+// loadSymbolMeta fetches option contract metadata for baseAsset using GROUP BY
+// + anyLast() instead of a FINAL join. FINAL forces ClickHouse to synchronously
+// merge all table parts before returning, which is very expensive for large
+// tables. GROUP BY + anyLast() achieves the same deduplication semantics (last
+// written value wins) without triggering a full merge.
+func loadSymbolMeta(ctx context.Context, conn driver.Conn, baseAsset string) (map[uint32]symbolMetaRecord, error) {
+	rows, err := conn.Query(ctx, `
+SELECT
+    symbol_id,
+    anyLast(symbol)       AS symbol,
+    anyLast(option_type)  AS option_type,
+    anyLast(strike_price) AS strike_price,
+    anyLast(expiration)   AS expiration
+FROM crypto_options_symbol_meta
+WHERE base_asset = {base_asset:String}
+GROUP BY symbol_id`,
+		clickhouse.Named("base_asset", baseAsset),
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	meta := make(map[uint32]symbolMetaRecord)
+	for rows.Next() {
+		var id uint32
+		var r symbolMetaRecord
+		if err := rows.Scan(&id, &r.symbol, &r.optionType, &r.strike, &r.expiration); err != nil {
+			return nil, fmt.Errorf("scan symbol meta: %w", err)
+		}
+		meta[id] = r
+	}
+	return meta, rows.Err()
+}
+
 // NewCryptoOptionsChainProvider loads all option data for the given base asset
 // and interval from ClickHouse. The data is indexed by timestamp for O(1)
 // lookups during replay.
@@ -29,6 +72,13 @@ func NewCryptoOptionsChainProvider(ctx context.Context, conn driver.Conn, baseAs
 	resolution, err := parseInterval(interval)
 	if err != nil {
 		return nil, err
+	}
+
+	// Pre-load symbol metadata separately so the main query can avoid the
+	// expensive LEFT JOIN … FINAL pattern (see loadSymbolMeta).
+	metaMap, err := loadSymbolMeta(ctx, conn, baseAsset)
+	if err != nil {
+		return nil, fmt.Errorf("load symbol metadata for %s: %w", baseAsset, err)
 	}
 
 	fromParam := backtestTimeParam(from)
@@ -56,36 +106,29 @@ func NewCryptoOptionsChainProvider(ctx context.Context, conn driver.Conn, baseAs
 		log.Printf("[compat] no spot source or legacy underlying columns found for %s/%s; using zero underlying prices in options chain", baseAsset, interval)
 	}
 
+	// Meta columns and the FINAL join are removed; metadata is looked up from
+	// metaMap in Go. ORDER BY is removed because results go into an unordered
+	// map. bid_open, ask_open, and mark_open are dropped as they are unused.
 	query := fmt.Sprintf(`SELECT
     b.timestamp,
     b.symbol_id,
-		crypto_options_symbol_meta.symbol,
-		crypto_options_symbol_meta.option_type,
-		crypto_options_symbol_meta.strike_price,
-		crypto_options_symbol_meta.expiration,
     b.delta,
     b.gamma,
     b.vega,
     b.theta,
     b.rho,
-    b.bid_open,
     b.bid_close,
-    b.ask_open,
     b.ask_close,
-    b.mark_open,
     b.mark_close,
     b.mark_iv_close,
-		%s AS underlying_close,
+    %s AS underlying_close,
     b.tick_count,
     b.open_interest
 FROM %s AS b
-LEFT JOIN crypto_options_symbol_meta FINAL
-		ON b.symbol_id = crypto_options_symbol_meta.symbol_id
 %s
 WHERE b.base_asset = {base_asset:String}
-	AND b.timestamp >= toDateTime({from:String}, 'UTC')
-	AND b.timestamp < toDateTime({to:String}, 'UTC')
-ORDER BY b.timestamp`,
+    AND b.timestamp >= toDateTime({from:String}, 'UTC')
+    AND b.timestamp < toDateTime({to:String}, 'UTC')`,
 		underlyingCloseExpr,
 		optionTableName,
 		joinClause,
@@ -102,27 +145,24 @@ ORDER BY b.timestamp`,
 	}
 	defer rows.Close()
 
-	byTimestamp := make(map[int64][]backtest.OptionContract)
+	numTimestamps := int(to.Sub(from)/resolution) + 1
+	if numTimestamps < 64 {
+		numTimestamps = 64
+	}
+	byTimestamp := make(map[int64][]backtest.OptionContract, numTimestamps)
 	missingMetaCount := 0
 
 	for rows.Next() {
 		var (
 			ts              time.Time
 			symbolID        uint32
-			symbol          string
-			optionType      string
-			strikePrice     float32
-			expiration      time.Time
 			delta           float32
 			gamma           float32
 			vega            float32
 			theta           float32
 			rho             float32
-			bidOpen         float32
 			bidClose        float32
-			askOpen         float32
 			askClose        float32
-			markOpen        float32
 			markClose       float32
 			markIVClose     float32
 			underlyingClose float32
@@ -131,32 +171,31 @@ ORDER BY b.timestamp`,
 		)
 
 		if err := rows.Scan(
-			&ts, &symbolID, &symbol, &optionType, &strikePrice, &expiration,
+			&ts, &symbolID,
 			&delta, &gamma, &vega, &theta, &rho,
-			&bidOpen, &bidClose, &askOpen, &askClose,
-			&markOpen, &markClose, &markIVClose,
+			&bidClose, &askClose, &markClose, &markIVClose,
 			&underlyingClose, &tickCount, &openInterest,
 		); err != nil {
 			return nil, fmt.Errorf("scan chain row: %w", err)
 		}
 
-		// Skip rows where symbol metadata is missing (LEFT JOIN produced defaults).
-		if symbol == "" {
+		meta, ok := metaMap[symbolID]
+		if !ok {
 			missingMetaCount++
 			continue
 		}
 
 		ot := backtest.Call
-		if optionType == "put" {
+		if meta.optionType == "put" {
 			ot = backtest.Put
 		}
 
 		contract := backtest.OptionContract{
-			Symbol:          symbol,
-			Ref:             backtest.SecurityRef{Market: "crypto-options", Symbol: symbol},
+			Symbol:          meta.symbol,
+			Ref:             backtest.SecurityRef{Market: "crypto-options", Symbol: meta.symbol},
 			Type:            ot,
-			StrikePrice:     float64(strikePrice),
-			Expiration:      expiration,
+			StrikePrice:     float64(meta.strike),
+			Expiration:      meta.expiration,
 			Delta:           float64(delta),
 			Gamma:           float64(gamma),
 			Vega:            float64(vega),
@@ -175,6 +214,9 @@ ORDER BY b.timestamp`,
 		byTimestamp[key] = append(byTimestamp[key], contract)
 	}
 
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate chain rows for %s: %w", baseAsset, err)
+	}
 	if missingMetaCount > 0 {
 		log.Printf("[chain] %d bars skipped due to missing symbol metadata for %s", missingMetaCount, baseAsset)
 	}

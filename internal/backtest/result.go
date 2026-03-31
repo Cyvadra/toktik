@@ -45,6 +45,9 @@ type Result struct {
 	EquityAnalysis  *EquityAnalysis        `json:"equity_analysis,omitempty"`
 	SpreadPositions []SpreadPositionReport `json:"spread_positions,omitempty"`
 
+	// Options spread group tracking
+	SpreadGroups []SpreadGroupReport `json:"spread_groups,omitempty"`
+
 	// Options spread summary
 	SpreadSummary *SpreadSummary `json:"spread_summary,omitempty"`
 }
@@ -81,35 +84,52 @@ type EquityAnalysis struct {
 
 // SpreadPositionReport is a report-friendly snapshot of a multi-leg options spread.
 type SpreadPositionReport struct {
-	ID          int               `json:"id"`
-	Tag         string            `json:"tag"`
-	CloseNote   string            `json:"close_note,omitempty"`
-	Status      string            `json:"status"`
-	OpenTime    time.Time         `json:"open_time"`
-	CloseTime   *time.Time        `json:"close_time,omitempty"`
-	DaysHeld    float64           `json:"days_held"`
-	NetPremium  float64           `json:"net_premium"`
-	RealizedPnL float64           `json:"realized_pnl"`
-	Legs        []SpreadLegReport `json:"legs"`
+	ID               int               `json:"id"`
+	Tag              string            `json:"tag"`
+	CloseNote        string            `json:"close_note,omitempty"`
+	Status           string            `json:"status"`
+	OpenTime         time.Time         `json:"open_time"`
+	CloseTriggerTime *time.Time        `json:"close_trigger_time,omitempty"`
+	CloseTime        *time.Time        `json:"close_time,omitempty"`
+	DaysHeld         float64           `json:"days_held"`
+	NetPremium       float64           `json:"net_premium"`
+	RealizedPnL      float64           `json:"realized_pnl"`
+	GroupID          int               `json:"group_id,omitempty"`
+	Legs             []SpreadLegReport `json:"legs"`
+}
+
+// SpreadGroupReport is a report-friendly snapshot of a spread group (roll chain).
+type SpreadGroupReport struct {
+	ID          int        `json:"id"`
+	Tag         string     `json:"tag"`
+	SpreadIDs   []int      `json:"spread_ids"`
+	InitAmount  float64    `json:"init_amount"`
+	DecayFactor float64    `json:"decay_factor"`
+	RollCount   int        `json:"roll_count"`
+	TotalPnL    float64    `json:"total_pnl"`
+	Status      string     `json:"status"`
+	OpenTime    time.Time  `json:"open_time"`
+	CloseTime   *time.Time `json:"close_time,omitempty"`
 }
 
 // SpreadLegReport is a report-friendly snapshot of an individual spread leg.
 type SpreadLegReport struct {
-	Symbol      string     `json:"symbol"`
-	Side        string     `json:"side"`
-	Type        OptionType `json:"type"`
-	StrikePrice float64    `json:"strike_price"`
-	Expiration  time.Time  `json:"expiration"`
-	Delta       float64    `json:"delta"`
-	Qty         float64    `json:"qty"`
-	EntryPrice  float64    `json:"entry_price"`
-	EntryTime   time.Time  `json:"entry_time"`
-	Closed      bool       `json:"closed"`
-	ClosePrice  float64    `json:"close_price,omitempty"`
-	CloseTime   *time.Time `json:"close_time,omitempty"`
-	CloseDelta  *float64   `json:"close_delta,omitempty"`
-	CloseReason string     `json:"close_reason,omitempty"`
-	RealizedPnL float64    `json:"realized_pnl"`
+	Symbol           string     `json:"symbol"`
+	Side             string     `json:"side"`
+	Type             OptionType `json:"type"`
+	StrikePrice      float64    `json:"strike_price"`
+	Expiration       time.Time  `json:"expiration"`
+	Delta            float64    `json:"delta"`
+	Qty              float64    `json:"qty"`
+	EntryPrice       float64    `json:"entry_price"`
+	EntryTime        time.Time  `json:"entry_time"`
+	Closed           bool       `json:"closed"`
+	ClosePrice       float64    `json:"close_price,omitempty"`
+	CloseTriggerTime *time.Time `json:"close_trigger_time,omitempty"`
+	CloseTime        *time.Time `json:"close_time,omitempty"`
+	CloseDelta       *float64   `json:"close_delta,omitempty"`
+	CloseReason      string     `json:"close_reason,omitempty"`
+	RealizedPnL      float64    `json:"realized_pnl"`
 }
 
 // SpreadSummary aggregates metrics across all spread positions in a backtest.

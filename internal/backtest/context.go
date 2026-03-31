@@ -189,9 +189,10 @@ type BarContext struct {
 	factorRefs []FactorRef
 
 	// Options trading extensions
-	chainProvider    OptionsChainProvider
-	spreadTracker    *SpreadTracker
-	scheduledActions *[]ScheduledAction
+	chainProvider      OptionsChainProvider
+	spreadTracker      *SpreadTracker
+	spreadGroupTracker *SpreadGroupTracker
+	scheduledActions   *[]ScheduledAction
 }
 
 // BarIndex returns the current bar index (0-based).
@@ -714,6 +715,33 @@ func (bc *BarContext) CloseSpread(spreadID int, priceFn func(OptionContract) flo
 // Spreads returns the spread tracker for querying open/closed spreads.
 func (bc *BarContext) Spreads() *SpreadTracker {
 	return bc.spreadTracker
+}
+
+// SpreadGroups returns the spread group tracker for querying/managing groups.
+func (bc *BarContext) SpreadGroups() *SpreadGroupTracker {
+	return bc.spreadGroupTracker
+}
+
+// OpenSpreadInGroup opens a multi-leg spread position belonging to a spread group.
+// Returns the spread ID for later reference.
+func (bc *BarContext) OpenSpreadInGroup(legs []SpreadLeg, tag string, groupID int) int {
+	if bc.spreadTracker == nil {
+		return 0
+	}
+	legsCopy := make([]SpreadLeg, len(legs))
+	copy(legsCopy, legs)
+	for i := range legsCopy {
+		legsCopy[i].EntryTime = bc.barTime
+	}
+	for i := range legsCopy {
+		amount := legsCopy[i].Qty * legsCopy[i].EntryPrice
+		if legsCopy[i].Side == Sell {
+			bc.broker.AdjustCash(amount)
+		} else {
+			bc.broker.AdjustCash(-amount)
+		}
+	}
+	return bc.spreadTracker.OpenFull(legsCopy, bc.barTime, bc.barIndex, tag, "", groupID)
 }
 
 // --- Scheduled actions ---

@@ -406,7 +406,12 @@ func buildSpreadPositionReports(tracker *SpreadTracker, endTime time.Time) []Spr
 			OpenTime:    spread.OpenTime,
 			NetPremium:  spreadNetPremium(spread),
 			RealizedPnL: spread.TotalRealizedPnL(),
+			GroupID:     spread.GroupID,
 			Legs:        make([]SpreadLegReport, 0, len(spread.Legs)),
+		}
+		closeTriggerTime := latestSpreadCloseTriggerTime(spread)
+		if closeTriggerTime != nil {
+			report.CloseTriggerTime = closeTriggerTime
 		}
 		closeTime := latestSpreadCloseTime(spread)
 		if closeTime != nil {
@@ -439,6 +444,7 @@ func buildSpreadPositionReports(tracker *SpreadTracker, endTime time.Time) []Spr
 			if leg.Closed {
 				closeAt := leg.CloseTime
 				legReport.ClosePrice = leg.ClosePrice
+				legReport.CloseTriggerTime = tradeCustomDataTime(leg.CloseCustomData, TradeCustomDataKeyCloseTriggerTime)
 				legReport.CloseTime = &closeAt
 				legReport.CloseDelta = tradeCustomDataFloat(leg.CloseCustomData, TradeCustomDataKeyCloseDelta)
 			}
@@ -467,6 +473,28 @@ func latestSpreadCloseTime(spread *SpreadPosition) *time.Time {
 	return &latest
 }
 
+func latestSpreadCloseTriggerTime(spread *SpreadPosition) *time.Time {
+	if spread == nil {
+		return nil
+	}
+	var latest time.Time
+	found := false
+	for _, leg := range spread.Legs {
+		triggerTime := tradeCustomDataTime(leg.CloseCustomData, TradeCustomDataKeyCloseTriggerTime)
+		if triggerTime == nil {
+			continue
+		}
+		if !found || triggerTime.After(latest) {
+			latest = *triggerTime
+			found = true
+		}
+	}
+	if !found {
+		return nil
+	}
+	return &latest
+}
+
 func tradeCustomDataFloat(items []TradeCustomData, key string) *float64 {
 	for _, item := range items {
 		if item.Key != key {
@@ -474,6 +502,20 @@ func tradeCustomDataFloat(items []TradeCustomData, key string) *float64 {
 		}
 		value, err := strconv.ParseFloat(strings.TrimSpace(item.Value), 64)
 		if err != nil || math.IsNaN(value) || math.IsInf(value, 0) {
+			return nil
+		}
+		return &value
+	}
+	return nil
+}
+
+func tradeCustomDataTime(items []TradeCustomData, key string) *time.Time {
+	for _, item := range items {
+		if item.Key != key {
+			continue
+		}
+		value, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(item.Value))
+		if err != nil {
 			return nil
 		}
 		return &value
@@ -547,6 +589,54 @@ func computeSpreadSummary(tracker *SpreadTracker) *SpreadSummary {
 	}
 
 	return s
+}
+
+// buildSpreadGroupReports creates report snapshots for spread groups.
+func buildSpreadGroupReports(groupTracker *SpreadGroupTracker, spreadTracker *SpreadTracker, endTime time.Time) []SpreadGroupReport {
+	if groupTracker == nil || len(groupTracker.All()) == 0 {
+		return nil
+	}
+	reports := make([]SpreadGroupReport, 0, len(groupTracker.All()))
+	for _, group := range groupTracker.All() {
+		report := SpreadGroupReport{
+			ID:          group.ID,
+			Tag:         group.Tag,
+			SpreadIDs:   append([]int(nil), group.SpreadIDs...),
+			InitAmount:  group.InitAmount,
+			DecayFactor: group.DecayFactor,
+			RollCount:   group.RollCount,
+			Status:      "open",
+			OpenTime:    group.OpenTime,
+		}
+		if group.Closed {
+			report.Status = "closed"
+		}
+
+		// Sum realized PnL from all spreads in the group
+		var latestClose time.Time
+		allClosed := true
+		for _, spreadID := range group.SpreadIDs {
+			sp := spreadTracker.Get(spreadID)
+			if sp == nil {
+				continue
+			}
+			report.TotalPnL += sp.TotalRealizedPnL()
+			if !sp.IsFullyClosed() {
+				allClosed = false
+			}
+			for _, leg := range sp.Legs {
+				if leg.Closed && leg.CloseTime.After(latestClose) {
+					latestClose = leg.CloseTime
+				}
+			}
+		}
+		if allClosed && !latestClose.IsZero() {
+			report.CloseTime = &latestClose
+			report.Status = "closed"
+		}
+		reports = append(reports, report)
+	}
+	return reports
 }
 
 // ComputeMaxDrawdown computes max drawdown, start index, and end index from an

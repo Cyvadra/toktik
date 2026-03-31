@@ -19,6 +19,8 @@ import (
 	"github.com/Cyvadra/toktik/pkg/strategies"
 )
 
+const defaultBacktestHTMLDir = "reports/backtests"
+
 func main() {
 	dsn := flag.String("clickhouse-dsn", appCli.DefaultDSN, "ClickHouse DSN")
 	baseAsset := flag.String("asset", "BTC", "Underlying base asset (e.g. BTC)")
@@ -152,6 +154,11 @@ func main() {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "strategy resolve failed: %v\n", err)
 		os.Exit(1)
+	}
+
+	htmlTargetDir := resolveHTMLTargetDir(*outputHTML)
+	if err := clearHTMLFiles(htmlTargetDir); err != nil {
+		log.Fatalf("Failed to clear HTML reports in %s: %v", htmlTargetDir, err)
 	}
 
 	ctx := context.Background()
@@ -321,6 +328,39 @@ func ensureParentDir(path string) error {
 	return os.MkdirAll(dir, 0o755)
 }
 
+func resolveHTMLTargetDir(base string) string {
+	if strings.TrimSpace(base) == "" {
+		return defaultBacktestHTMLDir
+	}
+	dir := filepath.Dir(base)
+	if strings.TrimSpace(dir) == "" {
+		return "."
+	}
+	return dir
+}
+
+func clearHTMLFiles(dir string) error {
+	if strings.TrimSpace(dir) == "" {
+		return nil
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.EqualFold(filepath.Ext(entry.Name()), ".html") {
+			continue
+		}
+		if err := os.Remove(filepath.Join(dir, entry.Name())); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func resolveHTMLOutputPath(base, strategyName, asset, interval string, from, to time.Time, index, total int) string {
 	if strings.TrimSpace(base) != "" {
 		return resolveOutputPath(base, index, total)
@@ -333,7 +373,7 @@ func resolveHTMLOutputPath(base, strategyName, asset, interval string, from, to 
 		from.Format("20060102"),
 		to.Format("20060102"),
 	)
-	return filepath.Join("reports", "backtests", fileName)
+	return filepath.Join(defaultBacktestHTMLDir, fileName)
 }
 
 func resolveCombinedHTMLOutputPath(base, strategyName, asset, interval string, from, to time.Time) string {
@@ -352,7 +392,7 @@ func resolveCombinedHTMLOutputPath(base, strategyName, asset, interval string, f
 		from.Format("20060102"),
 		to.Format("20060102"),
 	)
-	return filepath.Join("reports", "backtests", fileName)
+	return filepath.Join(defaultBacktestHTMLDir, fileName)
 }
 
 func slugify(value string) string {

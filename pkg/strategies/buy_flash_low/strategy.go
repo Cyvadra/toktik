@@ -26,8 +26,12 @@ const (
 	defaultScoreThreshold = 3
 	defaultStrictScore    = 5
 	defaultDvolMinPr      = 60.0
-	dvolPrWindowShort     = 90
-	dvolPrWindowLong      = 360
+	dvolDataInterval      = "1d"
+	dvolPrWindowShortDays = 90
+	dvolPrWindowLongDays  = 360
+	dvolColumn            = "dvol"
+	dvolPrShortColumn     = "dvol_pr_90"
+	dvolPrLongColumn      = "dvol_pr_360"
 	defaultSpotNotional   = 1e-6
 	defaultTargetDTE      = 15
 	defaultMinDTE         = 7
@@ -37,6 +41,8 @@ const (
 	defaultMaxContracts   = 100.0
 	defaultTakeProfit1    = 0.70
 	defaultTakeProfit2    = 0.88
+	positionGroupTag      = "buy-flash-low-short-put"
+	positionGroupDecay    = 1.0
 )
 
 func init() {
@@ -87,6 +93,7 @@ type buyFlashLowStrategy struct {
 	highestSinceEntry float64
 	optionSpreadIDs   [2]int
 	dvolFactor        backtest.FactorRef
+	positionGroupID   int
 }
 
 func (s *buyFlashLowStrategy) Name() string { return "BuyFlashLow" }
@@ -111,9 +118,9 @@ func (s *buyFlashLowStrategy) ReportColumns() []backtest.ReportColumn {
 		{Source: "amp_score", Label: "Amp Score", Decimals: 0},
 		{Source: "vol_score", Label: "Vol Score", Decimals: 0},
 		{Source: "l_prev", Label: "Support", Decimals: 2},
-		{Source: "dvol", Label: "DVOL", Decimals: 2},
-		{Source: "dvol_pr_90", Label: "DVOL PR90%", Decimals: 1},
-		{Source: "dvol_pr_360", Label: "DVOL PR360%", Decimals: 1},
+		{Source: "factor.dvol." + dvolDataInterval + ".close", Label: "DVOL", Decimals: 2},
+		{Source: "factor.dvol." + dvolDataInterval + "." + dvolPrShortColumn, Label: "DVOL PR90%", Decimals: 1},
+		{Source: "factor.dvol." + dvolDataInterval + "." + dvolPrLongColumn, Label: "DVOL PR360%", Decimals: 1},
 	}
 }
 
@@ -126,17 +133,18 @@ func (s *buyFlashLowStrategy) Init(ctx *backtest.SetupContext) error {
 	ctx.SetParam("min_amp_pr", s.minAmpPr)
 	ctx.SetParam("score_threshold", s.scoreThreshold)
 	ctx.SetParam("dvol_min_pr", s.dvolMinPr)
+	ctx.SetParam("dvol_interval", dvolDataInterval)
 
 	// DVOL factor is used only by the options leg as an additional volatility filter.
-	s.dvolFactor = ctx.AddFactor("dvol", ctx.PrimaryRef().Interval)
-	ctx.RegisterFactor(s.dvolFactor, "dvol", backtest.Custom(
+	s.dvolFactor = ctx.AddFactor("dvol", dvolDataInterval)
+	ctx.RegisterFactor(s.dvolFactor, dvolColumn, backtest.Custom(
 		[]string{"close"},
 		func(inputs map[string][]float64) []float64 {
 			return inputs["close"]
 		},
 	))
-	ctx.RegisterFactor(s.dvolFactor, "dvol_pr_90", percentileRank("close", dvolPrWindowShort))
-	ctx.RegisterFactor(s.dvolFactor, "dvol_pr_360", percentileRank("close", dvolPrWindowLong))
+	ctx.RegisterFactor(s.dvolFactor, dvolPrShortColumn, percentileRank("close", dvolPrWindowShortDays))
+	ctx.RegisterFactor(s.dvolFactor, dvolPrLongColumn, percentileRank("close", dvolPrWindowLongDays))
 
 	ctx.Register("atr", backtest.ATR(lkb))
 	ctx.Register("sma_2", backtest.SMA("close", 2))
@@ -423,9 +431,9 @@ func (s *buyFlashLowStrategy) OnBar(ctx *backtest.BarContext) {
 		qty := s.spotNotional / cls
 		ctx.Buy(primary, qty)
 		if !hasOpenOptionPosition {
-			// if s.shouldOpenShortPut(ctx) {
-			s.openShortPutTranches(ctx, chain)
-			// }
+			if s.shouldOpenShortPut(ctx) {
+				s.openShortPutTranches(ctx, chain)
+			}
 		}
 	}
 }
@@ -528,6 +536,9 @@ func (s *buyFlashLowStrategy) manageOpenShortPuts(ctx *backtest.BarContext, now 
 
 		active = true
 	}
+	if !active {
+		s.closeGroup(ctx, s.positionGroupID)
+	}
 	return active
 }
 
@@ -563,20 +574,62 @@ func (s *buyFlashLowStrategy) openShortPutTranches(ctx *backtest.BarContext, cha
 		{qty: secondQty, tag: "buy-flash-low-short-put-runner"},
 	}
 
+	groupID := s.openGroupID(ctx)
+	opened := false
+
 	for i, tranche := range tranches {
 		if tranche.qty <= 0 {
 			continue
 		}
-		spreadID := ctx.OpenSpread([]backtest.SpreadLeg{{
+		spreadID := s.openSpreadInGroup(ctx, []backtest.SpreadLeg{{
 			Contract:   *contract,
 			Side:       backtest.Sell,
 			Qty:        tranche.qty,
 			EntryPrice: entryPrice,
-		}}, tranche.tag)
+		}}, tranche.tag, groupID)
 		if spreadID > 0 {
 			s.optionSpreadIDs[i] = spreadID
+			opened = true
 		}
 	}
+
+	if !opened {
+		s.closeGroup(ctx, groupID)
+	}
+}
+
+func (s *buyFlashLowStrategy) openGroupID(ctx *backtest.BarContext) int {
+	if s.positionGroupID > 0 {
+		return s.positionGroupID
+	}
+	if ctx.SpreadGroups() == nil {
+		return 0
+	}
+	s.positionGroupID = ctx.SpreadGroups().Open(positionGroupTag, s.premiumTarget, positionGroupDecay, ctx.Time())
+	return s.positionGroupID
+}
+
+func (s *buyFlashLowStrategy) closeGroup(ctx *backtest.BarContext, groupID int) {
+	if groupID <= 0 {
+		return
+	}
+	if ctx.SpreadGroups() != nil {
+		ctx.SpreadGroups().Close(groupID)
+	}
+	if s.positionGroupID == groupID {
+		s.positionGroupID = 0
+	}
+}
+
+func (s *buyFlashLowStrategy) openSpreadInGroup(ctx *backtest.BarContext, legs []backtest.SpreadLeg, tag string, groupID int) int {
+	if groupID > 0 && ctx.SpreadGroups() != nil {
+		spreadID := ctx.OpenSpreadInGroup(legs, tag, groupID)
+		if spreadID > 0 {
+			ctx.SpreadGroups().AddSpread(groupID, spreadID)
+		}
+		return spreadID
+	}
+	return ctx.OpenSpread(legs, tag)
 }
 
 func (s *buyFlashLowStrategy) selectShortPut(chain *backtest.OptionsChain) *backtest.OptionContract {
