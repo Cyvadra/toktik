@@ -122,6 +122,14 @@ func (b *Broker) ProcessPending(barIndex int, barTime time.Time) []Trade {
 			fills = append(fills, *trade)
 
 			if o.Type == TWAPMarketOrder {
+				if o.Qty <= 0 && o.Notional > 0 {
+					slicesLeft := o.TWAPBars
+					if slicesLeft <= 0 {
+						slicesLeft = 1
+					}
+					o.Qty = trade.Qty * float64(slicesLeft)
+					o.Notional = 0
+				}
 				fillQty := trade.Qty
 				remainingQty := o.Qty - fillQty
 				remainingBars := o.TWAPBars - 1
@@ -168,6 +176,10 @@ func (b *Broker) ExecuteOrderAtCloseNow(o Order, barIndex int, barTime time.Time
 	if !isValidPrice(closePrice) {
 		return nil, false
 	}
+	fillQty := b.resolveOrderQty(o, closePrice)
+	if fillQty <= 0 {
+		return nil, false
+	}
 	fillPrice := b.applySlippage(closePrice, o.Side)
 	if o.ID == 0 {
 		o.ID = b.nextOID
@@ -179,10 +191,67 @@ func (b *Broker) ExecuteOrderAtCloseNow(o Order, barIndex int, barTime time.Time
 		Security:   o.Security,
 		Side:       o.Side,
 		Note:       o.Note,
-		Qty:        o.Qty,
+		Qty:        fillQty,
 		FillPrice:  fillPrice,
-		Commission: b.calcCommission(o.Qty, fillPrice),
+		Commission: b.calcCommission(fillQty, fillPrice),
 		Slippage:   abs(fillPrice - closePrice),
+		BarIndex:   barIndex,
+		Timestamp:  barTime,
+	}
+	b.nextTID++
+	b.cash += trade.NetAmount()
+	b.positions.Update(*trade)
+	b.trades = append(b.trades, *trade)
+	return trade, true
+}
+
+// ExecuteStopOrderNow attempts to fill a stop order against the current bar's
+// trigger range. extraSlippagePct is added on top of the broker's base slippage.
+func (b *Broker) ExecuteStopOrderNow(o Order, barIndex int, barTime time.Time, extraSlippagePct float64) (*Trade, bool) {
+	if b.priceFunc == nil || o.Type != StopOrder {
+		return nil, false
+	}
+	prices := b.priceFunc(o.Security)
+	open := prices.executionOpen(o.Side, b.config.ExecutionMode)
+	if !isValidPrice(open) || !isValidPrice(o.StopPrice) {
+		return nil, false
+	}
+	low, high := prices.triggerRange(o.Side, b.config.TriggerMode)
+	triggered := false
+	fillBasePrice := 0.0
+	if o.Side == Buy {
+		if isValidPrice(high) && high >= o.StopPrice {
+			fillBasePrice = max(open, o.StopPrice)
+			triggered = true
+		}
+	} else {
+		if isValidPrice(low) && low <= o.StopPrice {
+			fillBasePrice = min(open, o.StopPrice)
+			triggered = true
+		}
+	}
+	if !triggered {
+		return nil, false
+	}
+	fillQty := b.resolveOrderQty(o, fillBasePrice)
+	if fillQty <= 0 {
+		return nil, false
+	}
+	fillPrice := applySlippageWithExtra(fillBasePrice, o.Side, b.config.SlippagePct, extraSlippagePct)
+	if o.ID == 0 {
+		o.ID = b.nextOID
+		b.nextOID++
+	}
+	trade := &Trade{
+		ID:         b.nextTID,
+		OrderID:    o.ID,
+		Security:   o.Security,
+		Side:       o.Side,
+		Note:       o.Note,
+		Qty:        fillQty,
+		FillPrice:  fillPrice,
+		Commission: b.calcCommission(fillQty, fillPrice),
+		Slippage:   abs(fillPrice - fillBasePrice),
 		BarIndex:   barIndex,
 		Timestamp:  barTime,
 	}
@@ -206,15 +275,26 @@ func (b *Broker) executeOrderOnBar(o Order, barIndex int, barTime time.Time) (*T
 
 	switch o.Type {
 	case MarketOrder:
+		fillQty = b.resolveOrderQty(o, open)
+		if fillQty <= 0 {
+			return nil, false, true
+		}
 		fillPrice = b.applySlippage(open, o.Side)
 		filled = true
 
 	case TWAPMarketOrder:
+		totalQty := o.Qty
+		if totalQty <= 0 && o.Notional > 0 {
+			totalQty = b.resolveOrderQty(o, open)
+		}
+		if totalQty <= 0 {
+			return nil, false, true
+		}
 		slicesLeft := o.TWAPBars
 		if slicesLeft <= 0 {
 			slicesLeft = 1
 		}
-		fillQty = o.Qty / float64(slicesLeft)
+		fillQty = totalQty / float64(slicesLeft)
 		fillPrice = b.applySlippage(open, o.Side)
 		filled = true
 
@@ -222,9 +302,11 @@ func (b *Broker) executeOrderOnBar(o Order, barIndex int, barTime time.Time) (*T
 		low, high := prices.triggerRange(o.Side, b.config.TriggerMode)
 		if o.Side == Buy && isValidPrice(low) && low <= o.Price {
 			fillPrice = min(open, o.Price)
+			fillQty = b.resolveOrderQty(o, fillPrice)
 			filled = true
 		} else if o.Side == Sell && isValidPrice(high) && high >= o.Price {
 			fillPrice = max(open, o.Price)
+			fillQty = b.resolveOrderQty(o, fillPrice)
 			filled = true
 		}
 
@@ -232,9 +314,11 @@ func (b *Broker) executeOrderOnBar(o Order, barIndex int, barTime time.Time) (*T
 		low, high := prices.triggerRange(o.Side, b.config.TriggerMode)
 		if o.Side == Buy && isValidPrice(high) && high >= o.StopPrice {
 			fillPrice = b.applySlippage(max(open, o.StopPrice), o.Side)
+			fillQty = b.resolveOrderQty(o, fillPrice)
 			filled = true
 		} else if o.Side == Sell && isValidPrice(low) && low <= o.StopPrice {
 			fillPrice = b.applySlippage(min(open, o.StopPrice), o.Side)
+			fillQty = b.resolveOrderQty(o, fillPrice)
 			filled = true
 		}
 
@@ -249,15 +333,20 @@ func (b *Broker) executeOrderOnBar(o Order, barIndex int, barTime time.Time) (*T
 		if triggered {
 			if o.Side == Buy && isValidPrice(low) && low <= o.Price {
 				fillPrice = min(open, o.Price)
+				fillQty = b.resolveOrderQty(o, fillPrice)
 				filled = true
 			} else if o.Side == Sell && isValidPrice(high) && high >= o.Price {
 				fillPrice = max(open, o.Price)
+				fillQty = b.resolveOrderQty(o, fillPrice)
 				filled = true
 			}
 		}
 	}
 
 	if !filled {
+		return nil, false, true
+	}
+	if fillQty <= 0 {
 		return nil, false, true
 	}
 
@@ -400,6 +489,31 @@ func (b *Broker) calcCommission(qty, price float64) float64 {
 
 func (b *Broker) applySlippage(price float64, side Side) float64 {
 	slip := price * b.config.SlippagePct
+	if side == Buy {
+		return price + slip
+	}
+	return price - slip
+}
+
+func (b *Broker) resolveOrderQty(o Order, referencePrice float64) float64 {
+	if o.Qty > 0 {
+		return o.Qty
+	}
+	if o.Notional > 0 && isValidPrice(referencePrice) {
+		return o.Notional / referencePrice
+	}
+	return 0
+}
+
+func applySlippageWithExtra(price float64, side Side, baseSlippagePct, extraSlippagePct float64) float64 {
+	totalSlip := baseSlippagePct
+	if extraSlippagePct > 0 {
+		totalSlip += extraSlippagePct
+	}
+	if totalSlip <= 0 {
+		return price
+	}
+	slip := price * totalSlip
 	if side == Buy {
 		return price + slip
 	}

@@ -268,6 +268,8 @@ type factorDrivenStrategy struct {
 
 type immediateAndDeferredStrategy struct{}
 
+type scheduledNotionalStrategy struct{}
+
 func (s *immediateAndDeferredStrategy) Name() string { return "immediate-and-deferred" }
 
 func (s *immediateAndDeferredStrategy) Init(_ *SetupContext) error { return nil }
@@ -278,6 +280,17 @@ func (s *immediateAndDeferredStrategy) OnBar(ctx *BarContext) {
 	}
 	ctx.BuyNowWithNote(ctx.PrimaryRef(), 1, "now")
 	ctx.Buy(ctx.PrimaryRef(), 1)
+}
+
+func (s *scheduledNotionalStrategy) Name() string { return "scheduled-notional" }
+
+func (s *scheduledNotionalStrategy) Init(_ *SetupContext) error { return nil }
+
+func (s *scheduledNotionalStrategy) OnBar(ctx *BarContext) {
+	if ctx.BarIndex() != 0 {
+		return
+	}
+	ctx.ScheduleBuyNotionalWithNote(ctx.Time().Add(time.Hour), ctx.PrimaryRef(), 202, "scheduled-notional")
 }
 
 func (s *factorDrivenStrategy) Name() string { return "factor-driven" }
@@ -361,5 +374,34 @@ func TestImmediateExecutionUsesCurrentBarClose(t *testing.T) {
 	}
 	if want := from.Add(time.Hour); !result.Trades[1].Timestamp.Equal(want) {
 		t.Fatalf("deferred trade timestamp = %v, want %v", result.Trades[1].Timestamp, want)
+	}
+}
+
+func TestScheduledNotionalOrderUsesTriggerBarOpen(t *testing.T) {
+	engine := NewEngine(Config{InitialCapital: 10000})
+	engine.RegisterDataFeed("test", &stubDataFeed{
+		fields: []string{"open", "high", "low", "close", "volume"},
+	})
+
+	from := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	to := from.Add(3 * time.Hour)
+
+	result, err := engine.Run(context.Background(), "test", "TEST", "1h", from, to, &scheduledNotionalStrategy{}, nil)
+	if err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+	if len(result.Trades) != 1 {
+		t.Fatalf("expected 1 trade, got %d", len(result.Trades))
+	}
+	trade := result.Trades[0]
+	if trade.BarIndex != 1 {
+		t.Fatalf("trade.BarIndex = %d, want 1", trade.BarIndex)
+	}
+	if trade.FillPrice != 101 {
+		t.Fatalf("trade.FillPrice = %v, want 101", trade.FillPrice)
+	}
+	wantQty := 202.0 / 101.0
+	if math.Abs(trade.Qty-wantQty) > 1e-9 {
+		t.Fatalf("trade.Qty = %.12f, want %.12f", trade.Qty, wantQty)
 	}
 }

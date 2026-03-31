@@ -240,7 +240,7 @@ func (r *Replayer) Replay(prepared *PreparedData, strategy Strategy, params map[
 							barCtx.OpenSpreadWithRef(legs, tag, sa.OpenRef)
 						}
 					case ScheduleSecurityOrder:
-						if sa.SecurityOrder.Type == MarketOrder && sa.SecurityOrder.Qty > 0 {
+						if sa.SecurityOrder.Type == MarketOrder && (sa.SecurityOrder.Qty > 0 || sa.SecurityOrder.Notional > 0) {
 							broker.ExecuteOrderNow(sa.SecurityOrder, i, prepared.PrimaryDS.Timestamps[i])
 						}
 					case ScheduleCloseLeg:

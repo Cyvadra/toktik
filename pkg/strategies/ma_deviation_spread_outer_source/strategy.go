@@ -1,6 +1,7 @@
 package madeviationspread
 
 import (
+	"bufio"
 	"encoding/csv"
 	"fmt"
 	"math"
@@ -35,6 +36,7 @@ const (
 
 	interval12h           = "12h"
 	entrySignalTimeLayout = "2006/1/2 15:04"
+	txtTimeLayout         = "Jan 2, 2006, 15:04"
 	entrySignalPath       = "pkg/strategies/ma_deviation_spread_outer_source/SF18_RE_Bearish_Divergence_Only_BINANCE_BTCUSD_2026-03-30.csv"
 	callTrancheCount      = 2
 	positionGroupTag      = "ma-deviation-outer-source"
@@ -109,7 +111,7 @@ func (s *strategy) SpreadPricingConfig() backtest.SpreadPricingConfig {
 func (s *strategy) ReportColumns() []backtest.ReportColumn {
 	return []backtest.ReportColumn{
 		{Source: "entry_signal", Label: "Entry Signal", Decimals: 0},
-		{Source: "rsi_12h_prev", Label: "RSI 200 12h", Decimals: 2},
+		{Source: "rsi_12h", Label: "RSI 200 12h", Decimals: 2},
 		{Source: "atr20", Label: "ATR 20", Decimals: 2},
 	}
 }
@@ -145,7 +147,11 @@ func (s *strategy) Preload(ctx *backtest.PreloadContext) error {
 		return err
 	}
 
-	return s.setShiftedAlignedNumericColumn(ctx, s.ref12h, "rsi_12h", "rsi_12h_prev")
+	aligned, err := ctx.ColumnAlignedToPrimary(s.ref12h, "rsi_12h")
+	if err != nil {
+		return err
+	}
+	return ctx.Primary().SetColumn("rsi_12h", aligned)
 }
 
 func (s *strategy) OnBar(ctx *backtest.BarContext) {
@@ -177,7 +183,7 @@ func (s *strategy) tryOpenStructure(ctx *backtest.BarContext, chain *backtest.Op
 		return
 	}
 
-	targetDTE := s.targetExpiryDays(ctx.Ind("rsi_12h_prev"))
+	targetDTE := s.targetExpiryDays(ctx.Ind("rsi_12h"))
 	withinDTEs := expiryDTEsWithin(chain, ctx.Time(), s.lowRSIDTE, s.highRSIDTE)
 	fmt.Printf("[%s] entry option selection: target DTE=%d, within DTEs=%s\n", ctx.Time().Format(time.RFC3339), targetDTE, formatDTEs(withinDTEs))
 	shortCall := s.selectShortCall(chain)
@@ -507,26 +513,6 @@ func (s *strategy) applyDefaults() {
 	}
 }
 
-func (s *strategy) setShiftedAlignedNumericColumn(ctx *backtest.PreloadContext, ref backtest.SecurityRef, source, target string) error {
-	sec := ctx.Security(ref)
-	if sec == nil || sec.Len() == 0 {
-		return nil
-	}
-	col, err := sec.RequireColumn(source)
-	if err != nil {
-		return err
-	}
-	shifted := shiftSeries(col, math.NaN())
-	if err := sec.SetColumn(source+"_prev", shifted); err != nil {
-		return err
-	}
-	aligned, err := ctx.ColumnAlignedToPrimary(ref, source+"_prev")
-	if err != nil {
-		return err
-	}
-	return ctx.Primary().SetColumn(target, aligned)
-}
-
 func (s *strategy) buildContractMap(chain *backtest.OptionsChain) map[string]backtest.OptionContract {
 	if chain == nil || chain.Len() == 0 {
 		return nil
@@ -687,7 +673,7 @@ func loadEntrySignalTimes(path string) (map[int64]struct{}, error) {
 	reader := csv.NewReader(f)
 	records, err := reader.ReadAll()
 	if err != nil {
-		return nil, fmt.Errorf("parse entry signal csv %s: %w", resolvedPath, err)
+		return loadTextEntrySignalTimes(resolvedPath)
 	}
 	if len(records) == 0 {
 		return map[int64]struct{}{}, nil
@@ -696,7 +682,7 @@ func loadEntrySignalTimes(path string) (map[int64]struct{}, error) {
 	columns := csvColumnIndex(records[0])
 	timeIndex, ok := columns["日期和时间"]
 	if !ok {
-		return nil, fmt.Errorf("entry signal csv %s missing 日期和时间 column", resolvedPath)
+		return loadTextEntrySignalTimes(resolvedPath)
 	}
 	typeIndex, hasType := columns["类型"]
 	signalIndex, hasSignal := columns["信号"]
@@ -775,14 +761,30 @@ func isEntrySignalRecord(record []string, typeIndex int, hasType bool, signalInd
 	return false
 }
 
-func shiftSeries(src []float64, headValue float64) []float64 {
-	out := make([]float64, len(src))
-	if len(src) == 0 {
-		return out
+func loadTextEntrySignalTimes(path string) (map[int64]struct{}, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("open entry signal text %s: %w", path, err)
 	}
-	out[0] = headValue
-	copy(out[1:], src[:len(src)-1])
-	return out
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	entryTimes := make(map[int64]struct{})
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		ts, err := time.ParseInLocation(txtTimeLayout, line, time.UTC)
+		if err != nil {
+			continue
+		}
+		entryTimes[ts.UTC().Unix()] = struct{}{}
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("scan entry signal text %s: %w", path, err)
+	}
+	return entryTimes, nil
 }
 
 func expiryDTEsWithin(chain *backtest.OptionsChain, now time.Time, minDTE, maxDTE int) []float64 {

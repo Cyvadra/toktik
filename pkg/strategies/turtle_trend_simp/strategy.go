@@ -170,9 +170,8 @@ func (s *turtleTrendSimpStrategy) Init(ctx *backtest.SetupContext) error {
 	return nil
 }
 
-// Preload shifts 8h indicator columns by 1 bar (to avoid look-ahead into the
-// current incomplete 8h bar) and aligns them onto the primary (5m) timeline.
-// It also precomputes the low-volatility entry filter in 8h space.
+// Preload aligns confirmed 8h indicator columns onto the primary (5m)
+// timeline and precomputes the low-volatility entry filter in 8h space.
 func (s *turtleTrendSimpStrategy) Preload(ctx *backtest.PreloadContext) error {
 	htf := ctx.Security(s.htfRef)
 	if htf == nil || htf.Len() == 0 {
@@ -180,26 +179,8 @@ func (s *turtleTrendSimpStrategy) Preload(ctx *backtest.PreloadContext) error {
 	}
 	n := htf.Len()
 
-	// 1. Create _prev columns: shift each 8h indicator by 1 bar so that at
-	//    every 5m bar we only see the most recently COMPLETED 8h bar's value.
-	shiftNames := []string{"dc20_upper", "dc20_lower", "bb20_upper", "bb20_lower", "atr20", "close"}
-	for _, name := range shiftNames {
-		col := htf.Column(name)
-		if col == nil {
-			continue
-		}
-		shifted := make([]float64, n)
-		shifted[0] = math.NaN()
-		copy(shifted[1:], col[:n-1])
-		if err := htf.SetColumn(name+"_prev", shifted); err != nil {
-			return err
-		}
-	}
-
-	// 2. Compute low-vol flag in 8h space.
-	//    For each 8h bar i, check if any of bars i, i-1, i-2 has
-	//    stdma20 percentile rank < 0.35 over 120 trailing bars.
-	//    Then shift by 1 so it's safe to read during the next 8h period.
+	// 1. Compute low-vol flag in 8h space. alignSeries already exposes only the
+	//    latest confirmed 8h bar on the primary timeline, so no extra shift is needed.
 	stdma20 := htf.Column("stdma20")
 	if stdma20 != nil {
 		raw := make([]float64, n)
@@ -237,17 +218,13 @@ func (s *turtleTrendSimpStrategy) Preload(ctx *backtest.PreloadContext) error {
 				}
 			}
 		}
-		// Shift by 1 to avoid look-ahead
-		shifted := make([]float64, n)
-		shifted[0] = 0
-		copy(shifted[1:], raw[:n-1])
-		if err := htf.SetColumn("lowvol_ok_prev", shifted); err != nil {
+		if err := htf.SetColumn("lowvol_ok", raw); err != nil {
 			return err
 		}
 	}
 
-	// 3. Align all _prev columns onto the primary (5m) timeline.
-	alignNames := []string{"dc20_upper_prev", "dc20_lower_prev", "bb20_upper_prev", "bb20_lower_prev", "atr20_prev", "close_prev", "lowvol_ok_prev"}
+	// 2. Align confirmed 8h columns onto the primary (5m) timeline.
+	alignNames := []string{"dc20_upper", "dc20_lower", "bb20_upper", "bb20_lower", "atr20", "close", "lowvol_ok"}
 	for _, name := range alignNames {
 		if htf.Column(name) == nil {
 			continue
@@ -261,7 +238,7 @@ func (s *turtleTrendSimpStrategy) Preload(ctx *backtest.PreloadContext) error {
 		}
 	}
 
-	// 4. Project the actual aligned 8h bar index onto the primary timeline.
+	// 3. Project the actual aligned 8h bar index onto the primary timeline.
 	//    Signal evaluation should advance only when this index changes, not when
 	//    the primary timestamp happens to cross a wall-clock 8h boundary.
 	alignedHTFIndex := make([]float64, ctx.Primary().Len())
@@ -307,8 +284,8 @@ func (s *turtleTrendSimpStrategy) OnBar(ctx *backtest.BarContext) {
 	s.resolvePendingSlots(ctx)
 	s.resolvePendingSpotActions(ctx)
 
-	// ATR from the completed 8h bar, aligned to the 5m primary timeline.
-	atr := ctx.Field("htf_atr20_prev")
+	// ATR from the latest confirmed 8h bar, aligned to the 5m primary timeline.
+	atr := ctx.Field("htf_atr20")
 	prevClose := ctx.FieldAt("close", 1)
 
 	// --- Manage existing positions ---
@@ -520,7 +497,7 @@ func (s *turtleTrendSimpStrategy) OnBar(ctx *backtest.BarContext) {
 		}
 		if !math.IsNaN(atr) && close < s.longSpotHigh-3*atr {
 			if qty := ctx.Position(primary); qty > 0 {
-				s.enqueueSpotAction(pendingSpotAction{
+				s.enqueueSpotAction(ctx, pendingSpotAction{
 					triggerTime: triggerTime,
 					kind:        spotActionLongClose,
 					qty:         qty,
@@ -535,7 +512,7 @@ func (s *turtleTrendSimpStrategy) OnBar(ctx *backtest.BarContext) {
 		}
 		if !math.IsNaN(atr) && close > s.shortSpotLow+3*atr {
 			if qty := ctx.Position(primary); qty < 0 {
-				s.enqueueSpotAction(pendingSpotAction{
+				s.enqueueSpotAction(ctx, pendingSpotAction{
 					triggerTime: triggerTime,
 					kind:        spotActionShortClose,
 					qty:         -qty,
@@ -547,16 +524,16 @@ func (s *turtleTrendSimpStrategy) OnBar(ctx *backtest.BarContext) {
 
 	// --- Entry signals: gated to actual 8h bar availability ---
 
-	// Read preloaded (shifted-by-1, aligned) 8h indicator values.
-	lowVolOK := ctx.Field("htf_lowvol_ok_prev")
+	// Read confirmed 8h indicator values aligned onto the primary timeline.
+	lowVolOK := ctx.Field("htf_lowvol_ok")
 	allowInitialEntry := s.allowInitialEntry(lowVolOK)
 
-	dcUpper := ctx.Field("htf_dc20_upper_prev")
-	dcLower := ctx.Field("htf_dc20_lower_prev")
-	bbUpper := ctx.Field("htf_bb20_upper_prev")
-	bbLower := ctx.Field("htf_bb20_lower_prev")
-	atrSignal := ctx.Field("htf_atr20_prev")
-	htfClose := ctx.Field("htf_close_prev")
+	dcUpper := ctx.Field("htf_dc20_upper")
+	dcLower := ctx.Field("htf_dc20_lower")
+	bbUpper := ctx.Field("htf_bb20_upper")
+	bbLower := ctx.Field("htf_bb20_lower")
+	atrSignal := ctx.Field("htf_atr20")
+	htfClose := ctx.Field("htf_close")
 
 	if math.IsNaN(dcUpper) || math.IsNaN(bbUpper) || math.IsNaN(dcLower) || math.IsNaN(bbLower) || math.IsNaN(atrSignal) || math.IsNaN(htfClose) {
 		return
@@ -569,7 +546,7 @@ func (s *turtleTrendSimpStrategy) OnBar(ctx *backtest.BarContext) {
 
 	if allowInitialEntry && close > longBreakout && s.Direction != catalog.DirectionShortOnly {
 		if !s.longSpotOpen && !s.hasPendingSpotAction(spotActionLongOpen, 0) {
-			s.enqueueSpotAction(pendingSpotAction{
+			s.enqueueSpotAction(ctx, pendingSpotAction{
 				triggerTime: triggerTime,
 				kind:        spotActionLongOpen,
 				notional:    s.SpotSignalNotional,
@@ -605,7 +582,7 @@ func (s *turtleTrendSimpStrategy) OnBar(ctx *backtest.BarContext) {
 		}
 		nextAddCount := s.longSpotAddCount + 1
 		if targetSpotAdds >= nextAddCount && !s.hasPendingSpotAction(spotActionLongAdd, nextAddCount) {
-			s.enqueueSpotAction(pendingSpotAction{
+			s.enqueueSpotAction(ctx, pendingSpotAction{
 				triggerTime: triggerTime,
 				kind:        spotActionLongAdd,
 				notional:    s.SpotSignalNotional,
@@ -632,7 +609,7 @@ func (s *turtleTrendSimpStrategy) OnBar(ctx *backtest.BarContext) {
 	// Breakout below prior-bar Min(Donchian lower 20, Bollinger lower 20) - 0.5*ATR
 	if allowInitialEntry && close < shortBreakout && s.Direction != catalog.DirectionLongOnly {
 		if !s.shortSpotOpen && !s.hasPendingSpotAction(spotActionShortOpen, 0) {
-			s.enqueueSpotAction(pendingSpotAction{
+			s.enqueueSpotAction(ctx, pendingSpotAction{
 				triggerTime: triggerTime,
 				kind:        spotActionShortOpen,
 				notional:    s.SpotSignalNotional,
@@ -668,7 +645,7 @@ func (s *turtleTrendSimpStrategy) OnBar(ctx *backtest.BarContext) {
 		}
 		nextAddCount := s.shortSpotAddCount + 1
 		if targetSpotAdds >= nextAddCount && !s.hasPendingSpotAction(spotActionShortAdd, nextAddCount) {
-			s.enqueueSpotAction(pendingSpotAction{
+			s.enqueueSpotAction(ctx, pendingSpotAction{
 				triggerTime: triggerTime,
 				kind:        spotActionShortAdd,
 				notional:    s.SpotSignalNotional,
@@ -1082,7 +1059,30 @@ func (s *turtleTrendSimpStrategy) immediateExecutionTime(now time.Time) time.Tim
 	return now.Add(time.Nanosecond)
 }
 
-func (s *turtleTrendSimpStrategy) enqueueSpotAction(action pendingSpotAction) {
+func (s *turtleTrendSimpStrategy) enqueueSpotAction(ctx *backtest.BarContext, action pendingSpotAction) {
+	primary := ctx.PrimaryRef()
+	switch action.kind {
+	case spotActionLongOpen, spotActionLongAdd:
+		if action.qty > 0 {
+			ctx.ScheduleBuyWithNote(action.triggerTime, primary, action.qty, action.note)
+		} else if action.notional > 0 {
+			ctx.ScheduleBuyNotionalWithNote(action.triggerTime, primary, action.notional, action.note)
+		}
+	case spotActionLongClose:
+		if action.qty > 0 {
+			ctx.ScheduleSellWithNote(action.triggerTime, primary, action.qty, action.note)
+		}
+	case spotActionShortOpen, spotActionShortAdd:
+		if action.qty > 0 {
+			ctx.ScheduleSellWithNote(action.triggerTime, primary, action.qty, action.note)
+		} else if action.notional > 0 {
+			ctx.ScheduleSellNotionalWithNote(action.triggerTime, primary, action.notional, action.note)
+		}
+	case spotActionShortClose:
+		if action.qty > 0 {
+			ctx.ScheduleBuyWithNote(action.triggerTime, primary, action.qty, action.note)
+		}
+	}
 	s.pendingSpotActions = append(s.pendingSpotActions, &action)
 }
 
@@ -1102,7 +1102,6 @@ func (s *turtleTrendSimpStrategy) resolvePendingSpotActions(ctx *backtest.BarCon
 	if len(s.pendingSpotActions) == 0 {
 		return
 	}
-	primary := ctx.PrimaryRef()
 	open := ctx.Open()
 	updated := make([]*pendingSpotAction, 0, len(s.pendingSpotActions))
 	for _, action := range s.pendingSpotActions {
@@ -1114,25 +1113,17 @@ func (s *turtleTrendSimpStrategy) resolvePendingSpotActions(ctx *backtest.BarCon
 			continue
 		}
 
-		qty := action.qty
-		if qty <= 0 && action.notional > 0 && !math.IsNaN(open) && open > 0 {
-			qty = action.notional / open
-		}
-		if qty <= 0 {
-			updated = append(updated, action)
-			continue
-		}
-
 		executed := false
+		position := ctx.Position(ctx.PrimaryRef())
 		switch action.kind {
 		case spotActionLongOpen, spotActionLongAdd:
-			executed = ctx.BuyNowWithNote(primary, qty, action.note)
+			executed = position > 0
 		case spotActionLongClose:
-			executed = ctx.SellNowWithNote(primary, qty, action.note)
+			executed = position <= 0
 		case spotActionShortOpen, spotActionShortAdd:
-			executed = ctx.SellNowWithNote(primary, qty, action.note)
+			executed = position < 0
 		case spotActionShortClose:
-			executed = ctx.BuyNowWithNote(primary, qty, action.note)
+			executed = position >= 0
 		}
 		if !executed {
 			updated = append(updated, action)

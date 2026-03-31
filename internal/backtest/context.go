@@ -352,6 +352,19 @@ func (bc *BarContext) ScheduleBuyWithNote(triggerTime time.Time, ref SecurityRef
 	})
 }
 
+// ScheduleBuyNotionalWithNote executes a market buy sized from notional on the first primary bar at/after triggerTime.
+func (bc *BarContext) ScheduleBuyNotionalWithNote(triggerTime time.Time, ref SecurityRef, notional float64, note string) {
+	bc.ScheduleSecurityOrder(triggerTime, Order{
+		Security:   ref,
+		Side:       Buy,
+		Type:       MarketOrder,
+		Note:       note,
+		Notional:   notional,
+		SubmitBar:  bc.barIndex,
+		SubmitTime: bc.barTime,
+	})
+}
+
 // ScheduleSellWithNote executes a market sell on the first primary bar at/after triggerTime.
 func (bc *BarContext) ScheduleSellWithNote(triggerTime time.Time, ref SecurityRef, qty float64, note string) {
 	bc.ScheduleSecurityOrder(triggerTime, Order{
@@ -360,6 +373,19 @@ func (bc *BarContext) ScheduleSellWithNote(triggerTime time.Time, ref SecurityRe
 		Type:       MarketOrder,
 		Note:       note,
 		Qty:        qty,
+		SubmitBar:  bc.barIndex,
+		SubmitTime: bc.barTime,
+	})
+}
+
+// ScheduleSellNotionalWithNote executes a market sell sized from notional on the first primary bar at/after triggerTime.
+func (bc *BarContext) ScheduleSellNotionalWithNote(triggerTime time.Time, ref SecurityRef, notional float64, note string) {
+	bc.ScheduleSecurityOrder(triggerTime, Order{
+		Security:   ref,
+		Side:       Sell,
+		Type:       MarketOrder,
+		Note:       note,
+		Notional:   notional,
 		SubmitBar:  bc.barIndex,
 		SubmitTime: bc.barTime,
 	})
@@ -495,6 +521,44 @@ func (bc *BarContext) ClosePosition(ref SecurityRef) {
 	} else if pos.Qty < 0 {
 		bc.Buy(ref, -pos.Qty)
 	}
+}
+
+// ClosePositionStopNowWithNote attempts to stop out the current position inside the current bar.
+// extraSlippagePct is added on top of the broker's base slippage.
+func (bc *BarContext) ClosePositionStopNowWithNote(ref SecurityRef, stopPrice, extraSlippagePct float64, note string) bool {
+	pos := bc.broker.Positions().Get(ref)
+	if pos.Qty > 0 {
+		_, ok := bc.broker.ExecuteStopOrderNow(Order{
+			Security:   ref,
+			Side:       Sell,
+			Type:       StopOrder,
+			Note:       note,
+			Qty:        pos.Qty,
+			StopPrice:  stopPrice,
+			SubmitBar:  bc.barIndex,
+			SubmitTime: bc.barTime,
+		}, bc.barIndex, bc.barTime, extraSlippagePct)
+		return ok
+	}
+	if pos.Qty < 0 {
+		_, ok := bc.broker.ExecuteStopOrderNow(Order{
+			Security:   ref,
+			Side:       Buy,
+			Type:       StopOrder,
+			Note:       note,
+			Qty:        -pos.Qty,
+			StopPrice:  stopPrice,
+			SubmitBar:  bc.barIndex,
+			SubmitTime: bc.barTime,
+		}, bc.barIndex, bc.barTime, extraSlippagePct)
+		return ok
+	}
+	return false
+}
+
+// ClosePositionStopNow attempts to stop out the current position inside the current bar.
+func (bc *BarContext) ClosePositionStopNow(ref SecurityRef, stopPrice, extraSlippagePct float64) bool {
+	return bc.ClosePositionStopNowWithNote(ref, stopPrice, extraSlippagePct, "")
 }
 
 // ClosePositionTWAP submits a TWAP order to flatten the position over N bars.
@@ -672,6 +736,39 @@ func (bc *BarContext) CloseSpreadLegWithReasonAndData(spreadID, legIndex int, cl
 	}
 	closeCustomData = bc.withCurrentCloseDelta(leg, closeCustomData)
 	return bc.spreadTracker.CloseLegWithReasonAndData(spreadID, legIndex, closePrice, bc.barTime, closeReason, closeCustomData)
+}
+
+// CloseSpreadLegStopNowWithReason attempts to stop out a spread leg inside the current bar.
+// stopPrice is evaluated on the primary bar range. closePrice is the raw close price chosen by the strategy.
+// extraSlippagePct is added on top of the broker's base slippage.
+func (bc *BarContext) CloseSpreadLegStopNowWithReason(spreadID, legIndex int, stopPrice, closePrice, extraSlippagePct float64, closeReason string) bool {
+	if bc.spreadTracker == nil || math.IsNaN(stopPrice) || stopPrice <= 0 || math.IsNaN(closePrice) || closePrice <= 0 {
+		return false
+	}
+	sp := bc.spreadTracker.Get(spreadID)
+	if sp == nil || legIndex < 0 || legIndex >= len(sp.Legs) {
+		return false
+	}
+	leg := sp.Legs[legIndex]
+	if leg.Closed {
+		return false
+	}
+	triggerSide := Sell
+	exitSide := Sell
+	if leg.Side == Sell {
+		triggerSide = Buy
+		exitSide = Buy
+	}
+	if !triggeredByBar(ScheduledAction{OrderType: SpreadOrderStop, TriggerSide: triggerSide, TriggerPrice: stopPrice}, bc.Open(), bc.High(), bc.Low()) {
+		return false
+	}
+	fillPrice := applySlippageWithExtra(closePrice, exitSide, bc.broker.config.SlippagePct, extraSlippagePct)
+	return bc.CloseSpreadLegWithReason(spreadID, legIndex, fillPrice, closeReason)
+}
+
+// CloseSpreadLegStopNow attempts to stop out a spread leg inside the current bar.
+func (bc *BarContext) CloseSpreadLegStopNow(spreadID, legIndex int, stopPrice, closePrice, extraSlippagePct float64) bool {
+	return bc.CloseSpreadLegStopNowWithReason(spreadID, legIndex, stopPrice, closePrice, extraSlippagePct, "")
 }
 
 func (bc *BarContext) withCurrentCloseDelta(leg *SpreadLeg, items []TradeCustomData) []TradeCustomData {

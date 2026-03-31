@@ -53,6 +53,7 @@ type Order struct {
 	Type       OrderType
 	Note       string
 	Qty        float64
+	Notional   float64 // optional delayed sizing amount; resolved at fill time from the execution price
 	Price      float64 // limit price (for Limit and StopLimit)
 	StopPrice  float64 // trigger price (for Stop and StopLimit)
 	TWAPBars   int     // number of bars across which a TWAP market order is sliced

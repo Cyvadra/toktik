@@ -228,7 +228,7 @@ func (s *strategy) selectSpread(now time.Time, chain *backtest.OptionsChain, amo
 		return nil, false
 	}
 
-	eligibleCalls := chain.Calls().ExpiryMax(targetDTE + biasDTE).ExpiryMin(targetDTE - biasDTE).ExpiryNearest(targetDTE)
+	eligibleCalls := chain.Calls().ExpiryMax(targetDTE + biasDTE).ExpiryMin(targetDTE - biasDTE)
 	if eligibleCalls.Len() == 0 {
 		s.logSelection("[%s] %s: skip selection, no call contracts with dte within [%d, %d]\n", now.Format(time.RFC3339), scope, targetDTE-biasDTE, targetDTE+biasDTE)
 		return nil, false

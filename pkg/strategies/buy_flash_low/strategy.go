@@ -382,7 +382,8 @@ func (s *buyFlashLowStrategy) OnBar(ctx *backtest.BarContext) {
 			s.highestSinceEntry = math.Max(s.highestSinceEntry, high)
 		}
 		if !hasPendingSell && s.highestSinceEntry-cls > 2*atr {
-			ctx.ClosePosition(primary)
+			stopPrice := s.highestSinceEntry - 2*atr
+			ctx.ClosePositionStopNowWithNote(primary, stopPrice, 0.005, "buy flash low intrabar stop")
 			hasPendingSell = true
 		}
 	} else if !hasPendingBuy {

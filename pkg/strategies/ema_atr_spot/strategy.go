@@ -138,7 +138,7 @@ func (s *strategy) OnBar(ctx *backtest.BarContext) {
 
 	stopPrice := s.highestSinceEntry - s.atrMultiplier*atr
 	if !math.IsNaN(stopPrice) && ctx.Low() <= stopPrice {
-		ctx.ClosePosition(primary)
+		ctx.ClosePositionStopNowWithNote(primary, stopPrice, 0.005, "ema trend intrabar stop")
 		s.highestSinceEntry = math.NaN()
 	}
 }
