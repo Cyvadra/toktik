@@ -69,54 +69,57 @@ func (s *CryptoOptionsService) RunBacktest(ctx context.Context, req dto.Backtest
 	return engine.Run(ctx, "crypto-options", req.Symbol, req.Interval, fromT, toT, strategy, nil)
 }
 
-func parseCommissionModel(value string) (backtest.CommissionModel, error) {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "", "percent":
-		return backtest.CommissionPercent, nil
-	case "none":
-		return backtest.CommissionNone, nil
-	case "flat":
-		return backtest.CommissionFlat, nil
-	case "per-unit":
-		return backtest.CommissionPerUnit, nil
-	default:
-		return backtest.CommissionPercent, dto.NewValidationError("unsupported commission_model %q", value)
+// parseEnum normalises value and looks it up in mappings. An empty input
+// returns defaultVal. Unknown values produce a ValidationError that names
+// the field for the caller.
+func parseEnum[T any](value string, mappings map[string]T, defaultVal T, fieldName string) (T, error) {
+	key := strings.ToLower(strings.TrimSpace(value))
+	if key == "" {
+		return defaultVal, nil
 	}
+	if v, ok := mappings[key]; ok {
+		return v, nil
+	}
+	return defaultVal, dto.NewValidationError("unsupported %s %q", fieldName, value)
+}
+
+var commissionModelMap = map[string]backtest.CommissionModel{
+	"percent":  backtest.CommissionPercent,
+	"none":     backtest.CommissionNone,
+	"flat":     backtest.CommissionFlat,
+	"per-unit": backtest.CommissionPerUnit,
+}
+
+func parseCommissionModel(value string) (backtest.CommissionModel, error) {
+	return parseEnum(value, commissionModelMap, backtest.CommissionPercent, "commission_model")
+}
+
+var executionModeMap = map[string]backtest.ExecutionPriceModel{
+	"bidask":    backtest.ExecutionPriceBidAsk,
+	"canonical": backtest.ExecutionPriceCanonical,
 }
 
 func parseExecutionMode(value string) (backtest.ExecutionPriceModel, error) {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "", "bidask":
-		return backtest.ExecutionPriceBidAsk, nil
-	case "canonical":
-		return backtest.ExecutionPriceCanonical, nil
-	default:
-		return backtest.ExecutionPriceBidAsk, dto.NewValidationError("unsupported fill_mode %q", value)
-	}
+	return parseEnum(value, executionModeMap, backtest.ExecutionPriceBidAsk, "fill_mode")
+}
+
+var valuationModeMap = map[string]backtest.ValuationPriceModel{
+	"exit":  backtest.ValuationPriceExit,
+	"close": backtest.ValuationPriceClose,
+	"mid":   backtest.ValuationPriceMid,
 }
 
 func parseValuationMode(value string) (backtest.ValuationPriceModel, error) {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "", "exit":
-		return backtest.ValuationPriceExit, nil
-	case "close":
-		return backtest.ValuationPriceClose, nil
-	case "mid":
-		return backtest.ValuationPriceMid, nil
-	default:
-		return backtest.ValuationPriceExit, dto.NewValidationError("unsupported valuation_mode %q", value)
-	}
+	return parseEnum(value, valuationModeMap, backtest.ValuationPriceExit, "valuation_mode")
+}
+
+var triggerModeMap = map[string]backtest.TriggerPriceMode{
+	"canonical":       backtest.TriggerPriceCanonical,
+	"bidask-envelope": backtest.TriggerPriceBidAskEnvelope,
 }
 
 func parseTriggerMode(value string) (backtest.TriggerPriceMode, error) {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "", "canonical":
-		return backtest.TriggerPriceCanonical, nil
-	case "bidask-envelope":
-		return backtest.TriggerPriceBidAskEnvelope, nil
-	default:
-		return backtest.TriggerPriceCanonical, dto.NewValidationError("unsupported trigger_mode %q", value)
-	}
+	return parseEnum(value, triggerModeMap, backtest.TriggerPriceCanonical, "trigger_mode")
 }
 
 func validateBacktestRequest(req dto.BacktestRequest) error {
@@ -128,6 +131,9 @@ func validateBacktestRequest(req dto.BacktestRequest) error {
 	}
 	if req.SlippagePct != nil && *req.SlippagePct < 0 {
 		return dto.NewValidationError("slippage_pct must be >= 0")
+	}
+	if req.SlippagePct != nil && *req.SlippagePct > 1 {
+		return dto.NewValidationError("slippage_pct must be <= 1")
 	}
 	return nil
 }

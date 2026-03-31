@@ -38,21 +38,31 @@ func init() {
 }
 
 // Register registers one strategy implementation.
-// It is intended to be called from strategy files in init().
+// It is intended to be called from strategy files in init() and panics on
+// errors (empty name, nil factory, duplicate registration). Use TryRegister
+// for an error-returning alternative.
 func Register(reg Registration) {
+	if err := TryRegister(reg); err != nil {
+		panic(err.Error())
+	}
+}
+
+// TryRegister is like Register but returns an error instead of panicking.
+// This is useful for dynamic or late registration where a panic is undesirable.
+func TryRegister(reg Registration) error {
 	name := normalize(reg.Name)
 	if name == "" {
-		panic("strategies.Register: empty strategy name")
+		return fmt.Errorf("strategies.Register: empty strategy name")
 	}
 	if reg.Factory == nil {
-		panic(fmt.Sprintf("strategies.Register: nil factory for %q", reg.Name))
+		return fmt.Errorf("strategies.Register: nil factory for %q", reg.Name)
 	}
 
 	registryMu.Lock()
 	defer registryMu.Unlock()
 
 	if _, exists := strategiesByName[name]; exists {
-		panic(fmt.Sprintf("strategies.Register: duplicate strategy name %q", name))
+		return fmt.Errorf("strategies.Register: duplicate strategy name %q", name)
 	}
 
 	groups := make(map[string]struct{}, len(reg.Groups)+1)
@@ -74,15 +84,20 @@ func Register(reg Registration) {
 	strategiesByName[name] = spec
 	orderedStrategies = append(orderedStrategies, name)
 
-	registerAliasLocked(name, name)
+	if err := tryRegisterAliasLocked(name, name); err != nil {
+		return err
+	}
 	for _, alias := range reg.Aliases {
 		aliasName := normalize(alias)
 		if aliasName == "" {
 			continue
 		}
-		registerAliasLocked(aliasName, name)
+		if err := tryRegisterAliasLocked(aliasName, name); err != nil {
+			return err
+		}
 		spec.aliases = append(spec.aliases, aliasName)
 	}
+	return nil
 }
 
 // Resolve returns one or more strategy instances based on a strategy name,
@@ -176,11 +191,12 @@ func buildGroupLocked(groupName string, cfg Config) ([]backtest.Strategy, error)
 	return out, nil
 }
 
-func registerAliasLocked(alias, mapped string) {
+func tryRegisterAliasLocked(alias, mapped string) error {
 	if current, exists := aliasToName[alias]; exists && current != mapped {
-		panic(fmt.Sprintf("strategies.Register: alias %q already maps to %q", alias, current))
+		return fmt.Errorf("strategies.Register: alias %q already maps to %q", alias, current)
 	}
 	aliasToName[alias] = mapped
+	return nil
 }
 
 func splitRequest(request string) []string {

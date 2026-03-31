@@ -9,8 +9,6 @@ require (
 	github.com/parquet-go/parquet-go v0.29.0
 )
 
-require golang.org/x/time v0.15.0
-
 require (
 	github.com/ClickHouse/ch-go v0.71.0 // indirect
 	github.com/andybalholm/brotli v1.2.0 // indirect
