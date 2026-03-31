@@ -162,13 +162,17 @@ ORDER BY b.timestamp`, barSourceSQL, spotSourceSQL)
 	ds.SetTimestamps(timestamps)
 
 	for i, name := range allBarColumns {
-		ds.AddColumn(name, colData[i])
+		if err := ds.AddColumn(name, colData[i]); err != nil {
+			return nil, fmt.Errorf("build options dataset: %w", err)
+		}
 	}
 
 	// Add canonical aliases
 	for alias, target := range CryptoOptionsFieldAliases {
 		if col := ds.Column(target); col != nil {
-			ds.AddColumn(alias, col)
+			if err := ds.AddColumn(alias, col); err != nil {
+				return nil, fmt.Errorf("build options dataset alias %q: %w", alias, err)
+			}
 		}
 	}
 

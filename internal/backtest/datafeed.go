@@ -43,12 +43,15 @@ func NewDataSet(capacity int) *DataSet {
 	}
 }
 
-// AddColumn adds a named column. Panics if length does not match Len.
-func (ds *DataSet) AddColumn(name string, data []float64) {
+// AddColumn adds a named column. Returns an error if the data length does not
+// match the DataSet length, which would indicate a programming mistake in the
+// DataFeed implementation.
+func (ds *DataSet) AddColumn(name string, data []float64) error {
 	if ds.Len > 0 && len(data) != ds.Len {
-		panic(fmt.Sprintf("backtest.DataSet.AddColumn(%q): length %d != DataSet.Len %d", name, len(data), ds.Len))
+		return fmt.Errorf("backtest.DataSet.AddColumn(%q): length %d != DataSet.Len %d", name, len(data), ds.Len)
 	}
 	ds.Columns[name] = data
+	return nil
 }
 
 // Column returns the named column or an empty slice if not found.
@@ -66,10 +69,10 @@ func (ds *DataSet) SetTimestamps(ts []time.Time) {
 }
 
 // Slice returns a new DataSet containing bars in [startBar, endBar).
-// Panics if the range is out of bounds.
-func (ds *DataSet) Slice(startBar, endBar int) *DataSet {
+// Returns an error if the range is out of bounds.
+func (ds *DataSet) Slice(startBar, endBar int) (*DataSet, error) {
 	if startBar < 0 || endBar > ds.Len || startBar >= endBar {
-		panic(fmt.Sprintf("backtest.DataSet.Slice(%d, %d): out of bounds (Len=%d)", startBar, endBar, ds.Len))
+		return nil, fmt.Errorf("backtest.DataSet.Slice(%d, %d): out of bounds (Len=%d)", startBar, endBar, ds.Len)
 	}
 	n := endBar - startBar
 	out := &DataSet{
@@ -83,7 +86,7 @@ func (ds *DataSet) Slice(startBar, endBar int) *DataSet {
 		copy(sliced, col[startBar:endBar])
 		out.Columns[name] = sliced
 	}
-	return out
+	return out, nil
 }
 
 // Clone returns a deep copy of the DataSet.

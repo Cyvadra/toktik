@@ -1,6 +1,7 @@
 package madeviationspread
 
 import (
+	"bufio"
 	"encoding/csv"
 	"fmt"
 	"math"
@@ -34,7 +35,8 @@ const (
 	trailATRMultiplier     = 3.0
 
 	interval12h           = "12h"
-	entrySignalTimeLayout = "2006/1/2 15:04"
+	entrySignalTimeLayout     = "2006/1/2 15:04"
+	textEntrySignalTimeLayout = "Jan 2, 2006, 15:04"
 	entrySignalPath       = "pkg/strategies/ma_deviation_spread_outer_source/SF18_RE_Bearish_Divergence_Only_BINANCE_BTCUSD_2026-03-30.csv"
 	callTrancheCount      = 2
 	positionGroupTag      = "ma-deviation-outer-source"
@@ -678,6 +680,10 @@ func loadEntrySignalTimes(path string) (map[int64]struct{}, error) {
 		return nil, err
 	}
 
+	if strings.ToLower(filepath.Ext(resolvedPath)) == ".txt" {
+		return loadTextEntrySignalTimes(resolvedPath)
+	}
+
 	f, err := os.Open(resolvedPath)
 	if err != nil {
 		return nil, fmt.Errorf("open entry signal file %s: %w", resolvedPath, err)
@@ -727,6 +733,36 @@ func loadEntrySignalTimes(path string) (map[int64]struct{}, error) {
 		entryTimes[ts.UTC().Unix()] = struct{}{}
 	}
 
+	return entryTimes, nil
+}
+
+// loadTextEntrySignalTimes parses a plain-text signal file where each non-empty
+// line is a UTC timestamp in the format "Jan 2, 2006, 15:04".
+func loadTextEntrySignalTimes(path string) (map[int64]struct{}, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("open entry signal file %s: %w", path, err)
+	}
+	defer f.Close()
+
+	entryTimes := make(map[int64]struct{})
+	scanner := bufio.NewScanner(f)
+	lineNum := 0
+	for scanner.Scan() {
+		lineNum++
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		ts, err := time.Parse(textEntrySignalTimeLayout, line)
+		if err != nil {
+			return nil, fmt.Errorf("parse entry signal line %d (%q): %w", lineNum, line, err)
+		}
+		entryTimes[ts.UTC().Unix()] = struct{}{}
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("read entry signal file %s: %w", path, err)
+	}
 	return entryTimes, nil
 }
 

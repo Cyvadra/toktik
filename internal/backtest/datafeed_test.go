@@ -17,10 +17,17 @@ func TestDataSetSlice(t *testing.T) {
 		vol[i] = float64(1000 + i*100)
 	}
 	ds.SetTimestamps(ts)
-	ds.AddColumn("close", cl)
-	ds.AddColumn("volume", vol)
+	if err := ds.AddColumn("close", cl); err != nil {
+		t.Fatalf("AddColumn close: %v", err)
+	}
+	if err := ds.AddColumn("volume", vol); err != nil {
+		t.Fatalf("AddColumn volume: %v", err)
+	}
 
-	sliced := ds.Slice(2, 5)
+	sliced, err := ds.Slice(2, 5)
+	if err != nil {
+		t.Fatalf("Slice(2,5) unexpected error: %v", err)
+	}
 
 	if sliced.Len != 3 {
 		t.Fatalf("expected Len=3, got %d", sliced.Len)
@@ -55,7 +62,22 @@ func TestDataSetSlice(t *testing.T) {
 	}
 }
 
-func TestDataSetSlicePanics(t *testing.T) {
+func TestDataSetAddColumnLengthMismatch(t *testing.T) {
+	ds := NewDataSet(5)
+	ts := make([]time.Time, 5)
+	for i := range ts {
+		ts[i] = time.Now().Add(time.Duration(i) * time.Hour)
+	}
+	ds.SetTimestamps(ts)
+
+	// Length mismatch should return an error, not panic.
+	err := ds.AddColumn("bad", make([]float64, 3))
+	if err == nil {
+		t.Fatal("expected error for length mismatch, got nil")
+	}
+}
+
+func TestDataSetSliceErrors(t *testing.T) {
 	ds := NewDataSet(5)
 	ts := make([]time.Time, 5)
 	for i := range ts {
@@ -75,12 +97,10 @@ func TestDataSetSlicePanics(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			defer func() {
-				if r := recover(); r == nil {
-					t.Error("expected panic")
-				}
-			}()
-			ds.Slice(tc.start, tc.end)
+			_, err := ds.Slice(tc.start, tc.end)
+			if err == nil {
+				t.Errorf("Slice(%d,%d): expected error, got nil", tc.start, tc.end)
+			}
 		})
 	}
 }

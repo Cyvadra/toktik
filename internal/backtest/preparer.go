@@ -26,8 +26,17 @@ type DataPreparer struct {
 	feeds       map[string]DataFeed
 	factorFeeds map[string]FactorFeed
 
-	mu      sync.Mutex
-	dsCache map[DataRequest]*DataSet
+	mu        sync.Mutex
+	dsCache   map[DataRequest]*DataSet
+	dsPending map[DataRequest]*pendingLoad
+}
+
+// pendingLoad represents an in-flight data load. Concurrent callers that
+// arrive while the load is in progress wait on done and share the result.
+type pendingLoad struct {
+	done chan struct{}
+	ds   *DataSet
+	err  error
 }
 
 // Prepare loads data and computes base indicators for a strategy, returning a
@@ -216,29 +225,56 @@ func (dp *DataPreparer) Prepare(ctx context.Context, market, symbol, interval st
 	}, nil
 }
 
-// loadCached returns a cloned DataSet, loading from the feed only on first
+// loadCached returns a cloned DataSet, loading from the feed only on the first
 // access for a given DataRequest. Concurrent callers sharing the same request
-// will block until the first load completes.
+// block until the first load completes and then share its result, avoiding
+// duplicate in-flight loads.
 func (dp *DataPreparer) loadCached(ctx context.Context, feed DataFeed, req DataRequest) (*DataSet, error) {
 	dp.mu.Lock()
 	if dp.dsCache == nil {
 		dp.dsCache = make(map[DataRequest]*DataSet)
 	}
+	if dp.dsPending == nil {
+		dp.dsPending = make(map[DataRequest]*pendingLoad)
+	}
+
+	// Cache hit: return a clone immediately.
 	if cached, ok := dp.dsCache[req]; ok {
 		dp.mu.Unlock()
 		return cached.Clone(), nil
 	}
+
+	// Another goroutine is already loading this request: wait for it.
+	if pending, ok := dp.dsPending[req]; ok {
+		dp.mu.Unlock()
+		<-pending.done
+		if pending.err != nil {
+			return nil, pending.err
+		}
+		return pending.ds.Clone(), nil
+	}
+
+	// First caller: register a pending slot, then load outside the lock.
+	pl := &pendingLoad{done: make(chan struct{})}
+	dp.dsPending[req] = pl
 	dp.mu.Unlock()
 
 	ds, err := feed.Load(ctx, req)
+
+	dp.mu.Lock()
+	delete(dp.dsPending, req)
+	if err == nil {
+		dp.dsCache[req] = ds
+	}
+	pl.ds = ds
+	pl.err = err
+	dp.mu.Unlock()
+
+	close(pl.done)
+
 	if err != nil {
 		return nil, err
 	}
-
-	dp.mu.Lock()
-	dp.dsCache[req] = ds
-	dp.mu.Unlock()
-
 	return ds.Clone(), nil
 }
 
@@ -254,7 +290,10 @@ func trimPreparedWindow(primaryDS *DataSet, secDataSets []*DataSet, factorDataSe
 		return primaryDS, buildSecurityAlignMaps(primaryDS, secDataSets, setupCtx), buildFactorAlignMaps(primaryDS, factorDataSets, setupCtx), nil
 	}
 
-	trimmedPrimary := primaryDS.Slice(startBar, primaryDS.Len)
+	trimmedPrimary, err := primaryDS.Slice(startBar, primaryDS.Len)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("trim prepared window: %w", err)
+	}
 	return trimmedPrimary, buildSecurityAlignMaps(trimmedPrimary, secDataSets, setupCtx), buildFactorAlignMaps(trimmedPrimary, factorDataSets, setupCtx), nil
 }
 

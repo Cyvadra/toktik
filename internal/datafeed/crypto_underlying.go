@@ -110,13 +110,19 @@ func (f *CryptoUnderlyingDataFeed) Load(ctx context.Context, req backtest.DataRe
 
 	ds := backtest.NewDataSet(len(timestamps))
 	ds.SetTimestamps(timestamps)
-	ds.AddColumn("open", opens)
-	ds.AddColumn("high", highs)
-	ds.AddColumn("low", lows)
-	ds.AddColumn("close", closes)
-	ds.AddColumn("tick_count", tickCounts)
-	ds.AddColumn("volume", tickCounts)
-	ds.AddColumn("compat_fallback", fallbackMode)
+	for name, col := range map[string][]float64{
+		"open":           opens,
+		"high":           highs,
+		"low":            lows,
+		"close":          closes,
+		"tick_count":     tickCounts,
+		"volume":         tickCounts,
+		"compat_fallback": fallbackMode,
+	} {
+		if err := ds.AddColumn(name, col); err != nil {
+			return nil, fmt.Errorf("build underlying dataset: %w", err)
+		}
+	}
 
 	return ds, nil
 }
