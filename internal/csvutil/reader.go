@@ -10,6 +10,7 @@ import (
 	"strings"
 )
 
+// stackedReadCloser reads from reader and closes all closers in order.
 type stackedReadCloser struct {
 	reader  io.Reader
 	closers []io.Closer
