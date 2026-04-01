@@ -162,34 +162,54 @@ func (r *Result) ExportJSON(path string) error {
 // Summary returns a compact text summary of the result.
 func (r *Result) Summary() string {
 	unit := strings.TrimSpace(r.AccountUnit)
-	capitalMode := ""
+	var b strings.Builder
+	b.WriteString("Strategy:          ")
+	b.WriteString(r.StrategyName)
+	b.WriteString("\nPeriod:            ")
+	b.WriteString(r.StartTime.Format("2006-01-02"))
+	b.WriteString(" to ")
+	b.WriteString(r.EndTime.Format("2006-01-02"))
+	b.WriteString("\nBars:              ")
+	b.WriteString(itoa(r.BarsCount))
+	b.WriteByte('\n')
 	if strings.TrimSpace(r.CapitalMode) != "" {
-		capitalMode = "Capital Mode:      " + strings.TrimSpace(r.CapitalMode) + "\n"
+		b.WriteString("Capital Mode:      ")
+		b.WriteString(strings.TrimSpace(r.CapitalMode))
+		b.WriteByte('\n')
 	}
-	capitalProfile := ""
 	if strings.TrimSpace(r.CapitalProfile) != "" {
-		capitalProfile = "Capital Profile:   " + strings.TrimSpace(r.CapitalProfile) + "\n"
+		b.WriteString("Capital Profile:   ")
+		b.WriteString(strings.TrimSpace(r.CapitalProfile))
+		b.WriteByte('\n')
 	}
-	capitalNote := ""
 	if strings.TrimSpace(r.CapitalNote) != "" {
-		capitalNote = "Capital Note:      " + strings.TrimSpace(r.CapitalNote) + "\n"
+		b.WriteString("Capital Note:      ")
+		b.WriteString(strings.TrimSpace(r.CapitalNote))
+		b.WriteByte('\n')
 	}
-	return "Strategy:          " + r.StrategyName + "\n" +
-		"Period:            " + r.StartTime.Format("2006-01-02") + " to " + r.EndTime.Format("2006-01-02") + "\n" +
-		"Bars:              " + itoa(r.BarsCount) + "\n" +
-		capitalMode +
-		capitalProfile +
-		capitalNote +
-		"Initial Capital:   " + formatSummaryAmount(r.InitialCapital, unit) + "\n" +
-		"Final Equity:      " + formatSummaryAmount(r.FinalEquity, unit) + "\n" +
-		"Total Return:      " + pct(r.TotalReturn) + "\n" +
-		"Annualized Return: " + pct(r.AnnualizedReturn) + "\n" +
-		"Sharpe Ratio:      " + ftoa(r.SharpeRatio) + "\n" +
-		"Max Drawdown:      " + pct(r.MaxDrawdown) + "\n" +
-		"Total Trades:      " + itoa(r.TotalTrades) + "\n" +
-		"Win Rate:          " + pct(r.WinRate) + "\n" +
-		"Profit Factor:     " + ftoa(r.ProfitFactor) + "\n" +
-		"Avg Win:           " + formatSummaryAmount(r.AvgWin, unit) + "\n" +
-		"Avg Loss:          " + formatSummaryAmount(r.AvgLoss, unit) + "\n" +
-		"Total Fees:        " + formatSummaryAmount(r.TotalFees, unit)
+	b.WriteString("Initial Capital:   ")
+	b.WriteString(formatSummaryAmount(r.InitialCapital, unit))
+	b.WriteString("\nFinal Equity:      ")
+	b.WriteString(formatSummaryAmount(r.FinalEquity, unit))
+	b.WriteString("\nTotal Return:      ")
+	b.WriteString(pct(r.TotalReturn))
+	b.WriteString("\nAnnualized Return: ")
+	b.WriteString(pct(r.AnnualizedReturn))
+	b.WriteString("\nSharpe Ratio:      ")
+	b.WriteString(ftoa(r.SharpeRatio))
+	b.WriteString("\nMax Drawdown:      ")
+	b.WriteString(pct(r.MaxDrawdown))
+	b.WriteString("\nTotal Trades:      ")
+	b.WriteString(itoa(r.TotalTrades))
+	b.WriteString("\nWin Rate:          ")
+	b.WriteString(pct(r.WinRate))
+	b.WriteString("\nProfit Factor:     ")
+	b.WriteString(ftoa(r.ProfitFactor))
+	b.WriteString("\nAvg Win:           ")
+	b.WriteString(formatSummaryAmount(r.AvgWin, unit))
+	b.WriteString("\nAvg Loss:          ")
+	b.WriteString(formatSummaryAmount(r.AvgLoss, unit))
+	b.WriteString("\nTotal Fees:        ")
+	b.WriteString(formatSummaryAmount(r.TotalFees, unit))
+	return b.String()
 }

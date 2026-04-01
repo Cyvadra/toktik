@@ -217,8 +217,11 @@ func (dp *DataPreparer) Prepare(ctx context.Context, market, symbol, interval st
 }
 
 // loadCached returns a cloned DataSet, loading from the feed only on first
-// access for a given DataRequest. Concurrent callers sharing the same request
-// will block until the first load completes.
+// access for a given DataRequest. If multiple goroutines miss the initial cache
+// check concurrently, each will call feed.Load independently; only the first
+// to reacquire the lock stores its result — subsequent goroutines discard their
+// load and return the already-cached copy. This avoids stale overwrites while
+// keeping the lock-free hot path for cache hits.
 func (dp *DataPreparer) loadCached(ctx context.Context, feed DataFeed, req DataRequest) (*DataSet, error) {
 	dp.mu.Lock()
 	if dp.dsCache == nil {
@@ -236,6 +239,12 @@ func (dp *DataPreparer) loadCached(ctx context.Context, feed DataFeed, req DataR
 	}
 
 	dp.mu.Lock()
+	// Another goroutine may have loaded and cached this request while we were
+	// loading. Prefer the already-cached copy to avoid duplicate storage.
+	if existing, ok := dp.dsCache[req]; ok {
+		dp.mu.Unlock()
+		return existing.Clone(), nil
+	}
 	dp.dsCache[req] = ds
 	dp.mu.Unlock()
 

@@ -254,3 +254,24 @@ func TestNotFound(t *testing.T) {
 		t.Fatalf("expected 404, got %d", w.Code)
 	}
 }
+
+// --- /health ---
+
+func TestHealthEndpoint(t *testing.T) {
+	r := setupRouter(&mockQuerier{})
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/health", nil)
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var body map[string]string
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if body["status"] != "ok" {
+		t.Fatalf(`expected status "ok", got %q`, body["status"])
+	}
+}

@@ -584,5 +584,5 @@ func maxAvailable(values ...float64) float64 {
 }
 
 func isValidPrice(value float64) bool {
-	return !math.IsNaN(value) && !math.IsInf(value, 0)
+	return value > 0 && !math.IsNaN(value) && !math.IsInf(value, 0)
 }
