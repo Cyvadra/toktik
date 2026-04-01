@@ -1,56 +1,19 @@
 package usmarket
 
 import (
-	"bufio"
-	"compress/gzip"
 	"encoding/csv"
 	"fmt"
 	"io"
-	"os"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/Cyvadra/toktik/internal/csvutil"
 )
 
-type stackedReadCloser struct {
-	reader  io.Reader
-	closers []io.Closer
-}
-
-func (s *stackedReadCloser) Read(p []byte) (int, error) {
-	return s.reader.Read(p)
-}
-
-func (s *stackedReadCloser) Close() error {
-	var firstErr error
-	for _, closer := range s.closers {
-		if err := closer.Close(); err != nil && firstErr == nil {
-			firstErr = err
-		}
-	}
-	return firstErr
-}
-
 func openCSVReader(path string) (io.ReadCloser, *csv.Reader, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, nil, fmt.Errorf("open %s: %w", path, err)
-	}
-
-	var reader io.ReadCloser = f
-	if strings.HasSuffix(strings.ToLower(path), ".gz") {
-		gz, err := gzip.NewReader(f)
-		if err != nil {
-			f.Close()
-			return nil, nil, fmt.Errorf("gzip reader %s: %w", path, err)
-		}
-		reader = &stackedReadCloser{reader: gz, closers: []io.Closer{gz, f}}
-	}
-
-	csvReader := csv.NewReader(bufio.NewReaderSize(reader, 4*1024*1024))
-	csvReader.ReuseRecord = true
-	return reader, csvReader, nil
+	return csvutil.OpenMaybeGzipCSV(path, 4*1024*1024)
 }
 
 // ParseOptionCSV reads a Polygon OPRA minute-agg CSV (optionally gzipped) and

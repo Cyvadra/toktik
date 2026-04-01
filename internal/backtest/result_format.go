@@ -55,6 +55,10 @@ func pct(f float64) string {
 	return ftoa(f*100) + "%"
 }
 
+func FormatPercent(f float64) string {
+	return pct(f)
+}
+
 func formatSummaryAmount(value float64, unit string) string {
 	if strings.TrimSpace(unit) == "" {
 		return ftoa(value)
