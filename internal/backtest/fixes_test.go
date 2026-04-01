@@ -294,3 +294,120 @@ func TestOpenSpreadWithRefDoesNotMutateCallerSlice(t *testing.T) {
 		t.Fatalf("spread leg EntryTime = %v, want %v", sp.Legs[0].EntryTime, now)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Fix 8: isValidPrice rejects zero
+// ---------------------------------------------------------------------------
+
+// TestIsValidPriceRejectsZero ensures that a zero price is treated as invalid
+// so that Notional orders do not produce an infinite fill quantity.
+func TestIsValidPriceRejectsZero(t *testing.T) {
+	if isValidPrice(0) {
+		t.Fatal("isValidPrice(0) should return false; a zero price is not a valid market price")
+	}
+	if isValidPrice(-1) {
+		t.Fatal("isValidPrice(-1) should return false")
+	}
+	if isValidPrice(math.NaN()) {
+		t.Fatal("isValidPrice(NaN) should return false")
+	}
+	if isValidPrice(math.Inf(1)) {
+		t.Fatal("isValidPrice(+Inf) should return false")
+	}
+	if !isValidPrice(0.0001) {
+		t.Fatal("isValidPrice(0.0001) should return true")
+	}
+}
+
+// TestNotionalOrderWithZeroPriceProducesNoFill verifies that a Notional order
+// against a bar with a zero open price does not produce a fill.
+func TestNotionalOrderWithZeroPriceProducesNoFill(t *testing.T) {
+	ref := SecurityRef{Market: "m", Symbol: "s", Interval: "1h", Index: 0}
+	broker := NewBroker(Config{InitialCapital: 10000})
+
+	// Force a zero open price (simulates missing/bad data)
+	broker.SetPriceFunc(func(_ SecurityRef) BarPrices {
+		return BarPrices{Open: 0, High: 0, Low: 0, Close: 0}
+	})
+
+	broker.SubmitOrder(Order{Security: ref, Side: Buy, Type: MarketOrder, Notional: 5000})
+	fills := broker.ProcessPending(1, time.Unix(3600, 0))
+
+	if len(fills) != 0 {
+		t.Fatalf("expected 0 fills against zero open price, got %d", len(fills))
+	}
+	if len(broker.Trades()) != 0 {
+		t.Fatalf("expected no trades, got %d", len(broker.Trades()))
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Fix 9: ProfitFactor is 1.0 when all round trips break even
+// ---------------------------------------------------------------------------
+
+// TestProfitFactorBreakEven verifies that a strategy where every trade breaks
+// even (no wins or losses) reports ProfitFactor = 1.0, not the misleading 0.
+func TestProfitFactorBreakEven(t *testing.T) {
+	ref := SecurityRef{Market: "m", Symbol: "s", Interval: "1h", Index: 0}
+	trades := []Trade{
+		{Security: ref, Side: Buy, Qty: 1, FillPrice: 100},
+		{Security: ref, Side: Sell, Qty: 1, FillPrice: 100}, // break-even round trip
+	}
+	ts := []time.Time{
+		time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
+		time.Date(2024, 1, 2, 0, 0, 0, 0, time.UTC),
+	}
+	r := computeResult("test", trades, []float64{1000, 1000}, ts, 1000, "", nil, nil)
+	if r.ProfitFactor != 1.0 {
+		t.Fatalf("expected ProfitFactor 1.0 for break-even round trips, got %v", r.ProfitFactor)
+	}
+
+	// ApplyTradeSummary should be consistent.
+	r2 := &Result{Trades: trades}
+	ApplyTradeSummary(r2)
+	if r2.ProfitFactor != 1.0 {
+		t.Fatalf("ApplyTradeSummary: expected ProfitFactor 1.0, got %v", r2.ProfitFactor)
+	}
+}
+
+// TestProfitFactorNoRoundTrips verifies that ProfitFactor remains 0 when there
+// are fills but no completed round trips (open position at end).
+func TestProfitFactorNoRoundTrips(t *testing.T) {
+	ref := SecurityRef{Market: "m", Symbol: "s", Interval: "1h", Index: 0}
+	trades := []Trade{
+		{Security: ref, Side: Buy, Qty: 1, FillPrice: 100}, // opened, never closed
+	}
+	ts := []time.Time{
+		time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
+		time.Date(2024, 1, 2, 0, 0, 0, 0, time.UTC),
+	}
+	r := computeResult("test", trades, []float64{1000, 1100}, ts, 1000, "", nil, nil)
+	// No completed round trip → ProfitFactor stays 0 (undefined).
+	if r.ProfitFactor != 0 {
+		t.Fatalf("expected ProfitFactor 0 with no round trips, got %v", r.ProfitFactor)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Fix 10: ComputeTradePnL skips zero-qty trades
+// ---------------------------------------------------------------------------
+
+// TestComputeTradePnLSkipsZeroQty ensures that a trade with Qty == 0 (or
+// negative) is ignored and does not cause a division by zero or distort
+// round-trip pairing.
+func TestComputeTradePnLSkipsZeroQty(t *testing.T) {
+	ref := SecurityRef{Market: "m", Symbol: "s", Interval: "1h", Index: 0}
+	trades := []Trade{
+		{Security: ref, Side: Buy, Qty: 0, FillPrice: 100},  // zero-qty, must be skipped
+		{Security: ref, Side: Buy, Qty: 1, FillPrice: 100},  // real entry
+		{Security: ref, Side: Sell, Qty: 1, FillPrice: 110}, // real exit
+	}
+	pnls := ComputeTradePnL(trades)
+	if len(pnls) != 1 {
+		t.Fatalf("expected 1 round trip, got %d", len(pnls))
+	}
+	if pnls[0] != 10 {
+		t.Fatalf("expected pnl 10, got %v", pnls[0])
+	}
+}
+

@@ -1,6 +1,8 @@
 package api
 
 import (
+	"net/http"
+
 	"github.com/gin-gonic/gin"
 )
 
@@ -8,6 +10,10 @@ import (
 func NewRouter(cos CryptoOptionsQuerier) *gin.Engine {
 	r := gin.Default()
 	h := NewHandler(cos)
+
+	r.GET("/health", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"status": "ok"})
+	})
 
 	v1 := r.Group("/api/v1")
 	{

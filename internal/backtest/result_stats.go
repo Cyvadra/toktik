@@ -58,35 +58,7 @@ func computeResult(
 	// Trade statistics
 	r.TotalTrades = len(trades)
 	if r.TotalTrades > 0 {
-		// Group trades into round trips to compute win/loss
-		// Simple approach: pair consecutive buy/sell on same security
-		pnlByTrade := ComputeTradePnL(trades)
-		grossWins := 0.0
-		grossLosses := 0.0
-		for _, pnl := range pnlByTrade {
-			if pnl > 0 {
-				r.WinningTrades++
-				grossWins += pnl
-			} else if pnl < 0 {
-				r.LosingTrades++
-				grossLosses += -pnl
-			}
-		}
-
-		if len(pnlByTrade) > 0 {
-			r.WinRate = float64(r.WinningTrades) / float64(len(pnlByTrade))
-		}
-		if grossLosses > 0 {
-			r.ProfitFactor = grossWins / grossLosses
-		} else if grossWins > 0 {
-			r.ProfitFactor = math.Inf(1)
-		}
-		if r.WinningTrades > 0 {
-			r.AvgWin = grossWins / float64(r.WinningTrades)
-		}
-		if r.LosingTrades > 0 {
-			r.AvgLoss = grossLosses / float64(r.LosingTrades)
-		}
+		applyRoundTripStats(r, ComputeTradePnL(trades))
 
 		for _, t := range trades {
 			r.TotalFees += t.Commission
@@ -283,6 +255,11 @@ func ComputeTradePnL(trades []Trade) []float64 {
 	var pnls []float64
 
 	for _, t := range trades {
+		// Skip zero or negative-quantity fills – they carry no position delta
+		// and dividing by their qty below would produce NaN/Inf.
+		if t.Qty <= 0 {
+			continue
+		}
 		entry, hasPending := pending[t.Security]
 		if !hasPending {
 			// New entry
@@ -304,7 +281,10 @@ func ComputeTradePnL(trades []Trade) []float64 {
 			}
 			// Subtract only the close-side commission attributable to the portion
 			// that actually offsets the existing position, plus proportional entry commission.
-			entryCommission := entry.commission * (closeQty / entry.qty)
+			entryCommission := 0.0
+			if entry.qty > 0 {
+				entryCommission = entry.commission * (closeQty / entry.qty)
+			}
 			closeCommission := t.Commission
 			if t.Qty > 0 && closeQty < t.Qty {
 				closeCommission = t.Commission * (closeQty / t.Qty)
@@ -328,7 +308,9 @@ func ComputeTradePnL(trades []Trade) []float64 {
 		} else {
 			// Adding to position
 			totalQty := entry.qty + t.Qty
-			entry.price = (entry.price*entry.qty + t.FillPrice*t.Qty) / totalQty
+			if totalQty > 0 {
+				entry.price = (entry.price*entry.qty + t.FillPrice*t.Qty) / totalQty
+			}
 			entry.commission += t.Commission
 			entry.qty = totalQty
 		}
@@ -464,7 +446,14 @@ func ApplyTradeSummary(r *Result) {
 	r.AvgLoss = 0
 	r.WinRate = 0
 
-	pnls := ComputeTradePnL(r.Trades)
+	applyRoundTripStats(r, ComputeTradePnL(r.Trades))
+}
+
+// applyRoundTripStats populates win/loss metrics on r from a pre-computed
+// slice of per-round-trip PnL values. When there are completed round trips but
+// neither side has any gain or loss (all break-even), ProfitFactor is set to
+// 1.0 rather than the zero value to avoid misleading comparisons.
+func applyRoundTripStats(r *Result, pnls []float64) {
 	grossWins := 0.0
 	grossLosses := 0.0
 	for _, pnl := range pnls {
@@ -479,10 +468,14 @@ func ApplyTradeSummary(r *Result) {
 	if len(pnls) > 0 {
 		r.WinRate = float64(r.WinningTrades) / float64(len(pnls))
 	}
-	if grossLosses > 0 {
+	switch {
+	case grossLosses > 0:
 		r.ProfitFactor = grossWins / grossLosses
-	} else if grossWins > 0 {
+	case grossWins > 0:
 		r.ProfitFactor = math.Inf(1)
+	case len(pnls) > 0:
+		// All round trips broke even: profit factor is exactly 1.
+		r.ProfitFactor = 1.0
 	}
 	if r.WinningTrades > 0 {
 		r.AvgWin = grossWins / float64(r.WinningTrades)
