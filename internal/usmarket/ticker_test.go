@@ -57,6 +57,33 @@ func TestParseOptionTicker(t *testing.T) {
 	}
 }
 
+func TestOptionUnderlyingFallbackStockSymbol(t *testing.T) {
+	tests := []struct {
+		underlying string
+		want       string
+		ok         bool
+	}{
+		{"BRKB", "BRK.B", true},
+		{"BFB", "BF.B", true},
+		{"CWENA", "CWEN.A", true},
+		{"UHALB", "UHAL.B", true},
+		{"SPY", "", false},
+		{"", "", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.underlying, func(t *testing.T) {
+			got, ok := OptionUnderlyingFallbackStockSymbol(tt.underlying)
+			if ok != tt.ok {
+				t.Fatalf("ok: got %v, want %v", ok, tt.ok)
+			}
+			if got != tt.want {
+				t.Fatalf("got %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestParseNanosTimestamp(t *testing.T) {
 	ts := parseNanosTimestamp("1672756200000000000")
 	if ts.IsZero() {

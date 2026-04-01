@@ -115,7 +115,7 @@ func main() {
 
 	startTime := time.Now()
 
-	// Import stock files first so option greeks can be derived from underlying bars.
+	// Phase 1: import all stock files before any option processing starts.
 	for _, csvPath := range stockFiles {
 		wg.Add(1)
 		sem <- struct{}{}
@@ -139,8 +139,13 @@ func main() {
 			}
 		}(csvPath)
 	}
+	wg.Wait()
+	log.Printf("Stock import phase complete: %d files succeeded, %d skipped, %d failed", completed, skipped, failed)
+	if failed > 0 {
+		log.Fatalf("Stock import phase failed; refusing to import options against incomplete underlying data")
+	}
 
-	// Import option files after stock data is available.
+	// Phase 2: import option files only after the stock phase is fully complete.
 	for _, csvPath := range optionFiles {
 		wg.Add(1)
 		sem <- struct{}{}
@@ -229,9 +234,12 @@ func importOptionFile(ctx context.Context, dsn, path string, batchSize int, skip
 		}
 	}
 
-	stockCloses, err := usmarket.ValidateOptionStockCoverage(ctx, conn, path, marketDate)
+	stockCloses, missingSymbols, err := usmarket.ValidateOptionStockCoverage(ctx, conn, path, marketDate)
 	if err != nil {
 		return 0, false, fmt.Errorf("validate stock coverage: %w", err)
+	}
+	if len(missingSymbols) > 0 {
+		log.Printf("[WARN] %s: missing stock coverage for %d underlyings, affected option bars will be imported with NaN greeks: %v", baseName, len(missingSymbols), missingSymbols)
 	}
 
 	barCh, readErr, err := usmarket.ParseOptionCSV(path)
@@ -240,7 +248,7 @@ func importOptionFile(ctx context.Context, dsn, path string, batchSize int, skip
 	}
 
 	sessionedBarCh := usmarket.EnrichOptionBarsWithSession(barCh, sessions)
-	enrichedBarCh, enrichErr := usmarket.EnrichOptionBarsWithGreeks(sessionedBarCh, stockCloses, usmarket.GreeksConfig{RiskFreeRate: riskFreeRate})
+	enrichedBarCh, enrichWarn := usmarket.EnrichOptionBarsWithGreeks(sessionedBarCh, stockCloses, usmarket.GreeksConfig{RiskFreeRate: riskFreeRate})
 
 	rows, err := usmarket.InsertOptionBars(ctx, conn, enrichedBarCh, batchSize)
 	if err != nil {
@@ -249,11 +257,11 @@ func importOptionFile(ctx context.Context, dsn, path string, batchSize int, skip
 	if *readErr != nil {
 		return rows, false, fmt.Errorf("read: %w", *readErr)
 	}
-	if *enrichErr != nil {
-		return rows, false, fmt.Errorf("greeks: %w", *enrichErr)
+	if *enrichWarn != nil {
+		log.Printf("[WARN] %s: %v", baseName, *enrichWarn)
 	}
 
-	log.Printf("[IMPORT] %s: %d option rows with greeks in %s", baseName, rows, time.Since(fileStart).Round(time.Second))
+	log.Printf("[IMPORT] %s: %d option rows with enrichment in %s", baseName, rows, time.Since(fileStart).Round(time.Second))
 	return rows, false, nil
 }
 

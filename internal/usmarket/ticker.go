@@ -37,3 +37,23 @@ func ParseOptionTicker(ticker string) (underlying string, expiration time.Time, 
 
 	return underlying, expiration, optionType, strike, nil
 }
+
+// OptionUnderlyingFallbackStockSymbol converts OPRA underlyings for dotted share
+// classes, such as BRKB or CWENA, into their stock-table symbol form BRK.B/CWEN.A.
+func OptionUnderlyingFallbackStockSymbol(underlying string) (string, bool) {
+	if len(underlying) < 2 {
+		return "", false
+	}
+
+	suffix := underlying[len(underlying)-1]
+	if suffix != 'A' && suffix != 'B' && suffix != 'C' {
+		return "", false
+	}
+
+	root := underlying[:len(underlying)-1]
+	if root == "" {
+		return "", false
+	}
+
+	return root + "." + string(suffix), true
+}

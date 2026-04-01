@@ -263,6 +263,36 @@ Notes:
 - The schema file is auto-detected from `schema/clickhouse/us_market.sql`; override with `--schema path/to/file.sql` if needed.
 - Existing dates are skipped by default; pass `--skip-existing=false` to force re-import.
 
+### 7.5. Backfill Missing US Option Greeks from ThetaData
+
+When imported US option `1m` rows are missing Greeks because the underlying was not covered by the stock flatfiles, use the ThetaData daily-Greeks backfill command:
+
+```bash
+go run ./cmd/us-market-greeks-backfill \
+  --start-date 2023-01-03 \
+  --end-date 2025-12-31 \
+  --symbols "SPX,SPXW,XSP,VIX,VIXW,RUT,RUTW,NDX,NDXP,DJX,OEX,MRUT,NANOS" \
+  --clickhouse-dsn "clickhouse://default:@localhost:9000/default" \
+  --workers 4 \
+  --batch-size 50000
+```
+
+Use `--dry-run` first to inspect matching without writing:
+
+```bash
+go run ./cmd/us-market-greeks-backfill \
+  --date 2025-12-23 \
+  --symbols "DJX" \
+  --dry-run
+```
+
+Notes:
+- The command only scans rows that are still missing one or more of `underlying_close`, `implied_volatility`, `delta`, `gamma`, `vega`, `theta`, or `rho`.
+- ThetaData EOD chain requests are made day by day with `expiration=*`, then matched back onto ClickHouse rows by `expiration + strike + option_type`.
+- Known index-option alias families such as `SPX/SPXW`, `RUT/RUTW`, `VIX/VIXW`, and `NDX/NDXP` are tried automatically.
+- If ThetaData returns `No data found` for a product/day, that task is logged as `SKIPPED` and the batch continues.
+- Backfilled rows use the confirmed daily ThetaData Greeks as authoritative values for all affected `1m` rows of the matched contract on that market date.
+
 ## Writing Custom Strategies
 
 Implement the `backtest.Strategy` interface:

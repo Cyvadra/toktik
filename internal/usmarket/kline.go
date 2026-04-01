@@ -87,6 +87,23 @@ func InitStockKlineSchema(ctx context.Context, conn driver.Conn) error {
 	return nil
 }
 
+// RebuildOptionKlineAggregates repopulates all option kline aggregate tables
+// from the current 1m base table. This is required after backfills mutate the
+// base rows because materialized views only react to new inserts.
+func RebuildOptionKlineAggregates(ctx context.Context, conn driver.Conn) error {
+	for _, iv := range KlineIntervals {
+		agg := "us_options_bar_" + iv.Suffix + "_agg"
+		if err := conn.Exec(ctx, `TRUNCATE TABLE `+agg); err != nil {
+			return fmt.Errorf("truncate option kline aggregate [%s]: %w", iv.Suffix, err)
+		}
+		if err := conn.Exec(ctx, optionKlineRebuildSQL(iv)); err != nil {
+			return fmt.Errorf("rebuild option kline aggregate [%s]: %w", iv.Suffix, err)
+		}
+		log.Printf("[us-options-kline] rebuilt %s interval", iv.Suffix)
+	}
+	return nil
+}
+
 func optionKlineDDL(iv KlineInterval) []string {
 	base := "us_options_bar_1m"
 	agg := "us_options_bar_" + iv.Suffix + "_agg"
@@ -174,6 +191,37 @@ FROM %s
 GROUP BY ts, symbol, underlying, option_type, expiration, strike`, view, agg)
 
 	return []string{createAgg, dropMV, createMV, createView}
+}
+
+func optionKlineRebuildSQL(iv KlineInterval) string {
+	agg := "us_options_bar_" + iv.Suffix + "_agg"
+	base := "us_options_bar_1m"
+	timeFunc := klineTimeFunc(iv)
+
+	return fmt.Sprintf(`INSERT INTO %s
+SELECT
+    %s AS ts,
+    symbol,
+    underlying,
+    option_type,
+    expiration,
+    strike,
+    argMinState(open, timestamp)       AS open_state,
+    maxState(high)                     AS high_state,
+    minState(low)                      AS low_state,
+    argMaxState(close, timestamp)      AS close_state,
+    argMaxState(underlying_close, timestamp)   AS underlying_close_state,
+    argMaxState(implied_volatility, timestamp) AS implied_volatility_state,
+    argMaxState(delta, timestamp)      AS delta_state,
+    argMaxState(gamma, timestamp)      AS gamma_state,
+    argMaxState(vega, timestamp)       AS vega_state,
+    argMaxState(theta, timestamp)      AS theta_state,
+    argMaxState(rho, timestamp)        AS rho_state,
+    sumState(volume)                   AS volume_state,
+    sumState(transactions)             AS transactions_state
+FROM %s
+WHERE is_regular_session = 1
+GROUP BY ts, symbol, underlying, option_type, expiration, strike`, agg, timeFunc, base)
 }
 
 func stockKlineDDL(iv KlineInterval) []string {

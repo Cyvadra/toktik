@@ -14,6 +14,7 @@ const (
 	minImpliedVolatility = 1e-4
 	maxImpliedVolatility = 5.0
 	epsilonPrice         = 1e-8
+	priceClampTolerance  = 0.10
 	daysPerYear          = 365.0
 )
 
@@ -22,6 +23,30 @@ var newYorkLocation = loadNewYorkLocation()
 type stockCloseKey struct {
 	symbol    string
 	timestamp int64
+}
+
+type stockClosePoint struct {
+	timestamp int64
+	close     float64
+}
+
+type stockCloseSeries map[string][]stockClosePoint
+
+func (s stockCloseSeries) Lookup(symbol string, timestamp time.Time) (float64, bool) {
+	points := s[symbol]
+	if len(points) == 0 {
+		return 0, false
+	}
+
+	target := timestamp.UTC().Unix()
+	idx := sort.Search(len(points), func(i int) bool {
+		return points[i].timestamp > target
+	}) - 1
+	if idx < 0 {
+		return 0, false
+	}
+
+	return points[idx].close, true
 }
 
 // GreeksConfig controls the assumptions used by the Black-Scholes calculation.
@@ -63,41 +88,46 @@ func MissingStockSymbols(expected []string, seen map[string]struct{}) []string {
 	return missing
 }
 
-// ValidateOptionStockCoverage ensures the required stock bars exist before option import starts.
-func ValidateOptionStockCoverage(ctx context.Context, conn driver.Conn, optionPath string, marketDate time.Time) (map[stockCloseKey]float64, error) {
+// ValidateOptionStockCoverage loads available stock closes and returns any option
+// underlyings that have no matching stock rows for the market date.
+func ValidateOptionStockCoverage(ctx context.Context, conn driver.Conn, optionPath string, marketDate time.Time) (stockCloseSeries, []string, error) {
 	underlyings, err := CollectOptionUnderlyings(optionPath)
 	if err != nil {
-		return nil, fmt.Errorf("scan option underlyings: %w", err)
+		return nil, nil, fmt.Errorf("scan option underlyings: %w", err)
 	}
 	if len(underlyings) == 0 {
-		return nil, fmt.Errorf("no valid option tickers found in %s", optionPath)
+		return nil, nil, fmt.Errorf("no valid option tickers found in %s", optionPath)
 	}
 
 	stockCloses, seenSymbols, err := LoadStockCloseMap(ctx, conn, underlyings, marketDate)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
-	if missing := MissingStockSymbols(underlyings, seenSymbols); len(missing) > 0 {
-		return nil, fmt.Errorf("missing stock data for %s: %v", marketDate.Format("2006-01-02"), missing)
-	}
-
-	return stockCloses, nil
+	return stockCloses, MissingStockSymbols(underlyings, seenSymbols), nil
 }
 
 // EnrichOptionBarsWithGreeks attaches stock closes and Black-Scholes greeks to each option bar.
-func EnrichOptionBarsWithGreeks(bars <-chan OptionBar1m, stockCloses map[stockCloseKey]float64, cfg GreeksConfig) (<-chan OptionBar1m, *error) {
+// Missing stock closes are tolerated: affected bars are kept with NaN enrichment values
+// and a summary warning is stored in *enrichErr after the channel is drained.
+func EnrichOptionBarsWithGreeks(bars <-chan OptionBar1m, stockCloses stockCloseSeries, cfg GreeksConfig) (<-chan OptionBar1m, *error) {
 	out := make(chan OptionBar1m, 8192)
 	var enrichErr error
 
 	go func() {
 		defer close(out)
 
+		missingBars := 0
+		missingSymbols := make(map[string]struct{})
+
 		for bar := range bars {
-			underlyingClose, ok := stockCloses[newStockCloseKey(bar.Underlying, bar.Timestamp)]
+			underlyingClose, ok := stockCloses.Lookup(bar.Underlying, bar.Timestamp)
 			if !ok {
-				enrichErr = fmt.Errorf("missing stock close for %s at %s", bar.Underlying, bar.Timestamp.Format(time.RFC3339))
-				return
+				missingBars++
+				missingSymbols[bar.Underlying] = struct{}{}
+				applyMissingGreeks(&bar)
+				out <- bar
+				continue
 			}
 
 			greeks := calculateOptionGreeks(
@@ -119,9 +149,29 @@ func EnrichOptionBarsWithGreeks(bars <-chan OptionBar1m, stockCloses map[stockCl
 			bar.Rho = float32(greeks.Rho)
 			out <- bar
 		}
+
+		if missingBars > 0 {
+			symbols := make([]string, 0, len(missingSymbols))
+			for symbol := range missingSymbols {
+				symbols = append(symbols, symbol)
+			}
+			sort.Strings(symbols)
+			enrichErr = fmt.Errorf("missing stock closes for %d option bars across %d underlyings: %v", missingBars, len(symbols), symbols)
+		}
 	}()
 
 	return out, &enrichErr
+}
+
+func applyMissingGreeks(bar *OptionBar1m) {
+	nan := float32(math.NaN())
+	bar.UnderlyingClose = nan
+	bar.ImpliedVolatility = nan
+	bar.Delta = nan
+	bar.Gamma = nan
+	bar.Vega = nan
+	bar.Theta = nan
+	bar.Rho = nan
 }
 
 func calculateOptionGreeks(spot, strike, optionPrice float64, optionType string, timestamp, expiration time.Time, cfg GreeksConfig) optionGreeks {
@@ -205,7 +255,8 @@ func solveImpliedVolatility(spot, strike, targetPrice float64, optionType string
 	}
 
 	minPrice, maxPrice := optionPriceBounds(spot, strike, optionType, timeToExpiry, riskFreeRate, dividendYield)
-	if targetPrice < minPrice-epsilonPrice || targetPrice > maxPrice+epsilonPrice {
+	targetPrice, ok := clampOptionPriceToBounds(targetPrice, minPrice, maxPrice)
+	if !ok {
 		return math.NaN()
 	}
 
@@ -251,6 +302,22 @@ func solveImpliedVolatility(spot, strike, targetPrice float64, optionType string
 	}
 
 	return (lo + hi) * 0.5
+}
+
+func clampOptionPriceToBounds(targetPrice, minPrice, maxPrice float64) (float64, bool) {
+	if targetPrice < minPrice {
+		if minPrice-targetPrice > priceClampTolerance {
+			return math.NaN(), false
+		}
+		return minPrice, true
+	}
+	if targetPrice > maxPrice {
+		if targetPrice-maxPrice > priceClampTolerance {
+			return math.NaN(), false
+		}
+		return maxPrice, true
+	}
+	return targetPrice, true
 }
 
 func optionPriceBounds(spot, strike float64, optionType string, timeToExpiry, riskFreeRate, dividendYield float64) (float64, float64) {

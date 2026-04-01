@@ -248,25 +248,58 @@ func EnsureOptionGreeksColumns(ctx context.Context, conn driver.Conn) error {
 	return nil
 }
 
-// LoadStockCloseMap loads all stock closes for a given market date.
-func LoadStockCloseMap(ctx context.Context, conn driver.Conn, symbols []string, marketDate time.Time) (map[stockCloseKey]float64, map[string]struct{}, error) {
-	stockCloses := make(map[stockCloseKey]float64)
+// LoadStockCloseMap loads stock close series for a given market date.
+func LoadStockCloseMap(ctx context.Context, conn driver.Conn, symbols []string, marketDate time.Time) (stockCloseSeries, map[string]struct{}, error) {
+	stockCloses := make(stockCloseSeries)
 	seenSymbols := make(map[string]struct{}, len(symbols))
 
 	if len(symbols) == 0 {
 		return stockCloses, seenSymbols, nil
 	}
 
+	if err := loadStockCloseRows(ctx, conn, symbols, marketDate, nil, stockCloses, seenSymbols); err != nil {
+		return nil, nil, err
+	}
+
+	missingSymbols := MissingStockSymbols(symbols, seenSymbols)
+	if len(missingSymbols) > 0 {
+		fallbackSymbols := make([]string, 0, len(missingSymbols))
+		fallbackAliases := make(map[string]string, len(missingSymbols))
+		for _, symbol := range missingSymbols {
+			fallback, ok := OptionUnderlyingFallbackStockSymbol(symbol)
+			if !ok {
+				continue
+			}
+			fallbackSymbols = append(fallbackSymbols, fallback)
+			fallbackAliases[fallback] = symbol
+		}
+
+		if len(fallbackSymbols) > 0 {
+			if err := loadStockCloseRows(ctx, conn, fallbackSymbols, marketDate, fallbackAliases, stockCloses, seenSymbols); err != nil {
+				return nil, nil, err
+			}
+		}
+	}
+
+	return stockCloses, seenSymbols, nil
+}
+
+func loadStockCloseRows(ctx context.Context, conn driver.Conn, symbols []string, marketDate time.Time, aliasToUnderlying map[string]string, stockCloses stockCloseSeries, seenSymbols map[string]struct{}) error {
+	if len(symbols) == 0 {
+		return nil
+	}
+
 	rows, err := conn.Query(ctx,
 		`SELECT symbol, timestamp, close
 		FROM us_stocks_bar_1m
 		WHERE symbol IN ({symbols:Array(String)})
-		  AND market_date = {market_date:Date}`,
+		  AND market_date = {market_date:Date}
+		ORDER BY symbol, timestamp`,
 		clickhouse.Named("symbols", symbols),
-		clickhouse.Named("market_date", marketDate),
+		clickhouse.Named("market_date", marketDate.Format("2006-01-02")),
 	)
 	if err != nil {
-		return nil, nil, fmt.Errorf("query stock closes: %w", err)
+		return fmt.Errorf("query stock closes: %w", err)
 	}
 	defer rows.Close()
 
@@ -277,14 +310,25 @@ func LoadStockCloseMap(ctx context.Context, conn driver.Conn, symbols []string, 
 			close     float32
 		)
 		if err := rows.Scan(&symbol, &timestamp, &close); err != nil {
-			return nil, nil, fmt.Errorf("scan stock close row: %w", err)
+			return fmt.Errorf("scan stock close row: %w", err)
 		}
-		seenSymbols[symbol] = struct{}{}
-		stockCloses[newStockCloseKey(symbol, timestamp)] = float64(close)
+
+		underlying := symbol
+		if aliasToUnderlying != nil {
+			if aliased, ok := aliasToUnderlying[symbol]; ok {
+				underlying = aliased
+			}
+		}
+
+		seenSymbols[underlying] = struct{}{}
+		stockCloses[underlying] = append(stockCloses[underlying], stockClosePoint{
+			timestamp: timestamp.UTC().Unix(),
+			close:     float64(close),
+		})
 	}
 	if err := rows.Err(); err != nil {
-		return nil, nil, fmt.Errorf("iterate stock close rows: %w", err)
+		return fmt.Errorf("iterate stock close rows: %w", err)
 	}
 
-	return stockCloses, seenSymbols, nil
+	return nil
 }
