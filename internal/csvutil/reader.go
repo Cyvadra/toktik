@@ -31,6 +31,7 @@ func (s *stackedReadCloser) Close() error {
 }
 
 // OpenMaybeGzipCSV opens a CSV file and auto-wraps gzip files by ".gz" suffix.
+// A bufferSize of zero or negative uses a default buffer size of 4 MiB.
 func OpenMaybeGzipCSV(path string, bufferSize int) (io.ReadCloser, *csv.Reader, error) {
 	f, err := os.Open(path)
 	if err != nil {
