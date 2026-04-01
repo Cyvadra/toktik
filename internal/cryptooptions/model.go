@@ -100,6 +100,9 @@ type SpotBar1m struct {
 	Low         float32   `parquet:"low"`
 	Close       float32   `parquet:"close"`
 	TickCount   uint32    `parquet:"tick_count"`
+	VolumeBase  float64   `parquet:"volume_base"`
+	VolumeQuote float64   `parquet:"volume_quote"`
+	BarInterval string    `parquet:"bar_interval"`
 }
 
 // SymbolMeta holds parsed option contract metadata extracted from

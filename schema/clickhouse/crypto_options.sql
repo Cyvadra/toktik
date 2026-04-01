@@ -88,7 +88,10 @@ CREATE TABLE IF NOT EXISTS crypto_spot_bar_1m
     high         Float32,
     low          Float32,
     close        Float32,
-    tick_count   UInt32
+    tick_count   UInt32,
+    volume_base  Float64 DEFAULT 0,
+    volume_quote Float64 DEFAULT 0,
+    bar_interval LowCardinality(String) DEFAULT '1m'
 )
 ENGINE = MergeTree()
 PARTITION BY toYYYYMM(timestamp)

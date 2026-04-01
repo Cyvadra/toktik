@@ -16,7 +16,7 @@ const OptionBarColumns = `timestamp, symbol_id, base_asset,
     open_interest, tick_count`
 
 // SpotBarColumns is the standard column list for spot bar queries.
-const SpotBarColumns = `timestamp, symbol, price_source, open, high, low, close, tick_count`
+const SpotBarColumns = `timestamp, symbol, price_source, open, high, low, close, tick_count, volume_base, volume_quote`
 
 // ClickHouseTimeParam formats a timestamp for string-bound query parameters.
 func ClickHouseTimeParam(t time.Time) string {

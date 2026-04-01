@@ -18,6 +18,7 @@ dist/
 
 # Vendor and dependency directories
 vendor/
+data/
 
 # IDEs and editors
 .vscode/

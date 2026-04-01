@@ -283,7 +283,7 @@ open_interest, tick_count
 const spotBarInsertSQL = `INSERT INTO crypto_spot_bar_1m (
 timestamp, symbol, price_source,
 open, high, low, close,
-tick_count
+tick_count, volume_base, volume_quote, bar_interval
 )`
 
 // InsertBars batch-inserts 1-minute bars into crypto_options_bar_1m.
@@ -396,6 +396,10 @@ func InsertSpotBars(ctx context.Context, conn driver.Conn, bars <-chan SpotBar1m
 
 	batchCount := 0
 	for bar := range bars {
+		barInterval := bar.BarInterval
+		if barInterval == "" {
+			barInterval = "1m"
+		}
 		if err := batch.Append(
 			bar.Timestamp,
 			bar.Symbol,
@@ -405,6 +409,9 @@ func InsertSpotBars(ctx context.Context, conn driver.Conn, bars <-chan SpotBar1m
 			bar.Low,
 			bar.Close,
 			bar.TickCount,
+			bar.VolumeBase,
+			bar.VolumeQuote,
+			barInterval,
 		); err != nil {
 			return totalRows, fmt.Errorf("append spot bar row: %w", err)
 		}

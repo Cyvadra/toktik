@@ -38,6 +38,8 @@
 --      open/high/low/close
 --      price_source
 --      tick_count (sum)
+--      volume_base (sum)
+--      volume_quote (sum)
 --
 -- Use the import pipeline or call the Go initializers directly:
 --   cryptooptions.InitKlineSchema(...)

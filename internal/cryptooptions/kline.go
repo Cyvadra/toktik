@@ -200,14 +200,16 @@ func spotKlineDDLWithPrefix(prefix string, iv KlineInterval) []string {
 
 	createAgg := fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s
 (
-    ts                 DateTime('UTC'),
-    symbol             LowCardinality(String),
-    price_source       LowCardinality(String),
-    open_state         AggregateFunction(argMin, Float32, DateTime('UTC')),
-    high_state         AggregateFunction(max, Float32),
-    low_state          AggregateFunction(min, Float32),
-    close_state        AggregateFunction(argMax, Float32, DateTime('UTC')),
-    tick_count_state   AggregateFunction(sum, UInt32)
+    ts                    DateTime('UTC'),
+    symbol                LowCardinality(String),
+    price_source          LowCardinality(String),
+    open_state            AggregateFunction(argMin, Float32, DateTime('UTC')),
+    high_state            AggregateFunction(max, Float32),
+    low_state             AggregateFunction(min, Float32),
+    close_state           AggregateFunction(argMax, Float32, DateTime('UTC')),
+    tick_count_state      AggregateFunction(sum, UInt32),
+    volume_base_state     AggregateFunction(sum, Float64),
+    volume_quote_state    AggregateFunction(sum, Float64)
 )
 ENGINE = AggregatingMergeTree()
 PARTITION BY toYYYYMM(ts)
@@ -224,7 +226,9 @@ AS SELECT
     maxState(high)                               AS high_state,
     minState(low)                                AS low_state,
     argMaxState(close, timestamp)                AS close_state,
-    sumState(tick_count)                         AS tick_count_state
+    sumState(tick_count)                         AS tick_count_state,
+    sumState(volume_base)                        AS volume_base_state,
+    sumState(volume_quote)                       AS volume_quote_state
 FROM %s
 GROUP BY ts, symbol`, mv, agg, iv.TimeFunc, base)
 
@@ -237,7 +241,9 @@ SELECT
     maxMerge(high_state)              AS high,
     minMerge(low_state)               AS low,
     argMaxMerge(close_state)          AS close,
-    sumMerge(tick_count_state)        AS tick_count
+    sumMerge(tick_count_state)        AS tick_count,
+    sumMerge(volume_base_state)       AS volume_base,
+    sumMerge(volume_quote_state)      AS volume_quote
 FROM %s
 GROUP BY ts, symbol`, view, agg)
 
@@ -392,7 +398,9 @@ func QuerySpotAggregationSQL(interval string) (string, error) {
     max(high)                                 AS high,
     min(low)                                  AS low,
     argMax(close, timestamp)                  AS close,
-    sum(tick_count)                           AS tick_count
+    sum(tick_count)                           AS tick_count,
+    sum(volume_base)                          AS volume_base,
+    sum(volume_quote)                         AS volume_quote
 FROM crypto_spot_bar_1m
 WHERE symbol = {symbol:String}
     AND timestamp >= toDateTime({from:String}, 'UTC')
