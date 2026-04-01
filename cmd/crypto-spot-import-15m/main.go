@@ -87,7 +87,7 @@ func main() {
 				log.Printf("[ERROR] BTC volume distribute from %s: %v", csvPath, err)
 				continue
 			}
-			log.Printf("[BTC] distributed volume across %d 15m windows from %s", n, csvPath)
+			log.Printf("[BTC] rebuilt %d 1m rows using 15m volume from %s", n, csvPath)
 			totalImported += int64(n)
 			continue
 		}
@@ -286,88 +286,129 @@ func distributeBTCVolume(ctx context.Context, conn driver.Conn, csvPath string, 
 		return csv15mRows[i].Timestamp.Before(csv15mRows[j].Timestamp)
 	})
 
-	updated := 0
-	for _, row := range csv15mRows {
-		windowStart := row.Timestamp
-		windowEnd := windowStart.Add(15 * time.Minute)
-
-		// Query existing 1m bars in this 15m window
-		minuteBars, err := queryMinuteBars(ctx, conn, "BTC", windowStart, windowEnd)
-		if err != nil {
-			log.Printf("[WARN] BTC query 1m bars for window %s: %v", windowStart.Format(time.RFC3339), err)
-			continue
-		}
-
-		if len(minuteBars) == 0 {
-			continue
-		}
-
-		// Compute total tick_count as weight sum
-		totalWeight := float64(0)
-		for _, mb := range minuteBars {
-			totalWeight += float64(mb.TickCount)
-		}
-		if totalWeight <= 0 {
-			totalWeight = float64(len(minuteBars))
-		}
-
-		// Distribute volume proportionally and update
-		for _, mb := range minuteBars {
-			weight := float64(mb.TickCount) / totalWeight
-			if totalWeight == float64(len(minuteBars)) {
-				weight = 1.0 / float64(len(minuteBars))
-			}
-
-			vb := row.VolumeBase * weight
-			vq := row.VolumeQuote * weight
-
-			err := updateSpotBarVolume(ctx, conn, mb.Timestamp, "BTC", vb, vq)
-			if err != nil {
-				log.Printf("[WARN] BTC update volume at %s: %v", mb.Timestamp.Format(time.RFC3339), err)
-				continue
-			}
-		}
-		updated++
+	bars, err := querySpotBarsBySymbol(ctx, conn, "BTC")
+	if err != nil {
+		return 0, fmt.Errorf("query existing BTC 1m bars: %w", err)
+	}
+	if len(bars) == 0 {
+		return 0, nil
 	}
 
-	return updated, nil
+	updatedBars, matchedWindows := applyVolumeRowsToSpotBars(bars, csv15mRows)
+	if matchedWindows == 0 {
+		return 0, fmt.Errorf("no overlapping BTC 1m bars found for 15m CSV windows")
+	}
+
+	if _, err := deleteSpotRowsBySymbol(ctx, conn, "BTC"); err != nil {
+		return 0, fmt.Errorf("delete existing BTC rows before rewrite: %w", err)
+	}
+
+	barCh := make(chan cryptooptions.SpotBar1m, 8192)
+	go func() {
+		defer close(barCh)
+		for i := range updatedBars {
+			barCh <- updatedBars[i]
+		}
+	}()
+
+	inserted, err := cryptooptions.InsertSpotBars(ctx, conn, barCh, batchSize)
+	if err != nil {
+		return 0, fmt.Errorf("reinsert rebuilt BTC rows: %w", err)
+	}
+
+	log.Printf("[BTC] matched %d 15m windows and rewrote %d 1m rows", matchedWindows, inserted)
+	return int(inserted), nil
 }
 
-type minuteBarRef struct {
-	Timestamp time.Time
-	TickCount uint32
-}
-
-func queryMinuteBars(ctx context.Context, conn driver.Conn, symbol string, from, to time.Time) ([]minuteBarRef, error) {
+func querySpotBarsBySymbol(ctx context.Context, conn driver.Conn, symbol string) ([]cryptooptions.SpotBar1m, error) {
 	rows, err := conn.Query(ctx,
-		`SELECT timestamp, tick_count FROM crypto_spot_bar_1m
-		 WHERE symbol = ? AND timestamp >= ? AND timestamp < ?
+		`SELECT timestamp, symbol, price_source, open, high, low, close, tick_count, volume_base, volume_quote, bar_interval
+		 FROM crypto_spot_bar_1m
+		 WHERE symbol = ?
 		 ORDER BY timestamp`,
-		symbol, from, to)
+		symbol)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	var bars []minuteBarRef
+	bars := make([]cryptooptions.SpotBar1m, 0, 1024)
 	for rows.Next() {
-		var mb minuteBarRef
-		if err := rows.Scan(&mb.Timestamp, &mb.TickCount); err != nil {
+		var bar cryptooptions.SpotBar1m
+		if err := rows.Scan(
+			&bar.Timestamp,
+			&bar.Symbol,
+			&bar.PriceSource,
+			&bar.Open,
+			&bar.High,
+			&bar.Low,
+			&bar.Close,
+			&bar.TickCount,
+			&bar.VolumeBase,
+			&bar.VolumeQuote,
+			&bar.BarInterval,
+		); err != nil {
 			return nil, err
 		}
-		bars = append(bars, mb)
+		if bar.BarInterval == "" {
+			bar.BarInterval = "1m"
+		}
+		bars = append(bars, bar)
 	}
 	return bars, nil
 }
 
-func updateSpotBarVolume(ctx context.Context, conn driver.Conn, ts time.Time, symbol string, volumeBase, volumeQuote float64) error {
-	return conn.Exec(ctx,
-		`ALTER TABLE crypto_spot_bar_1m UPDATE
-			volume_base = ?,
-			volume_quote = ?
-		 WHERE symbol = ? AND timestamp = ?
-		 SETTINGS mutations_sync=1`,
-		volumeBase, volumeQuote, symbol, ts)
+func applyVolumeRowsToSpotBars(bars []cryptooptions.SpotBar1m, volumeRows []csv15mRow) ([]cryptooptions.SpotBar1m, int) {
+	if len(bars) == 0 || len(volumeRows) == 0 {
+		return bars, 0
+	}
+
+	updated := make([]cryptooptions.SpotBar1m, len(bars))
+	copy(updated, bars)
+
+	matchedWindows := 0
+	start := 0
+	for _, row := range volumeRows {
+		windowStart := row.Timestamp.UTC()
+		windowEnd := windowStart.Add(15 * time.Minute)
+
+		for start < len(updated) && updated[start].Timestamp.Before(windowStart) {
+			start++
+		}
+
+		end := start
+		for end < len(updated) && updated[end].Timestamp.Before(windowEnd) {
+			end++
+		}
+		if end == start {
+			continue
+		}
+
+		weightSum := 0.0
+		for i := start; i < end; i++ {
+			weightSum += float64(updated[i].TickCount)
+		}
+		useUniform := weightSum <= 0
+		if useUniform {
+			weightSum = float64(end - start)
+		}
+
+		for i := start; i < end; i++ {
+			weight := 1.0 / float64(end-start)
+			if !useUniform {
+				weight = float64(updated[i].TickCount) / weightSum
+			}
+			updated[i].VolumeBase = row.VolumeBase * weight
+			updated[i].VolumeQuote = row.VolumeQuote * weight
+			if updated[i].BarInterval == "" {
+				updated[i].BarInterval = "1m"
+			}
+		}
+
+		matchedWindows++
+	}
+
+	return updated, matchedWindows
 }
 
 func deleteSpotRowsBySymbol(ctx context.Context, conn driver.Conn, symbol string) (int, error) {
