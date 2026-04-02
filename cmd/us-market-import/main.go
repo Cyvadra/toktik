@@ -82,6 +82,9 @@ func main() {
 	if err := usmarket.InitOptionKlineSchema(ctx, conn); err != nil {
 		log.Fatalf("init option kline schema: %v", err)
 	}
+	if err := usmarket.InitOptionChainCacheSchema(ctx, conn); err != nil {
+		log.Fatalf("init option chain cache schema: %v", err)
+	}
 	if err := usmarket.InitStockKlineSchema(ctx, conn); err != nil {
 		log.Fatalf("init stock kline schema: %v", err)
 	}

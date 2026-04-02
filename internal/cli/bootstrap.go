@@ -33,6 +33,8 @@ type SchemaInit struct {
 	Kline bool
 	// SpotKline enables crypto_spot kline materialized views.
 	SpotKline bool
+	// ChainCache enables crypto option-chain cache materialized views.
+	ChainCache bool
 }
 
 // ConnectClickHouse establishes a ClickHouse connection, initialises the
@@ -62,6 +64,11 @@ func ConnectClickHouse(ctx context.Context, dsn string, schema *SchemaInit) (dri
 	if schema.SpotKline {
 		if err := cryptooptions.InitSpotKlineSchema(ctx, conn); err != nil {
 			return nil, fmt.Errorf("init spot kline schema: %w", err)
+		}
+	}
+	if schema.ChainCache {
+		if err := cryptooptions.InitChainCacheSchema(ctx, conn); err != nil {
+			return nil, fmt.Errorf("init chain cache schema: %w", err)
 		}
 	}
 	slog.Info("Schema initialized")

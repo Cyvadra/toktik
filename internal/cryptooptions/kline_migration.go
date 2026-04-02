@@ -56,6 +56,9 @@ func MigrateCryptoKlineSchemaToUTC(ctx context.Context, conn driver.Conn, opts K
 	}
 
 	if optionBaseExists {
+		if err := dropChainCacheObjects(ctx, conn); err != nil {
+			return err
+		}
 		if err := dropOptionKlineObjects(ctx, conn, "crypto_options"); err != nil {
 			return err
 		}
@@ -64,6 +67,9 @@ func MigrateCryptoKlineSchemaToUTC(ctx context.Context, conn driver.Conn, opts K
 		}
 		if err := initOptionKlineSchemaForPrefix(ctx, conn, "crypto_options"); err != nil {
 			return err
+		}
+		if err := InitChainCacheSchema(ctx, conn); err != nil {
+			return fmt.Errorf("init chain cache schema: %w", err)
 		}
 	}
 
@@ -159,6 +165,31 @@ func dropSpotKlineObjects(ctx context.Context, conn driver.Conn, prefix string) 
 	return nil
 }
 
+func dropChainCacheObjects(ctx context.Context, conn driver.Conn) error {
+	intervals := make([]string, 0, len(KlineIntervals)+1)
+	intervals = append(intervals, "1m")
+	for _, iv := range KlineIntervals {
+		intervals = append(intervals, iv.Suffix)
+	}
+
+	for _, suffix := range intervals {
+		viewName := "crypto_options_chain_" + suffix
+		mvName := "crypto_options_chain_" + suffix + "_mv"
+		aggName := "crypto_options_chain_" + suffix + "_agg"
+
+		if err := execMigrationDDL(ctx, conn, fmt.Sprintf("DROP VIEW IF EXISTS %s", viewName)); err != nil {
+			return fmt.Errorf("drop chain view %s: %w", viewName, err)
+		}
+		if err := execMigrationDDL(ctx, conn, fmt.Sprintf("DROP TABLE IF EXISTS %s", mvName)); err != nil {
+			return fmt.Errorf("drop chain mv %s: %w", mvName, err)
+		}
+		if err := execMigrationDDL(ctx, conn, fmt.Sprintf("DROP TABLE IF EXISTS %s", aggName)); err != nil {
+			return fmt.Errorf("drop chain agg %s: %w", aggName, err)
+		}
+	}
+	return nil
+}
+
 func execMigrationDDL(ctx context.Context, conn driver.Conn, stmt string) error {
 	log.Printf("[kline-migrate-utc] exec: %s", stmt)
 	return conn.Exec(ctx, stmt)
@@ -202,6 +233,12 @@ func backfillCryptoKlineWindows(ctx context.Context, conn driver.Conn, optionBas
 
 	for _, interval := range intervals {
 		if interval == "1m" {
+			if optionBaseExists {
+				iv := KlineInterval{Suffix: "1m", TimeFunc: "timestamp"}
+				if err := backfillChainInterval(ctx, conn, iv, from, to, baseAsset, false); err != nil {
+					return fmt.Errorf("backfill chain interval %s: %w", interval, err)
+				}
+			}
 			continue
 		}
 		iv, ok := intervalToConfig[interval]
@@ -211,6 +248,9 @@ func backfillCryptoKlineWindows(ctx context.Context, conn driver.Conn, optionBas
 		if optionBaseExists {
 			if err := backfillOptionInterval(ctx, conn, iv, from, to, baseAsset, false); err != nil {
 				return fmt.Errorf("backfill option interval %s: %w", interval, err)
+			}
+			if err := backfillChainInterval(ctx, conn, iv, from, to, baseAsset, false); err != nil {
+				return fmt.Errorf("backfill chain interval %s: %w", interval, err)
 			}
 		}
 		if spotBaseExists {

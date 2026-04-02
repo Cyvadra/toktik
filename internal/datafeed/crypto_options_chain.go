@@ -10,6 +10,7 @@ import (
 	clickhouse "github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/Cyvadra/toktik/internal/backtest"
+	"github.com/Cyvadra/toktik/internal/cryptooptions"
 )
 
 // CryptoOptionsChainProvider implements backtest.OptionsChainProvider by
@@ -84,31 +85,195 @@ func NewCryptoOptionsChainProvider(ctx context.Context, conn driver.Conn, baseAs
 	fromParam := backtestTimeParam(from)
 	toParam := backtestTimeParam(to)
 
-	optionTableName := resolveOptionTableName(interval)
-	underlyingCloseExpr := "toFloat32(0)"
-	joinClause := ""
+	underlyingCloseExprBars := "toFloat32(0)"
+	underlyingCloseExprCache := "toFloat32(0)"
+	joinClauseBars := ""
+	joinClauseCache := ""
 
 	spotSourceSQL, degraded, err := buildSpotSourceSQLWithFallback(ctx, conn, interval, baseAsset, from, to)
 	if err != nil {
 		return nil, fmt.Errorf("resolve spot source for options chain: %w", err)
 	}
 	if spotSourceSQL != "" {
-		joinClause = fmt.Sprintf("LEFT JOIN (%s) AS u\n    ON u.symbol = b.base_asset AND u.timestamp = b.timestamp", spotSourceSQL)
-		underlyingCloseExpr = "ifNull(u.close, toFloat32(0))"
+		joinClauseBars = fmt.Sprintf("LEFT JOIN (%s) AS u\n    ON u.symbol = b.base_asset AND u.timestamp = b.timestamp", spotSourceSQL)
+		joinClauseCache = fmt.Sprintf("LEFT JOIN (%s) AS u\n    ON u.symbol = c.base_asset AND u.timestamp = c.timestamp", spotSourceSQL)
+		underlyingCloseExprBars = "ifNull(u.close, toFloat32(0))"
+		underlyingCloseExprCache = "ifNull(u.close, toFloat32(0))"
 		if degraded {
 			log.Printf("[compat] options chain for %s/%s is using slower spot aggregation fallback", baseAsset, interval)
 		}
 	} else if legacyExpr, ok, err := legacyUnderlyingCloseExpr(ctx, conn, interval); err != nil {
 		return nil, fmt.Errorf("resolve legacy underlying source for options chain: %w", err)
 	} else if ok {
-		underlyingCloseExpr = legacyExpr
+		underlyingCloseExprBars = legacyExpr
 	} else {
 		log.Printf("[compat] no spot source or legacy underlying columns found for %s/%s; using zero underlying prices in options chain", baseAsset, interval)
 	}
 
-	// Meta columns and the FINAL join are removed; metadata is looked up from
-	// metaMap in Go. ORDER BY is removed because results go into an unordered
-	// map. bid_open, ask_open, and mark_open are dropped as they are unused.
+	numTimestamps := int(to.Sub(from)/resolution) + 1
+	if numTimestamps < 64 {
+		numTimestamps = 64
+	}
+	if chainView, ok := cryptooptions.ChainPrecomputedIntervals[interval]; ok {
+		exists, err := tableExists(ctx, conn, chainView)
+		if err != nil {
+			return nil, fmt.Errorf("check chain cache table %s: %w", chainView, err)
+		}
+		if exists {
+			byTimestamp, rowCount, missingMetaCount, err := loadOptionsChainFromCache(ctx, conn, chainView, baseAsset, fromParam, toParam, underlyingCloseExprCache, joinClauseCache, resolution, metaMap, numTimestamps)
+			if err != nil {
+				return nil, err
+			}
+			if missingMetaCount > 0 {
+				log.Printf("[chain] %d cached contracts skipped due to missing symbol metadata for %s", missingMetaCount, baseAsset)
+			}
+			if rowCount > 0 {
+				return &CryptoOptionsChainProvider{
+					byTimestamp: byTimestamp,
+					resolution:  resolution,
+				}, nil
+			}
+			log.Printf("[chain] cache table %s has no rows for %s/%s [%s,%s), falling back to bar scan",
+				chainView, baseAsset, interval, fromParam, toParam)
+		}
+	}
+
+	byTimestamp, missingMetaCount, err := loadOptionsChainFromBars(ctx, conn, baseAsset, interval, fromParam, toParam, underlyingCloseExprBars, joinClauseBars, resolution, metaMap, numTimestamps)
+	if err != nil {
+		return nil, err
+	}
+	if missingMetaCount > 0 {
+		log.Printf("[chain] %d bars skipped due to missing symbol metadata for %s", missingMetaCount, baseAsset)
+	}
+
+	return &CryptoOptionsChainProvider{
+		byTimestamp: byTimestamp,
+		resolution:  resolution,
+	}, nil
+}
+
+func loadOptionsChainFromCache(
+	ctx context.Context,
+	conn driver.Conn,
+	chainView, baseAsset, fromParam, toParam, underlyingCloseExpr, joinClause string,
+	resolution time.Duration,
+	metaMap map[uint32]symbolMetaRecord,
+	numTimestamps int,
+) (map[int64][]backtest.OptionContract, uint64, uint64, error) {
+	query := fmt.Sprintf(`SELECT
+    c.timestamp,
+    c.symbol_ids,
+    c.deltas,
+    c.gammas,
+    c.vegas,
+    c.thetas,
+    c.rhos,
+    c.bid_prices,
+    c.ask_prices,
+    c.mark_prices,
+    c.mark_ivs,
+    c.volumes,
+    c.open_interests,
+    %s AS underlying_close
+FROM %s AS c
+%s
+WHERE c.base_asset = {base_asset:String}
+    AND c.timestamp >= toDateTime({from:String}, 'UTC')
+    AND c.timestamp < toDateTime({to:String}, 'UTC')`,
+		underlyingCloseExpr,
+		chainView,
+		joinClause,
+	)
+
+	rows, err := conn.Query(ctx, query,
+		clickhouse.Named("base_asset", baseAsset),
+		clickhouse.Named("symbol", baseAsset),
+		clickhouse.Named("from", fromParam),
+		clickhouse.Named("to", toParam),
+	)
+	if err != nil {
+		return nil, 0, 0, fmt.Errorf("load options chain cache for %s: %w", baseAsset, err)
+	}
+	defer rows.Close()
+
+	byTimestamp := make(map[int64][]backtest.OptionContract, numTimestamps)
+	var rowCount uint64
+	var missingMetaCount uint64
+
+	for rows.Next() {
+		var (
+			ts              time.Time
+			symbolIDs       []uint32
+			deltas          []float32
+			gammas          []float32
+			vegas           []float32
+			thetas          []float32
+			rhos            []float32
+			bidPrices       []float32
+			askPrices       []float32
+			markPrices      []float32
+			markIVs         []float32
+			volumes         []uint64
+			openInterests   []float32
+			underlyingClose float32
+		)
+
+		if err := rows.Scan(
+			&ts,
+			&symbolIDs,
+			&deltas,
+			&gammas,
+			&vegas,
+			&thetas,
+			&rhos,
+			&bidPrices,
+			&askPrices,
+			&markPrices,
+			&markIVs,
+			&volumes,
+			&openInterests,
+			&underlyingClose,
+		); err != nil {
+			return nil, 0, 0, fmt.Errorf("scan cached chain row: %w", err)
+		}
+
+		seriesLen := len(symbolIDs)
+		if seriesLen == 0 || len(deltas) != seriesLen || len(gammas) != seriesLen || len(vegas) != seriesLen ||
+			len(thetas) != seriesLen || len(rhos) != seriesLen || len(bidPrices) != seriesLen || len(askPrices) != seriesLen ||
+			len(markPrices) != seriesLen || len(markIVs) != seriesLen || len(volumes) != seriesLen || len(openInterests) != seriesLen {
+			return nil, 0, 0, fmt.Errorf("invalid cached chain row at %s: array lengths mismatch", ts.UTC().Format(time.RFC3339))
+		}
+
+		key := ts.UTC().Truncate(resolution).Unix()
+		contracts := make([]backtest.OptionContract, 0, seriesLen)
+		for i := 0; i < seriesLen; i++ {
+			meta, ok := metaMap[symbolIDs[i]]
+			if !ok {
+				missingMetaCount++
+				continue
+			}
+			contracts = append(contracts, buildOptionContract(meta, deltas[i], gammas[i], vegas[i], thetas[i], rhos[i], bidPrices[i], askPrices[i], markPrices[i], markIVs[i], underlyingClose, volumes[i], openInterests[i]))
+		}
+		byTimestamp[key] = contracts
+		rowCount++
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, 0, 0, fmt.Errorf("iterate cached chain rows for %s: %w", baseAsset, err)
+	}
+
+	return byTimestamp, rowCount, missingMetaCount, nil
+}
+
+func loadOptionsChainFromBars(
+	ctx context.Context,
+	conn driver.Conn,
+	baseAsset, interval, fromParam, toParam, underlyingCloseExpr, joinClause string,
+	resolution time.Duration,
+	metaMap map[uint32]symbolMetaRecord,
+	numTimestamps int,
+) (map[int64][]backtest.OptionContract, uint64, error) {
+	optionTableName := resolveOptionTableName(interval)
 	query := fmt.Sprintf(`SELECT
     b.timestamp,
     b.symbol_id,
@@ -141,16 +306,12 @@ WHERE b.base_asset = {base_asset:String}
 		clickhouse.Named("to", toParam),
 	)
 	if err != nil {
-		return nil, fmt.Errorf("load options chain for %s: %w", baseAsset, err)
+		return nil, 0, fmt.Errorf("load options chain for %s: %w", baseAsset, err)
 	}
 	defer rows.Close()
 
-	numTimestamps := int(to.Sub(from)/resolution) + 1
-	if numTimestamps < 64 {
-		numTimestamps = 64
-	}
 	byTimestamp := make(map[int64][]backtest.OptionContract, numTimestamps)
-	missingMetaCount := 0
+	var missingMetaCount uint64
 
 	for rows.Next() {
 		var (
@@ -176,7 +337,7 @@ WHERE b.base_asset = {base_asset:String}
 			&bidClose, &askClose, &markClose, &markIVClose,
 			&underlyingClose, &tickCount, &openInterest,
 		); err != nil {
-			return nil, fmt.Errorf("scan chain row: %w", err)
+			return nil, 0, fmt.Errorf("scan chain row: %w", err)
 		}
 
 		meta, ok := metaMap[symbolID]
@@ -185,46 +346,42 @@ WHERE b.base_asset = {base_asset:String}
 			continue
 		}
 
-		ot := backtest.Call
-		if meta.optionType == "put" {
-			ot = backtest.Put
-		}
-
-		contract := backtest.OptionContract{
-			Symbol:          meta.symbol,
-			Ref:             backtest.SecurityRef{Market: "crypto-options", Symbol: meta.symbol},
-			Type:            ot,
-			StrikePrice:     float64(meta.strike),
-			Expiration:      meta.expiration,
-			Delta:           float64(delta),
-			Gamma:           float64(gamma),
-			Vega:            float64(vega),
-			Theta:           float64(theta),
-			Rho:             float64(rho),
-			BidPrice:        float64(bidClose),
-			AskPrice:        float64(askClose),
-			MarkPrice:       float64(markClose),
-			IV:              float64(markIVClose),
-			UnderlyingPrice: float64(underlyingClose),
-			Volume:          float64(tickCount),
-			OpenInterest:    float64(openInterest),
-		}
-
 		key := ts.UTC().Truncate(resolution).Unix()
-		byTimestamp[key] = append(byTimestamp[key], contract)
+		byTimestamp[key] = append(byTimestamp[key], buildOptionContract(meta, delta, gamma, vega, theta, rho, bidClose, askClose, markClose, markIVClose, underlyingClose, tickCount, openInterest))
 	}
 
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate chain rows for %s: %w", baseAsset, err)
-	}
-	if missingMetaCount > 0 {
-		log.Printf("[chain] %d bars skipped due to missing symbol metadata for %s", missingMetaCount, baseAsset)
+		return nil, 0, fmt.Errorf("iterate chain rows for %s: %w", baseAsset, err)
 	}
 
-	return &CryptoOptionsChainProvider{
-		byTimestamp: byTimestamp,
-		resolution:  resolution,
-	}, nil
+	return byTimestamp, missingMetaCount, nil
+}
+
+func buildOptionContract(meta symbolMetaRecord, delta, gamma, vega, theta, rho, bidClose, askClose, markClose, markIVClose, underlyingClose float32, tickCount uint64, openInterest float32) backtest.OptionContract {
+	ot := backtest.Call
+	if meta.optionType == "put" {
+		ot = backtest.Put
+	}
+
+	return backtest.OptionContract{
+		Symbol:          meta.symbol,
+		Ref:             backtest.SecurityRef{Market: "crypto-options", Symbol: meta.symbol},
+		Type:            ot,
+		StrikePrice:     float64(meta.strike),
+		Expiration:      meta.expiration,
+		Delta:           float64(delta),
+		Gamma:           float64(gamma),
+		Vega:            float64(vega),
+		Theta:           float64(theta),
+		Rho:             float64(rho),
+		BidPrice:        float64(bidClose),
+		AskPrice:        float64(askClose),
+		MarkPrice:       float64(markClose),
+		IV:              float64(markIVClose),
+		UnderlyingPrice: float64(underlyingClose),
+		Volume:          float64(tickCount),
+		OpenInterest:    float64(openInterest),
+	}
 }
 
 // AvailableContracts returns all option contracts at the given time.

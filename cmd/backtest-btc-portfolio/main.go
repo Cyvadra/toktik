@@ -25,6 +25,7 @@ const defaultBacktestHTMLDir = "reports/backtests"
 
 func main() {
 	dsn := flag.String("clickhouse-dsn", appCli.DefaultDSN, "ClickHouse DSN")
+	market := flag.String("market", "crypto", "Primary market: crypto | us")
 	baseAsset := flag.String("asset", "BTC", "Underlying base asset (e.g. BTC)")
 	interval := flag.String("interval", "1h", "Bar interval for the strategy (e.g. 1h)")
 	fromStr := flag.String("from", "", "Start date YYYY-MM-DD (required)")
@@ -151,6 +152,12 @@ func main() {
 	strategyCfg.PThreshold = *pThreshold
 	strategyCfg.Direction = tradeDirection
 
+	primaryMarket, err := parsePrimaryMarket(*market)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+
 	resolved, err := strategies.ResolveDetailed(*stratName, strategyCfg, *baseAsset)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "strategy resolve failed: %v\n", err)
@@ -182,9 +189,13 @@ func main() {
 
 	var chainProvider backtest.OptionsChainProvider
 	if strategiesNeedOptions(resolved) {
-		log.Printf("Loading options chain for %s (%s) [%s → %s]...",
-			*baseAsset, *interval, from.Format("2006-01-02"), to.Format("2006-01-02"))
-		chainProvider, err = datafeed.NewCryptoOptionsChainProvider(ctx, conn, *baseAsset, *interval, from, to)
+		log.Printf("Loading options chain for %s [%s/%s, %s → %s]...",
+			*baseAsset, primaryMarket, *interval, from.Format("2006-01-02"), to.Format("2006-01-02"))
+		if primaryMarket == marketUS {
+			chainProvider, err = datafeed.NewUSOptionsChainProvider(ctx, conn, *baseAsset, *interval, from, to)
+		} else {
+			chainProvider, err = datafeed.NewCryptoOptionsChainProvider(ctx, conn, *baseAsset, *interval, from, to)
+		}
 		if err != nil {
 			log.Fatalf("Failed to load options chain: %v", err)
 		}
@@ -210,10 +221,10 @@ func main() {
 			TriggerMode:     backtest.TriggerPriceCanonical,
 		}
 
-		engine := newEngine(cfg, conn, factorStore, chainProvider, item.Profile.UsesOptions)
+		engine := newEngine(cfg, conn, factorStore, primaryMarket, chainProvider, item.Profile.UsesOptions)
 
 		log.Printf("--- Running strategy: %s [%s, %s] ---", item.Strategy.Name(), item.Runtime.ProfileLabel, strings.ToUpper(item.Runtime.CapitalUnit))
-		result, runErr := engine.Run(ctx, "crypto-underlying", *baseAsset, *interval, from, to, item.Strategy, nil)
+		result, runErr := engine.Run(ctx, primaryMarket, *baseAsset, *interval, from, to, item.Strategy, nil)
 		if runErr != nil {
 			log.Fatalf("Backtest failed [%s]: %v", item.Strategy.Name(), runErr)
 		}
@@ -269,14 +280,31 @@ func main() {
 	}
 }
 
-func newEngine(cfg backtest.Config, conn driver.Conn, factorStore *feeds.Store, chainProvider backtest.OptionsChainProvider, usesOptions bool) *backtest.Engine {
+const (
+	marketCrypto = "crypto-underlying"
+	marketUS     = "us-underlying"
+)
+
+func newEngine(cfg backtest.Config, conn driver.Conn, factorStore *feeds.Store, primaryMarket string, chainProvider backtest.OptionsChainProvider, usesOptions bool) *backtest.Engine {
 	engine := backtest.NewEngine(cfg)
 	engine.RegisterDataFeed("crypto-underlying", datafeed.NewCryptoUnderlyingDataFeed(conn))
+	engine.RegisterDataFeed("us-underlying", datafeed.NewUSUnderlyingDataFeed(conn))
 	engine.RegisterFactorFeed("dvol", datafeed.NewFeedFactorBridge("dvol", factorStore))
 	if usesOptions && chainProvider != nil {
 		engine.SetOptionsChainProvider(chainProvider)
 	}
 	return engine
+}
+
+func parsePrimaryMarket(raw string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "", "crypto", "crypto-underlying":
+		return marketCrypto, nil
+	case "us", "us-underlying":
+		return marketUS, nil
+	default:
+		return "", fmt.Errorf("--market %q is invalid; want crypto|us", raw)
+	}
 }
 
 func strategiesNeedOptions(items []strategies.ResolvedStrategy) bool {

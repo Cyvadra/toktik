@@ -41,8 +41,9 @@ func main() {
 
 	ctx := context.Background()
 	conn, err := appCli.ConnectClickHouse(ctx, *dsn, &appCli.SchemaInit{
-		Kline:     true,
-		SpotKline: true,
+		Kline:      true,
+		SpotKline:  true,
+		ChainCache: true,
 	})
 	if err != nil {
 		log.Fatalf("%v", err)

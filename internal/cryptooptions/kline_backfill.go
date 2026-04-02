@@ -49,6 +49,10 @@ func BackfillKlineWindows(ctx context.Context, conn driver.Conn, opts KlineBackf
 
 	for _, interval := range intervals {
 		if interval == "1m" {
+			iv := KlineInterval{Suffix: "1m", TimeFunc: "timestamp"}
+			if err := backfillChainInterval(ctx, conn, iv, opts.From, opts.To, baseAsset, opts.Replace); err != nil {
+				return fmt.Errorf("backfill chain interval %s: %w", interval, err)
+			}
 			continue
 		}
 
@@ -59,6 +63,9 @@ func BackfillKlineWindows(ctx context.Context, conn driver.Conn, opts KlineBackf
 
 		if err := backfillOptionInterval(ctx, conn, iv, opts.From, opts.To, baseAsset, opts.Replace); err != nil {
 			return fmt.Errorf("backfill option interval %s: %w", interval, err)
+		}
+		if err := backfillChainInterval(ctx, conn, iv, opts.From, opts.To, baseAsset, opts.Replace); err != nil {
+			return fmt.Errorf("backfill chain interval %s: %w", interval, err)
 		}
 		if err := backfillSpotInterval(ctx, conn, iv, opts.From, opts.To, baseAsset, opts.Replace); err != nil {
 			return fmt.Errorf("backfill spot interval %s: %w", interval, err)
@@ -210,6 +217,75 @@ GROUP BY ts, symbol`, aggTable, iv.TimeFunc, spotSourceWhere(from, to, baseAsset
 	return nil
 }
 
+func backfillChainInterval(ctx context.Context, conn driver.Conn, iv KlineInterval, from, to time.Time, baseAsset string, replace bool) error {
+	aggTable := fmt.Sprintf("crypto_options_chain_%s_agg", iv.Suffix)
+
+	hasRows, err := chainAggHasRows(ctx, conn, aggTable, from, to, baseAsset)
+	if err != nil {
+		return err
+	}
+	if hasRows && !replace {
+		log.Printf("[kline-backfill] skip chain %s: target table already has rows in selected scope", iv.Suffix)
+		return nil
+	}
+
+	if hasRows && replace {
+		if err := chainAggDeleteScope(ctx, conn, aggTable, from, to, baseAsset); err != nil {
+			return fmt.Errorf("clear existing chain scope: %w", err)
+		}
+	}
+
+	query := fmt.Sprintf(`INSERT INTO %s
+SELECT
+    ts,
+    base_asset,
+    symbol_id,
+    argMinState(delta, ts1m)         AS delta_state,
+    argMinState(gamma, ts1m)         AS gamma_state,
+    argMinState(vega, ts1m)          AS vega_state,
+    argMinState(theta, ts1m)         AS theta_state,
+    argMinState(rho, ts1m)           AS rho_state,
+    argMaxState(bid_close, ts1m)     AS bid_close_state,
+    argMaxState(ask_close, ts1m)     AS ask_close_state,
+    argMaxState(mark_close, ts1m)    AS mark_close_state,
+    argMaxState(mark_iv_close, ts1m) AS mark_iv_close_state,
+    sumState(tick_count)             AS tick_count_state,
+    argMaxState(open_interest, ts1m) AS open_interest_state
+FROM
+(
+    SELECT
+        timestamp AS ts1m,
+        %s AS ts,
+        symbol_id,
+        base_asset,
+        argMin(delta, timestamp)         AS delta,
+        argMin(gamma, timestamp)         AS gamma,
+        argMin(vega, timestamp)          AS vega,
+        argMin(theta, timestamp)         AS theta,
+        argMin(rho, timestamp)           AS rho,
+        argMax(bid_close, timestamp)     AS bid_close,
+        argMax(ask_close, timestamp)     AS ask_close,
+        argMax(mark_close, timestamp)    AS mark_close,
+        argMax(mark_iv_close, timestamp) AS mark_iv_close,
+        sum(toUInt64(tick_count))        AS tick_count,
+        argMax(open_interest, timestamp) AS open_interest
+    FROM crypto_options_bar_1m
+    %s
+    GROUP BY ts, symbol_id, base_asset
+)
+GROUP BY ts, base_asset, symbol_id`, aggTable, iv.TimeFunc, optionSourceWhere(from, to, baseAsset))
+
+	args := optionSourceArgs(from, to, baseAsset)
+	if err := retryBackfillTimeout(ctx, fmt.Sprintf("insert chain cache rows for %s", iv.Suffix), func() error {
+		return conn.Exec(ctx, query, args...)
+	}); err != nil {
+		return fmt.Errorf("insert chain cache rows: %w", err)
+	}
+
+	log.Printf("[kline-backfill] chain interval %s completed", iv.Suffix)
+	return nil
+}
+
 func optionAggHasRows(ctx context.Context, conn driver.Conn, aggTable string, from, to time.Time, baseAsset string) (bool, error) {
 	query := fmt.Sprintf("SELECT count() FROM %s%s", aggTable, optionAggScopeWhere(from, to, baseAsset))
 	var count uint64
@@ -256,6 +332,29 @@ func spotAggHasRows(ctx context.Context, conn driver.Conn, aggTable string, from
 	return count > 0, nil
 }
 
+func chainAggHasRows(ctx context.Context, conn driver.Conn, aggTable string, from, to time.Time, baseAsset string) (bool, error) {
+	query := fmt.Sprintf("SELECT count() FROM %s%s", aggTable, optionAggScopeWhere(from, to, baseAsset))
+	var count uint64
+	if err := retryBackfillTimeout(ctx, fmt.Sprintf("query chain agg row count for %s", aggTable), func() error {
+		rows, err := conn.Query(ctx, query, optionAggScopeArgs(from, to, baseAsset)...)
+		if err != nil {
+			return fmt.Errorf("query chain agg row count: %w", err)
+		}
+		defer rows.Close()
+		if !rows.Next() {
+			count = 0
+			return nil
+		}
+		if err := rows.Scan(&count); err != nil {
+			return fmt.Errorf("scan chain agg row count: %w", err)
+		}
+		return nil
+	}); err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
 func optionAggDeleteScope(ctx context.Context, conn driver.Conn, aggTable string, from, to time.Time, baseAsset string) error {
 	query := fmt.Sprintf("ALTER TABLE %s DELETE%s SETTINGS mutations_sync = 1", aggTable, optionAggScopeWhere(from, to, baseAsset))
 	if err := retryBackfillTimeout(ctx, fmt.Sprintf("delete option agg scope for %s", aggTable), func() error {
@@ -272,6 +371,16 @@ func spotAggDeleteScope(ctx context.Context, conn driver.Conn, aggTable string, 
 		return conn.Exec(ctx, query, spotAggScopeArgs(from, to, baseAsset)...)
 	}); err != nil {
 		return fmt.Errorf("delete spot agg scope: %w", err)
+	}
+	return nil
+}
+
+func chainAggDeleteScope(ctx context.Context, conn driver.Conn, aggTable string, from, to time.Time, baseAsset string) error {
+	query := fmt.Sprintf("ALTER TABLE %s DELETE%s SETTINGS mutations_sync = 1", aggTable, optionAggScopeWhere(from, to, baseAsset))
+	if err := retryBackfillTimeout(ctx, fmt.Sprintf("delete chain agg scope for %s", aggTable), func() error {
+		return conn.Exec(ctx, query, optionAggScopeArgs(from, to, baseAsset)...)
+	}); err != nil {
+		return fmt.Errorf("delete chain agg scope: %w", err)
 	}
 	return nil
 }

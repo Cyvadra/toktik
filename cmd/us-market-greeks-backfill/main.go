@@ -139,9 +139,12 @@ func main() {
 	}
 	remainingCount := len(remainingTasks)
 	if !*dryRun && remainingCount == 0 && failedTasks == 0 && *rebuildKlines {
-		log.Printf("Rebuilding higher-interval option kline aggregates from clean 1m data")
+		log.Printf("Rebuilding higher-interval option kline + chain cache aggregates from clean 1m data")
 		if err := usmarket.RebuildOptionKlineAggregates(ctx, conn); err != nil {
 			log.Fatalf("rebuild option kline aggregates: %v", err)
+		}
+		if err := usmarket.RebuildOptionChainCaches(ctx, conn); err != nil {
+			log.Fatalf("rebuild option chain caches: %v", err)
 		}
 	}
 
