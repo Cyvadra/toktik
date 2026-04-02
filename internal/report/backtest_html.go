@@ -1608,7 +1608,7 @@ func pct(value float64) string {
 	if math.IsNaN(value) || math.IsInf(value, 0) {
 		return "-"
 	}
-	return fmt.Sprintf("%.2f%%", value*100)
+	return backtest.FormatPercent(value)
 }
 
 func nullableCurrency4(value float64, ok bool) string {

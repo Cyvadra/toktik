@@ -51,7 +51,7 @@ func ftoa(f float64) string {
 	return neg + itoa(whole) + "." + string([]byte{byte('0' + frac/10), byte('0' + frac%10)})
 }
 
-func pct(f float64) string {
+func FormatPercent(f float64) string {
 	return ftoa(f*100) + "%"
 }
 

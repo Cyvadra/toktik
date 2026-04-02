@@ -7,9 +7,29 @@ import (
 	"github.com/Cyvadra/toktik/internal/dto"
 )
 
-// --- parseEnum / parse* helpers ---
+// --- parseEnum ---
 
-func TestParseCommissionModel(t *testing.T) {
+func testParseEnum[T comparable](t *testing.T, name string, mappings map[string]T, defaultVal T, fieldName string, tests []struct {
+	input   string
+	want    T
+	wantErr bool
+}) {
+	t.Helper()
+	t.Run(name, func(t *testing.T) {
+		for _, tt := range tests {
+			got, err := parseEnum(tt.input, mappings, defaultVal, fieldName)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("parseEnum(%q) error = %v, wantErr %v", tt.input, err, tt.wantErr)
+				continue
+			}
+			if got != tt.want {
+				t.Errorf("parseEnum(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+		}
+	})
+}
+
+func TestParseEnum(t *testing.T) {
 	tests := []struct {
 		input   string
 		want    backtest.CommissionModel
@@ -24,20 +44,9 @@ func TestParseCommissionModel(t *testing.T) {
 		{"per-unit", backtest.CommissionPerUnit, false},
 		{"unknown", backtest.CommissionPercent, true},
 	}
-	for _, tt := range tests {
-		got, err := parseCommissionModel(tt.input)
-		if (err != nil) != tt.wantErr {
-			t.Errorf("parseCommissionModel(%q) error = %v, wantErr %v", tt.input, err, tt.wantErr)
-			continue
-		}
-		if got != tt.want {
-			t.Errorf("parseCommissionModel(%q) = %v, want %v", tt.input, got, tt.want)
-		}
-	}
-}
+	testParseEnum(t, "commission model", commissionModelMap, backtest.CommissionPercent, "commission_model", tests)
 
-func TestParseExecutionMode(t *testing.T) {
-	tests := []struct {
+	executionTests := []struct {
 		input   string
 		want    backtest.ExecutionPriceModel
 		wantErr bool
@@ -48,20 +57,9 @@ func TestParseExecutionMode(t *testing.T) {
 		{"CANONICAL", backtest.ExecutionPriceCanonical, false},
 		{"invalid", backtest.ExecutionPriceBidAsk, true},
 	}
-	for _, tt := range tests {
-		got, err := parseExecutionMode(tt.input)
-		if (err != nil) != tt.wantErr {
-			t.Errorf("parseExecutionMode(%q) error = %v, wantErr %v", tt.input, err, tt.wantErr)
-			continue
-		}
-		if got != tt.want {
-			t.Errorf("parseExecutionMode(%q) = %v, want %v", tt.input, got, tt.want)
-		}
-	}
-}
+	testParseEnum(t, "execution mode", executionModeMap, backtest.ExecutionPriceBidAsk, "fill_mode", executionTests)
 
-func TestParseValuationMode(t *testing.T) {
-	tests := []struct {
+	valuationTests := []struct {
 		input   string
 		want    backtest.ValuationPriceModel
 		wantErr bool
@@ -73,20 +71,9 @@ func TestParseValuationMode(t *testing.T) {
 		{"MID", backtest.ValuationPriceMid, false},
 		{"bad", backtest.ValuationPriceExit, true},
 	}
-	for _, tt := range tests {
-		got, err := parseValuationMode(tt.input)
-		if (err != nil) != tt.wantErr {
-			t.Errorf("parseValuationMode(%q) error = %v, wantErr %v", tt.input, err, tt.wantErr)
-			continue
-		}
-		if got != tt.want {
-			t.Errorf("parseValuationMode(%q) = %v, want %v", tt.input, got, tt.want)
-		}
-	}
-}
+	testParseEnum(t, "valuation mode", valuationModeMap, backtest.ValuationPriceExit, "valuation_mode", valuationTests)
 
-func TestParseTriggerMode(t *testing.T) {
-	tests := []struct {
+	triggerTests := []struct {
 		input   string
 		want    backtest.TriggerPriceMode
 		wantErr bool
@@ -97,16 +84,7 @@ func TestParseTriggerMode(t *testing.T) {
 		{"BIDASK-ENVELOPE", backtest.TriggerPriceBidAskEnvelope, false},
 		{"foo", backtest.TriggerPriceCanonical, true},
 	}
-	for _, tt := range tests {
-		got, err := parseTriggerMode(tt.input)
-		if (err != nil) != tt.wantErr {
-			t.Errorf("parseTriggerMode(%q) error = %v, wantErr %v", tt.input, err, tt.wantErr)
-			continue
-		}
-		if got != tt.want {
-			t.Errorf("parseTriggerMode(%q) = %v, want %v", tt.input, got, tt.want)
-		}
-	}
+	testParseEnum(t, "trigger mode", triggerModeMap, backtest.TriggerPriceCanonical, "trigger_mode", triggerTests)
 }
 
 // --- validateBacktestRequest ---

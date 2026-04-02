@@ -31,19 +31,19 @@ func (s *CryptoOptionsService) RunBacktest(ctx context.Context, req dto.Backtest
 		return nil, err
 	}
 
-	commissionModel, err := parseCommissionModel(req.CommissionModel)
+	commissionModel, err := parseEnum(req.CommissionModel, commissionModelMap, backtest.CommissionPercent, "commission_model")
 	if err != nil {
 		return nil, err
 	}
-	executionMode, err := parseExecutionMode(req.FillMode)
+	executionMode, err := parseEnum(req.FillMode, executionModeMap, backtest.ExecutionPriceBidAsk, "fill_mode")
 	if err != nil {
 		return nil, err
 	}
-	valuationMode, err := parseValuationMode(req.ValuationMode)
+	valuationMode, err := parseEnum(req.ValuationMode, valuationModeMap, backtest.ValuationPriceExit, "valuation_mode")
 	if err != nil {
 		return nil, err
 	}
-	triggerMode, err := parseTriggerMode(req.TriggerMode)
+	triggerMode, err := parseEnum(req.TriggerMode, triggerModeMap, backtest.TriggerPriceCanonical, "trigger_mode")
 	if err != nil {
 		return nil, err
 	}
@@ -90,17 +90,9 @@ var commissionModelMap = map[string]backtest.CommissionModel{
 	"per-unit": backtest.CommissionPerUnit,
 }
 
-func parseCommissionModel(value string) (backtest.CommissionModel, error) {
-	return parseEnum(value, commissionModelMap, backtest.CommissionPercent, "commission_model")
-}
-
 var executionModeMap = map[string]backtest.ExecutionPriceModel{
 	"bidask":    backtest.ExecutionPriceBidAsk,
 	"canonical": backtest.ExecutionPriceCanonical,
-}
-
-func parseExecutionMode(value string) (backtest.ExecutionPriceModel, error) {
-	return parseEnum(value, executionModeMap, backtest.ExecutionPriceBidAsk, "fill_mode")
 }
 
 var valuationModeMap = map[string]backtest.ValuationPriceModel{
@@ -109,17 +101,9 @@ var valuationModeMap = map[string]backtest.ValuationPriceModel{
 	"mid":   backtest.ValuationPriceMid,
 }
 
-func parseValuationMode(value string) (backtest.ValuationPriceModel, error) {
-	return parseEnum(value, valuationModeMap, backtest.ValuationPriceExit, "valuation_mode")
-}
-
 var triggerModeMap = map[string]backtest.TriggerPriceMode{
 	"canonical":       backtest.TriggerPriceCanonical,
 	"bidask-envelope": backtest.TriggerPriceBidAskEnvelope,
-}
-
-func parseTriggerMode(value string) (backtest.TriggerPriceMode, error) {
-	return parseEnum(value, triggerModeMap, backtest.TriggerPriceCanonical, "trigger_mode")
 }
 
 func validateBacktestRequest(req dto.BacktestRequest) error {
