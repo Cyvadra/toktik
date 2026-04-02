@@ -5,7 +5,9 @@ import (
 	"math"
 
 	"github.com/Cyvadra/toktik/internal/backtest"
+	"github.com/Cyvadra/toktik/internal/validation"
 	"github.com/Cyvadra/toktik/pkg/strategies/catalog"
+	"github.com/Cyvadra/toktik/pkg/strategies/helpers"
 )
 
 const (
@@ -40,7 +42,7 @@ func init() {
 				atrMultiplier:     defaultATRMultiplier,
 				volumePeriod:      defaultVolumePeriod,
 				volumeRatioMin:    defaultVolumeRatio,
-				positionPct:       positionPctOrDefault(cfg.PositionSize),
+				positionPct:       helpers.ClampPositionPct(cfg.PositionSize, defaultPositionPct),
 				highestSinceEntry: math.NaN(),
 			}, nil
 		},
@@ -83,7 +85,7 @@ func (s *strategy) Init(ctx *backtest.SetupContext) error {
 	ctx.Register("ema_slow", backtest.EMA("close", s.slowPeriod))
 	ctx.Register("atr", backtest.ATR(s.atrPeriod))
 	ctx.Register("volume_value", backtest.CustomOptional([]string{"close"}, []string{"volume"}, func(inputs map[string][]float64) []float64 {
-		return cloneSeries(inputs["volume"])
+		return helpers.CopySeries(inputs["volume"])
 	}))
 	ctx.Register("volume_sma", backtest.SMA("volume_value", s.volumePeriod))
 	ctx.Register("volume_ratio", backtest.Custom([]string{"volume_value", "volume_sma"}, func(inputs map[string][]float64) []float64 {
@@ -91,7 +93,7 @@ func (s *strategy) Init(ctx *backtest.SetupContext) error {
 		volumeSMA := inputs["volume_sma"]
 		out := make([]float64, len(volume))
 		for i := range volume {
-			if math.IsNaN(volume[i]) || math.IsNaN(volumeSMA[i]) || volumeSMA[i] <= 0 {
+			if !validation.AllPositive(volumeSMA[i]) || !validation.AllValid(volume[i]) {
 				out[i] = math.NaN()
 				continue
 			}
@@ -114,7 +116,7 @@ func (s *strategy) OnBar(ctx *backtest.BarContext) {
 	if position <= 0 {
 		s.highestSinceEntry = math.NaN()
 		if shouldEnterLong(ctx.Ind("buy_signal"), ctx.Open(), price, emaFast, emaSlow, volumeRatio, s.volumeRatioMin) {
-			qty := positionSizeFromBudget(ctx.Cash(), ctx.Equity(), price, s.positionPct)
+			qty := helpers.PositionSizeFromEquity(ctx.Cash(), ctx.Equity(), price, s.positionPct)
 			if qty > 0 {
 				ctx.BuyWithNote(primary, qty, fmt.Sprintf("ema trend with volume %.2fx", volumeRatio))
 			}
@@ -133,7 +135,7 @@ func (s *strategy) OnBar(ctx *backtest.BarContext) {
 	}
 
 	atr := ctx.Ind("atr")
-	if math.IsNaN(atr) || atr <= 0 || math.IsNaN(s.highestSinceEntry) {
+	if !validation.IsPositiveValue(atr) || math.IsNaN(s.highestSinceEntry) {
 		return
 	}
 
@@ -148,7 +150,7 @@ func shouldEnterLong(crossover, openPrice, closePrice, emaFast, emaSlow, volumeR
 	if crossover != 1 || closePrice <= 0 {
 		return false
 	}
-	if math.IsNaN(openPrice) || math.IsNaN(closePrice) || math.IsNaN(emaFast) || math.IsNaN(emaSlow) || math.IsNaN(volumeRatio) {
+	if !validation.AllValid(openPrice, closePrice, emaFast, emaSlow, volumeRatio) {
 		return false
 	}
 	if closePrice <= openPrice || closePrice <= emaFast || emaFast <= emaSlow {
@@ -158,42 +160,15 @@ func shouldEnterLong(crossover, openPrice, closePrice, emaFast, emaSlow, volumeR
 }
 
 func shouldExitTrend(closePrice, emaFast, emaSlow float64) bool {
-	if math.IsNaN(closePrice) || math.IsNaN(emaFast) || math.IsNaN(emaSlow) {
+	if !validation.AllValid(closePrice, emaFast, emaSlow) {
 		return false
 	}
 	return closePrice < emaFast && emaFast < emaSlow
 }
 
 func shouldQueueTrailExit(lowPrice, stopPrice float64) bool {
-	if math.IsNaN(lowPrice) || math.IsNaN(stopPrice) {
+	if !validation.AllValid(lowPrice, stopPrice) {
 		return false
 	}
 	return lowPrice <= stopPrice
-}
-
-func positionSizeFromBudget(cash, equity, price, positionPct float64) float64 {
-	if cash <= 0 || equity <= 0 || price <= 0 || positionPct <= 0 {
-		return 0
-	}
-	budget := math.Min(cash, equity*positionPct)
-	if budget <= 0 {
-		return 0
-	}
-	return budget / price
-}
-
-func cloneSeries(values []float64) []float64 {
-	out := make([]float64, len(values))
-	copy(out, values)
-	return out
-}
-
-func positionPctOrDefault(raw float64) float64 {
-	if raw <= 0 {
-		return defaultPositionPct
-	}
-	if raw > 1 {
-		return 1
-	}
-	return raw
 }

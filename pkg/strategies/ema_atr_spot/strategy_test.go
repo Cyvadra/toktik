@@ -6,9 +6,10 @@ import (
 
 	"github.com/Cyvadra/toktik/internal/backtest"
 	"github.com/Cyvadra/toktik/pkg/strategies/catalog"
+	"github.com/Cyvadra/toktik/pkg/strategies/helpers"
 )
 
-func TestPositionPctOrDefault(t *testing.T) {
+func TestClampPositionPct(t *testing.T) {
 	tests := []struct {
 		name string
 		in   float64
@@ -20,7 +21,7 @@ func TestPositionPctOrDefault(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		if got := positionPctOrDefault(tt.in); got != tt.want {
+		if got := helpers.ClampPositionPct(tt.in, defaultPositionPct); got != tt.want {
 			t.Fatalf("%s: got %v want %v", tt.name, got, tt.want)
 		}
 	}
@@ -67,7 +68,7 @@ func TestShouldEnterLong(t *testing.T) {
 	}
 }
 
-func TestPositionSizeFromBudget(t *testing.T) {
+func TestPositionSizeFromEquity(t *testing.T) {
 	tests := []struct {
 		name        string
 		cash        float64
@@ -82,7 +83,7 @@ func TestPositionSizeFromBudget(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		if got := positionSizeFromBudget(tt.cash, tt.equity, tt.price, tt.positionPct); got != tt.want {
+		if got := helpers.PositionSizeFromEquity(tt.cash, tt.equity, tt.price, tt.positionPct); got != tt.want {
 			t.Fatalf("%s: got %v want %v", tt.name, got, tt.want)
 		}
 	}

@@ -3,12 +3,14 @@ package goldencross
 import (
 	"github.com/Cyvadra/toktik/internal/backtest"
 	"github.com/Cyvadra/toktik/pkg/strategies/catalog"
+	"github.com/Cyvadra/toktik/pkg/strategies/helpers"
 )
 
 const (
 	defaultFastPeriod    = 10
 	defaultSlowPeriod    = 50
 	defaultEntryTWAPBars = 1
+	defaultPositionPct   = 0.95
 )
 
 func init() {
@@ -19,18 +21,20 @@ func init() {
 		Profile: catalog.StrategyProfile{RegularTrade: catalog.RegularTradeMaterial},
 		Factory: func(cfg catalog.Config) (backtest.Strategy, error) {
 			return &goldenCrossStrategy{
-				fastPeriod: catalog.IntOrDefault(cfg.FastPeriod, defaultFastPeriod),
-				slowPeriod: catalog.IntOrDefault(cfg.SlowPeriod, defaultSlowPeriod),
-				entryTWAP:  catalog.IntOrDefault(cfg.EntryTWAPBars, defaultEntryTWAPBars),
+				fastPeriod:  catalog.IntOrDefault(cfg.FastPeriod, defaultFastPeriod),
+				slowPeriod:  catalog.IntOrDefault(cfg.SlowPeriod, defaultSlowPeriod),
+				entryTWAP:   catalog.IntOrDefault(cfg.EntryTWAPBars, defaultEntryTWAPBars),
+				positionPct: helpers.ClampPositionPct(cfg.PositionSize, defaultPositionPct),
 			}, nil
 		},
 	})
 }
 
 type goldenCrossStrategy struct {
-	fastPeriod int
-	slowPeriod int
-	entryTWAP  int
+	fastPeriod  int
+	slowPeriod  int
+	entryTWAP   int
+	positionPct float64
 }
 
 func (s *goldenCrossStrategy) Name() string { return "GoldenCross" }
@@ -51,12 +55,13 @@ func (s *goldenCrossStrategy) OnBar(ctx *backtest.BarContext) {
 
 	if ctx.Ind("buy_signal") == 1 && ctx.Position(primary) == 0 {
 		price := ctx.Close()
-		if price > 0 {
-			qty := (ctx.Equity() * 0.95) / price
+		qty := helpers.PositionSizeFromEquity(ctx.Cash(), ctx.Equity(), price, s.positionPct)
+		if qty > 0 {
+			// Use the OrderBuilder pattern for cleaner code
 			if s.entryTWAP > 1 {
-				ctx.BuyTWAP(primary, qty, s.entryTWAP)
+				ctx.Order(primary).Buy().Qty(qty).TWAP(s.entryTWAP).Submit()
 			} else {
-				ctx.Buy(primary, qty)
+				ctx.Order(primary).Buy().Qty(qty).Submit()
 			}
 		}
 	}
