@@ -1807,6 +1807,14 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
 		.feature-empty-state { border: 1px dashed rgba(255,255,255,0.1); border-radius: 10px; padding: 18px; text-align: center; color: #94a3b8; font-size: 12px; }
 		.feature-legend-swatch { display: inline-block; width: 10px; height: 10px; border-radius: 999px; }
 		.feature-legend-value { color: #f8fafc; }
+		.spread-group-summary { list-style: none; }
+		.spread-group-summary::-webkit-details-marker { display: none; }
+		.spread-group-chevron { transition: transform 140ms ease; }
+		details[open] > .spread-group-summary .spread-group-chevron { transform: rotate(90deg); }
+		.spread-group-state-open { display: inline; }
+		.spread-group-state-closed { display: none; }
+		details[open] > .spread-group-summary .spread-group-state-open { display: none; }
+		details[open] > .spread-group-summary .spread-group-state-closed { display: inline; }
   </style>
 </head>
 <body class="text-slate-300 min-h-screen p-4 lg:p-6">
@@ -1998,14 +2006,27 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
 				<h2 class="!mb-0">价差活动</h2>
 				<span class="mono text-xs text-slate-400">{{ .SpreadsCount }} 个持仓 · {{ len .Spreads }} 个事件</span>
       </div>
-			<p class="text-xs text-slate-400 mb-4">开仓和平仓会拆分为独立事件，并按时间排序。可使用跳转链接在同一价差的两个事件之间切换。</p>
+			<div class="mb-4 flex flex-wrap items-center justify-between gap-3">
+				<p class="text-xs text-slate-400">开仓和平仓会拆分为独立事件，并按时间排序。可使用跳转链接在同一价差的两个事件之间切换；分组支持折叠查看。</p>
+				{{ if .SpreadGroups }}
+				<div class="flex flex-wrap gap-2">
+					<button type="button" data-spread-groups-toggle="collapse" class="rounded-md border border-white/10 px-3 py-1.5 text-xs text-slate-300 transition hover:border-white/20 hover:text-white">全部折叠</button>
+					<button type="button" data-spread-groups-toggle="expand" class="rounded-md border border-white/10 px-3 py-1.5 text-xs text-slate-300 transition hover:border-white/20 hover:text-white">全部展开</button>
+				</div>
+				{{ end }}
+			</div>
 			{{ if .SpreadGroups }}
 			<div class="space-y-5 mb-5">
 				{{ range .SpreadGroups }}
-				<div id="{{ .AnchorID }}" class="border border-white/5 rounded-xl overflow-hidden bg-white/[0.02]">
-					<div class="px-4 py-3 border-b border-white/5 bg-white/[0.03]">
+				<details id="{{ .AnchorID }}" class="border border-white/5 rounded-xl overflow-hidden bg-white/[0.02]" data-spread-group open>
+					<summary class="spread-group-summary cursor-pointer px-4 py-3 bg-white/[0.03] transition hover:bg-white/[0.045] focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-400/60">
 						<div class="flex flex-wrap items-center justify-between gap-3">
 							<div class="flex flex-wrap items-center gap-3">
+								<span class="mono text-xs text-slate-400 inline-flex items-center gap-2">
+									<span class="spread-group-chevron text-sm text-teal-300">▸</span>
+									<span class="spread-group-state-open">展开</span>
+									<span class="spread-group-state-closed">收起</span>
+								</span>
 								<span class="font-medium text-slate-100">组 #{{ .ID }} {{ .Tag }}</span>
 								<span class="mono text-xs px-2 py-0.5 rounded {{ .StatusClass }}">{{ .Status }}</span>
 								<span class="mono text-xs text-slate-400">开组 {{ .OpenTime }}</span>
@@ -2020,13 +2041,13 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
 								<span>组盈亏 <span class="mono text-slate-200">{{ .TotalPnL }}</span></span>
 							</div>
 						</div>
-					</div>
-					<div class="p-4 space-y-4">
+					</summary>
+					<div class="border-t border-white/5 p-4 space-y-4">
 						{{ range .Spreads }}
 						{{ template "classicSpreadEventCard" . }}
 						{{ end }}
 					</div>
-				</div>
+				</details>
 				{{ end }}
 			</div>
 			{{ end }}
@@ -2783,6 +2804,18 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
 			}
 			toggle.addEventListener('change', function(e) {
 				applyIdleFilter(e.target.checked);
+			});
+		}
+
+		var spreadGroupButtons = document.querySelectorAll('[data-spread-groups-toggle]');
+		if (spreadGroupButtons.length > 0) {
+			spreadGroupButtons.forEach(function(button) {
+				button.addEventListener('click', function() {
+					var action = button.getAttribute('data-spread-groups-toggle');
+					document.querySelectorAll('[data-spread-group]').forEach(function(group) {
+						group.open = action === 'expand';
+					});
+				});
 			});
 		}
   </script>

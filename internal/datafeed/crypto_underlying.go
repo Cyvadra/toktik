@@ -28,6 +28,35 @@ func (f *CryptoUnderlyingDataFeed) Fields() []string {
 	return []string{"open", "high", "low", "close", "tick_count", "volume", "compat_fallback"}
 }
 
+func projectUnderlyingSpotQuery(baseQuery string) string {
+	return fmt.Sprintf(`SELECT timestamp, open, close, high, low, tick_count, volume_base FROM (%s) ORDER BY timestamp`, baseQuery)
+}
+
+func buildUnderlyingDataSet(
+	timestamps []time.Time,
+	opens, highs, lows, closes, tickCounts, volumes []float64,
+	degraded bool,
+) *backtest.DataSet {
+	fallbackMode := make([]float64, len(timestamps))
+	if degraded {
+		for index := range fallbackMode {
+			fallbackMode[index] = 1.0
+		}
+	}
+
+	ds := backtest.NewDataSet(len(timestamps))
+	ds.SetTimestamps(timestamps)
+	ds.AddColumn("open", opens)
+	ds.AddColumn("high", highs)
+	ds.AddColumn("low", lows)
+	ds.AddColumn("close", closes)
+	ds.AddColumn("tick_count", tickCounts)
+	ds.AddColumn("volume", volumes)
+	ds.AddColumn("compat_fallback", fallbackMode)
+
+	return ds
+}
+
 // Load fetches the underlying asset's OHLC from options data.
 // The req.Symbol should be the base asset name (e.g. "BTC").
 func (f *CryptoUnderlyingDataFeed) Load(ctx context.Context, req backtest.DataRequest) (*backtest.DataSet, error) {
@@ -40,8 +69,7 @@ func (f *CryptoUnderlyingDataFeed) Load(ctx context.Context, req backtest.DataRe
 		return nil, fmt.Errorf("resolve underlying source for %s: %w", baseAsset, err)
 	}
 	if query != "" {
-		// Spot source returns 8 columns; project down to the 6 the scan expects.
-		query = fmt.Sprintf(`SELECT timestamp, open, close, high, low, tick_count FROM (%s) ORDER BY timestamp`, query)
+		query = projectUnderlyingSpotQuery(query)
 	} else {
 		query, degraded, err = buildLegacyUnderlyingSeriesSQL(ctx, f.conn, interval, baseAsset, req.From, req.To)
 		if err != nil {
@@ -73,20 +101,17 @@ func (f *CryptoUnderlyingDataFeed) Load(ctx context.Context, req backtest.DataRe
 	lows := make([]float64, 0, 4096)
 	closes := make([]float64, 0, 4096)
 	tickCounts := make([]float64, 0, 4096)
-	fallbackMode := make([]float64, 0, 4096)
-	fallbackValue := 0.0
-	if degraded {
-		fallbackValue = 1.0
-	}
+	volumes := make([]float64, 0, 4096)
 
 	for rows.Next() {
 		var (
 			ts                         time.Time
 			uopen, uclose, uhigh, ulow float32
 			tickCount                  uint64
+			volumeBase                 float64
 		)
 		if hasNativeVolume {
-			if err := rows.Scan(&ts, &uopen, &uclose, &uhigh, &ulow, &tickCount); err != nil {
+			if err := rows.Scan(&ts, &uopen, &uclose, &uhigh, &ulow, &tickCount, &volumeBase); err != nil {
 				return nil, fmt.Errorf("scan underlying row with volume: %w", err)
 			}
 		} else {
@@ -94,6 +119,7 @@ func (f *CryptoUnderlyingDataFeed) Load(ctx context.Context, req backtest.DataRe
 				return nil, fmt.Errorf("scan underlying row: %w", err)
 			}
 			tickCount = 0
+			volumeBase = math.NaN()
 		}
 		timestamps = append(timestamps, ts)
 		opens = append(opens, float64(uopen))
@@ -105,20 +131,10 @@ func (f *CryptoUnderlyingDataFeed) Load(ctx context.Context, req backtest.DataRe
 		} else {
 			tickCounts = append(tickCounts, math.NaN())
 		}
-		fallbackMode = append(fallbackMode, fallbackValue)
+		volumes = append(volumes, volumeBase)
 	}
 
-	ds := backtest.NewDataSet(len(timestamps))
-	ds.SetTimestamps(timestamps)
-	ds.AddColumn("open", opens)
-	ds.AddColumn("high", highs)
-	ds.AddColumn("low", lows)
-	ds.AddColumn("close", closes)
-	ds.AddColumn("tick_count", tickCounts)
-	ds.AddColumn("volume", tickCounts)
-	ds.AddColumn("compat_fallback", fallbackMode)
-
-	return ds, nil
+	return buildUnderlyingDataSet(timestamps, opens, highs, lows, closes, tickCounts, volumes, degraded), nil
 }
 
 func backtestTimeParam(t time.Time) string {

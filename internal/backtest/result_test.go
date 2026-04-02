@@ -1,6 +1,7 @@
 package backtest
 
 import (
+	"encoding/csv"
 	"encoding/json"
 	"math"
 	"os"
@@ -84,6 +85,129 @@ func TestResultExportJSONSanitizesNaNAndInf(t *testing.T) {
 	tradeOverview, ok := decoded["trade_overview"].(map[string]interface{})
 	if !ok || tradeOverview["net_pnl"] != nil {
 		t.Fatalf("decoded trade_overview.net_pnl = %#v, want nil", tradeOverview)
+	}
+}
+
+func TestResultExportTradesCSVIncludesRegularAndOptionRows(t *testing.T) {
+	entryTime := time.Date(2024, time.January, 3, 9, 0, 0, 0, time.UTC)
+	closeTime := entryTime.Add(6 * time.Hour)
+	expiration := entryTime.Add(7 * 24 * time.Hour)
+	closeDelta := -0.43219
+
+	result := &Result{
+		Trades: []Trade{{
+			ID:         7,
+			OrderID:    11,
+			Security:   SecurityRef{Market: "crypto-underlying", Symbol: "BTCUSDT", Interval: "1h"},
+			Side:       Buy,
+			Note:       "  add   long  ",
+			Qty:        1.234567,
+			FillPrice:  62000.1234567,
+			Commission: 0.1234567,
+			Timestamp:  entryTime,
+		}},
+		SpreadPositions: []SpreadPositionReport{{
+			ID:          3,
+			Tag:         " credit   spread ",
+			CloseNote:   " close all ",
+			Status:      "closed",
+			OpenTime:    entryTime,
+			CloseTime:   &closeTime,
+			DaysHeld:    0.25,
+			NetPremium:  1.25,
+			RealizedPnL: 5.5,
+			GroupID:     2,
+			Legs: []SpreadLegReport{{
+				Symbol:      "BTC-28JUN24-65000-C",
+				Side:        "sell",
+				Type:        Call,
+				StrikePrice: 65000,
+				Expiration:  expiration,
+				Delta:       0.123456,
+				Qty:         1.234567,
+				EntryPrice:  10.1234567,
+				EntryTime:   entryTime,
+				Closed:      true,
+				ClosePrice:  4.1234567,
+				CloseTime:   &closeTime,
+				CloseDelta:  &closeDelta,
+				CloseReason: " take   profit ",
+				RealizedPnL: 6.1234567,
+			}},
+		}},
+	}
+
+	outputPath := filepath.Join(t.TempDir(), "trades.csv")
+	if err := result.ExportTradesCSV(outputPath); err != nil {
+		t.Fatalf("ExportTradesCSV() error = %v", err)
+	}
+
+	f, err := os.Open(outputPath)
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	defer f.Close()
+
+	rows, err := csv.NewReader(f).ReadAll()
+	if err != nil {
+		t.Fatalf("ReadAll() error = %v", err)
+	}
+	if len(rows) != 4 {
+		t.Fatalf("len(rows) = %d, want 4", len(rows))
+	}
+	if got := strings.Join(rows[0], ","); got != strings.Join(tradeCSVHeader, ",") {
+		t.Fatalf("header = %q, want %q", got, strings.Join(tradeCSVHeader, ","))
+	}
+	if got := rows[1][1]; got != "trade" {
+		t.Fatalf("rows[1][1] = %q, want trade", got)
+	}
+	if got := rows[1][5]; got != "BTCUSDT" {
+		t.Fatalf("rows[1][5] = %q, want BTCUSDT", got)
+	}
+	if got := rows[1][8]; got != "1.2346" {
+		t.Fatalf("rows[1][8] = %q, want 1.2346", got)
+	}
+	if got := rows[1][9]; got != "62000.123457" {
+		t.Fatalf("rows[1][9] = %q, want 62000.123457", got)
+	}
+	if got := rows[1][10]; got != "0.123457" {
+		t.Fatalf("rows[1][10] = %q, want 0.123457", got)
+	}
+	if got := rows[1][16]; got != "add long" {
+		t.Fatalf("rows[1][16] = %q, want add long", got)
+	}
+	if got := rows[2][1]; got != "option_open" {
+		t.Fatalf("rows[2][1] = %q, want option_open", got)
+	}
+	if got := rows[2][3]; got != "2" {
+		t.Fatalf("rows[2][3] = %q, want 2", got)
+	}
+	if got := rows[2][8]; got != "1.2346" {
+		t.Fatalf("rows[2][8] = %q, want 1.2346", got)
+	}
+	if got := rows[2][9]; got != "10.123457" {
+		t.Fatalf("rows[2][9] = %q, want 10.123457", got)
+	}
+	if got := rows[2][12]; got != "0.1235" {
+		t.Fatalf("rows[2][12] = %q, want 0.1235", got)
+	}
+	if got := rows[2][16]; got != "credit spread" {
+		t.Fatalf("rows[2][16] = %q, want credit spread", got)
+	}
+	if got := rows[3][1]; got != "option_close" {
+		t.Fatalf("rows[3][1] = %q, want option_close", got)
+	}
+	if got := rows[3][6]; got != "buy" {
+		t.Fatalf("rows[3][6] = %q, want buy", got)
+	}
+	if got := rows[3][11]; got != "6.123457" {
+		t.Fatalf("rows[3][11] = %q, want 6.123457", got)
+	}
+	if got := rows[3][12]; got != "-0.4322" {
+		t.Fatalf("rows[3][12] = %q, want -0.4322", got)
+	}
+	if got := rows[3][16]; got != "take profit" {
+		t.Fatalf("rows[3][16] = %q, want take profit", got)
 	}
 }
 

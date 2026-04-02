@@ -69,7 +69,7 @@ func TestSelectSpreadFallsForwardToNextExpiry(t *testing.T) {
 			Symbol:      "BTC-20240209-50000-C",
 			Type:        backtest.Call,
 			Expiration:  now.Add(39 * 24 * time.Hour),
-			Delta:       0.33,
+			Delta:       0.50,
 			MarkPrice:   0,
 			BidPrice:    0,
 			AskPrice:    0,
@@ -86,28 +86,28 @@ func TestSelectSpreadFallsForwardToNextExpiry(t *testing.T) {
 			StrikePrice: 60000,
 		},
 		{
-			Symbol:      "BTC-20240126-52000-C",
+			Symbol:      "BTC-20240126-50000-C",
 			Type:        backtest.Call,
 			Expiration:  now.Add(25 * 24 * time.Hour),
-			Delta:       0.32,
+			Delta:       0.49,
 			MarkPrice:   5,
 			BidPrice:    4.8,
 			AskPrice:    5.2,
-			StrikePrice: 52000,
+			StrikePrice: 50000,
 		},
 		{
-			Symbol:      "BTC-20240126-58000-C",
+			Symbol:      "BTC-20240126-60000-C",
 			Type:        backtest.Call,
 			Expiration:  now.Add(25 * 24 * time.Hour),
 			Delta:       0.11,
 			MarkPrice:   2,
 			BidPrice:    1.9,
 			AskPrice:    2.1,
-			StrikePrice: 58000,
+			StrikePrice: 60000,
 		},
 	}, now)
 
-	selection, ok := s.selectSpread(now, chain, amountBase, "entry")
+	selection, ok := s.selectSpread(now, chain, amountBase, defaultVolPercentile, defaultVolPercentile, "entry")
 	if !ok {
 		t.Fatal("expected selection to succeed on later expiry")
 	}
@@ -115,11 +115,11 @@ func TestSelectSpreadFallsForwardToNextExpiry(t *testing.T) {
 	if got, want := selection.expiry, now.Add(25*24*time.Hour); !got.Equal(want) {
 		t.Fatalf("selected expiry = %s, want %s", got.Format(time.RFC3339), want.Format(time.RFC3339))
 	}
-	if selection.long.Symbol != "BTC-20240126-52000-C" {
-		t.Fatalf("selected long = %s, want BTC-20240126-52000-C", selection.long.Symbol)
+	if selection.long.Symbol != "BTC-20240126-50000-C" {
+		t.Fatalf("selected long = %s, want BTC-20240126-50000-C", selection.long.Symbol)
 	}
-	if selection.short.Symbol != "BTC-20240126-58000-C" {
-		t.Fatalf("selected short = %s, want BTC-20240126-58000-C", selection.short.Symbol)
+	if selection.short.Symbol != "BTC-20240126-60000-C" {
+		t.Fatalf("selected short = %s, want BTC-20240126-60000-C", selection.short.Symbol)
 	}
 
 	output := logs.String()
@@ -129,7 +129,7 @@ func TestSelectSpreadFallsForwardToNextExpiry(t *testing.T) {
 	if !strings.Contains(output, "skip long candidate #1 BTC-20240209-50000-C") {
 		t.Fatalf("expected logs to mention skipped long candidate, got:\n%s", output)
 	}
-	if !strings.Contains(output, "skip expiry 2024-02-09, reason=no valid long contract near delta 0.33") {
+	if !strings.Contains(output, "skip expiry 2024-02-09, reason=no valid long contract near delta 0.50") {
 		t.Fatalf("expected logs to mention skipped expiry reason, got:\n%s", output)
 	}
 	if !strings.Contains(output, "selected expiry 2024-01-26") {

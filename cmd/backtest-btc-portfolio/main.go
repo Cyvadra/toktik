@@ -39,6 +39,7 @@ func main() {
 	commValue := flag.Float64("commission-value", 0, "Commission value")
 	slippagePct := flag.Float64("slippage-pct", 0, "Slippage fraction (0 = none)")
 	outputJSON := flag.String("output", "", "Optional JSON output file path")
+	tradeCSVOutput := flag.String("trade-csv-output", "", "Optional compact CSV trade ledger path (single strategy: exact file; multi-strategy: adjacent numbered files)")
 	outputHTML := flag.String("html-output", "", "Optional HTML report output path (single strategy: detail report; multi-strategy: overview page with adjacent detail pages)")
 	positionSize := flag.Float64("position-size", 0, "Contracts per leg when opening a spread; when unset, the strategy decides")
 	maxHoldHours := flag.Float64("max-hold-hours", 0, "Maximum holding time in hours; when unset, the strategy decides")
@@ -238,6 +239,15 @@ func main() {
 			}
 		}
 
+		tradeCSVPath := resolveTradeCSVOutputPath(*tradeCSVOutput, result.StrategyName, *baseAsset, *interval, from, to, index, len(resolved))
+		if prepErr := ensureParentDir(tradeCSVPath); prepErr != nil {
+			log.Printf("Warning: failed to prepare trade CSV directory for %s: %v", tradeCSVPath, prepErr)
+		} else if writeErr := result.ExportTradesCSV(tradeCSVPath); writeErr != nil {
+			log.Printf("Warning: failed to write trade CSV to %s: %v", tradeCSVPath, writeErr)
+		} else {
+			log.Printf("Trade CSV written to %s", tradeCSVPath)
+		}
+
 		htmlPath := resolveHTMLOutputPath(*outputHTML, result.StrategyName, *baseAsset, *interval, from, to, index, len(resolved))
 		if writeErr := report.WriteBacktestHTML(htmlPath, result, htmlMeta); writeErr != nil {
 			log.Printf("Warning: failed to write HTML report to %s: %v", htmlPath, writeErr)
@@ -386,6 +396,21 @@ func resolveHTMLOutputPath(base, strategyName, asset, interval string, from, to 
 	}
 	fileName := fmt.Sprintf(
 		"%s_%s_%s_%s_%s.html",
+		slugify(strategyName),
+		strings.ToLower(asset),
+		slugify(interval),
+		from.Format("20060102"),
+		to.Format("20060102"),
+	)
+	return filepath.Join(defaultBacktestHTMLDir, fileName)
+}
+
+func resolveTradeCSVOutputPath(base, strategyName, asset, interval string, from, to time.Time, index, total int) string {
+	if strings.TrimSpace(base) != "" {
+		return resolveOutputPath(base, index, total)
+	}
+	fileName := fmt.Sprintf(
+		"%s_%s_%s_%s_%s_trades.csv",
 		slugify(strategyName),
 		strings.ToLower(asset),
 		slugify(interval),

@@ -59,6 +59,35 @@ func TestBarContextTotalPnLIncludesOpenSpreadMark(t *testing.T) {
 	}
 }
 
+func TestBarContextTotalPnLUsesLastSeenSpreadContractWhenSnapshotMissing(t *testing.T) {
+	broker := NewBroker(Config{InitialCapital: 1000})
+	tracker := NewSpreadTracker()
+	now := time.Unix(0, 0)
+
+	tracker.Open([]SpreadLeg{{
+		Contract:   OptionContract{Symbol: "OPT", MarkPrice: 5, BidPrice: 4.9, AskPrice: 5.1},
+		Side:       Buy,
+		Qty:        1,
+		EntryPrice: 5,
+		EntryTime:  now,
+	}}, now, 0, "t")
+	broker.AdjustCash(-5)
+
+	refreshOpenSpreadContracts(tracker, map[string]OptionContract{
+		"OPT": {Symbol: "OPT", MarkPrice: 8, BidPrice: 7.9, AskPrice: 8.1},
+	})
+
+	bc := &BarContext{
+		barTime:       now.Add(time.Hour),
+		broker:        broker,
+		spreadTracker: tracker,
+	}
+
+	if pnl := bc.TotalPnL(); pnl != 3 {
+		t.Fatalf("expected total pnl 3 after missing snapshot fallback, got %v", pnl)
+	}
+}
+
 func TestClosePositionStopNowWithExtraSlippage(t *testing.T) {
 	ref := SecurityRef{Market: "m", Symbol: "s", Interval: "1h", Index: 0}
 	broker := NewBroker(Config{InitialCapital: 1000, SlippagePct: 0.001})

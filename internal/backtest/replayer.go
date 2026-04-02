@@ -199,6 +199,7 @@ func (r *Replayer) Replay(prepared *PreparedData, strategy Strategy, params map[
 			for _, c := range contracts {
 				contractMap[c.Symbol] = c
 			}
+			refreshOpenSpreadContracts(spreadTracker, contractMap)
 		}
 
 		if len(scheduledActions) > 0 {
@@ -338,6 +339,22 @@ func resolveSpreadContract(contract OptionContract, contractMap map[string]Optio
 		return updated
 	}
 	return contract
+}
+
+func refreshOpenSpreadContracts(spreadTracker *SpreadTracker, contractMap map[string]OptionContract) {
+	if spreadTracker == nil || len(contractMap) == 0 {
+		return
+	}
+	for _, sp := range spreadTracker.OpenSpreads() {
+		for legIndex := range sp.Legs {
+			if sp.Legs[legIndex].Closed {
+				continue
+			}
+			if updated, ok := contractMap[sp.Legs[legIndex].Contract.Symbol]; ok {
+				sp.Legs[legIndex].Contract = updated
+			}
+		}
+	}
 }
 
 // applySlippage adjusts a price for slippage based on trade side.

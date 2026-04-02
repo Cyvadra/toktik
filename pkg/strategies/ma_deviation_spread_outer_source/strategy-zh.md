@@ -1,43 +1,44 @@
-## **BTC Coin-Margined Enhancement Strategy**
+### 比特币（BTC）币本位增强策略
 
-**Core Parameters**
-* **Initial Capital:** 100 BTC
-* **Position Size:** 10 BTC (notional value) per entry.
-* **Divergence Definition:** 1.  **MACD Divergence:** Price makes a Higher High (HH), but MACD Diff makes a Lower High (or vice versa).
-    2.  **Volatility Filter:** Current Standard Deviation ($std / mastd$) must be above the **50th percentile** (last 100 bars).
-
----
-
-### **Scenario 1: High RSI (Bullish/Neutral Trend)**
-* **Condition:** $RSI(200) > 50$
-* **Signal Level:** 12h or 24h charts.
-* **Entry Trigger:** Bearish Divergence (MACD or CCI) followed by one **Bearish Candle**.
-* **Trade Execution:**
-    * **Sell Call:** Delta 0.3 (~40 days to expiry).
-    * **Buy Put:** Delta -0.25 (~40 days to expiry).
-    * **Budgeting:** Use **70%** of the premium collected from the Sell Call to fund the Put.
-* **Exit (Stop):** Spot price bounces **$3 \times ATR$** from the post-entry low.
+**核心参数**
+- **初始资金**：100 枚比特币
+- **仓位规模**：每次入场 10 枚比特币（名义价值）。
+- **背离定义**：
+  1. **平滑异同移动平均线背离**：价格创出更高高点，但平滑异同移动平均线差值创出更低高点（反之亦然）。
+  2. **波动率过滤**：当前标准差（$std / mastd$）必须高于**第 50 百分位**（过去 100 根 K 线）。
 
 ---
 
-### **Scenario 2: Low RSI (Bearish/Weak Trend)**
-* **Condition:** $RSI(200) < 50$
-* **Signal Level:** 3h or 6h charts.
-* **Entry Trigger:** Bearish Divergence signal.
-* **Trade Execution:**
-    * **Sell Call:** Delta 0.3 (~25 days to expiry).
-    * **Buy Put:** Delta -0.25 (~25 days to expiry).
-    * **Budgeting:** Use **70%** of the premium collected from the Sell Call to fund the Put.
-* **Exit (Stop):** Spot price drops **$3 \times ATR$** from the post-entry high.
+### 情景 1：高相对强弱指数（看涨/中性趋势）
+- **条件**：$RSI(200) > 50$
+- **信号周期**：12 小时或 24 小时图表。
+- **入场触发**：看跌背离（平滑异同移动平均线或顺势指标）后出现一根**看跌 K 线**。
+- **交易执行**：
+  - **卖出看涨期权**：Delta 0.3（约 40 天到期）。
+  - **买入看跌期权**：Delta -0.25（约 40 天到期）。
+  - **资金分配**：使用卖出看涨期权所获权利金的**70%**来资助买入看跌期权。
+- **出场（止损）**：现货价格从入场后的低点反弹**$3 \times ATR$**。
 
 ---
 
-### **Dynamic Management**
+### 情景 2：低相对强弱指数（看跌/弱势趋势）
+- **条件**：$RSI(200) < 50$
+- **信号周期**：3 小时或 6 小时图表。
+- **入场触发**：看跌背离信号。
+- **交易执行**：
+  - **卖出看涨期权**：Delta 0.3（约 25 天到期）。
+  - **买入看跌期权**：Delta -0.25（约 25 天到期）。
+  - **资金分配**：使用卖出看涨期权所获权利金的**70%**来资助买入看跌期权。
+- **出场（止损）**：现货价格从入场后的高点下跌**$3 \times ATR$**。
 
-#### **1. Long Put Management**
-* **Auto-Roll/Rebalance:** If Put Delta exceeds **-0.5** (absolute value > 0.5) OR floating profit exceeds **50%**.
-* **Action:** Close and restart the entry process.
+---
 
-#### **2. Short Call Management (Profit Taking)**
-* **Partial Close:** Close **50%** of the position if floating profit > **70%**.
-* **Full Close:** Close **100%** of the position if floating profit > **88%**.
+### 动态管理
+
+#### 1. 看跌期权多头管理
+- **自动展期/再平衡**：如果看跌期权 Delta 超过**-0.5**（绝对值 > 0.5）或浮动利润超过**50%**。
+- **操作**：平仓并重新开始入场流程。
+
+#### 2. 看涨期权空头管理（止盈）
+- **部分平仓**：如果浮动利润 > **70%**，平仓**50%**的仓位。
+- **全部平仓**：如果浮动利润 > **88%**，平仓**100%**的仓位。
