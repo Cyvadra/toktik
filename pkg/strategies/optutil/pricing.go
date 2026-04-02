@@ -2,16 +2,24 @@
 // development, eliminating boilerplate that is otherwise copy-pasted across
 // every strategy.
 //
-// Typical usage — embed PricingMixin and GroupMixin into your strategy struct:
+// Typical usage starts with embedding only the mixins you actually need:
+//
+//   - PricingMixin: price modes, spread pricing config, leg pricing helpers.
+//   - GroupMixin: position-group lifecycle and stored PositionGroupID.
+//   - PendingRefCounter: scheduled spread refs for next-bar execution.
+//
+// For a strategy with grouped spreads and deferred opens, embed all three:
 //
 //	type myStrategy struct {
 //	    optutil.PricingMixin
 //	    optutil.GroupMixin
+//	    optutil.PendingRefCounter
 //	    // ... strategy-specific fields
 //	}
 //
-// The embedded methods cover spread pricing config, contract map lookups,
-// per-leg exit/valuation pricing, and position-group lifecycle.
+// Then prefer the shared helpers below instead of adding strategy-local
+// variants for contract lookups, per-leg exit pricing, expiry checks, pending
+// refs, or generic indicator math.
 package optutil
 
 import (

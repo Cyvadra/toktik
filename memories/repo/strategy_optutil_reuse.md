@@ -1,0 +1,7 @@
+- Prefer `pkg/strategies/optutil` for shared option-strategy plumbing.
+- Embed `PricingMixin` for spread pricing config and price-mode defaults.
+- Embed `GroupMixin` for `PositionGroupID`, `OpenGroup`, `CloseGroup`, `OpenSpreadInGroup`.
+- Embed `PendingRefCounter` for scheduled spread refs; pair with `FindSpreadByRef`.
+- Reuse `BuildContractMap`, `ResolveContract`, `LegExitPrice`, `LegValuationPrice` instead of local copies.
+- Reuse `PercentileRank`, `RollingStdDevIndicator`, `PercentChange` before adding new generic indicator helpers.
+- Reference implementations: `dual_spreads_btc_volatility`, `covered_call_0330_tvsig`, `ma_deviation_spread_outer_source`, `buy_flash_low`, `turtle_trend_simp`.

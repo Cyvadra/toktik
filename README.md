@@ -8,8 +8,14 @@ Quantitative backtesting and market data platform for crypto options trading, bu
 - **Event-driven backtesting engine** — Pine Script-style strategy interface with multi-asset, multi-leg options support, vectorized indicator computation, and realistic broker simulation (slippage, commissions, TWAP)
 - **REST API** — Query historical bars, symbols, greeks, and run backtests with cursor-based pagination
 - **Options spread strategies** — Built-in bull put / bear call spread strategies with MA deviation signals
+- **Strategy reuse helpers** — Shared `pkg/strategies/optutil` mixins and helpers for options strategy development
 - **US market flatfile import** — Import Polygon US options and stocks minute CSV flatfiles into ClickHouse with precomputed K-line views
 - **HTML reports** — Self-contained backtest reports with equity curves, drawdown charts, and trade markers
+
+## Strategy Development
+
+When adding a new options strategy, start from the shared helpers in `pkg/strategies/optutil` before writing local boilerplate.
+See `docs/strategy-reuse.md` for the current reuse patterns and reference strategies.
 
 ## Prerequisites
 
