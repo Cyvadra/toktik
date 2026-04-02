@@ -158,6 +158,75 @@ func TestBuildHTMLViewIncludesOverlayColumns(t *testing.T) {
 	}
 }
 
+func TestBuildHTMLViewIncludesSettledEquitySeries(t *testing.T) {
+	result := &backtest.Result{
+		StrategyName:   "settled-series",
+		StartTime:      time.Date(2024, time.January, 1, 0, 0, 0, 0, time.UTC),
+		EndTime:        time.Date(2024, time.January, 1, 2, 0, 0, 0, time.UTC),
+		BarsCount:      3,
+		InitialCapital: 100,
+		FinalEquity:    110,
+		EquityCurve:    []float64{100, 106, 110},
+		Timestamps: []time.Time{
+			time.Date(2024, time.January, 1, 0, 0, 0, 0, time.UTC),
+			time.Date(2024, time.January, 1, 1, 0, 0, 0, time.UTC),
+			time.Date(2024, time.January, 1, 2, 0, 0, 0, time.UTC),
+		},
+		Series: map[string][]float64{
+			"open":  {60000, 60100, 60200},
+			"high":  {60200, 60300, 60400},
+			"low":   {59900, 60050, 60100},
+			"close": {60150, 60250, 60350},
+		},
+		Trades: []backtest.Trade{
+			{
+				ID:         1,
+				Security:   backtest.SecurityRef{Market: "crypto", Symbol: "BTC", Interval: "1h"},
+				Side:       backtest.Buy,
+				Qty:        1,
+				FillPrice:  10,
+				Commission: 1,
+				Timestamp:  time.Date(2024, time.January, 1, 0, 0, 0, 0, time.UTC),
+			},
+			{
+				ID:         2,
+				Security:   backtest.SecurityRef{Market: "crypto", Symbol: "BTC", Interval: "1h"},
+				Side:       backtest.Sell,
+				Qty:        1,
+				FillPrice:  15,
+				Commission: 1,
+				Timestamp:  time.Date(2024, time.January, 1, 2, 0, 0, 0, time.UTC),
+			},
+		},
+		SpreadPositions: []backtest.SpreadPositionReport{{
+			ID:          1,
+			Status:      "closed",
+			OpenTime:    time.Date(2024, time.January, 1, 0, 0, 0, 0, time.UTC),
+			CloseTime:   ptrTime(time.Date(2024, time.January, 1, 1, 0, 0, 0, time.UTC)),
+			RealizedPnL: 7,
+		}},
+	}
+
+	view := buildHTMLView(result, HTMLMeta{})
+
+	var payload []chartLinePoint
+	if err := json.Unmarshal([]byte(view.SettledEquitySeriesData), &payload); err != nil {
+		t.Fatalf("json.Unmarshal(SettledEquitySeriesData) error = %v", err)
+	}
+	if len(payload) != 3 {
+		t.Fatalf("len(payload) = %d, want 3", len(payload))
+	}
+	if payload[0].Value == nil || *payload[0].Value != 100 {
+		t.Fatalf("payload[0] = %#v, want settled equity 100", payload[0])
+	}
+	if payload[1].Value == nil || *payload[1].Value != 107 {
+		t.Fatalf("payload[1] = %#v, want settled equity 107", payload[1])
+	}
+	if payload[2].Value == nil || *payload[2].Value != 110 {
+		t.Fatalf("payload[2] = %#v, want settled equity 110", payload[2])
+	}
+}
+
 func TestBuildHTMLViewIncludesUnderlyingVolumeHistogram(t *testing.T) {
 	result := &backtest.Result{
 		StrategyName:   "test",
@@ -269,7 +338,7 @@ func TestBuildHTMLViewSkipsMissingVolumeNoteWhenVolumeExists(t *testing.T) {
 	}
 }
 
-func TestWriteBacktestHTMLUsesUTCChartFormatting(t *testing.T) {
+func TestWriteBacktestHTMLIncludesTimezoneControls(t *testing.T) {
 	result := &backtest.Result{
 		StrategyName:   "test",
 		StartTime:      time.Date(2024, time.March, 31, 0, 0, 0, 0, time.UTC),
@@ -301,17 +370,63 @@ func TestWriteBacktestHTMLUsesUTCChartFormatting(t *testing.T) {
 	}
 	html := string(htmlBytes)
 
-	if !strings.Contains(html, "formatUTCDateTime") {
-		t.Fatalf("expected generated html to include UTC time formatter")
+	if !strings.Contains(html, "id=\"timezone-select\"") {
+		t.Fatalf("expected generated html to include timezone selector")
 	}
-	if !strings.Contains(html, "return formatted + ' UTC';") {
-		t.Fatalf("expected generated html to format chart timestamps in UTC")
+	if !strings.Contains(html, "detectDefaultTimeZoneMode") {
+		t.Fatalf("expected generated html to detect default timezone mode")
 	}
-	if !strings.Contains(html, "tickMarkFormatter: function(timeValue) { return formatUTCTickLabel(timeValue); }") {
-		t.Fatalf("expected generated html to override tick mark formatting")
+	if !strings.Contains(html, "rewriteVisibleDateText") {
+		t.Fatalf("expected generated html to rewrite visible UTC date strings")
 	}
-	if !strings.Contains(html, " UTC") {
-		t.Fatalf("expected GeneratedAt or other timestamps to include UTC label in html")
+	if !strings.Contains(html, "formatDateTimeForMode") {
+		t.Fatalf("expected generated html to include timezone-aware datetime formatter")
+	}
+	if !strings.Contains(html, "applyTimeZoneMode(detectDefaultTimeZoneMode());") {
+		t.Fatalf("expected generated html to align timezone display to the browser by default")
+	}
+}
+
+func TestWriteBacktestHTMLIncludesSettledEquityToggle(t *testing.T) {
+	result := &backtest.Result{
+		StrategyName:   "test",
+		StartTime:      time.Date(2024, time.January, 1, 0, 0, 0, 0, time.UTC),
+		EndTime:        time.Date(2024, time.January, 1, 1, 0, 0, 0, time.UTC),
+		BarsCount:      2,
+		InitialCapital: 100,
+		FinalEquity:    101,
+		EquityCurve:    []float64{100, 101},
+		Timestamps: []time.Time{
+			time.Date(2024, time.January, 1, 0, 0, 0, 0, time.UTC),
+			time.Date(2024, time.January, 1, 1, 0, 0, 0, time.UTC),
+		},
+		Series: map[string][]float64{
+			"open":  {70000, 70100},
+			"high":  {70200, 70300},
+			"low":   {69900, 70050},
+			"close": {70150, 70250},
+		},
+	}
+
+	outputPath := filepath.Join(t.TempDir(), "report.html")
+	if err := WriteBacktestHTML(outputPath, result, HTMLMeta{}); err != nil {
+		t.Fatalf("WriteBacktestHTML() error = %v", err)
+	}
+
+	htmlBytes, err := os.ReadFile(outputPath)
+	if err != nil {
+		t.Fatalf("os.ReadFile() error = %v", err)
+	}
+	html := string(htmlBytes)
+
+	if !strings.Contains(html, "data-equity-mode=\"settled\"") {
+		t.Fatalf("expected generated html to include settled equity mode toggle")
+	}
+	if !strings.Contains(html, "settledEquitySeries") {
+		t.Fatalf("expected generated html to include settled equity series payload")
+	}
+	if !strings.Contains(html, "renderEquitySeriesMode") {
+		t.Fatalf("expected generated html to include settled equity rendering logic")
 	}
 }
 
@@ -721,4 +836,8 @@ func TestWriteBacktestHTMLIncludesSpreadGroupSections(t *testing.T) {
 	if !strings.Contains(html, "grouped-spread") || !strings.Contains(html, "standalone") {
 		t.Fatalf("expected generated html to include both grouped and ungrouped spread tags")
 	}
+}
+
+func ptrTime(value time.Time) *time.Time {
+	return &value
 }
