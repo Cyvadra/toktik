@@ -11,6 +11,7 @@ import (
 
 	"github.com/Cyvadra/toktik/internal/backtest"
 	"github.com/Cyvadra/toktik/pkg/strategies/catalog"
+	"github.com/Cyvadra/toktik/pkg/strategies/optutil"
 )
 
 const (
@@ -59,10 +60,12 @@ func init() {
 				return nil, fmt.Errorf("load signals: %w", err)
 			}
 			return &strategy{
-				EntryPriceMode:     cfg.EntryPriceMode,
-				ExitPriceMode:      cfg.ExitPriceMode,
-				ValuationPriceMode: cfg.ValuationPriceMode,
-				signals:            signals,
+				PricingMixin: optutil.PricingMixin{
+					EntryPriceMode:     cfg.EntryPriceMode,
+					ExitPriceMode:      cfg.ExitPriceMode,
+					ValuationPriceMode: cfg.ValuationPriceMode,
+				},
+				signals: signals,
 			}, nil
 		},
 	})
@@ -74,10 +77,8 @@ type activeGroup struct {
 }
 
 type strategy struct {
-	EntryPriceMode     backtest.OptionPriceMode
-	ExitPriceMode      backtest.OptionPriceMode
-	ValuationPriceMode backtest.OptionPriceMode
-	logf               func(format string, args ...any)
+	optutil.PricingMixin
+	logf func(format string, args ...any)
 
 	signals              map[int64]signalType
 	processedSignalTimes map[int64]struct{}
@@ -98,14 +99,6 @@ type spreadSelection struct {
 
 func (s *strategy) Name() string { return "DualSpreadsBTCVolatility" }
 
-func (s *strategy) SpreadPricingConfig() backtest.SpreadPricingConfig {
-	return backtest.SpreadPricingConfig{
-		EntryMode:     s.EntryPriceMode,
-		ExitMode:      s.ExitPriceMode,
-		ValuationMode: s.ValuationPriceMode,
-	}.WithDefaults()
-}
-
 func (s *strategy) ReportColumns() []backtest.ReportColumn {
 	return []backtest.ReportColumn{
 		{Source: "entry_signal", Label: "Entry Signal", Decimals: 0},
@@ -120,12 +113,12 @@ func (s *strategy) Init(ctx *backtest.SetupContext) error {
 		s.processedSignalTimes = make(map[int64]struct{}, len(s.signals))
 	}
 
-	ctx.Register("ret_12h", percentChange("close"))
-	ctx.Register("hv_100_12h", rollingStdDevIndicator("ret_12h", volLookbackBars))
-	ctx.Register(hvPercentileColumn, percentileRankIndicator("hv_100_12h", volLookbackBars))
+	ctx.Register("ret_12h", optutil.PercentChange("close"))
+	ctx.Register("hv_100_12h", optutil.RollingStdDevIndicator("ret_12h", volLookbackBars))
+	ctx.Register(hvPercentileColumn, optutil.PercentileRank("hv_100_12h", volLookbackBars))
 
 	s.dvolRef = ctx.AddFactor("dvol", dvolInterval)
-	ctx.RegisterFactor(s.dvolRef, dvolPercentileColumn, percentileRankIndicator("close", volLookbackBars))
+	ctx.RegisterFactor(s.dvolRef, dvolPercentileColumn, optutil.PercentileRank("close", volLookbackBars))
 	ctx.SetWarmup(120 * 24 * time.Hour)
 	ctx.SetParam("amount_base", amountBase)
 	ctx.SetParam("strategy_interval", strategyRunInterval)
@@ -156,7 +149,7 @@ func (s *strategy) Preload(ctx *backtest.PreloadContext) error {
 
 func (s *strategy) OnBar(ctx *backtest.BarContext) {
 	chain := ctx.OptionsChain()
-	contractMap := buildContractMap(chain)
+	contractMap := optutil.BuildContractMap(chain)
 
 	s.manageGroups(ctx, chain, contractMap)
 
@@ -463,7 +456,7 @@ func (s *strategy) manageGroups(ctx *backtest.BarContext, chain *backtest.Option
 			if leg.Closed {
 				continue
 			}
-			contract := resolveContract(leg.Contract, contractMap)
+			contract := optutil.ResolveContract(leg.Contract, contractMap)
 			if contract.DaysToExpiry(now) <= 1 {
 				needExpiryClose = true
 				break
@@ -517,8 +510,8 @@ func (s *strategy) checkRollConditions(sp *backtest.SpreadPosition, contractMap 
 		return false, ""
 	}
 
-	longContract := resolveContract(longLeg.Contract, contractMap)
-	shortContract := resolveContract(shortLeg.Contract, contractMap)
+	longContract := optutil.ResolveContract(longLeg.Contract, contractMap)
+	shortContract := optutil.ResolveContract(shortLeg.Contract, contractMap)
 
 	longMark := s.ValuationPriceMode.ExitPrice(longLeg.Side, longContract)
 	shortMark := s.ValuationPriceMode.ExitPrice(shortLeg.Side, shortContract)
@@ -551,7 +544,7 @@ func (s *strategy) closeGroupSpread(ctx *backtest.BarContext, spreadID int, cont
 		if sp.Legs[i].Closed {
 			continue
 		}
-		contract := resolveContract(sp.Legs[i].Contract, contractMap)
+		contract := optutil.ResolveContract(sp.Legs[i].Contract, contractMap)
 		closePrice := s.ExitPriceMode.ExitPrice(sp.Legs[i].Side, contract)
 		if !math.IsNaN(closePrice) && closePrice > 0 {
 			ctx.CloseSpreadLegWithReason(spreadID, i, closePrice, reason)
@@ -578,25 +571,6 @@ func (s *strategy) openRollSpread(ctx *backtest.BarContext, chain *backtest.Opti
 			selection.long.Delta, selection.longPrice, selection.short.Delta, selection.shortPrice)
 	}
 	return spreadID
-}
-
-func resolveContract(contract backtest.OptionContract, contractMap map[string]backtest.OptionContract) backtest.OptionContract {
-	if updated, ok := contractMap[contract.Symbol]; ok {
-		return updated
-	}
-	return contract
-}
-
-func buildContractMap(chain *backtest.OptionsChain) map[string]backtest.OptionContract {
-	if chain == nil || chain.Len() == 0 {
-		return nil
-	}
-	contracts := chain.Contracts()
-	cm := make(map[string]backtest.OptionContract, len(contracts))
-	for _, c := range contracts {
-		cm[c.Symbol] = c
-	}
-	return cm
 }
 
 func loadSignals(relPath string) (map[int64]signalType, error) {
@@ -696,103 +670,4 @@ func deltaBoundaryDistance(delta, minDelta, maxDelta float64) float64 {
 		return delta - maxDelta
 	}
 	return 0
-}
-
-func percentChange(source string) backtest.Indicator {
-	return backtest.Custom(
-		[]string{source},
-		func(inputs map[string][]float64) []float64 {
-			series := inputs[source]
-			out := make([]float64, len(series))
-			for i := range out {
-				out[i] = math.NaN()
-			}
-			for i := 1; i < len(series); i++ {
-				prev := series[i-1]
-				curr := series[i]
-				if math.IsNaN(prev) || math.IsNaN(curr) || prev == 0 {
-					continue
-				}
-				out[i] = curr/prev - 1
-			}
-			return out
-		},
-	)
-}
-
-func rollingStdDevIndicator(source string, period int) backtest.Indicator {
-	return backtest.Custom(
-		[]string{source},
-		func(inputs map[string][]float64) []float64 {
-			return rollingStdDev(inputs[source], period)
-		},
-	)
-}
-
-func rollingStdDev(series []float64, period int) []float64 {
-	out := make([]float64, len(series))
-	for i := range out {
-		out[i] = math.NaN()
-	}
-	if period <= 0 {
-		return out
-	}
-	for i := period - 1; i < len(series); i++ {
-		sum := 0.0
-		count := 0
-		valid := true
-		for j := i - period + 1; j <= i; j++ {
-			if math.IsNaN(series[j]) {
-				valid = false
-				break
-			}
-			sum += series[j]
-			count++
-		}
-		if !valid || count == 0 {
-			continue
-		}
-		mean := sum / float64(count)
-		variance := 0.0
-		for j := i - period + 1; j <= i; j++ {
-			diff := series[j] - mean
-			variance += diff * diff
-		}
-		out[i] = math.Sqrt(variance / float64(count))
-	}
-	return out
-}
-
-func percentileRankIndicator(source string, period int) backtest.Indicator {
-	return backtest.Custom(
-		[]string{source},
-		func(inputs map[string][]float64) []float64 {
-			series := inputs[source]
-			out := make([]float64, len(series))
-			for i := range out {
-				out[i] = math.NaN()
-			}
-			for i := 0; i < len(series); i++ {
-				if i < period || math.IsNaN(series[i]) {
-					continue
-				}
-				count := 0
-				valid := 0
-				for j := i - period; j < i; j++ {
-					if math.IsNaN(series[j]) {
-						continue
-					}
-					valid++
-					if series[j] < series[i] {
-						count++
-					}
-				}
-				if valid == 0 {
-					continue
-				}
-				out[i] = float64(count) / float64(valid) * 100
-			}
-			return out
-		},
-	)
 }

@@ -14,11 +14,11 @@ package buyflashlow
 
 import (
 	"math"
-	"strconv"
 	"time"
 
 	"github.com/Cyvadra/toktik/internal/backtest"
 	"github.com/Cyvadra/toktik/pkg/strategies/catalog"
+	"github.com/Cyvadra/toktik/pkg/strategies/optutil"
 )
 
 const (
@@ -54,27 +54,30 @@ func init() {
 		Profile: catalog.StrategyProfile{UsesOptions: true, RegularTrade: catalog.RegularTradeSignalOnly},
 		Factory: func(cfg catalog.Config) (backtest.Strategy, error) {
 			return &buyFlashLowStrategy{
-				EntryPriceMode:     cfg.EntryPriceMode,
-				ExitPriceMode:      cfg.ExitPriceMode,
-				ValuationPriceMode: cfg.ValuationPriceMode,
-				lookback:           catalog.IntOrDefault(cfg.FastPeriod, defaultLookback),
-				minAmpPr:           catalog.FloatOrDefault(cfg.PThreshold, defaultMinAmpPr),
-				scoreThreshold:     catalog.IntOrDefault(cfg.SlowPeriod, defaultScoreThreshold),
-				strictScore:        defaultStrictScore,
-				dvolMinPr:          defaultDvolMinPr,
-				targetExpiryDays:   catalog.IntOrDefault(cfg.TargetExpiryDays, defaultTargetDTE),
-				minExpiryDays:      catalog.IntOrDefault(cfg.MinExpiryDays, defaultMinDTE),
-				shortDeltaMin:      catalog.FloatOrDefault(cfg.ShortDeltaMin, defaultShortDeltaMin),
-				shortDeltaMax:      catalog.FloatOrDefault(cfg.ShortDeltaMax, defaultShortDeltaMax),
+				PricingMixin: optutil.PricingMixin{
+					EntryPriceMode:     cfg.EntryPriceMode,
+					ExitPriceMode:      cfg.ExitPriceMode,
+					ValuationPriceMode: cfg.ValuationPriceMode,
+				},
+				PendingRefCounter: optutil.PendingRefCounter{Prefix: "BuyFlashLow"},
+				lookback:          catalog.IntOrDefault(cfg.FastPeriod, defaultLookback),
+				minAmpPr:          catalog.FloatOrDefault(cfg.PThreshold, defaultMinAmpPr),
+				scoreThreshold:    catalog.IntOrDefault(cfg.SlowPeriod, defaultScoreThreshold),
+				strictScore:       defaultStrictScore,
+				dvolMinPr:         defaultDvolMinPr,
+				targetExpiryDays:  catalog.IntOrDefault(cfg.TargetExpiryDays, defaultTargetDTE),
+				minExpiryDays:     catalog.IntOrDefault(cfg.MinExpiryDays, defaultMinDTE),
+				shortDeltaMin:     catalog.FloatOrDefault(cfg.ShortDeltaMin, defaultShortDeltaMin),
+				shortDeltaMax:     catalog.FloatOrDefault(cfg.ShortDeltaMax, defaultShortDeltaMax),
 			}, nil
 		},
 	})
 }
 
 type buyFlashLowStrategy struct {
-	EntryPriceMode     backtest.OptionPriceMode
-	ExitPriceMode      backtest.OptionPriceMode
-	ValuationPriceMode backtest.OptionPriceMode
+	optutil.PricingMixin
+	optutil.GroupMixin
+	optutil.PendingRefCounter
 
 	lookback         int
 	minAmpPr         float64
@@ -97,19 +100,9 @@ type buyFlashLowStrategy struct {
 	pendingOptionRefs  [2]string
 	pendingOptionTimes [2]time.Time
 	dvolFactor         backtest.FactorRef
-	positionGroupID    int
-	nextPendingRefID   int
 }
 
 func (s *buyFlashLowStrategy) Name() string { return "BuyFlashLow" }
-
-func (s *buyFlashLowStrategy) SpreadPricingConfig() backtest.SpreadPricingConfig {
-	return backtest.SpreadPricingConfig{
-		EntryMode:     s.EntryPriceMode,
-		ExitMode:      s.ExitPriceMode,
-		ValuationMode: s.ValuationPriceMode,
-	}.WithDefaults()
-}
 
 // ReportColumns implements backtest.ReportColumnProvider so the HTML report's
 // data window shows key indicator values when hovering over the candlestick chart.
@@ -148,8 +141,8 @@ func (s *buyFlashLowStrategy) Init(ctx *backtest.SetupContext) error {
 			return inputs["close"]
 		},
 	))
-	ctx.RegisterFactor(s.dvolFactor, dvolPrShortColumn, percentileRank("close", dvolPrWindowShortDays))
-	ctx.RegisterFactor(s.dvolFactor, dvolPrLongColumn, percentileRank("close", dvolPrWindowLongDays))
+	ctx.RegisterFactor(s.dvolFactor, dvolPrShortColumn, optutil.PercentileRank("close", dvolPrWindowShortDays))
+	ctx.RegisterFactor(s.dvolFactor, dvolPrLongColumn, optutil.PercentileRank("close", dvolPrWindowLongDays))
 
 	ctx.Register("atr", backtest.ATR(lkb))
 	ctx.Register("sma_2", backtest.SMA("close", 2))
@@ -336,7 +329,7 @@ func (s *buyFlashLowStrategy) OnBar(ctx *backtest.BarContext) {
 	vol := ctx.Ind("vol_norm")
 	now := ctx.Time()
 	chain := ctx.OptionsChain()
-	contractMap := s.buildContractMap(chain)
+	contractMap := optutil.BuildContractMap(chain)
 	hasOpenOptionPosition := s.manageOpenShortPuts(ctx, now, contractMap)
 
 	atr := ctx.Ind("atr")
@@ -453,16 +446,7 @@ func (s *buyFlashLowStrategy) shouldOpenShortPut(ctx *backtest.BarContext) bool 
 }
 
 func (s *buyFlashLowStrategy) applyDefaults() {
-	pricingDefaults := backtest.DefaultSpreadPricingConfig()
-	if s.EntryPriceMode == backtest.OptionPriceModeUnspecified {
-		s.EntryPriceMode = pricingDefaults.EntryMode
-	}
-	if s.ExitPriceMode == backtest.OptionPriceModeUnspecified {
-		s.ExitPriceMode = pricingDefaults.ExitMode
-	}
-	if s.ValuationPriceMode == backtest.OptionPriceModeUnspecified {
-		s.ValuationPriceMode = pricingDefaults.ValuationMode
-	}
+	s.ApplyPricingDefaults()
 	if s.targetExpiryDays == 0 {
 		s.targetExpiryDays = defaultTargetDTE
 	}
@@ -492,17 +476,6 @@ func (s *buyFlashLowStrategy) applyDefaults() {
 	}
 }
 
-func (s *buyFlashLowStrategy) buildContractMap(chain *backtest.OptionsChain) map[string]backtest.OptionContract {
-	if chain == nil || chain.Len() == 0 {
-		return nil
-	}
-	contractMap := make(map[string]backtest.OptionContract, chain.Len())
-	for _, contract := range chain.Contracts() {
-		contractMap[contract.Symbol] = contract
-	}
-	return contractMap
-}
-
 func (s *buyFlashLowStrategy) manageOpenShortPuts(ctx *backtest.BarContext, now time.Time, contractMap map[string]backtest.OptionContract) bool {
 	active := false
 	for i, spreadID := range s.optionSpreadIDs {
@@ -516,8 +489,8 @@ func (s *buyFlashLowStrategy) manageOpenShortPuts(ctx *backtest.BarContext, now 
 		}
 
 		leg := sp.Legs[0]
-		contract := s.currentContract(leg.Contract, contractMap)
-		markPrice := s.valuationPrice(leg, contractMap)
+		contract := optutil.ResolveContract(leg.Contract, contractMap)
+		markPrice := s.LegValuationPrice(leg, contractMap)
 		pnlPct := sp.LegUnrealizedPnLPct(0, markPrice)
 
 		shouldClose := false
@@ -534,7 +507,7 @@ func (s *buyFlashLowStrategy) manageOpenShortPuts(ctx *backtest.BarContext, now 
 		}
 
 		if shouldClose {
-			closePrice := s.exitPrice(leg, contractMap)
+			closePrice := s.LegExitPrice(leg, contractMap)
 			if !math.IsNaN(closePrice) && closePrice > 0 && ctx.CloseSpreadLegWithReason(spreadID, 0, closePrice, closeReason) {
 				s.optionSpreadIDs[i] = 0
 				continue
@@ -553,7 +526,7 @@ func (s *buyFlashLowStrategy) manageOpenShortPuts(ctx *backtest.BarContext, now 
 		}
 	}
 	if !active {
-		s.closeGroup(ctx, s.positionGroupID)
+		s.CloseGroup(ctx, s.PositionGroupID)
 	}
 	return active
 }
@@ -601,7 +574,7 @@ func (s *buyFlashLowStrategy) openShortPutTranches(ctx *backtest.BarContext, cha
 		if tranche.qty <= 0 {
 			continue
 		}
-		pendingRef := s.nextPendingOptionRef()
+		pendingRef := s.Next("short-put")
 		ctx.ScheduleOpenSpreadInGroupWithRef(triggerTime, []backtest.SpreadLeg{{
 			Contract:   *contract,
 			Side:       backtest.Sell,
@@ -614,42 +587,19 @@ func (s *buyFlashLowStrategy) openShortPutTranches(ctx *backtest.BarContext, cha
 	}
 
 	if !opened {
-		s.closeGroup(ctx, groupID)
+		s.CloseGroup(ctx, groupID)
 	}
 }
 
 func (s *buyFlashLowStrategy) openGroupID(ctx *backtest.BarContext) int {
-	if s.positionGroupID > 0 {
-		return s.positionGroupID
+	if s.PositionGroupID > 0 {
+		return s.PositionGroupID
 	}
 	if ctx.SpreadGroups() == nil {
 		return 0
 	}
-	s.positionGroupID = ctx.SpreadGroups().Open(positionGroupTag, s.premiumTarget, positionGroupDecay, ctx.Time())
-	return s.positionGroupID
-}
-
-func (s *buyFlashLowStrategy) closeGroup(ctx *backtest.BarContext, groupID int) {
-	if groupID <= 0 {
-		return
-	}
-	if ctx.SpreadGroups() != nil {
-		ctx.SpreadGroups().Close(groupID)
-	}
-	if s.positionGroupID == groupID {
-		s.positionGroupID = 0
-	}
-}
-
-func (s *buyFlashLowStrategy) openSpreadInGroup(ctx *backtest.BarContext, legs []backtest.SpreadLeg, tag string, groupID int) int {
-	if groupID > 0 && ctx.SpreadGroups() != nil {
-		spreadID := ctx.OpenSpreadInGroup(legs, tag, groupID)
-		if spreadID > 0 {
-			ctx.SpreadGroups().AddSpread(groupID, spreadID)
-		}
-		return spreadID
-	}
-	return ctx.OpenSpread(legs, tag)
+	s.PositionGroupID = ctx.SpreadGroups().Open(positionGroupTag, s.premiumTarget, positionGroupDecay, ctx.Time())
+	return s.PositionGroupID
 }
 
 func (s *buyFlashLowStrategy) resolvePendingShortPutOpens(ctx *backtest.BarContext) {
@@ -676,11 +626,6 @@ func (s *buyFlashLowStrategy) resolvePendingShortPutOpens(ctx *backtest.BarConte
 			s.pendingOptionTimes[i] = time.Time{}
 		}
 	}
-}
-
-func (s *buyFlashLowStrategy) nextPendingOptionRef() string {
-	s.nextPendingRefID++
-	return s.Name() + "/short-put/" + strconv.Itoa(s.nextPendingRefID)
 }
 
 func (s *buyFlashLowStrategy) selectShortPut(chain *backtest.OptionsChain) *backtest.OptionContract {
@@ -716,51 +661,6 @@ func (s *buyFlashLowStrategy) selectShortPut(chain *backtest.OptionsChain) *back
 	}
 
 	return nil
-}
-
-func (s *buyFlashLowStrategy) currentContract(contract backtest.OptionContract, contractMap map[string]backtest.OptionContract) backtest.OptionContract {
-	if contractMap == nil {
-		return contract
-	}
-	if updated, ok := contractMap[contract.Symbol]; ok {
-		return updated
-	}
-	return contract
-}
-
-func (s *buyFlashLowStrategy) exitPrice(leg backtest.SpreadLeg, contractMap map[string]backtest.OptionContract) float64 {
-	contract := s.currentContract(leg.Contract, contractMap)
-	return s.ExitPriceMode.ExitPrice(leg.Side, contract)
-}
-
-func (s *buyFlashLowStrategy) valuationPrice(leg backtest.SpreadLeg, contractMap map[string]backtest.OptionContract) float64 {
-	contract := s.currentContract(leg.Contract, contractMap)
-	return s.ValuationPriceMode.ExitPrice(leg.Side, contract)
-}
-
-func percentileRank(source string, period int) backtest.Indicator {
-	return backtest.Custom(
-		[]string{source},
-		func(inputs map[string][]float64) []float64 {
-			series := inputs[source]
-			n := len(series)
-			out := make([]float64, n)
-			for i := 0; i < n; i++ {
-				if i < period || math.IsNaN(series[i]) {
-					out[i] = math.NaN()
-					continue
-				}
-				count := 0
-				for j := i - period; j < i; j++ {
-					if !math.IsNaN(series[j]) && series[j] < series[i] {
-						count++
-					}
-				}
-				out[i] = float64(count) / float64(period) * 100
-			}
-			return out
-		},
-	)
 }
 
 func computeAmpScore(ampPr100 float64) int {

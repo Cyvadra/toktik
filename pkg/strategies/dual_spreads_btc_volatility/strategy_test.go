@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Cyvadra/toktik/internal/backtest"
+	"github.com/Cyvadra/toktik/pkg/strategies/optutil"
 )
 
 func TestSignalTypeFromIndicator(t *testing.T) {
@@ -57,7 +58,7 @@ func TestSelectSpreadFallsForwardToNextExpiry(t *testing.T) {
 	var logs strings.Builder
 
 	s := &strategy{
-		EntryPriceMode: backtest.OptionPriceMarkClose,
+		PricingMixin: optutil.PricingMixin{EntryPriceMode: backtest.OptionPriceMarkClose},
 		logf: func(format string, args ...any) {
 			logs.WriteString(fmt.Sprintf(strings.TrimSpace(format), args...))
 			logs.WriteString("\n")

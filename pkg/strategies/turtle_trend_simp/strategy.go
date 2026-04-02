@@ -8,6 +8,7 @@ import (
 
 	"github.com/Cyvadra/toktik/internal/backtest"
 	"github.com/Cyvadra/toktik/pkg/strategies/catalog"
+	"github.com/Cyvadra/toktik/pkg/strategies/optutil"
 )
 
 func init() {
@@ -18,9 +19,12 @@ func init() {
 		Profile: catalog.StrategyProfile{UsesOptions: true, RegularTrade: catalog.RegularTradeSignalOnly},
 		Factory: func(cfg catalog.Config) (backtest.Strategy, error) {
 			return &turtleTrendSimpStrategy{
-				EntryPriceMode:     cfg.EntryPriceMode,
-				ExitPriceMode:      cfg.ExitPriceMode,
-				ValuationPriceMode: cfg.ValuationPriceMode,
+				PricingMixin: optutil.PricingMixin{
+					EntryPriceMode:     cfg.EntryPriceMode,
+					ExitPriceMode:      cfg.ExitPriceMode,
+					ValuationPriceMode: cfg.ValuationPriceMode,
+				},
+				PendingRefCounter:  optutil.PendingRefCounter{Prefix: "TurtleTrendSimp"},
 				SpotSignalNotional: 0,
 				Direction:          cfg.Direction,
 			}, nil
@@ -46,9 +50,9 @@ const turtleTrendSimpSpotSignalNotional = 1e-6
 // Short side: buys Puts when price breaks below Min(DonchianLower20, BollingerLower20) - 0.5*ATR
 // under the same low-volatility conditions.
 type turtleTrendSimpStrategy struct {
-	EntryPriceMode     backtest.OptionPriceMode
-	ExitPriceMode      backtest.OptionPriceMode
-	ValuationPriceMode backtest.OptionPriceMode
+	optutil.PricingMixin
+	optutil.PendingRefCounter
+
 	SpotSignalNotional float64
 	Direction          catalog.TradeDirection // both | long_only | short_only
 	Debug              bool
@@ -79,7 +83,6 @@ type turtleTrendSimpStrategy struct {
 	longSpotHigh        float64 // BTC_max: highest price since long spot entry
 	shortSpotLow        float64 // BTC_min: lowest price since short spot entry
 	pendingSpotActions  []*pendingSpotAction
-	nextPendingRefID    int
 }
 
 // slotState tracks a single option position slot.
@@ -116,14 +119,6 @@ var (
 	_ = chainLen
 )
 
-func (s *turtleTrendSimpStrategy) SpreadPricingConfig() backtest.SpreadPricingConfig {
-	return backtest.SpreadPricingConfig{
-		EntryMode:     s.EntryPriceMode,
-		ExitMode:      s.ExitPriceMode,
-		ValuationMode: s.ValuationPriceMode,
-	}.WithDefaults()
-}
-
 func (s *turtleTrendSimpStrategy) Name() string { return "TurtleTrendSimp" }
 
 func (s *turtleTrendSimpStrategy) Init(ctx *backtest.SetupContext) error {
@@ -147,7 +142,7 @@ func (s *turtleTrendSimpStrategy) Init(ctx *backtest.SetupContext) error {
 	ctx.RegisterOn(s.htfRef, "std20", backtest.Custom(
 		[]string{"close"},
 		func(inputs map[string][]float64) []float64 {
-			return rollingStdDev(inputs["close"], 20)
+			return optutil.RollingStdDev(inputs["close"], 20)
 		},
 	))
 	ctx.RegisterOn(s.htfRef, "ma_std20", backtest.SMA("std20", 20))
@@ -319,8 +314,8 @@ func (s *turtleTrendSimpStrategy) OnBar(ctx *backtest.BarContext) {
 			continue
 		}
 
-		currentContract := s.currentContract(leg.Contract, contractMap)
-		markPrice := s.valuationPriceForLeg(*leg, contractMap)
+		currentContract := optutil.ResolveContract(leg.Contract, contractMap)
+		markPrice := s.LegValuationPrice(*leg, contractMap)
 
 		// When the main slot suffers an 80% premium drawdown, detach the whole side.
 		if i == 0 && s.hitRemovalThreshold(*leg, markPrice) {
@@ -340,7 +335,7 @@ func (s *turtleTrendSimpStrategy) OnBar(ctx *backtest.BarContext) {
 		}
 
 		if needsRoll {
-			ctx.CloseSpreadLegWithReason(sp.ID, 0, s.exitPriceForLeg(*leg, contractMap), s.rollCloseReason(absDelta, pnlPct))
+			ctx.CloseSpreadLegWithReason(sp.ID, 0, s.LegExitPrice(*leg, contractMap), s.rollCloseReason(absDelta, pnlPct))
 			s.longSlots[i] = s.openCallOption(ctx, chain, close, s.immediateExecutionTime(now), "active-long", "换仓")
 		}
 	}
@@ -365,8 +360,8 @@ func (s *turtleTrendSimpStrategy) OnBar(ctx *backtest.BarContext) {
 			continue
 		}
 
-		currentContract := s.currentContract(leg.Contract, contractMap)
-		markPrice := s.valuationPriceForLeg(*leg, contractMap)
+		currentContract := optutil.ResolveContract(leg.Contract, contractMap)
+		markPrice := s.LegValuationPrice(*leg, contractMap)
 
 		if i == 0 && s.hitRemovalThreshold(*leg, markPrice) {
 			s.detachShortSeries(barIndex)
@@ -385,7 +380,7 @@ func (s *turtleTrendSimpStrategy) OnBar(ctx *backtest.BarContext) {
 		}
 
 		if needsRoll {
-			ctx.CloseSpreadLegWithReason(sp.ID, 0, s.exitPriceForLeg(*leg, contractMap), s.rollCloseReason(absDelta, pnlPct))
+			ctx.CloseSpreadLegWithReason(sp.ID, 0, s.LegExitPrice(*leg, contractMap), s.rollCloseReason(absDelta, pnlPct))
 			s.shortSlots[i] = s.openPutOption(ctx, chain, close, s.immediateExecutionTime(now), "active-short", "换仓")
 		}
 	}
@@ -410,8 +405,8 @@ func (s *turtleTrendSimpStrategy) OnBar(ctx *backtest.BarContext) {
 				continue
 			}
 
-			currentContract := s.currentContract(leg.Contract, contractMap)
-			markPrice := s.valuationPriceForLeg(*leg, contractMap)
+			currentContract := optutil.ResolveContract(leg.Contract, contractMap)
+			markPrice := s.LegValuationPrice(*leg, contractMap)
 
 			absDelta := math.Abs(currentContract.Delta)
 			pnlPct := sp.LegUnrealizedPnLPct(0, markPrice)
@@ -424,7 +419,7 @@ func (s *turtleTrendSimpStrategy) OnBar(ctx *backtest.BarContext) {
 			}
 
 			if needsRoll {
-				ctx.CloseSpreadLegWithReason(sp.ID, 0, s.exitPriceForLeg(*leg, contractMap), s.rollCloseReason(absDelta, pnlPct))
+				ctx.CloseSpreadLegWithReason(sp.ID, 0, s.LegExitPrice(*leg, contractMap), s.rollCloseReason(absDelta, pnlPct))
 				if reopened := s.openCallOption(ctx, chain, close, s.immediateExecutionTime(now), "removed-long", "换仓"); reopened != nil {
 					updated = append(updated, reopened)
 				}
@@ -456,8 +451,8 @@ func (s *turtleTrendSimpStrategy) OnBar(ctx *backtest.BarContext) {
 				continue
 			}
 
-			currentContract := s.currentContract(leg.Contract, contractMap)
-			markPrice := s.valuationPriceForLeg(*leg, contractMap)
+			currentContract := optutil.ResolveContract(leg.Contract, contractMap)
+			markPrice := s.LegValuationPrice(*leg, contractMap)
 
 			absDelta := math.Abs(currentContract.Delta)
 			pnlPct := sp.LegUnrealizedPnLPct(0, markPrice)
@@ -470,7 +465,7 @@ func (s *turtleTrendSimpStrategy) OnBar(ctx *backtest.BarContext) {
 			}
 
 			if needsRoll {
-				ctx.CloseSpreadLegWithReason(sp.ID, 0, s.exitPriceForLeg(*leg, contractMap), s.rollCloseReason(absDelta, pnlPct))
+				ctx.CloseSpreadLegWithReason(sp.ID, 0, s.LegExitPrice(*leg, contractMap), s.rollCloseReason(absDelta, pnlPct))
 				if reopened := s.openPutOption(ctx, chain, close, s.immediateExecutionTime(now), "removed-short", "换仓"); reopened != nil {
 					updated = append(updated, reopened)
 				}
@@ -705,7 +700,7 @@ func (s *turtleTrendSimpStrategy) openCallOption(ctx *backtest.BarContext, chain
 		tag += "：" + reason
 	}
 
-	pendingRef := s.nextPendingRef(slotRef)
+	pendingRef := s.Next(slotRef)
 	ctx.ScheduleOpenSpreadWithRef(triggerTime, []backtest.SpreadLeg{{
 		Contract:   contract,
 		Side:       backtest.Buy,
@@ -751,7 +746,7 @@ func (s *turtleTrendSimpStrategy) openPutOption(ctx *backtest.BarContext, chain 
 		tag += "：" + reason
 	}
 
-	pendingRef := s.nextPendingRef(slotRef)
+	pendingRef := s.Next(slotRef)
 	ctx.ScheduleOpenSpreadWithRef(triggerTime, []backtest.SpreadLeg{{
 		Contract:   contract,
 		Side:       backtest.Buy,
@@ -771,32 +766,8 @@ func (s *turtleTrendSimpStrategy) ivCoefficient(chain *backtest.OptionsChain, is
 	return 1.0
 }
 
-func (s *turtleTrendSimpStrategy) currentContract(contract backtest.OptionContract, contractMap map[string]backtest.OptionContract) backtest.OptionContract {
-	if contractMap == nil {
-		return contract
-	}
-	if updated, ok := contractMap[contract.Symbol]; ok {
-		return updated
-	}
-	return contract
-}
-
-func (s *turtleTrendSimpStrategy) exitPriceForLeg(leg backtest.SpreadLeg, contractMap map[string]backtest.OptionContract) float64 {
-	contract := s.currentContract(leg.Contract, contractMap)
-	return s.ExitPriceMode.ExitPrice(leg.Side, contract)
-}
-
-func (s *turtleTrendSimpStrategy) valuationPriceForLeg(leg backtest.SpreadLeg, contractMap map[string]backtest.OptionContract) float64 {
-	contract := s.currentContract(leg.Contract, contractMap)
-	return s.ValuationPriceMode.ExitPrice(leg.Side, contract)
-}
-
 func (s *turtleTrendSimpStrategy) hitRemovalThreshold(leg backtest.SpreadLeg, markPrice float64) bool {
 	return !math.IsNaN(markPrice) && leg.EntryPrice > 0 && markPrice <= leg.EntryPrice*0.2
-}
-
-func (s *turtleTrendSimpStrategy) shouldCloseForExpiry(contract backtest.OptionContract, now time.Time) bool {
-	return contract.DaysToExpiry(now) <= 1
 }
 
 func (s *turtleTrendSimpStrategy) detachLongSeries(_ int) {
@@ -989,7 +960,7 @@ func (s *turtleTrendSimpStrategy) resolvePendingSlot(ctx *backtest.BarContext, s
 	if slot == nil || !slot.isPending() {
 		return slot
 	}
-	if spread := s.findSpreadByRef(ctx.Spreads(), slot.pendingRef); spread != nil {
+	if spread := optutil.FindSpreadByRef(ctx.Spreads(), slot.pendingRef); spread != nil {
 		slot.spreadID = spread.ID
 		slot.pendingRef = ""
 		slot.pendingTime = time.Time{}
@@ -1001,38 +972,12 @@ func (s *turtleTrendSimpStrategy) resolvePendingSlot(ctx *backtest.BarContext, s
 	return slot
 }
 
-func (s *turtleTrendSimpStrategy) findSpreadByRef(tracker *backtest.SpreadTracker, pendingRef string) *backtest.SpreadPosition {
-	if tracker == nil || pendingRef == "" {
-		return nil
-	}
-	for _, spread := range tracker.All() {
-		if spread != nil && spread.Ref == pendingRef {
-			return spread
-		}
-	}
-	return nil
-}
-
-func (s *turtleTrendSimpStrategy) nextPendingRef(slotRef string) string {
-	s.nextPendingRefID++
-	return s.Name() + "/" + slotRef + "/" + strconv.Itoa(s.nextPendingRefID)
-}
-
 func (s *turtleTrendSimpStrategy) allowInitialEntry(lowVolOK float64) bool {
 	return lowVolOK == 1
 }
 
 func (s *turtleTrendSimpStrategy) applyDefaults() {
-	pricingDefaults := backtest.DefaultSpreadPricingConfig()
-	if s.EntryPriceMode == backtest.OptionPriceModeUnspecified {
-		s.EntryPriceMode = pricingDefaults.EntryMode
-	}
-	if s.ExitPriceMode == backtest.OptionPriceModeUnspecified {
-		s.ExitPriceMode = pricingDefaults.ExitMode
-	}
-	if s.ValuationPriceMode == backtest.OptionPriceModeUnspecified {
-		s.ValuationPriceMode = pricingDefaults.ValuationMode
-	}
+	s.ApplyPricingDefaults()
 	if s.SpotSignalNotional <= 0 {
 		s.SpotSignalNotional = turtleTrendSimpSpotSignalNotional
 	}
@@ -1189,8 +1134,8 @@ func (s *turtleTrendSimpStrategy) scheduleExpiryClosesForSlots(ctx *backtest.Bar
 		if sp == nil || sp.IsFullyClosed() || len(sp.Legs) == 0 || sp.Legs[0].Closed {
 			continue
 		}
-		contract := s.currentContract(sp.Legs[0].Contract, contractMap)
-		if !s.shouldCloseForExpiry(contract, now) {
+		contract := optutil.ResolveContract(sp.Legs[0].Contract, contractMap)
+		if !optutil.ShouldCloseForExpiry(contract, now, 1) {
 			continue
 		}
 		ctx.ScheduleCloseLegOrder(triggerTime, sp.ID, 0, backtest.SpreadOrderMarket, backtest.Sell, math.NaN(), 0, "到期前一天平仓")
@@ -1240,44 +1185,4 @@ func chainLen(chain *backtest.OptionsChain) int {
 		return 0
 	}
 	return chain.Len()
-}
-
-// rollingStdDev computes a rolling standard deviation over the given period.
-func rollingStdDev(src []float64, period int) []float64 {
-	n := len(src)
-	out := make([]float64, n)
-	if period <= 1 {
-		return out
-	}
-
-	for i := 0; i < n; i++ {
-		if i < period-1 {
-			out[i] = math.NaN()
-			continue
-		}
-		sum := 0.0
-		sumSq := 0.0
-		valid := 0
-		for j := i - period + 1; j <= i; j++ {
-			v := src[j]
-			if math.IsNaN(v) {
-				out[i] = math.NaN()
-				break
-			}
-			sum += v
-			sumSq += v * v
-			valid++
-		}
-		if valid == period {
-			mean := sum / float64(period)
-			variance := sumSq/float64(period) - mean*mean
-			if variance < 0 {
-				variance = 0
-			}
-			out[i] = math.Sqrt(variance)
-		} else {
-			out[i] = math.NaN()
-		}
-	}
-	return out
 }

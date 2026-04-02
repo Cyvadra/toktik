@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/Cyvadra/toktik/internal/backtest"
+	"github.com/Cyvadra/toktik/pkg/strategies/optutil"
 )
 
 func TestTurtleTrendSimpDetachLongSeriesResetsActiveState(t *testing.T) {
@@ -68,13 +69,12 @@ func TestTurtleTrendSimpDetachShortSeriesResetsActiveState(t *testing.T) {
 }
 
 func TestTurtleTrendSimpShouldCloseForExpiry(t *testing.T) {
-	strategy := &turtleTrendSimpStrategy{}
 	now := time.Date(2026, time.March, 21, 9, 0, 0, 0, time.UTC)
 
-	if !strategy.shouldCloseForExpiry(backtest.OptionContract{Expiration: now.Add(24 * time.Hour)}, now) {
+	if !optutil.ShouldCloseForExpiry(backtest.OptionContract{Expiration: now.Add(24 * time.Hour)}, now, 1) {
 		t.Fatal("expected contract with 1 day to expiry to be closed")
 	}
-	if strategy.shouldCloseForExpiry(backtest.OptionContract{Expiration: now.Add(25 * time.Hour)}, now) {
+	if optutil.ShouldCloseForExpiry(backtest.OptionContract{Expiration: now.Add(25 * time.Hour)}, now, 1) {
 		t.Fatal("expected contract with more than 1 day to expiry to remain open")
 	}
 }

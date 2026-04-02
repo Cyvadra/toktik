@@ -13,6 +13,7 @@ import (
 
 	"github.com/Cyvadra/toktik/internal/backtest"
 	"github.com/Cyvadra/toktik/pkg/strategies/catalog"
+	"github.com/Cyvadra/toktik/pkg/strategies/optutil"
 )
 
 const (
@@ -65,24 +66,25 @@ func init() {
 				return nil, err
 			}
 			return &strategy{
-				EntryPriceMode:     cfg.EntryPriceMode,
-				ExitPriceMode:      cfg.ExitPriceMode,
-				ValuationPriceMode: cfg.ValuationPriceMode,
-				positionSize:       fixedPositionSize,
-				direction:          cfg.Direction,
-				highRSIDTE:         catalog.IntOrDefault(cfg.TargetExpiryDays, defaultHighRSIDTE),
-				lowRSIDTE:          catalog.IntOrDefault(cfg.MinExpiryDays, defaultLowRSIDTE),
-				entryTimes:         entryTimes,
-				lowestSinceEntry:   math.NaN(),
+				PricingMixin: optutil.PricingMixin{
+					EntryPriceMode:     cfg.EntryPriceMode,
+					ExitPriceMode:      cfg.ExitPriceMode,
+					ValuationPriceMode: cfg.ValuationPriceMode,
+				},
+				positionSize:     fixedPositionSize,
+				direction:        cfg.Direction,
+				highRSIDTE:       catalog.IntOrDefault(cfg.TargetExpiryDays, defaultHighRSIDTE),
+				lowRSIDTE:        catalog.IntOrDefault(cfg.MinExpiryDays, defaultLowRSIDTE),
+				entryTimes:       entryTimes,
+				lowestSinceEntry: math.NaN(),
 			}, nil
 		},
 	})
 }
 
 type strategy struct {
-	EntryPriceMode     backtest.OptionPriceMode
-	ExitPriceMode      backtest.OptionPriceMode
-	ValuationPriceMode backtest.OptionPriceMode
+	optutil.PricingMixin
+	optutil.GroupMixin
 
 	positionSize float64
 	direction    catalog.TradeDirection
@@ -94,20 +96,11 @@ type strategy struct {
 	lowestSinceEntry float64
 	callSpreadIDs    [callTrancheCount]int
 	putSpreadID      int
-	positionGroupID  int
 
 	ref12h backtest.SecurityRef
 }
 
 func (s *strategy) Name() string { return "MADeviationSpreadOuterSource" }
-
-func (s *strategy) SpreadPricingConfig() backtest.SpreadPricingConfig {
-	return backtest.SpreadPricingConfig{
-		EntryMode:     s.EntryPriceMode,
-		ExitMode:      s.ExitPriceMode,
-		ValuationMode: s.ValuationPriceMode,
-	}.WithDefaults()
-}
 
 func (s *strategy) ReportColumns() []backtest.ReportColumn {
 	return []backtest.ReportColumn{
@@ -157,7 +150,7 @@ func (s *strategy) Preload(ctx *backtest.PreloadContext) error {
 
 func (s *strategy) OnBar(ctx *backtest.BarContext) {
 	chain := ctx.OptionsChain()
-	contractMap := s.buildContractMap(chain)
+	contractMap := optutil.BuildContractMap(chain)
 	hasOpenOptionPosition := s.manageOpenPositions(ctx, chain, contractMap)
 
 	if hasOpenOptionPosition {
@@ -222,16 +215,16 @@ func (s *strategy) tryOpenStructure(ctx *backtest.BarContext, chain *backtest.Op
 		return
 	}
 
-	groupID := s.openPositionGroup(ctx)
+	groupID := s.OpenGroup(ctx, positionGroupTag, s.positionSize, positionGroupDecay)
 
-	putSpreadID := s.openSpread(ctx, []backtest.SpreadLeg{{
+	putSpreadID := s.OpenSpreadInGroup(ctx, []backtest.SpreadLeg{{
 		Contract:   *longPut,
 		Side:       backtest.Buy,
 		Qty:        putQty,
 		EntryPrice: putEntryPrice,
 	}}, openNoteInitialPut, groupID)
 	if putSpreadID <= 0 {
-		s.closePositionGroup(ctx, groupID)
+		s.CloseGroup(ctx, groupID)
 		return
 	}
 
@@ -245,7 +238,7 @@ func (s *strategy) tryOpenStructure(ctx *backtest.BarContext, chain *backtest.Op
 		if qty <= 0 {
 			continue
 		}
-		spreadID := s.openSpread(ctx, []backtest.SpreadLeg{{
+		spreadID := s.OpenSpreadInGroup(ctx, []backtest.SpreadLeg{{
 			Contract:   *shortCall,
 			Side:       backtest.Sell,
 			Qty:        qty,
@@ -262,7 +255,7 @@ func (s *strategy) tryOpenStructure(ctx *backtest.BarContext, chain *backtest.Op
 		s.callSpreadIDs[i] = openedCallIDs[i]
 	}
 	s.putSpreadID = putSpreadID
-	s.positionGroupID = groupID
+	s.PositionGroupID = groupID
 
 	s.lowestSinceEntry = ctx.Low()
 }
@@ -283,8 +276,8 @@ func (s *strategy) manageOpenPositions(ctx *backtest.BarContext, chain *backtest
 
 		active = true
 		leg := sp.Legs[0]
-		contract := s.currentContract(leg.Contract, contractMap)
-		markPrice := s.valuationPrice(leg, contractMap)
+		contract := optutil.ResolveContract(leg.Contract, contractMap)
+		markPrice := s.LegValuationPrice(leg, contractMap)
 		pnlPct := sp.LegUnrealizedPnLPct(0, markPrice)
 
 		shouldClose := false
@@ -301,7 +294,7 @@ func (s *strategy) manageOpenPositions(ctx *backtest.BarContext, chain *backtest
 		}
 
 		if shouldClose {
-			closePrice := s.exitPrice(leg, contractMap)
+			closePrice := s.LegExitPrice(leg, contractMap)
 			if !math.IsNaN(closePrice) && closePrice > 0 && ctx.CloseSpreadLegWithReason(spreadID, 0, closePrice, closeReason) {
 				s.callSpreadIDs[i] = 0
 			}
@@ -315,18 +308,18 @@ func (s *strategy) manageOpenPositions(ctx *backtest.BarContext, chain *backtest
 		} else {
 			active = true
 			leg := sp.Legs[0]
-			contract := s.currentContract(leg.Contract, contractMap)
-			markPrice := s.valuationPrice(leg, contractMap)
+			contract := optutil.ResolveContract(leg.Contract, contractMap)
+			markPrice := s.LegValuationPrice(leg, contractMap)
 			pnlPct := sp.LegUnrealizedPnLPct(0, markPrice)
 			absDelta := math.Abs(contract.Delta)
 
 			if contract.DaysToExpiry(now) <= 1 {
-				closePrice := s.exitPrice(leg, contractMap)
+				closePrice := s.LegExitPrice(leg, contractMap)
 				if !math.IsNaN(closePrice) && closePrice > 0 && ctx.CloseSpreadLegWithReason(s.putSpreadID, 0, closePrice, closeNoteExpiryPut) {
 					s.putSpreadID = 0
 				}
 			} else if absDelta >= defaultPutRollDelta || (!math.IsNaN(pnlPct) && pnlPct >= defaultPutRollProfit) {
-				closePrice := s.exitPrice(leg, contractMap)
+				closePrice := s.LegExitPrice(leg, contractMap)
 				if !math.IsNaN(closePrice) && closePrice > 0 && ctx.CloseSpreadLegWithReason(s.putSpreadID, 0, closePrice, s.putRollReason(absDelta, pnlPct)) {
 					s.putSpreadID = 0
 					s.reopenPutLeg(ctx, chain)
@@ -337,7 +330,7 @@ func (s *strategy) manageOpenPositions(ctx *backtest.BarContext, chain *backtest
 
 	stillActive := active || s.hasOpenCallSpread(ctx) || s.hasOpenPutSpread(ctx)
 	if !stillActive {
-		s.closePositionGroup(ctx, s.positionGroupID)
+		s.CloseGroup(ctx, s.PositionGroupID)
 	}
 	return stillActive
 }
@@ -368,19 +361,19 @@ func (s *strategy) reopenPutLeg(ctx *backtest.BarContext, chain *backtest.Option
 		return
 	}
 
-	putSpreadID := s.openSpread(ctx, []backtest.SpreadLeg{{
+	putSpreadID := s.OpenSpreadInGroup(ctx, []backtest.SpreadLeg{{
 		Contract:   *longPut,
 		Side:       backtest.Buy,
 		Qty:        qty,
 		EntryPrice: entryPrice,
-	}}, openNoteRolledPut, s.positionGroupID)
+	}}, openNoteRolledPut, s.PositionGroupID)
 	if putSpreadID <= 0 {
 		return
 	}
 
 	s.putSpreadID = putSpreadID
-	if s.positionGroupID > 0 && ctx.SpreadGroups() != nil {
-		ctx.SpreadGroups().IncrementRoll(s.positionGroupID)
+	if s.PositionGroupID > 0 && ctx.SpreadGroups() != nil {
+		ctx.SpreadGroups().IncrementRoll(s.PositionGroupID)
 	}
 }
 
@@ -403,7 +396,7 @@ func (s *strategy) handleATRExit(ctx *backtest.BarContext, contractMap map[strin
 			s.callSpreadIDs[i] = 0
 			continue
 		}
-		closePrice := s.exitPrice(sp.Legs[0], contractMap)
+		closePrice := s.LegExitPrice(sp.Legs[0], contractMap)
 		if !math.IsNaN(closePrice) && closePrice > 0 && ctx.CloseSpreadLegWithReason(spreadID, 0, closePrice, fmt.Sprintf("ATR反弹%.1fx平空call", trailATRMultiplier)) {
 			closedAny = true
 			s.callSpreadIDs[i] = 0
@@ -413,7 +406,7 @@ func (s *strategy) handleATRExit(ctx *backtest.BarContext, contractMap map[strin
 	if s.putSpreadID > 0 {
 		sp := ctx.Spreads().Get(s.putSpreadID)
 		if sp != nil && len(sp.Legs) > 0 && !sp.Legs[0].Closed {
-			closePrice := s.exitPrice(sp.Legs[0], contractMap)
+			closePrice := s.LegExitPrice(sp.Legs[0], contractMap)
 			if !math.IsNaN(closePrice) && closePrice > 0 && ctx.CloseSpreadLegWithReason(s.putSpreadID, 0, closePrice, fmt.Sprintf("ATR反弹%.1fx平多put", trailATRMultiplier)) {
 				closedAny = true
 			}
@@ -437,7 +430,7 @@ func (s *strategy) rollbackOpenedStructure(ctx *backtest.BarContext, callSpreadI
 	if putSpreadID > 0 {
 		ctx.CloseSpreadLegWithReason(putSpreadID, 0, putEntryPrice, closeNoteOpenRollback)
 	}
-	s.closePositionGroup(ctx, groupID)
+	s.CloseGroup(ctx, groupID)
 }
 
 func (s *strategy) selectShortCall(chain *backtest.OptionsChain) *backtest.OptionContract {
@@ -492,16 +485,7 @@ func (s *strategy) targetExpiryDays(rsi12h float64) int {
 }
 
 func (s *strategy) applyDefaults() {
-	pricingDefaults := backtest.DefaultSpreadPricingConfig()
-	if s.EntryPriceMode == backtest.OptionPriceModeUnspecified {
-		s.EntryPriceMode = pricingDefaults.EntryMode
-	}
-	if s.ExitPriceMode == backtest.OptionPriceModeUnspecified {
-		s.ExitPriceMode = pricingDefaults.ExitMode
-	}
-	if s.ValuationPriceMode == backtest.OptionPriceModeUnspecified {
-		s.ValuationPriceMode = pricingDefaults.ValuationMode
-	}
+	s.ApplyPricingDefaults()
 	if s.highRSIDTE <= 0 {
 		s.highRSIDTE = defaultHighRSIDTE
 	}
@@ -512,37 +496,6 @@ func (s *strategy) applyDefaults() {
 	if s.entryTimes == nil {
 		s.entryTimes = map[int64]struct{}{}
 	}
-}
-
-func (s *strategy) buildContractMap(chain *backtest.OptionsChain) map[string]backtest.OptionContract {
-	if chain == nil || chain.Len() == 0 {
-		return nil
-	}
-	contractMap := make(map[string]backtest.OptionContract, chain.Len())
-	for _, contract := range chain.Contracts() {
-		contractMap[contract.Symbol] = contract
-	}
-	return contractMap
-}
-
-func (s *strategy) currentContract(contract backtest.OptionContract, contractMap map[string]backtest.OptionContract) backtest.OptionContract {
-	if contractMap == nil {
-		return contract
-	}
-	if updated, ok := contractMap[contract.Symbol]; ok {
-		return updated
-	}
-	return contract
-}
-
-func (s *strategy) exitPrice(leg backtest.SpreadLeg, contractMap map[string]backtest.OptionContract) float64 {
-	contract := s.currentContract(leg.Contract, contractMap)
-	return s.ExitPriceMode.ExitPrice(leg.Side, contract)
-}
-
-func (s *strategy) valuationPrice(leg backtest.SpreadLeg, contractMap map[string]backtest.OptionContract) float64 {
-	contract := s.currentContract(leg.Contract, contractMap)
-	return s.ValuationPriceMode.ExitPrice(leg.Side, contract)
 }
 
 func (s *strategy) hasOpenCallSpread(ctx *backtest.BarContext) bool {
@@ -617,36 +570,6 @@ func (s *strategy) putRollReason(absDelta, pnlPct float64) string {
 
 func (s *strategy) allowsEntry() bool {
 	return s.direction == "" || s.direction == catalog.DirectionBoth || s.direction == catalog.DirectionShortOnly
-}
-
-func (s *strategy) openPositionGroup(ctx *backtest.BarContext) int {
-	if ctx.SpreadGroups() == nil {
-		return 0
-	}
-	return ctx.SpreadGroups().Open(positionGroupTag, s.positionSize, positionGroupDecay, ctx.Time())
-}
-
-func (s *strategy) closePositionGroup(ctx *backtest.BarContext, groupID int) {
-	if groupID <= 0 {
-		return
-	}
-	if ctx.SpreadGroups() != nil {
-		ctx.SpreadGroups().Close(groupID)
-	}
-	if s.positionGroupID == groupID {
-		s.positionGroupID = 0
-	}
-}
-
-func (s *strategy) openSpread(ctx *backtest.BarContext, legs []backtest.SpreadLeg, tag string, groupID int) int {
-	if groupID > 0 && ctx.SpreadGroups() != nil {
-		spreadID := ctx.OpenSpreadInGroup(legs, tag, groupID)
-		if spreadID > 0 {
-			ctx.SpreadGroups().AddSpread(groupID, spreadID)
-		}
-		return spreadID
-	}
-	return ctx.OpenSpread(legs, tag)
 }
 
 func buildEntrySignalSeries(timestamps []time.Time, entryTimes map[int64]struct{}) []float64 {

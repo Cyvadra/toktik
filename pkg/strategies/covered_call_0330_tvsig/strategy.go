@@ -13,6 +13,7 @@ import (
 
 	"github.com/Cyvadra/toktik/internal/backtest"
 	"github.com/Cyvadra/toktik/pkg/strategies/catalog"
+	"github.com/Cyvadra/toktik/pkg/strategies/optutil"
 )
 
 const (
@@ -78,9 +79,11 @@ func init() {
 		Profile: catalog.StrategyProfile{UsesOptions: true, RegularTrade: catalog.RegularTradeNone},
 		Factory: func(cfg catalog.Config) (backtest.Strategy, error) {
 			return &strategy{
-				EntryPriceMode:     cfg.EntryPriceMode,
-				ExitPriceMode:      cfg.ExitPriceMode,
-				ValuationPriceMode: cfg.ValuationPriceMode,
+				PricingMixin: optutil.PricingMixin{
+					EntryPriceMode:     cfg.EntryPriceMode,
+					ExitPriceMode:      cfg.ExitPriceMode,
+					ValuationPriceMode: cfg.ValuationPriceMode,
+				},
 			}, nil
 		},
 	})
@@ -104,9 +107,8 @@ func init() {
 //
 //	expiry close: all legs are closed 1 day before expiry.
 type strategy struct {
-	EntryPriceMode     backtest.OptionPriceMode
-	ExitPriceMode      backtest.OptionPriceMode
-	ValuationPriceMode backtest.OptionPriceMode
+	optutil.PricingMixin
+	optutil.GroupMixin
 
 	entryTimes           map[int64]struct{}
 	processedSignalTimes map[int64]struct{}
@@ -118,19 +120,9 @@ type strategy struct {
 	protLegID      int
 	protLegIsCall  bool
 	protRollAmount float64 // decays with each roll
-
-	positionGroupID int
 }
 
 func (s *strategy) Name() string { return "CoveredCall0330TVSig" }
-
-func (s *strategy) SpreadPricingConfig() backtest.SpreadPricingConfig {
-	return backtest.SpreadPricingConfig{
-		EntryMode:     s.EntryPriceMode,
-		ExitMode:      s.ExitPriceMode,
-		ValuationMode: s.ValuationPriceMode,
-	}.WithDefaults()
-}
 
 func (s *strategy) ReportColumns() []backtest.ReportColumn {
 	return []backtest.ReportColumn{
@@ -169,7 +161,7 @@ func (s *strategy) Preload(ctx *backtest.PreloadContext) error {
 
 func (s *strategy) OnBar(ctx *backtest.BarContext) {
 	chain := ctx.OptionsChain()
-	contractMap := buildContractMap(chain)
+	contractMap := optutil.BuildContractMap(chain)
 
 	hasOpen := s.managePositions(ctx, chain, contractMap)
 	if hasOpen {
@@ -231,42 +223,42 @@ func (s *strategy) tryOpenStructure(ctx *backtest.BarContext, chain *backtest.Op
 		return
 	}
 
-	groupID := s.openGroupID(ctx)
+	groupID := s.OpenGroup(ctx, positionGroupTag, callAmountTotal, positionGroupDecay)
 
 	// Open PUT first; roll back everything if any subsequent open fails.
-	protID := s.openSpreadInGroup(ctx, []backtest.SpreadLeg{
+	protID := s.OpenSpreadInGroup(ctx, []backtest.SpreadLeg{
 		{Contract: *protPut, Side: backtest.Buy, Qty: putQty, EntryPrice: protPutPrice},
 	}, openNoteProtPut, groupID)
 	if protID <= 0 {
-		s.closeGroup(ctx, groupID)
+		s.CloseGroup(ctx, groupID)
 		return
 	}
 
-	callID0 := s.openSpreadInGroup(ctx, []backtest.SpreadLeg{
+	callID0 := s.OpenSpreadInGroup(ctx, []backtest.SpreadLeg{
 		{Contract: *sellCall, Side: backtest.Sell, Qty: qty0, EntryPrice: sellCallPrice},
 		{Contract: *buyCall, Side: backtest.Buy, Qty: qty0, EntryPrice: buyCallPrice},
 	}, openNoteCallTranche0, groupID)
 	if callID0 <= 0 {
 		s.rollbackSingleLeg(ctx, protID, protPutPrice)
-		s.closeGroup(ctx, groupID)
+		s.CloseGroup(ctx, groupID)
 		return
 	}
 
-	callID1 := s.openSpreadInGroup(ctx, []backtest.SpreadLeg{
+	callID1 := s.OpenSpreadInGroup(ctx, []backtest.SpreadLeg{
 		{Contract: *sellCall, Side: backtest.Sell, Qty: qty1, EntryPrice: sellCallPrice},
 		{Contract: *buyCall, Side: backtest.Buy, Qty: qty1, EntryPrice: buyCallPrice},
 	}, openNoteCallTranche1, groupID)
 	if callID1 <= 0 {
 		s.rollbackSingleLeg(ctx, protID, protPutPrice)
 		s.rollbackCallSpread(ctx, callID0, sellCallPrice, buyCallPrice)
-		s.closeGroup(ctx, groupID)
+		s.CloseGroup(ctx, groupID)
 		return
 	}
 
 	s.callSpreadIDs[0] = callID0
 	s.callSpreadIDs[1] = callID1
 	s.protLegID = protID
-	s.positionGroupID = groupID
+	s.PositionGroupID = groupID
 
 	fmt.Printf("[%s] entry: sell=%s(d=%.4f)@%.6f buy=%s(d=%.4f)@%.6f credit=%.6f qty=[%.4f+%.4f]; put=%s(d=%.4f)@%.6f qty=%.4f\n",
 		ctx.Time().Format(time.RFC3339),
@@ -303,8 +295,8 @@ func (s *strategy) managePositions(ctx *backtest.BarContext, chain *backtest.Opt
 			continue
 		}
 
-		sellContract := resolveContract(sellLeg.Contract, contractMap)
-		buyContract := resolveContract(buyLeg.Contract, contractMap)
+		sellContract := optutil.ResolveContract(sellLeg.Contract, contractMap)
+		buyContract := optutil.ResolveContract(buyLeg.Contract, contractMap)
 
 		// Expiry close: 1 day before
 		if !sellLeg.Closed && sellContract.DaysToExpiry(now) <= float64(expiryCloseLeadDays) {
@@ -367,7 +359,7 @@ func (s *strategy) managePositions(ctx *backtest.BarContext, chain *backtest.Opt
 			s.protLegID = 0
 		} else {
 			leg := sp.Legs[0]
-			contract := resolveContract(leg.Contract, contractMap)
+			contract := optutil.ResolveContract(leg.Contract, contractMap)
 
 			if contract.DaysToExpiry(now) <= float64(expiryCloseLeadDays) {
 				closePrice := s.ExitPriceMode.ExitPrice(leg.Side, contract)
@@ -404,7 +396,7 @@ func (s *strategy) managePositions(ctx *backtest.BarContext, chain *backtest.Opt
 
 	stillActive := s.hasAnyOpen(ctx)
 	if !stillActive {
-		s.closeGroup(ctx, s.positionGroupID)
+		s.CloseGroup(ctx, s.PositionGroupID)
 	}
 	return stillActive
 }
@@ -426,9 +418,9 @@ func (s *strategy) reopenProtectiveLeg(ctx *backtest.BarContext, chain *backtest
 		return
 	}
 
-	spreadID := s.openSpreadInGroup(ctx, []backtest.SpreadLeg{
+	spreadID := s.OpenSpreadInGroup(ctx, []backtest.SpreadLeg{
 		{Contract: *opt, Side: backtest.Buy, Qty: qty, EntryPrice: price},
-	}, openNoteRolledCall, s.positionGroupID)
+	}, openNoteRolledCall, s.PositionGroupID)
 	if spreadID <= 0 {
 		return
 	}
@@ -542,7 +534,7 @@ func (s *strategy) closeCallSpread(ctx *backtest.BarContext, spreadID int, contr
 		if leg.Closed {
 			continue
 		}
-		contract := resolveContract(leg.Contract, contractMap)
+		contract := optutil.ResolveContract(leg.Contract, contractMap)
 		closePrice := s.ExitPriceMode.ExitPrice(leg.Side, contract)
 		if !math.IsNaN(closePrice) && closePrice > 0 {
 			ctx.CloseSpreadLegWithReason(spreadID, i, closePrice, reason)
@@ -559,7 +551,7 @@ func (s *strategy) closeProtectiveLeg(ctx *backtest.BarContext, spreadID int, co
 	if leg.Closed {
 		return
 	}
-	contract := resolveContract(leg.Contract, contractMap)
+	contract := optutil.ResolveContract(leg.Contract, contractMap)
 	closePrice := s.ExitPriceMode.ExitPrice(leg.Side, contract)
 	if !math.IsNaN(closePrice) && closePrice > 0 {
 		ctx.CloseSpreadLegWithReason(spreadID, 0, closePrice, reason)
@@ -576,7 +568,7 @@ func (s *strategy) closeEntireOrderGroup(ctx *backtest.BarContext, contractMap m
 		s.closeProtectiveLeg(ctx, s.protLegID, contractMap, reason)
 	}
 	if !s.hasAnyOpen(ctx) {
-		s.closeGroup(ctx, s.positionGroupID)
+		s.CloseGroup(ctx, s.PositionGroupID)
 	}
 }
 
@@ -628,47 +620,8 @@ func (s *strategy) hasAnyOpen(ctx *backtest.BarContext) bool {
 	return false
 }
 
-func (s *strategy) openGroupID(ctx *backtest.BarContext) int {
-	if ctx.SpreadGroups() == nil {
-		return 0
-	}
-	return ctx.SpreadGroups().Open(positionGroupTag, callAmountTotal, positionGroupDecay, ctx.Time())
-}
-
-func (s *strategy) closeGroup(ctx *backtest.BarContext, groupID int) {
-	if groupID <= 0 {
-		return
-	}
-	if ctx.SpreadGroups() != nil {
-		ctx.SpreadGroups().Close(groupID)
-	}
-	if s.positionGroupID == groupID {
-		s.positionGroupID = 0
-	}
-}
-
-func (s *strategy) openSpreadInGroup(ctx *backtest.BarContext, legs []backtest.SpreadLeg, tag string, groupID int) int {
-	if groupID > 0 && ctx.SpreadGroups() != nil {
-		spreadID := ctx.OpenSpreadInGroup(legs, tag, groupID)
-		if spreadID > 0 {
-			ctx.SpreadGroups().AddSpread(groupID, spreadID)
-		}
-		return spreadID
-	}
-	return ctx.OpenSpread(legs, tag)
-}
-
 func (s *strategy) applyDefaults() {
-	pricingDefaults := backtest.DefaultSpreadPricingConfig()
-	if s.EntryPriceMode == backtest.OptionPriceModeUnspecified {
-		s.EntryPriceMode = pricingDefaults.EntryMode
-	}
-	if s.ExitPriceMode == backtest.OptionPriceModeUnspecified {
-		s.ExitPriceMode = pricingDefaults.ExitMode
-	}
-	if s.ValuationPriceMode == backtest.OptionPriceModeUnspecified {
-		s.ValuationPriceMode = pricingDefaults.ValuationMode
-	}
+	s.ApplyPricingDefaults()
 	if s.entryTimes == nil {
 		s.entryTimes = map[int64]struct{}{}
 	}
@@ -775,28 +728,6 @@ func contractsForExpiry(contracts []backtest.OptionContract, expiry time.Time) [
 		}
 	}
 	return out
-}
-
-func resolveContract(c backtest.OptionContract, m map[string]backtest.OptionContract) backtest.OptionContract {
-	if m == nil {
-		return c
-	}
-	if updated, ok := m[c.Symbol]; ok {
-		return updated
-	}
-	return c
-}
-
-func buildContractMap(chain *backtest.OptionsChain) map[string]backtest.OptionContract {
-	if chain == nil || chain.Len() == 0 {
-		return nil
-	}
-	contracts := chain.Contracts()
-	cm := make(map[string]backtest.OptionContract, len(contracts))
-	for _, c := range contracts {
-		cm[c.Symbol] = c
-	}
-	return cm
 }
 
 // ── Signal file loading ────────────────────────────────────────────────────────

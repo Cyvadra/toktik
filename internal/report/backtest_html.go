@@ -61,6 +61,11 @@ type htmlReportView struct {
 	HasHoverColumns       bool
 	HasFeatureColumns     bool
 	EquitySeriesData      template.JS
+	BuyHoldSeriesData     template.JS
+	HasBuyHoldBenchmark   bool
+	BuyHoldMin            string
+	BuyHoldMax            string
+	BuyHoldNote           string
 	DrawdownSeriesData    template.JS
 	PnLUSDSeriesData      template.JS
 	ActiveTimeData        template.JS
@@ -525,6 +530,7 @@ func buildHTMLView(result *backtest.Result, meta HTMLMeta) htmlReportView {
 		PnLUSDSeriesData:     template.JS("[]"),
 		ActiveTimeData:       template.JS("[]"),
 		EquitySeriesData:     marshalJS(buildLineSeries(result.Timestamps, result.EquityCurve)),
+		BuyHoldSeriesData:    template.JS("[]"),
 		DrawdownSeriesData:   marshalJS(buildLineSeries(result.Timestamps, drawdown)),
 	}
 
@@ -532,6 +538,26 @@ func buildHTMLView(result *backtest.Result, meta HTMLMeta) htmlReportView {
 	view.EquityMin = amount(minEq, result.AccountUnit)
 	view.EquityMax = amount(maxEq, result.AccountUnit)
 	view.DrawdownMax = pct(maxValue(drawdown))
+
+	buyHoldSeries, buyHoldInitialUSD := buildBuyHoldSeries(result)
+	if len(buyHoldSeries) > 0 {
+		view.HasBuyHoldBenchmark = true
+		view.BuyHoldSeriesData = marshalJS(buyHoldSeries)
+		buyHoldValues := make([]float64, 0, len(buyHoldSeries))
+		for _, point := range buyHoldSeries {
+			if point.Value != nil {
+				buyHoldValues = append(buyHoldValues, *point.Value)
+			}
+		}
+		minBuyHold, maxBuyHold := minMax(buyHoldValues)
+		view.BuyHoldMin = currency(minBuyHold)
+		view.BuyHoldMax = currency(maxBuyHold)
+		if strings.EqualFold(strings.TrimSpace(result.AccountUnit), "USD") || strings.TrimSpace(result.AccountUnit) == "" {
+			view.BuyHoldNote = fmt.Sprintf("Buy&Hold 参考线按 USD 计价，假设用初始资金 %s 在首个有效收盘价一次性买入并持有。", currency(buyHoldInitialUSD))
+		} else {
+			view.BuyHoldNote = fmt.Sprintf("Buy&Hold 参考线始终按 USD 计价；此处先将初始资金 %s 按首个有效收盘价换算为 %s，再一次性买入并持有。", amount(result.InitialCapital, result.AccountUnit), currency(buyHoldInitialUSD))
+		}
+	}
 
 	if closeSeries, ok := result.Series["close"]; ok && len(closeSeries) > 0 {
 		n := minInt(len(result.Timestamps), minInt(len(result.EquityCurve), len(closeSeries)))
@@ -1262,6 +1288,56 @@ func buildLineSeries(times []time.Time, values []float64) []chartLinePoint {
 	return points
 }
 
+func buildBuyHoldSeries(result *backtest.Result) ([]chartLinePoint, float64) {
+	if result == nil || len(result.Timestamps) == 0 || result.Series == nil {
+		return nil, 0
+	}
+	closeSeries := result.Series["close"]
+	n := minInt(len(result.Timestamps), len(closeSeries))
+	if n == 0 {
+		return nil, 0
+	}
+
+	entryIndex := -1
+	entryClose := 0.0
+	for i := 0; i < n; i++ {
+		if chartValueValid(closeSeries[i]) && closeSeries[i] > 0 {
+			entryIndex = i
+			entryClose = closeSeries[i]
+			break
+		}
+	}
+	if entryIndex < 0 {
+		return nil, 0
+	}
+
+	initialUSD := result.InitialCapital
+	trimmedUnit := strings.TrimSpace(result.AccountUnit)
+	if trimmedUnit != "" && !strings.EqualFold(trimmedUnit, "USD") {
+		initialUSD = result.InitialCapital * entryClose
+	}
+	if !chartValueValid(initialUSD) || initialUSD <= 0 {
+		return nil, 0
+	}
+
+	points := make([]chartLinePoint, 0, n-entryIndex)
+	for i := entryIndex; i < n; i++ {
+		closeValue := closeSeries[i]
+		if !chartValueValid(closeValue) || closeValue <= 0 {
+			continue
+		}
+		value := initialUSD * (closeValue / entryClose)
+		points = append(points, chartLinePoint{
+			Time:  result.Timestamps[i].Unix(),
+			Value: &value,
+		})
+	}
+	if len(points) == 0 {
+		return nil, 0
+	}
+	return points, initialUSD
+}
+
 func buildTimeAlignedLineSeries(times []time.Time, values []float64) []chartLinePoint {
 	n := minInt(len(times), len(values))
 	if n == 0 {
@@ -1977,6 +2053,7 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
     <div class="section">
 	<h2>权益曲线</h2>
 	<p class="text-xs text-slate-400 mb-3">范围 {{ .EquityMin }} 至 {{ .EquityMax }} · 手续费 {{ .TotalFees }}</p>
+		{{ if .HasBuyHoldBenchmark }}<p class="text-xs text-slate-400 mb-3">Buy&amp;Hold（USD）范围 {{ .BuyHoldMin }} 至 {{ .BuyHoldMax }} · {{ .BuyHoldNote }}</p>{{ end }}
       <div class="chart-box p-1">
         <div id="equity-chart" style="width:100%;height:300px;"></div>
       </div>
@@ -2125,6 +2202,7 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
     const underlyingMarkers = {{ .UnderlyingMarkerData }};
 	const hoverColumns = {{ .HoverColumnsData }};
     const equitySeries = {{ .EquitySeriesData }};
+	const buyHoldSeries = {{ .BuyHoldSeriesData }};
     const drawdownSeries = {{ .DrawdownSeriesData }};
     const pnlUSDSeries = {{ .PnLUSDSeriesData }};
 	const activeTimes = {{ .ActiveTimeData }};
@@ -2304,6 +2382,7 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
 		var pnlPlot = null;
 		var drawdownChart = null;
 		var drawdownPlot = null;
+		var buyHoldPlot = null;
 		var dataWindowGrid = document.getElementById('underlying-data-window-grid');
 		var dataWindowTime = document.getElementById('underlying-data-window-time');
 		var candleByTime = new Map();
@@ -2707,6 +2786,29 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
         lineColor: '#2dd4bf', topColor: 'rgba(45,212,191,0.28)',
         bottomColor: 'rgba(45,212,191,0.02)', lineWidth: 2
       });
+			if (buyHoldSeries.length > 0) {
+				ec.applyOptions({
+					leftPriceScale: {
+						visible: true,
+						borderColor: 'rgba(255,255,255,0.06)'
+					},
+					rightPriceScale: {
+						visible: true,
+						borderColor: 'rgba(255,255,255,0.06)'
+					}
+				});
+				buyHoldPlot = ec.addLineSeries({
+					priceScaleId: 'left',
+					color: '#60a5fa',
+					lineWidth: 2,
+					priceLineVisible: true,
+					lastValueVisible: true,
+					crosshairMarkerRadius: 4,
+					crosshairMarkerBorderColor: '#60a5fa',
+					crosshairMarkerBackgroundColor: '#60a5fa'
+				});
+				buyHoldPlot.setData(buyHoldSeries);
+			}
       el.setData(equitySeries);
       ec.timeScale().fitContent();
 			equityChart = ec;
@@ -2760,6 +2862,9 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
 				renderOverlayPlots();
 				if (equityPlot) {
 					equityPlot.setData(filterLineSeriesByTimes(equitySeries, activeSet, useFilter));
+				}
+				if (buyHoldPlot) {
+					buyHoldPlot.setData(filterLineSeriesByTimes(buyHoldSeries, activeSet, useFilter));
 				}
 				if (pnlPlot) {
 					pnlPlot.setData(filterLineSeriesByTimes(pnlUSDSeries, activeSet, useFilter));
