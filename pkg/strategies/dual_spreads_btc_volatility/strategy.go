@@ -27,6 +27,7 @@ const (
 	rollProfitPct          = 0.50
 	rollDeltaIncrease      = 0.20
 	decayFactor            = 0.90
+	allowRepeatedEntries   = true
 	minLongDelta           = 0.20
 	maxLongDelta           = 0.80
 	minShortDelta          = 0.10
@@ -169,6 +170,9 @@ func (s *strategy) OnBar(ctx *backtest.BarContext) {
 	}
 
 	s.markSignalProcessed(signalTime)
+	if !allowRepeatedEntries && s.hasActiveGroups() {
+		return
+	}
 	s.openNewGroup(ctx, chain, amountBase)
 }
 
@@ -200,6 +204,10 @@ func (s *strategy) markSignalProcessed(signalTime int64) {
 		s.processedSignalTimes = make(map[int64]struct{})
 	}
 	s.processedSignalTimes[signalTime] = struct{}{}
+}
+
+func (s *strategy) hasActiveGroups() bool {
+	return len(s.activeGroups) > 0
 }
 
 func (s *strategy) dvolFilter(ctx *backtest.BarContext) bool {

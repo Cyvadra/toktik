@@ -12,6 +12,7 @@ import (
 	_ "github.com/Cyvadra/toktik/pkg/strategies/ema_atr_spot"
 	_ "github.com/Cyvadra/toktik/pkg/strategies/golden_cross"
 	_ "github.com/Cyvadra/toktik/pkg/strategies/ma_deviation_spread_outer_source"
+	_ "github.com/Cyvadra/toktik/pkg/strategies/retracement_ratio_protective_spread"
 	_ "github.com/Cyvadra/toktik/pkg/strategies/turtle_trend_simp"
 )
 

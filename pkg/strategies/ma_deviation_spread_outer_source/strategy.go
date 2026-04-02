@@ -677,7 +677,7 @@ func isEntrySignalRecord(record []string, typeIndex int, hasType bool, signalInd
 
 	if hasSignal && signalIndex < len(record) {
 		signal := strings.TrimSpace(strings.ToLower(record[signalIndex]))
-		if strings.Contains(signal, "做空") || strings.Contains(signal, "bearish") || strings.Contains(signal, "divergence") {
+		if strings.Contains(signal, "做空") || strings.Contains(signal, "空头") || strings.Contains(signal, "bearish") || strings.Contains(signal, "divergence") {
 			return true
 		}
 	}
