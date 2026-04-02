@@ -20,15 +20,14 @@ type barAccumulator struct {
 }
 
 type spotAccumulator struct {
-	FirstTimestamp time.Time
-	LastTimestamp  time.Time
-	bar            SpotBar1m
-	hasFirst       bool
-	allPrices      []float32
-	firstPrices    []float32
-	lastPrices     []float32
-	openWindow     []float32
-	closeWindow    []float32
+	bar          SpotBar1m
+	observations []spotObservation
+}
+
+type spotObservation struct {
+	timestamp       time.Time
+	underlyingIndex string
+	price           float32
 }
 
 // Aggregator collects ticks and produces 1-minute aggregated bars.
@@ -101,11 +100,80 @@ func medianF32(values []float32) float32 {
 }
 
 func (s *spotAccumulator) finalize() {
-	if len(s.allPrices) == 0 {
+	selectedSources := nearestUnderlyingIndices(s.observations, s.bar.Timestamp, 3)
+	if len(selectedSources) == 0 {
+		return
+	}
+	selectedSet := make(map[string]struct{}, len(selectedSources))
+	for _, source := range selectedSources {
+		selectedSet[source] = struct{}{}
+	}
+
+	allPrices := make([]float32, 0, len(s.observations))
+	openWindow := make([]float32, 0, len(s.observations))
+	closeWindow := make([]float32, 0, len(s.observations))
+	firstPrices := make([]float32, 0, 4)
+	lastPrices := make([]float32, 0, 4)
+	var (
+		firstTimestamp time.Time
+		lastTimestamp  time.Time
+		hasFirst       bool
+	)
+	minuteEnd := s.bar.Timestamp.Add(time.Minute)
+	openWindowEnd := s.bar.Timestamp.Add(500 * time.Millisecond)
+	closeWindowStart := minuteEnd.Add(-500 * time.Millisecond)
+
+	for _, observation := range s.observations {
+		if _, ok := selectedSet[observation.underlyingIndex]; !ok {
+			continue
+		}
+
+		allPrices = append(allPrices, observation.price)
+		if !observation.timestamp.Before(s.bar.Timestamp) && observation.timestamp.Before(openWindowEnd) {
+			openWindow = append(openWindow, observation.price)
+		}
+		if !observation.timestamp.Before(closeWindowStart) && observation.timestamp.Before(minuteEnd) {
+			closeWindow = append(closeWindow, observation.price)
+		}
+
+		if !hasFirst {
+			firstTimestamp = observation.timestamp
+			lastTimestamp = observation.timestamp
+			hasFirst = true
+			firstPrices = append(firstPrices, observation.price)
+			lastPrices = append(lastPrices, observation.price)
+			continue
+		}
+
+		if observation.timestamp.Before(firstTimestamp) {
+			firstTimestamp = observation.timestamp
+			firstPrices = firstPrices[:0]
+			firstPrices = append(firstPrices, observation.price)
+		} else if observation.timestamp.Equal(firstTimestamp) {
+			firstPrices = append(firstPrices, observation.price)
+		}
+
+		if observation.timestamp.After(lastTimestamp) {
+			lastTimestamp = observation.timestamp
+			lastPrices = lastPrices[:0]
+			lastPrices = append(lastPrices, observation.price)
+		} else if observation.timestamp.Equal(lastTimestamp) {
+			lastPrices = append(lastPrices, observation.price)
+		}
+	}
+
+	if len(allPrices) == 0 {
 		return
 	}
 
-	sorted := append([]float32(nil), s.allPrices...)
+	s.bar.TickCount = uint32(len(allPrices))
+	if len(selectedSources) == 1 {
+		s.bar.PriceSource = selectedSources[0]
+	} else {
+		s.bar.PriceSource = "mixed"
+	}
+
+	sorted := append([]float32(nil), allPrices...)
 	sort.Slice(sorted, func(i, j int) bool {
 		return sorted[i] < sorted[j]
 	})
@@ -113,17 +181,108 @@ func (s *spotAccumulator) finalize() {
 	s.bar.High = percentileSortedF32(sorted, 0.95)
 	s.bar.Low = percentileSortedF32(sorted, 0.05)
 
-	if len(s.openWindow) > 0 {
-		s.bar.Open = medianF32(s.openWindow)
+	if len(openWindow) > 0 {
+		s.bar.Open = medianF32(openWindow)
 	} else {
-		s.bar.Open = medianF32(s.firstPrices)
+		s.bar.Open = medianF32(firstPrices)
 	}
 
-	if len(s.closeWindow) > 0 {
-		s.bar.Close = medianF32(s.closeWindow)
+	if len(closeWindow) > 0 {
+		s.bar.Close = medianF32(closeWindow)
 	} else {
-		s.bar.Close = medianF32(s.lastPrices)
+		s.bar.Close = medianF32(lastPrices)
 	}
+}
+
+func nearestUnderlyingIndices(observations []spotObservation, minuteTS time.Time, limit int) []string {
+	if limit < 1 || len(observations) == 0 {
+		return nil
+	}
+
+	type candidate struct {
+		source   string
+		parsed   bool
+		expiry   time.Time
+		distance time.Duration
+	}
+
+	bySource := make(map[string]candidate)
+	for _, observation := range observations {
+		source := strings.TrimSpace(observation.underlyingIndex)
+		if source == "" {
+			continue
+		}
+		if _, exists := bySource[source]; exists {
+			continue
+		}
+		expiry, ok := parseUnderlyingIndexDate(source)
+		candidate := candidate{source: source, parsed: ok, expiry: expiry}
+		if ok {
+			candidate.distance = absDuration(expiry.Sub(minuteTS))
+		}
+		bySource[source] = candidate
+	}
+
+	parsed := make([]candidate, 0, len(bySource))
+	unparsed := make([]candidate, 0, len(bySource))
+	for _, candidate := range bySource {
+		if candidate.parsed {
+			parsed = append(parsed, candidate)
+		} else {
+			unparsed = append(unparsed, candidate)
+		}
+	}
+
+	sort.Slice(parsed, func(i, j int) bool {
+		if parsed[i].distance != parsed[j].distance {
+			return parsed[i].distance < parsed[j].distance
+		}
+		if !parsed[i].expiry.Equal(parsed[j].expiry) {
+			return parsed[i].expiry.Before(parsed[j].expiry)
+		}
+		return parsed[i].source < parsed[j].source
+	})
+	sort.Slice(unparsed, func(i, j int) bool {
+		return unparsed[i].source < unparsed[j].source
+	})
+
+	selected := make([]string, 0, min(limit, len(bySource)))
+	for _, candidate := range parsed {
+		selected = append(selected, candidate.source)
+		if len(selected) == limit {
+			return selected
+		}
+	}
+	for _, candidate := range unparsed {
+		selected = append(selected, candidate.source)
+		if len(selected) == limit {
+			break
+		}
+	}
+	return selected
+}
+
+func parseUnderlyingIndexDate(underlyingIndex string) (time.Time, bool) {
+	underlyingIndex = strings.TrimSpace(underlyingIndex)
+	if underlyingIndex == "" {
+		return time.Time{}, false
+	}
+	parts := strings.Split(underlyingIndex, "-")
+	if len(parts) < 2 {
+		return time.Time{}, false
+	}
+	expiry, err := ParseExpiryDate(strings.ToUpper(parts[len(parts)-1]))
+	if err != nil {
+		return time.Time{}, false
+	}
+	return expiry, true
+}
+
+func absDuration(duration time.Duration) time.Duration {
+	if duration < 0 {
+		return -duration
+	}
+	return duration
 }
 
 func (a *Aggregator) Add(tick TickRow) {
@@ -232,55 +391,13 @@ func (a *Aggregator) Add(tick TickRow) {
 		spotAcc = &spotAccumulator{}
 		spotAcc.bar.Timestamp = minuteTS
 		spotAcc.bar.Symbol = acc.bar.BaseAsset
-		spotAcc.bar.PriceSource = strings.TrimSpace(tick.UnderlyingIndex)
 		a.spotAccumulators[spotKey] = spotAcc
 	}
-
-	underlyingIndex := strings.TrimSpace(tick.UnderlyingIndex)
-	if underlyingIndex != "" {
-		if spotAcc.bar.PriceSource == "" {
-			spotAcc.bar.PriceSource = underlyingIndex
-		} else if !strings.EqualFold(spotAcc.bar.PriceSource, underlyingIndex) {
-			spotAcc.bar.PriceSource = "mixed"
-		}
-	}
-
-	spotAcc.allPrices = append(spotAcc.allPrices, tick.UnderlyingPrice)
-	minuteEnd := minuteTS.Add(time.Minute)
-	openWindowEnd := minuteTS.Add(500 * time.Millisecond)
-	closeWindowStart := minuteEnd.Add(-500 * time.Millisecond)
-	if !tick.Timestamp.Before(minuteTS) && tick.Timestamp.Before(openWindowEnd) {
-		spotAcc.openWindow = append(spotAcc.openWindow, tick.UnderlyingPrice)
-	}
-	if !tick.Timestamp.Before(closeWindowStart) && tick.Timestamp.Before(minuteEnd) {
-		spotAcc.closeWindow = append(spotAcc.closeWindow, tick.UnderlyingPrice)
-	}
-
-	if !spotAcc.hasFirst {
-		spotAcc.FirstTimestamp = tick.Timestamp
-		spotAcc.LastTimestamp = tick.Timestamp
-		spotAcc.hasFirst = true
-		spotAcc.firstPrices = append(spotAcc.firstPrices, tick.UnderlyingPrice)
-		spotAcc.lastPrices = append(spotAcc.lastPrices, tick.UnderlyingPrice)
-	} else {
-		if tick.Timestamp.Before(spotAcc.FirstTimestamp) {
-			spotAcc.FirstTimestamp = tick.Timestamp
-			spotAcc.firstPrices = spotAcc.firstPrices[:0]
-			spotAcc.firstPrices = append(spotAcc.firstPrices, tick.UnderlyingPrice)
-		} else if tick.Timestamp.Equal(spotAcc.FirstTimestamp) {
-			spotAcc.firstPrices = append(spotAcc.firstPrices, tick.UnderlyingPrice)
-		}
-
-		if tick.Timestamp.After(spotAcc.LastTimestamp) {
-			spotAcc.LastTimestamp = tick.Timestamp
-			spotAcc.lastPrices = spotAcc.lastPrices[:0]
-			spotAcc.lastPrices = append(spotAcc.lastPrices, tick.UnderlyingPrice)
-		} else if tick.Timestamp.Equal(spotAcc.LastTimestamp) {
-			spotAcc.lastPrices = append(spotAcc.lastPrices, tick.UnderlyingPrice)
-		}
-	}
-
-	spotAcc.bar.TickCount++
+	spotAcc.observations = append(spotAcc.observations, spotObservation{
+		timestamp:       tick.Timestamp,
+		underlyingIndex: strings.TrimSpace(tick.UnderlyingIndex),
+		price:           tick.UnderlyingPrice,
+	})
 }
 
 // FlushSortedOptionBatches sorts option bars by (base_asset, symbol, timestamp),
