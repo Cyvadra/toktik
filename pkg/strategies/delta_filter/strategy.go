@@ -2,10 +2,15 @@ package deltafilter
 
 import (
 	"github.com/Cyvadra/toktik/internal/backtest"
+	"github.com/Cyvadra/toktik/internal/validation"
 	"github.com/Cyvadra/toktik/pkg/strategies/catalog"
+	"github.com/Cyvadra/toktik/pkg/strategies/helpers"
 )
 
-const defaultEntryTWAPBars = 1
+const (
+	defaultEntryTWAPBars = 1
+	defaultPositionPct   = 0.5
+)
 
 func init() {
 	catalog.Register(catalog.Registration{
@@ -13,13 +18,17 @@ func init() {
 		Groups:  []string{"signal"},
 		Profile: catalog.StrategyProfile{RegularTrade: catalog.RegularTradeMaterial},
 		Factory: func(cfg catalog.Config) (backtest.Strategy, error) {
-			return &deltaFilterStrategy{entryTWAP: catalog.IntOrDefault(cfg.EntryTWAPBars, defaultEntryTWAPBars)}, nil
+			return &deltaFilterStrategy{
+				entryTWAP:   catalog.IntOrDefault(cfg.EntryTWAPBars, defaultEntryTWAPBars),
+				positionPct: helpers.ClampPositionPct(cfg.PositionSize, defaultPositionPct),
+			}, nil
 		},
 	})
 }
 
 type deltaFilterStrategy struct {
-	entryTWAP int
+	entryTWAP   int
+	positionPct float64
 }
 
 func (s *deltaFilterStrategy) Name() string { return "DeltaFilter" }
@@ -33,7 +42,7 @@ func (s *deltaFilterStrategy) Init(ctx *backtest.SetupContext) error {
 			deltaSeries := inputs["delta"]
 			out := make([]float64, len(deltaSeries))
 			for i, value := range deltaSeries {
-				if value > 0.3 && value < 0.7 {
+				if validation.AllValid(value) && value > 0.3 && value < 0.7 {
 					out[i] = 1
 				}
 			}
@@ -50,12 +59,13 @@ func (s *deltaFilterStrategy) OnBar(ctx *backtest.BarContext) {
 
 	if deltaOK == 1 && rsi < 30 && ctx.Position(primary) == 0 {
 		price := ctx.Close()
-		if price > 0 {
-			qty := (ctx.Equity() * 0.5) / price
+		qty := helpers.PositionSizeFromEquity(ctx.Cash(), ctx.Equity(), price, s.positionPct)
+		if qty > 0 {
+			// Use the new OrderBuilder pattern
 			if s.entryTWAP > 1 {
-				ctx.BuyTWAP(primary, qty, s.entryTWAP)
+				ctx.Order(primary).Buy().Qty(qty).TWAP(s.entryTWAP).Submit()
 			} else {
-				ctx.Buy(primary, qty)
+				ctx.Order(primary).Buy().Qty(qty).Submit()
 			}
 		}
 	}
