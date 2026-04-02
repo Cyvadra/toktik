@@ -11,6 +11,7 @@ import (
 	_ "github.com/Cyvadra/toktik/pkg/strategies/dual_spreads_btc_volatility"
 	_ "github.com/Cyvadra/toktik/pkg/strategies/ema_atr_spot"
 	_ "github.com/Cyvadra/toktik/pkg/strategies/golden_cross"
+	_ "github.com/Cyvadra/toktik/pkg/strategies/golden_cross_dsl"
 	_ "github.com/Cyvadra/toktik/pkg/strategies/ma_deviation_spread_outer_source"
 	_ "github.com/Cyvadra/toktik/pkg/strategies/turtle_trend_simp"
 )
