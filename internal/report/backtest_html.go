@@ -2801,6 +2801,61 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
 			});
 		}
 
+		function sortedActiveTimes() {
+			return Array.from(activeSet).sort(function(a, b) { return a - b; });
+		}
+
+		function visibleTimeRangeForIdleFilter(useFilter) {
+			if (useFilter) {
+				var filteredTimes = sortedActiveTimes();
+				if (filteredTimes.length > 1) {
+					return { from: filteredTimes[0], to: filteredTimes[filteredTimes.length - 1] };
+				}
+			}
+
+			if (underlyingCandles.length > 1) {
+				return {
+					from: underlyingCandles[0].time,
+					to: underlyingCandles[underlyingCandles.length - 1].time,
+				};
+			}
+			if (equitySeries.length > 1) {
+				return {
+					from: equitySeries[0].time,
+					to: equitySeries[equitySeries.length - 1].time,
+				};
+			}
+			return null;
+		}
+
+		function applySharedVisibleRange(range) {
+			chartSyncState.syncing = true;
+			charts.forEach(function(chart) {
+				if (!chart) return;
+				if (range && range.from !== range.to) {
+					chart.timeScale().setVisibleRange(range);
+					return;
+				}
+				chart.timeScale().fitContent();
+			});
+			chartSyncState.syncing = false;
+		}
+
+		function syncDataWindowToVisibleRange(useFilter) {
+			if (!useFilter || activeSet.size === 0) {
+				renderDataWindow(currentDataWindowTime);
+				return;
+			}
+
+			if (typeof currentDataWindowTime === 'number' && activeSet.has(currentDataWindowTime)) {
+				renderDataWindow(currentDataWindowTime);
+				return;
+			}
+
+			var filteredTimes = sortedActiveTimes();
+			renderDataWindow(filteredTimes.length > 0 ? filteredTimes[filteredTimes.length - 1] : null);
+		}
+
 		function refreshChartLocalization() {
 			charts.forEach(function(chart) {
 				preserveVisibleRange(chart, function() {
@@ -3230,6 +3285,7 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
 		function applyIdleFilter(enabled) {
 			var useFilter = enabled && hasActiveFilter;
 			currentIdleFilterEnabled = useFilter;
+			var sharedRange = visibleTimeRangeForIdleFilter(useFilter);
 
 			preserveVisibleRanges(charts.slice(), function() {
 				if (underlyingSeries) {
@@ -3253,8 +3309,11 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
 					drawdownPlot.setData(filterLineSeriesByTimes(drawdownSeries, activeSet, useFilter));
 				}
 				renderFeatureChart();
-				renderEquitySeriesMode();
+				updateEquityModeButtons();
 			});
+
+			applySharedVisibleRange(sharedRange);
+			syncDataWindowToVisibleRange(useFilter);
 		}
 
     if (charts.length > 1) syncCharts(charts);
