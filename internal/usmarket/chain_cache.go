@@ -5,29 +5,28 @@ import (
 	"fmt"
 	"log"
 
+	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
 // ChainPrecomputedIntervals maps US option chain intervals to cached view names.
+// US options chain consumers are currently daily-only.
 var ChainPrecomputedIntervals = map[string]string{
-	"1m":  "us_options_chain_1m",
-	"5m":  "us_options_chain_5m",
-	"15m": "us_options_chain_15m",
-	"30m": "us_options_chain_30m",
-	"1h":  "us_options_chain_1h",
-	"2h":  "us_options_chain_2h",
-	"4h":  "us_options_chain_4h",
-	"1d":  "us_options_chain_1d",
+	"1d": "us_options_chain_1d",
+}
+
+// DefaultChainCacheIntervals is the set of US chain cache resolutions we maintain.
+var DefaultChainCacheIntervals = []KlineInterval{
+	{Suffix: "1d", Seconds: 0},
 }
 
 // InitOptionChainCacheSchema creates option-chain cache tables/materialized views
-// for 1m + all precomputed US option intervals. Cache is regular-session only.
+// for daily US option intervals. Cache is regular-session only.
 func InitOptionChainCacheSchema(ctx context.Context, conn driver.Conn) error {
-	intervals := make([]KlineInterval, 0, len(KlineIntervals)+1)
-	intervals = append(intervals, KlineInterval{Suffix: "1m", Seconds: 60})
-	intervals = append(intervals, KlineIntervals...)
-
-	for _, iv := range intervals {
+	for _, iv := range DefaultChainCacheIntervals {
+		if err := migrateOptionChainAggregateIfNeeded(ctx, conn, iv.Suffix); err != nil {
+			return fmt.Errorf("migrate us option chain cache [%s]: %w", iv.Suffix, err)
+		}
 		stmts := optionChainCacheDDL(iv)
 		for _, stmt := range stmts {
 			if err := conn.Exec(ctx, stmt); err != nil {
@@ -39,14 +38,57 @@ func InitOptionChainCacheSchema(ctx context.Context, conn driver.Conn) error {
 	return nil
 }
 
+func migrateOptionChainAggregateIfNeeded(ctx context.Context, conn driver.Conn, suffix string) error {
+	agg := "us_options_chain_" + suffix + "_agg"
+	rows, err := conn.Query(ctx, `SELECT name, type
+FROM system.columns
+WHERE database = currentDatabase()
+  AND table = {table:String}
+  AND name IN ('volume_state', 'transactions_state')`, clickhouse.Named("table", agg))
+	if err != nil {
+		return fmt.Errorf("query chain aggregate schema: %w", err)
+	}
+	defer rows.Close()
+
+	types := make(map[string]string, 2)
+	for rows.Next() {
+		var name string
+		var colType string
+		if err := rows.Scan(&name, &colType); err != nil {
+			return fmt.Errorf("scan chain aggregate schema: %w", err)
+		}
+		types[name] = colType
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate chain aggregate schema: %w", err)
+	}
+
+	if len(types) == 0 {
+		return nil
+	}
+	if types["volume_state"] == "AggregateFunction(sum, UInt64)" && types["transactions_state"] == "AggregateFunction(sum, UInt64)" {
+		return nil
+	}
+
+	view := "us_options_chain_" + suffix
+	mv := "us_options_chain_" + suffix + "_mv"
+	if err := conn.Exec(ctx, "DROP VIEW IF EXISTS "+view); err != nil {
+		return fmt.Errorf("drop incompatible chain view: %w", err)
+	}
+	if err := conn.Exec(ctx, "DROP TABLE IF EXISTS "+mv); err != nil {
+		return fmt.Errorf("drop incompatible chain mv: %w", err)
+	}
+	if err := conn.Exec(ctx, "DROP TABLE IF EXISTS "+agg+" SETTINGS max_table_size_to_drop=0, max_partition_size_to_drop=0"); err != nil {
+		return fmt.Errorf("drop incompatible chain agg: %w", err)
+	}
+	log.Printf("[us-options-chain] dropped incompatible %s schema to apply latest aggregate types", suffix)
+	return nil
+}
+
 // RebuildOptionChainCaches repopulates all option chain cache aggregates from
 // the current 1m base table.
 func RebuildOptionChainCaches(ctx context.Context, conn driver.Conn) error {
-	intervals := make([]KlineInterval, 0, len(KlineIntervals)+1)
-	intervals = append(intervals, KlineInterval{Suffix: "1m", Seconds: 60})
-	intervals = append(intervals, KlineIntervals...)
-
-	for _, iv := range intervals {
+	for _, iv := range DefaultChainCacheIntervals {
 		agg := "us_options_chain_" + iv.Suffix + "_agg"
 		if err := conn.Exec(ctx, `TRUNCATE TABLE `+agg); err != nil {
 			return fmt.Errorf("truncate us option chain aggregate [%s]: %w", iv.Suffix, err)
@@ -84,8 +126,8 @@ func optionChainCacheDDL(iv KlineInterval) []string {
     vega_state AggregateFunction(argMax, Float32, DateTime('UTC')),
     theta_state AggregateFunction(argMax, Float32, DateTime('UTC')),
     rho_state AggregateFunction(argMax, Float32, DateTime('UTC')),
-    volume_state AggregateFunction(sum, UInt32),
-    transactions_state AggregateFunction(sum, UInt32)
+    volume_state AggregateFunction(sum, UInt64),
+    transactions_state AggregateFunction(sum, UInt64)
 )
 ENGINE = AggregatingMergeTree()
 PARTITION BY toYYYYMM(ts)
@@ -100,19 +142,19 @@ AS SELECT
     ts,
     underlying,
     symbol,
-    argMaxState(option_type, timestamp)        AS option_type_state,
-    argMaxState(expiration, timestamp)         AS expiration_state,
-    argMaxState(strike, timestamp)             AS strike_state,
-    argMaxState(close, timestamp)              AS close_state,
-    argMaxState(underlying_close, timestamp)   AS underlying_close_state,
-    argMaxState(implied_volatility, timestamp) AS implied_volatility_state,
-    argMaxState(delta, timestamp)              AS delta_state,
-    argMaxState(gamma, timestamp)              AS gamma_state,
-    argMaxState(vega, timestamp)               AS vega_state,
-    argMaxState(theta, timestamp)              AS theta_state,
-    argMaxState(rho, timestamp)                AS rho_state,
-    sumState(volume)                           AS volume_state,
-    sumState(transactions)                     AS transactions_state
+        argMaxState(option_type, last_ts)          AS option_type_state,
+        argMaxState(expiration, last_ts)           AS expiration_state,
+        argMaxState(strike, last_ts)               AS strike_state,
+        argMaxState(close, last_ts)                AS close_state,
+        argMaxState(underlying_close, last_ts)     AS underlying_close_state,
+        argMaxState(implied_volatility, last_ts)   AS implied_volatility_state,
+        argMaxState(delta, last_ts)                AS delta_state,
+        argMaxState(gamma, last_ts)                AS gamma_state,
+        argMaxState(vega, last_ts)                 AS vega_state,
+        argMaxState(theta, last_ts)                AS theta_state,
+        argMaxState(rho, last_ts)                  AS rho_state,
+    sumState(toUInt64(volume))                 AS volume_state,
+    sumState(toUInt64(transactions))           AS transactions_state
 FROM
 (
     SELECT
@@ -130,9 +172,9 @@ FROM
         argMax(vega, timestamp)               AS vega,
         argMax(theta, timestamp)              AS theta,
         argMax(rho, timestamp)                AS rho,
-        sum(volume)                           AS volume,
-        sum(transactions)                     AS transactions,
-        max(timestamp)                        AS timestamp
+        sum(toUInt64(volume))                 AS volume,
+        sum(toUInt64(transactions))           AS transactions,
+        max(timestamp)                        AS last_ts
     FROM us_options_bar_1m
     WHERE is_regular_session = 1
     GROUP BY ts, symbol, underlying, option_type, expiration, strike
@@ -221,19 +263,19 @@ SELECT
     ts,
     underlying,
     symbol,
-    argMaxState(option_type, timestamp)        AS option_type_state,
-    argMaxState(expiration, timestamp)         AS expiration_state,
-    argMaxState(strike, timestamp)             AS strike_state,
-    argMaxState(close, timestamp)              AS close_state,
-    argMaxState(underlying_close, timestamp)   AS underlying_close_state,
-    argMaxState(implied_volatility, timestamp) AS implied_volatility_state,
-    argMaxState(delta, timestamp)              AS delta_state,
-    argMaxState(gamma, timestamp)              AS gamma_state,
-    argMaxState(vega, timestamp)               AS vega_state,
-    argMaxState(theta, timestamp)              AS theta_state,
-    argMaxState(rho, timestamp)                AS rho_state,
-    sumState(volume)                           AS volume_state,
-    sumState(transactions)                     AS transactions_state
+        argMaxState(option_type, last_ts)          AS option_type_state,
+        argMaxState(expiration, last_ts)           AS expiration_state,
+        argMaxState(strike, last_ts)               AS strike_state,
+        argMaxState(close, last_ts)                AS close_state,
+        argMaxState(underlying_close, last_ts)     AS underlying_close_state,
+        argMaxState(implied_volatility, last_ts)   AS implied_volatility_state,
+        argMaxState(delta, last_ts)                AS delta_state,
+        argMaxState(gamma, last_ts)                AS gamma_state,
+        argMaxState(vega, last_ts)                 AS vega_state,
+        argMaxState(theta, last_ts)                AS theta_state,
+        argMaxState(rho, last_ts)                  AS rho_state,
+    sumState(toUInt64(volume))                 AS volume_state,
+    sumState(toUInt64(transactions))           AS transactions_state
 FROM
 (
     SELECT
@@ -251,9 +293,9 @@ FROM
         argMax(vega, timestamp)               AS vega,
         argMax(theta, timestamp)              AS theta,
         argMax(rho, timestamp)                AS rho,
-        sum(volume)                           AS volume,
-        sum(transactions)                     AS transactions,
-        max(timestamp)                        AS timestamp
+        sum(toUInt64(volume))                 AS volume,
+        sum(toUInt64(transactions))           AS transactions,
+        max(timestamp)                        AS last_ts
     FROM us_options_bar_1m
     WHERE is_regular_session = 1
     GROUP BY ts, symbol, underlying, option_type, expiration, strike

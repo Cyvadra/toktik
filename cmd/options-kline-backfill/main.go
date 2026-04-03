@@ -11,13 +11,15 @@ import (
 
 	appCli "github.com/Cyvadra/toktik/internal/cli"
 	"github.com/Cyvadra/toktik/internal/cryptooptions"
+	"github.com/Cyvadra/toktik/internal/usmarket"
 )
 
 func main() {
 	dsn := flag.String("clickhouse-dsn", appCli.DefaultDSN, "ClickHouse DSN")
+	market := flag.String("market", "crypto", "Market: crypto | us")
 	from := flag.String("from", "", "Optional start date/time (YYYY-MM-DD or RFC3339), inclusive")
 	to := flag.String("to", "", "Optional end date/time (YYYY-MM-DD or RFC3339), exclusive for RFC3339, next-day exclusive for YYYY-MM-DD")
-	baseAsset := flag.String("base-asset", "", "Optional base asset filter, e.g. BTC")
+	baseAsset := flag.String("base-asset", "", "Optional asset filter, e.g. BTC (crypto base_asset / US underlying+symbol)")
 	intervals := flag.String("intervals", strings.Join(cryptooptions.DefaultKlineWindows, ","), "Comma-separated intervals to generate")
 	replace := flag.Bool("replace", false, "Replace existing rows in target aggregation scope before backfill")
 	flag.Parse()
@@ -40,24 +42,54 @@ func main() {
 	}
 
 	ctx := context.Background()
-	conn, err := appCli.ConnectClickHouse(ctx, *dsn, &appCli.SchemaInit{
-		Kline:      true,
-		SpotKline:  true,
-		ChainCache: true,
-	})
-	if err != nil {
-		log.Fatalf("%v", err)
-	}
+	switch strings.ToLower(strings.TrimSpace(*market)) {
+	case "crypto":
+		conn, err := appCli.ConnectClickHouse(ctx, *dsn, &appCli.SchemaInit{
+			Kline:      true,
+			SpotKline:  true,
+			ChainCache: true,
+		})
+		if err != nil {
+			log.Fatalf("%v", err)
+		}
 
-	opts := cryptooptions.KlineBackfillOptions{
-		Intervals: ivList,
-		From:      fromTime,
-		To:        toTime,
-		BaseAsset: strings.TrimSpace(*baseAsset),
-		Replace:   *replace,
-	}
-	if err := cryptooptions.BackfillKlineWindows(ctx, conn, opts); err != nil {
-		log.Fatalf("backfill kline windows: %v", err)
+		opts := cryptooptions.KlineBackfillOptions{
+			Intervals: ivList,
+			From:      fromTime,
+			To:        toTime,
+			BaseAsset: strings.TrimSpace(*baseAsset),
+			Replace:   *replace,
+		}
+		if err := cryptooptions.BackfillKlineWindows(ctx, conn, opts); err != nil {
+			log.Fatalf("backfill crypto kline windows: %v", err)
+		}
+	case "us":
+		conn, err := usmarket.ConnectClickHouse(ctx, *dsn)
+		if err != nil {
+			log.Fatalf("connect ClickHouse: %v", err)
+		}
+		if err := usmarket.InitOptionKlineSchema(ctx, conn); err != nil {
+			log.Fatalf("init us option kline schema: %v", err)
+		}
+		if err := usmarket.InitStockKlineSchema(ctx, conn); err != nil {
+			log.Fatalf("init us stock kline schema: %v", err)
+		}
+		if err := usmarket.InitOptionChainCacheSchema(ctx, conn); err != nil {
+			log.Fatalf("init us chain cache schema: %v", err)
+		}
+
+		opts := usmarket.KlineBackfillOptions{
+			Intervals: ivList,
+			From:      fromTime,
+			To:        toTime,
+			Asset:     strings.TrimSpace(*baseAsset),
+			Replace:   *replace,
+		}
+		if err := usmarket.BackfillKlineWindows(ctx, conn, opts); err != nil {
+			log.Fatalf("backfill us kline windows: %v", err)
+		}
+	default:
+		log.Fatalf("unsupported --market %q (expected crypto|us)", *market)
 	}
 
 	fmt.Fprintln(os.Stdout, "K-line backfill completed")

@@ -233,16 +233,18 @@ bin/crypto-options-missing-days \
 Manually generate precomputed K-line windows from 1-minute base tables:
 
 ```bash
-bin/crypto-options-kline-backfill \
+bin/options-kline-backfill \
   --clickhouse-dsn "clickhouse://localhost:9000/default" \
-  --intervals "1m,5m,15m,30m,1h,2h,3h,4h,6h,8h,12h,1d" \
+  --market crypto \
+  --intervals "1d" \
   --base-asset BTC \
   --from 2025-01-01 \
   --to 2025-03-01
 ```
 
 Notes:
-- `1m` is the base table and will be skipped during backfill.
+- Command renamed to `options-kline-backfill`, supporting `--market crypto|us`.
+- Crypto chain cache is daily-only (`1d`) and US kline/chain backfill currently only supports `1d`.
 - Without `--replace`, intervals with existing rows in the selected scope are skipped to avoid duplicate aggregation states.
 - Add `--replace` to rebuild selected intervals in-range.
 - After re-importing spot `1m` bars, use `--replace` if you need to overwrite existing higher spot windows from the new base data.

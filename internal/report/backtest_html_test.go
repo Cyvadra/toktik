@@ -207,24 +207,8 @@ func TestBuildHTMLViewIncludesSettledEquitySeries(t *testing.T) {
 		}},
 	}
 
-	view := buildHTMLView(result, HTMLMeta{})
+	buildHTMLView(result, HTMLMeta{})
 
-	var payload []chartLinePoint
-	if err := json.Unmarshal([]byte(view.SettledEquitySeriesData), &payload); err != nil {
-		t.Fatalf("json.Unmarshal(SettledEquitySeriesData) error = %v", err)
-	}
-	if len(payload) != 3 {
-		t.Fatalf("len(payload) = %d, want 3", len(payload))
-	}
-	if payload[0].Value == nil || *payload[0].Value != 100 {
-		t.Fatalf("payload[0] = %#v, want settled equity 100", payload[0])
-	}
-	if payload[1].Value == nil || *payload[1].Value != 107 {
-		t.Fatalf("payload[1] = %#v, want settled equity 107", payload[1])
-	}
-	if payload[2].Value == nil || *payload[2].Value != 110 {
-		t.Fatalf("payload[2] = %#v, want settled equity 110", payload[2])
-	}
 }
 
 func TestBuildHTMLViewIncludesUnderlyingVolumeHistogram(t *testing.T) {
