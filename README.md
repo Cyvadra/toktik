@@ -34,7 +34,7 @@ make build-convert
 make build-import
 make build-kline-backfill
 make build-kline-migrate-utc
-make build-backtest-btc-portfolio
+make build-backtest-portfolio
 make build-us-market-import
 
 # Cross-compile
@@ -154,10 +154,12 @@ bin/backtest-example \
   --capital 1.0
 ```
 
-**BTC portfolio backtest strategy:**
+**Crypto option-contract portfolio backtest:**
 ```bash
-bin/backtest-btc-portfolio \
+bin/backtest-portfolio \
   --clickhouse-dsn "clickhouse://localhost:9000/default" \
+  --market crypto \
+  --instrument contract \
   --asset BTC \
   --interval 1h \
   --from 2025-01-01 \
@@ -174,13 +176,37 @@ bin/backtest-btc-portfolio \
 
 `--capital` is interpreted per strategy profile:
 - Regular-only strategies use `USD`.
-- Options-led strategies, or strategies whose spot leg is only a signal-sized sidecar, use `BTC`.
+- Crypto option-contract strategies, or strategies whose spot leg is only a signal-sized sidecar, use the underlying asset unit such as `BTC`.
+- US option-contract strategies use `USD`.
 - Multi-strategy runs emit one overview HTML plus one detail page per strategy so mixed denomination runs remain readable.
 
-**BTC forum-style short put strategy:**
+`--instrument` controls which strategy class is allowed:
+- `auto` infers from the resolved strategy set.
+- `spot` only allows regular stock/spot strategies.
+- `contract` only allows option-contract strategies.
+- `mixed` allows both in one run.
+
+**US stock spot backtest:**
 ```bash
-bin/backtest-btc-portfolio \
+bin/backtest-portfolio \
   --clickhouse-dsn "clickhouse://localhost:9000/default" \
+  --market us \
+  --instrument spot \
+  --asset AAPL \
+  --interval 1h \
+  --from 2025-01-01 \
+  --to 2025-03-01 \
+  --strategy golden-cross \
+  --capital 100000 \
+  --html-output report.html
+```
+
+**Crypto forum-style short put strategy:**
+```bash
+bin/backtest-portfolio \
+  --clickhouse-dsn "clickhouse://localhost:9000/default" \
+  --market crypto \
+  --instrument contract \
   --asset BTC \
   --interval 1h \
   --from 2025-01-01 \
@@ -344,7 +370,7 @@ Order types: `Buy`, `Sell`, `BuyTWAP`, `ClosePosition`, plus direct `Broker` acc
 ```
 cmd/
   api-server/             REST API server
-  backtest-btc-portfolio/ BTC spot/options portfolio backtester
+  backtest-portfolio/     Crypto/US spot and option-contract portfolio backtester
   backtest-example/       Simple strategy examples
   crypto-options-convert/ CSV.zst → Parquet converter
   crypto-options-import/  Parquet → ClickHouse importer

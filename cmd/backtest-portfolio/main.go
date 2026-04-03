@@ -23,14 +23,40 @@ import (
 
 const defaultBacktestHTMLDir = "reports/backtests"
 
+type marketSpec struct {
+	name           string
+	underlyingFeed string
+}
+
+type instrumentScope string
+
+type capitalProfile struct {
+	mode string
+	unit string
+	note string
+}
+
+const (
+	marketCrypto         = "crypto"
+	marketUS             = "us"
+	cryptoUnderlyingFeed = "crypto-underlying"
+	usUnderlyingFeed     = "us-underlying"
+
+	instrumentAuto     instrumentScope = "auto"
+	instrumentSpot     instrumentScope = "spot"
+	instrumentContract instrumentScope = "contract"
+	instrumentMixed    instrumentScope = "mixed"
+)
+
 func main() {
 	dsn := flag.String("clickhouse-dsn", appCli.DefaultDSN, "ClickHouse DSN")
-	market := flag.String("market", "crypto", "Primary market: crypto | us")
-	baseAsset := flag.String("asset", "BTC", "Underlying base asset (e.g. BTC)")
+	market := flag.String("market", marketCrypto, "Backtest market: crypto | us")
+	instrument := flag.String("instrument", string(instrumentAuto), "Trading scope: auto | spot | contract | mixed (contract currently means option-contract strategies)")
+	baseAsset := flag.String("asset", "BTC", "Underlying symbol or base asset (e.g. BTC, ETH, AAPL)")
 	interval := flag.String("interval", "1h", "Bar interval for the strategy (e.g. 1h)")
 	fromStr := flag.String("from", "", "Start date YYYY-MM-DD (required)")
 	toStr := flag.String("to", "", "End date YYYY-MM-DD (required)")
-	capital := flag.Float64("capital", 0, "Initial capital. Regular-only strategies interpret it as USD; options-led strategies interpret it as BTC. (required)")
+	capital := flag.Float64("capital", 0, "Initial capital. Spot-only strategies use USD; crypto option-contract strategies use the underlying asset unit; US option-contract strategies use USD. (required)")
 	strategyHelp := fmt.Sprintf(
 		"Strategy selector: name, alias, group, or comma list. Available names: %s. Group aliases: both=spread, all=all",
 		strings.Join(strategies.Available(), " | "),
@@ -157,10 +183,24 @@ func main() {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
+	tradeScope, err := parseInstrumentScope(*instrument)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+	underlyingSymbol := strings.ToUpper(strings.TrimSpace(*baseAsset))
+	if underlyingSymbol == "" {
+		fmt.Fprintln(os.Stderr, "error: --asset must not be empty")
+		os.Exit(1)
+	}
 
-	resolved, err := strategies.ResolveDetailed(*stratName, strategyCfg, *baseAsset)
+	resolved, err := strategies.ResolveDetailed(*stratName, strategyCfg, underlyingSymbol)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "strategy resolve failed: %v\n", err)
+		os.Exit(1)
+	}
+	if err := validateInstrumentScope(tradeScope, resolved); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
 
@@ -188,13 +228,13 @@ func main() {
 	}()
 
 	var chainProvider backtest.OptionsChainProvider
-	if strategiesNeedOptions(resolved) {
+	if shouldLoadOptionChain(tradeScope, resolved) {
 		log.Printf("Loading options chain for %s [%s/%s, %s → %s]...",
-			*baseAsset, primaryMarket, *interval, from.Format("2006-01-02"), to.Format("2006-01-02"))
-		if primaryMarket == marketUS {
-			chainProvider, err = datafeed.NewUSOptionsChainProvider(ctx, conn, *baseAsset, *interval, from, to)
+			underlyingSymbol, primaryMarket.name, *interval, from.Format("2006-01-02"), to.Format("2006-01-02"))
+		if primaryMarket.name == marketUS {
+			chainProvider, err = datafeed.NewUSOptionsChainProvider(ctx, conn, underlyingSymbol, *interval, from, to)
 		} else {
-			chainProvider, err = datafeed.NewCryptoOptionsChainProvider(ctx, conn, *baseAsset, *interval, from, to)
+			chainProvider, err = datafeed.NewCryptoOptionsChainProvider(ctx, conn, underlyingSymbol, *interval, from, to)
 		}
 		if err != nil {
 			log.Fatalf("Failed to load options chain: %v", err)
@@ -204,15 +244,16 @@ func main() {
 	results := make([]*backtest.Result, 0, len(resolved))
 	overviewItems := make([]report.OverviewItem, 0, len(resolved))
 	htmlMeta := report.HTMLMeta{
-		Asset:       *baseAsset,
+		Asset:       underlyingSymbol,
 		Interval:    *interval,
 		GeneratedAt: time.Now(),
 	}
 
 	for index, item := range resolved {
+		capitalProfile := resolveCapitalProfile(primaryMarket, item.Profile, underlyingSymbol)
 		cfg := backtest.Config{
 			InitialCapital:  *capital,
-			AccountUnit:     item.Runtime.CapitalUnit,
+			AccountUnit:     capitalProfile.unit,
 			CommissionModel: commissionModel,
 			CommissionValue: *commValue,
 			SlippagePct:     *slippagePct,
@@ -221,16 +262,16 @@ func main() {
 			TriggerMode:     backtest.TriggerPriceCanonical,
 		}
 
-		engine := newEngine(cfg, conn, factorStore, primaryMarket, chainProvider, item.Profile.UsesOptions)
+		engine := newEngine(cfg, conn, factorStore, chainProvider, item.Profile.UsesOptions)
 
-		log.Printf("--- Running strategy: %s [%s, %s] ---", item.Strategy.Name(), item.Runtime.ProfileLabel, strings.ToUpper(item.Runtime.CapitalUnit))
-		result, runErr := engine.Run(ctx, primaryMarket, *baseAsset, *interval, from, to, item.Strategy, nil)
+		log.Printf("--- Running strategy: %s [%s, %s] ---", item.Strategy.Name(), item.Runtime.ProfileLabel, strings.ToUpper(capitalProfile.unit))
+		result, runErr := engine.Run(ctx, primaryMarket.underlyingFeed, underlyingSymbol, *interval, from, to, item.Strategy, nil)
 		if runErr != nil {
 			log.Fatalf("Backtest failed [%s]: %v", item.Strategy.Name(), runErr)
 		}
-		result.CapitalMode = strings.ToUpper(item.Runtime.CapitalUnit)
+		result.CapitalMode = strings.ToUpper(capitalProfile.unit)
 		result.CapitalProfile = item.Runtime.ProfileLabel
-		result.CapitalNote = item.Runtime.CapitalExplanation
+		result.CapitalNote = capitalProfile.note
 		results = append(results, result)
 
 		fmt.Println()
@@ -250,7 +291,7 @@ func main() {
 			}
 		}
 
-		tradeCSVPath := resolveTradeCSVOutputPath(*tradeCSVOutput, result.StrategyName, *baseAsset, *interval, from, to, index, len(resolved))
+		tradeCSVPath := resolveTradeCSVOutputPath(*tradeCSVOutput, result.StrategyName, underlyingSymbol, *interval, from, to, index, len(resolved))
 		if prepErr := ensureParentDir(tradeCSVPath); prepErr != nil {
 			log.Printf("Warning: failed to prepare trade CSV directory for %s: %v", tradeCSVPath, prepErr)
 		} else if writeErr := result.ExportTradesCSV(tradeCSVPath); writeErr != nil {
@@ -259,7 +300,7 @@ func main() {
 			log.Printf("Trade CSV written to %s", tradeCSVPath)
 		}
 
-		htmlPath := resolveHTMLOutputPath(*outputHTML, result.StrategyName, *baseAsset, *interval, from, to, index, len(resolved))
+		htmlPath := resolveHTMLOutputPath(*outputHTML, result.StrategyName, underlyingSymbol, *interval, from, to, index, len(resolved))
 		if writeErr := report.WriteBacktestHTML(htmlPath, result, htmlMeta); writeErr != nil {
 			log.Printf("Warning: failed to write HTML report to %s: %v", htmlPath, writeErr)
 		} else {
@@ -272,7 +313,7 @@ func main() {
 		return
 	}
 
-	overviewPath := resolveOverviewHTMLOutputPath(*outputHTML, *stratName, *baseAsset, *interval, from, to)
+	overviewPath := resolveOverviewHTMLOutputPath(*outputHTML, *stratName, underlyingSymbol, *interval, from, to)
 	if writeErr := report.WriteBacktestOverviewHTML(overviewPath, overviewItems, htmlMeta); writeErr != nil {
 		log.Printf("Warning: failed to write overview HTML report to %s: %v", overviewPath, writeErr)
 	} else {
@@ -280,15 +321,10 @@ func main() {
 	}
 }
 
-const (
-	marketCrypto = "crypto-underlying"
-	marketUS     = "us-underlying"
-)
-
-func newEngine(cfg backtest.Config, conn driver.Conn, factorStore *feeds.Store, primaryMarket string, chainProvider backtest.OptionsChainProvider, usesOptions bool) *backtest.Engine {
+func newEngine(cfg backtest.Config, conn driver.Conn, factorStore *feeds.Store, chainProvider backtest.OptionsChainProvider, usesOptions bool) *backtest.Engine {
 	engine := backtest.NewEngine(cfg)
-	engine.RegisterDataFeed("crypto-underlying", datafeed.NewCryptoUnderlyingDataFeed(conn))
-	engine.RegisterDataFeed("us-underlying", datafeed.NewUSUnderlyingDataFeed(conn))
+	engine.RegisterDataFeed(cryptoUnderlyingFeed, datafeed.NewCryptoUnderlyingDataFeed(conn))
+	engine.RegisterDataFeed(usUnderlyingFeed, datafeed.NewUSUnderlyingDataFeed(conn))
 	engine.RegisterFactorFeed("dvol", datafeed.NewFeedFactorBridge("dvol", factorStore))
 	if usesOptions && chainProvider != nil {
 		engine.SetOptionsChainProvider(chainProvider)
@@ -296,14 +332,91 @@ func newEngine(cfg backtest.Config, conn driver.Conn, factorStore *feeds.Store, 
 	return engine
 }
 
-func parsePrimaryMarket(raw string) (string, error) {
+func parsePrimaryMarket(raw string) (marketSpec, error) {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
-	case "", "crypto", "crypto-underlying":
-		return marketCrypto, nil
-	case "us", "us-underlying":
-		return marketUS, nil
+	case "", marketCrypto, cryptoUnderlyingFeed:
+		return marketSpec{name: marketCrypto, underlyingFeed: cryptoUnderlyingFeed}, nil
+	case marketUS, usUnderlyingFeed:
+		return marketSpec{name: marketUS, underlyingFeed: usUnderlyingFeed}, nil
 	default:
-		return "", fmt.Errorf("--market %q is invalid; want crypto|us", raw)
+		return marketSpec{}, fmt.Errorf("--market %q is invalid; want crypto|us", raw)
+	}
+}
+
+func parseInstrumentScope(raw string) (instrumentScope, error) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "", string(instrumentAuto):
+		return instrumentAuto, nil
+	case string(instrumentSpot), "underlying":
+		return instrumentSpot, nil
+	case string(instrumentContract), "contracts", "option", "options":
+		return instrumentContract, nil
+	case string(instrumentMixed), "both":
+		return instrumentMixed, nil
+	default:
+		return "", fmt.Errorf("--instrument %q is invalid; want auto|spot|contract|mixed", raw)
+	}
+}
+
+func validateInstrumentScope(scope instrumentScope, items []strategies.ResolvedStrategy) error {
+	switch scope {
+	case instrumentSpot:
+		if strategiesNeedOptions(items) {
+			return fmt.Errorf("--instrument=spot does not support option-contract strategies")
+		}
+	case instrumentContract:
+		for _, item := range items {
+			if item.Profile.UsesOptions {
+				continue
+			}
+			name := strings.TrimSpace(item.CanonicalName)
+			if name == "" {
+				name = "selected strategy"
+			}
+			return fmt.Errorf("--instrument=contract requires option-contract strategies only; %s uses regular underlying trades", name)
+		}
+	}
+	return nil
+}
+
+func shouldLoadOptionChain(scope instrumentScope, items []strategies.ResolvedStrategy) bool {
+	if scope == instrumentSpot {
+		return false
+	}
+	return strategiesNeedOptions(items)
+}
+
+func resolveCapitalProfile(market marketSpec, profile strategies.StrategyProfile, underlyingSymbol string) capitalProfile {
+	underlyingSymbol = strings.ToUpper(strings.TrimSpace(underlyingSymbol))
+	if underlyingSymbol == "" {
+		underlyingSymbol = "BTC"
+	}
+	if !profile.UsesOptions {
+		return capitalProfile{
+			mode: "usd",
+			unit: "USD",
+			note: "该策略不包含合约逻辑，-capital 按 USD 计价。",
+		}
+	}
+	if market.name == marketUS {
+		note := "该策略包含期权合约逻辑；在美股市场，-capital 按 USD 计价。"
+		if profile.UsesSignalOnlyRegularTrades() {
+			note = "该策略包含期权合约逻辑，且现货腿仅用于信号跟踪；在美股市场，-capital 按 USD 计价。"
+		}
+		return capitalProfile{
+			mode: "usd",
+			unit: "USD",
+			note: note,
+		}
+	}
+	note := fmt.Sprintf("该策略包含期权合约逻辑；在加密市场，-capital 按 %s 计价。", underlyingSymbol)
+	if profile.UsesSignalOnlyRegularTrades() {
+		note = fmt.Sprintf("该策略包含期权合约逻辑，且现货腿仅用于信号跟踪；在加密市场，-capital 按 %s 计价。", underlyingSymbol)
+	}
+	return capitalProfile{
+		mode: "base_asset",
+		unit: underlyingSymbol,
+		note: note,
 	}
 }
 
