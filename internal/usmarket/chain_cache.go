@@ -140,25 +140,6 @@ FROM
 GROUP BY ts, underlying, symbol`, mv, agg, timeFunc)
 
 	createView := fmt.Sprintf(`CREATE OR REPLACE VIEW %s AS
-WITH arraySort(
-    x -> tupleElement(x, 1),
-    groupArray(tuple(
-        symbol,
-        argMaxMerge(option_type_state),
-        argMaxMerge(expiration_state),
-        argMaxMerge(strike_state),
-        argMaxMerge(close_state),
-        argMaxMerge(underlying_close_state),
-        argMaxMerge(implied_volatility_state),
-        argMaxMerge(delta_state),
-        argMaxMerge(gamma_state),
-        argMaxMerge(vega_state),
-        argMaxMerge(theta_state),
-        argMaxMerge(rho_state),
-        sumMerge(volume_state),
-        sumMerge(transactions_state)
-    ))
-) AS contracts
 SELECT
     ts AS timestamp,
     underlying,
@@ -176,8 +157,54 @@ SELECT
     arrayMap(x -> tupleElement(x, 12), contracts) AS rhos,
     arrayMap(x -> tupleElement(x, 13), contracts) AS volumes,
     arrayMap(x -> tupleElement(x, 14), contracts) AS transactions
-FROM %s
-GROUP BY ts, underlying`, view, agg)
+FROM
+(
+    SELECT
+        ts,
+        underlying,
+        arraySort(
+            x -> tupleElement(x, 1),
+            groupArray(tuple(
+                symbol,
+                option_type,
+                expiration,
+                strike,
+                close,
+                underlying_close,
+                implied_volatility,
+                delta,
+                gamma,
+                vega,
+                theta,
+                rho,
+                volume,
+                transactions
+            ))
+        ) AS contracts
+    FROM
+    (
+        SELECT
+            ts,
+            underlying,
+            symbol,
+            argMaxMerge(option_type_state)        AS option_type,
+            argMaxMerge(expiration_state)         AS expiration,
+            argMaxMerge(strike_state)             AS strike,
+            argMaxMerge(close_state)              AS close,
+            argMaxMerge(underlying_close_state)   AS underlying_close,
+            argMaxMerge(implied_volatility_state) AS implied_volatility,
+            argMaxMerge(delta_state)              AS delta,
+            argMaxMerge(gamma_state)              AS gamma,
+            argMaxMerge(vega_state)               AS vega,
+            argMaxMerge(theta_state)              AS theta,
+            argMaxMerge(rho_state)                AS rho,
+            sumMerge(volume_state)                AS volume,
+            sumMerge(transactions_state)          AS transactions
+        FROM %s
+        GROUP BY ts, underlying, symbol
+    )
+    GROUP BY ts, underlying
+)`, view, agg)
 
 	return []string{createAgg, dropMV, createMV, createView}
 }

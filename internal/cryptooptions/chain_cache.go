@@ -78,23 +78,25 @@ SELECT
     ts,
     base_asset,
     symbol_id,
-    argMinState(delta, timestamp)         AS delta_state,
-    argMinState(gamma, timestamp)         AS gamma_state,
-    argMinState(vega, timestamp)          AS vega_state,
-    argMinState(theta, timestamp)         AS theta_state,
-    argMinState(rho, timestamp)           AS rho_state,
-    argMaxState(bid_close, timestamp)     AS bid_close_state,
-    argMaxState(ask_close, timestamp)     AS ask_close_state,
-    argMaxState(mark_close, timestamp)    AS mark_close_state,
-    argMaxState(mark_iv_close, timestamp) AS mark_iv_close_state,
+    argMinState(delta, first_ts)          AS delta_state,
+    argMinState(gamma, first_ts)          AS gamma_state,
+    argMinState(vega, first_ts)           AS vega_state,
+    argMinState(theta, first_ts)          AS theta_state,
+    argMinState(rho, first_ts)            AS rho_state,
+    argMaxState(bid_close, last_ts)       AS bid_close_state,
+    argMaxState(ask_close, last_ts)       AS ask_close_state,
+    argMaxState(mark_close, last_ts)      AS mark_close_state,
+    argMaxState(mark_iv_close, last_ts)   AS mark_iv_close_state,
     sumState(toUInt64(tick_count))        AS tick_count_state,
-    argMaxState(open_interest, timestamp) AS open_interest_state
+    argMaxState(open_interest, last_ts)   AS open_interest_state
 FROM
 (
     SELECT
         %s AS ts,
         symbol_id,
         base_asset,
+        min(timestamp)                    AS first_ts,
+        max(timestamp)                    AS last_ts,
         argMin(delta, timestamp)         AS delta,
         argMin(gamma, timestamp)         AS gamma,
         argMin(vega, timestamp)          AS vega,
@@ -112,23 +114,6 @@ FROM
 GROUP BY ts, base_asset, symbol_id`, mv, agg, iv.TimeFunc)
 
 	createView := fmt.Sprintf(`CREATE OR REPLACE VIEW %s AS
-WITH arraySort(
-    x -> tupleElement(x, 1),
-    groupArray(tuple(
-        symbol_id,
-        argMinMerge(delta_state),
-        argMinMerge(gamma_state),
-        argMinMerge(vega_state),
-        argMinMerge(theta_state),
-        argMinMerge(rho_state),
-        argMaxMerge(bid_close_state),
-        argMaxMerge(ask_close_state),
-        argMaxMerge(mark_close_state),
-        argMaxMerge(mark_iv_close_state),
-        sumMerge(tick_count_state),
-        argMaxMerge(open_interest_state)
-    ))
-) AS contracts
 SELECT
     ts AS timestamp,
     base_asset,
@@ -144,8 +129,50 @@ SELECT
     arrayMap(x -> tupleElement(x, 10), contracts) AS mark_ivs,
     arrayMap(x -> tupleElement(x, 11), contracts) AS volumes,
     arrayMap(x -> tupleElement(x, 12), contracts) AS open_interests
-FROM %s
-GROUP BY ts, base_asset`, view, agg)
+FROM
+(
+    SELECT
+        ts,
+        base_asset,
+        arraySort(
+            x -> tupleElement(x, 1),
+            groupArray(tuple(
+                symbol_id,
+                delta,
+                gamma,
+                vega,
+                theta,
+                rho,
+                bid_close,
+                ask_close,
+                mark_close,
+                mark_iv_close,
+                tick_count,
+                open_interest
+            ))
+        ) AS contracts
+    FROM
+    (
+        SELECT
+            ts,
+            base_asset,
+            symbol_id,
+            argMinMerge(delta_state)         AS delta,
+            argMinMerge(gamma_state)         AS gamma,
+            argMinMerge(vega_state)          AS vega,
+            argMinMerge(theta_state)         AS theta,
+            argMinMerge(rho_state)           AS rho,
+            argMaxMerge(bid_close_state)     AS bid_close,
+            argMaxMerge(ask_close_state)     AS ask_close,
+            argMaxMerge(mark_close_state)    AS mark_close,
+            argMaxMerge(mark_iv_close_state) AS mark_iv_close,
+            sumMerge(tick_count_state)       AS tick_count,
+            argMaxMerge(open_interest_state) AS open_interest
+        FROM %s
+        GROUP BY ts, base_asset, symbol_id
+    )
+    GROUP BY ts, base_asset
+)`, view, agg)
 
 	return []string{createAgg, createMV, createView}
 }
