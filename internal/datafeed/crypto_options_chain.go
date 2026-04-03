@@ -23,6 +23,8 @@ type CryptoOptionsChainProvider struct {
 	resolution time.Duration
 }
 
+const cryptoDailyChainInterval = "1d"
+
 // symbolMetaRecord holds the immutable metadata fields for a single option contract.
 type symbolMetaRecord struct {
 	symbol     string
@@ -75,6 +77,15 @@ func NewCryptoOptionsChainProvider(ctx context.Context, conn driver.Conn, baseAs
 		return nil, err
 	}
 
+	cacheInterval := resolveCryptoChainCacheInterval(interval)
+	cacheResolution := resolution
+	if cacheInterval != "" {
+		cacheResolution, err = parseInterval(cacheInterval)
+		if err != nil {
+			return nil, fmt.Errorf("parse chain cache interval %s: %w", cacheInterval, err)
+		}
+	}
+
 	// Pre-load symbol metadata separately so the main query can avoid the
 	// expensive LEFT JOIN … FINAL pattern (see loadSymbolMeta).
 	metaMap, err := loadSymbolMeta(ctx, conn, baseAsset)
@@ -96,9 +107,7 @@ func NewCryptoOptionsChainProvider(ctx context.Context, conn driver.Conn, baseAs
 	}
 	if spotSourceSQL != "" {
 		joinClauseBars = fmt.Sprintf("LEFT JOIN (%s) AS u\n    ON u.symbol = b.base_asset AND u.timestamp = b.timestamp", spotSourceSQL)
-		joinClauseCache = fmt.Sprintf("LEFT JOIN (%s) AS u\n    ON u.symbol = c.base_asset AND u.timestamp = c.timestamp", spotSourceSQL)
 		underlyingCloseExprBars = "ifNull(u.close, toFloat32(0))"
-		underlyingCloseExprCache = "ifNull(u.close, toFloat32(0))"
 		if degraded {
 			log.Printf("[compat] options chain for %s/%s is using slower spot aggregation fallback", baseAsset, interval)
 		}
@@ -110,17 +119,35 @@ func NewCryptoOptionsChainProvider(ctx context.Context, conn driver.Conn, baseAs
 		log.Printf("[compat] no spot source or legacy underlying columns found for %s/%s; using zero underlying prices in options chain", baseAsset, interval)
 	}
 
+	if cacheInterval != "" {
+		spotSourceSQLCache, degradedCache, err := buildSpotSourceSQLWithFallback(ctx, conn, cacheInterval, baseAsset, from, to)
+		if err != nil {
+			return nil, fmt.Errorf("resolve cache spot source for options chain: %w", err)
+		}
+		if spotSourceSQLCache != "" {
+			joinClauseCache = fmt.Sprintf("LEFT JOIN (%s) AS u\n    ON u.symbol = c.base_asset AND u.timestamp = c.timestamp", spotSourceSQLCache)
+			underlyingCloseExprCache = "ifNull(u.close, toFloat32(0))"
+			if degradedCache {
+				log.Printf("[compat] options chain cache for %s/%s is using slower spot aggregation fallback", baseAsset, cacheInterval)
+			}
+		} else if legacyExpr, ok, err := legacyUnderlyingCloseExpr(ctx, conn, cacheInterval); err != nil {
+			return nil, fmt.Errorf("resolve cache legacy underlying source for options chain: %w", err)
+		} else if ok {
+			underlyingCloseExprCache = legacyExpr
+		}
+	}
+
 	numTimestamps := int(to.Sub(from)/resolution) + 1
 	if numTimestamps < 64 {
 		numTimestamps = 64
 	}
-	if chainView, ok := cryptooptions.ChainPrecomputedIntervals[interval]; ok {
+	if chainView, ok := cryptooptions.ChainPrecomputedIntervals[cacheInterval]; ok {
 		exists, err := tableExists(ctx, conn, chainView)
 		if err != nil {
 			return nil, fmt.Errorf("check chain cache table %s: %w", chainView, err)
 		}
 		if exists {
-			byTimestamp, rowCount, missingMetaCount, err := loadOptionsChainFromCache(ctx, conn, chainView, baseAsset, fromParam, toParam, underlyingCloseExprCache, joinClauseCache, resolution, metaMap, numTimestamps)
+			byTimestamp, rowCount, missingMetaCount, err := loadOptionsChainFromCache(ctx, conn, chainView, baseAsset, from, to, fromParam, toParam, underlyingCloseExprCache, joinClauseCache, resolution, cacheResolution, metaMap, numTimestamps)
 			if err != nil {
 				return nil, err
 			}
@@ -134,7 +161,7 @@ func NewCryptoOptionsChainProvider(ctx context.Context, conn driver.Conn, baseAs
 				}, nil
 			}
 			log.Printf("[chain] cache table %s has no rows for %s/%s [%s,%s), falling back to bar scan",
-				chainView, baseAsset, interval, fromParam, toParam)
+				chainView, baseAsset, cacheInterval, fromParam, toParam)
 		}
 	}
 
@@ -155,8 +182,10 @@ func NewCryptoOptionsChainProvider(ctx context.Context, conn driver.Conn, baseAs
 func loadOptionsChainFromCache(
 	ctx context.Context,
 	conn driver.Conn,
-	chainView, baseAsset, fromParam, toParam, underlyingCloseExpr, joinClause string,
-	resolution time.Duration,
+	chainView, baseAsset string,
+	from, to time.Time,
+	fromParam, toParam, underlyingCloseExpr, joinClause string,
+	resolution, cacheResolution time.Duration,
 	metaMap map[uint32]symbolMetaRecord,
 	numTimestamps int,
 ) (map[int64][]backtest.OptionContract, uint64, uint64, error) {
@@ -244,7 +273,6 @@ WHERE c.base_asset = {base_asset:String}
 			return nil, 0, 0, fmt.Errorf("invalid cached chain row at %s: array lengths mismatch", ts.UTC().Format(time.RFC3339))
 		}
 
-		key := ts.UTC().Truncate(resolution).Unix()
 		contracts := make([]backtest.OptionContract, 0, seriesLen)
 		for i := 0; i < seriesLen; i++ {
 			meta, ok := metaMap[symbolIDs[i]]
@@ -254,7 +282,7 @@ WHERE c.base_asset = {base_asset:String}
 			}
 			contracts = append(contracts, buildOptionContract(meta, deltas[i], gammas[i], vegas[i], thetas[i], rhos[i], bidPrices[i], askPrices[i], markPrices[i], markIVs[i], underlyingClose, volumes[i], openInterests[i]))
 		}
-		byTimestamp[key] = contracts
+		expandCachedChainContracts(byTimestamp, contracts, ts, from, to, resolution, cacheResolution)
 		rowCount++
 	}
 
@@ -263,6 +291,41 @@ WHERE c.base_asset = {base_asset:String}
 	}
 
 	return byTimestamp, rowCount, missingMetaCount, nil
+}
+
+func resolveCryptoChainCacheInterval(requestedInterval string) string {
+	if _, ok := cryptooptions.ChainPrecomputedIntervals[requestedInterval]; ok {
+		return requestedInterval
+	}
+	if _, ok := cryptooptions.ChainPrecomputedIntervals[cryptoDailyChainInterval]; ok {
+		return cryptoDailyChainInterval
+	}
+	return ""
+}
+
+func expandCachedChainContracts(byTimestamp map[int64][]backtest.OptionContract, contracts []backtest.OptionContract, ts, from, to time.Time, resolution, cacheResolution time.Duration) {
+	if len(contracts) == 0 {
+		return
+	}
+
+	cacheTS := ts.UTC()
+	if cacheResolution <= 0 || resolution >= cacheResolution {
+		byTimestamp[cacheTS.Truncate(resolution).Unix()] = contracts
+		return
+	}
+
+	windowStart := cacheTS.Truncate(cacheResolution)
+	windowEnd := windowStart.Add(cacheResolution)
+	if !from.IsZero() && windowStart.Before(from.UTC()) {
+		windowStart = from.UTC().Truncate(resolution)
+	}
+	if !to.IsZero() && windowEnd.After(to.UTC()) {
+		windowEnd = to.UTC()
+	}
+
+	for bucket := windowStart; bucket.Before(windowEnd); bucket = bucket.Add(resolution) {
+		byTimestamp[bucket.UTC().Unix()] = contracts
+	}
 }
 
 func loadOptionsChainFromBars(

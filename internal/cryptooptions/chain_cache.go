@@ -9,30 +9,20 @@ import (
 )
 
 // ChainPrecomputedIntervals maps option chain intervals to precomputed chain
-// cache view names.
+// cache view names. Crypto chain consumers only require daily precision.
 var ChainPrecomputedIntervals = map[string]string{
-	"1m":  "crypto_options_chain_1m",
-	"5m":  "crypto_options_chain_5m",
-	"15m": "crypto_options_chain_15m",
-	"30m": "crypto_options_chain_30m",
-	"1h":  "crypto_options_chain_1h",
-	"2h":  "crypto_options_chain_2h",
-	"3h":  "crypto_options_chain_3h",
-	"4h":  "crypto_options_chain_4h",
-	"6h":  "crypto_options_chain_6h",
-	"8h":  "crypto_options_chain_8h",
-	"12h": "crypto_options_chain_12h",
-	"1d":  "crypto_options_chain_1d",
+	"1d": "crypto_options_chain_1d",
 }
 
-// InitChainCacheSchema creates option-chain cache tables/materialized views
-// for 1m + all precomputed K-line intervals.
-func InitChainCacheSchema(ctx context.Context, conn driver.Conn) error {
-	intervals := make([]KlineInterval, 0, len(KlineIntervals)+1)
-	intervals = append(intervals, KlineInterval{Suffix: "1m", TimeFunc: "timestamp"})
-	intervals = append(intervals, KlineIntervals...)
+// DefaultChainCacheIntervals is the set of crypto chain cache resolutions we
+// maintain in ClickHouse.
+var DefaultChainCacheIntervals = []KlineInterval{
+	{Suffix: "1d", TimeFunc: "toStartOfDay(timestamp)"},
+}
 
-	for _, iv := range intervals {
+// InitChainCacheSchema creates daily option-chain cache tables/materialized views.
+func InitChainCacheSchema(ctx context.Context, conn driver.Conn) error {
+	for _, iv := range DefaultChainCacheIntervals {
 		stmts := chainCacheDDL(iv)
 		for _, stmt := range stmts {
 			if err := conn.Exec(ctx, stmt); err != nil {

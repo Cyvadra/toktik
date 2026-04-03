@@ -14,8 +14,8 @@ import (
 )
 
 // DefaultKlineWindows is the default window set used by import/backfill flows.
-// 1m is served directly from base tables; larger windows are pre-computed.
-var DefaultKlineWindows = []string{"1m", "5m", "15m", "30m", "1h", "2h", "3h", "4h", "6h", "8h", "12h", "1d"}
+// The 1m source tables are already materialized, so backfill only needs derived windows.
+var DefaultKlineWindows = []string{"5m", "15m", "30m", "1h", "2h", "3h", "4h", "6h", "8h", "12h", "1d"}
 
 const (
 	backfillTimeoutRetryDelay = 5 * time.Second
@@ -49,14 +49,6 @@ func BackfillKlineWindows(ctx context.Context, conn driver.Conn, opts KlineBackf
 	}
 
 	for _, interval := range intervals {
-		if interval == "1m" {
-			iv := KlineInterval{Suffix: "1m", TimeFunc: "timestamp"}
-			if err := backfillChainInterval(ctx, conn, iv, opts.From, opts.To, baseAsset, opts.Replace); err != nil {
-				return fmt.Errorf("backfill chain interval %s: %w", interval, err)
-			}
-			continue
-		}
-
 		iv, ok := intervalToConfig[interval]
 		if !ok {
 			return fmt.Errorf("interval %q is not precomputed", interval)
@@ -65,8 +57,10 @@ func BackfillKlineWindows(ctx context.Context, conn driver.Conn, opts KlineBackf
 		if err := backfillOptionInterval(ctx, conn, iv, opts.From, opts.To, baseAsset, opts.Replace); err != nil {
 			return fmt.Errorf("backfill option interval %s: %w", interval, err)
 		}
-		if err := backfillChainInterval(ctx, conn, iv, opts.From, opts.To, baseAsset, opts.Replace); err != nil {
-			return fmt.Errorf("backfill chain interval %s: %w", interval, err)
+		if iv.Suffix == "1d" {
+			if err := backfillChainInterval(ctx, conn, iv, opts.From, opts.To, baseAsset, opts.Replace); err != nil {
+				return fmt.Errorf("backfill chain interval %s: %w", interval, err)
+			}
 		}
 		if err := backfillSpotInterval(ctx, conn, iv, opts.From, opts.To, baseAsset, opts.Replace); err != nil {
 			return fmt.Errorf("backfill spot interval %s: %w", interval, err)
