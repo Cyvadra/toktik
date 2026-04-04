@@ -123,6 +123,10 @@ func (b *Broker) ProcessPending(barIndex int, barTime time.Time) []Trade {
 			fills = append(fills, *trade)
 
 			if o.Type == TWAPMarketOrder {
+				// When using Notional-based sizing, we must compute the total
+				// order quantity from the first fill. The fill quantity equals
+				// the per-slice amount (totalQty / slicesLeft), so we multiply
+				// back to recover totalQty before tracking remaining amounts.
 				if o.Qty <= 0 && o.Notional > 0 {
 					slicesLeft := o.TWAPBars
 					if slicesLeft <= 0 {

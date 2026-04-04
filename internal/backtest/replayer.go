@@ -218,9 +218,16 @@ func (r *Replayer) Replay(prepared *PreparedData, strategy Strategy, params map[
 		}
 
 		if len(scheduledActions) > 0 {
-			barOpen := secColumns[0]["open"][i]
-			barHigh := secColumns[0]["high"][i]
-			barLow := secColumns[0]["low"][i]
+			// Safely get primary bar prices for trigger checks
+			getBarVal := func(name string) float64 {
+				if col, ok := secColumns[0][name]; ok && i < len(col) {
+					return col[i]
+				}
+				return math.NaN()
+			}
+			barOpen := getBarVal("open")
+			barHigh := getBarVal("high")
+			barLow := getBarVal("low")
 
 			var remaining []ScheduledAction
 			for _, sa := range scheduledActions {

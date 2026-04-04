@@ -113,6 +113,9 @@ func validateBacktestRequest(req dto.BacktestRequest) error {
 	if req.CommissionValue != nil && *req.CommissionValue < 0 {
 		return dto.NewValidationError("commission_value must be >= 0")
 	}
+	// Commission values > 0.1 (10%) are unusual for percentage model but may be
+	// valid for flat or per-unit models. No upper bound enforced here; callers
+	// should verify parameters make sense for their commission model.
 	if req.SlippagePct != nil && *req.SlippagePct < 0 {
 		return dto.NewValidationError("slippage_pct must be >= 0")
 	}

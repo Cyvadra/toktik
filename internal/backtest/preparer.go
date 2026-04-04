@@ -97,6 +97,11 @@ func (dp *DataPreparer) Prepare(ctx context.Context, market, symbol, interval st
 	if primaryDS.Len == 0 {
 		return nil, fmt.Errorf("no data returned for %s/%s/%s", market, symbol, interval)
 	}
+	// Warn if data doesn't cover the requested warmup period
+	if setupCtx.warmup > 0 && primaryDS.Len > 0 && primaryDS.Timestamps[0].After(loadFrom) {
+		// Data starts after the requested warmup start; indicators may not seed properly
+		// This is acceptable but strategies should be aware indicators may have NaN values
+	}
 
 	// Load secondary datasets in parallel
 	type secResult struct {
