@@ -405,3 +405,53 @@ func TestScheduledNotionalOrderUsesTriggerBarOpen(t *testing.T) {
 		t.Fatalf("trade.Qty = %.12f, want %.12f", trade.Qty, wantQty)
 	}
 }
+
+func TestRunReportsProgress(t *testing.T) {
+	engine := NewEngine(Config{InitialCapital: 10000})
+	engine.RegisterDataFeed("test", &stubDataFeed{
+		fields: []string{"open", "high", "low", "close", "volume"},
+	})
+
+	var updates []ProgressUpdate
+	engine.SetProgressFunc(func(update ProgressUpdate) {
+		updates = append(updates, update)
+	})
+
+	from := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2024, 1, 2, 0, 0, 0, 0, time.UTC)
+
+	if _, err := engine.Run(context.Background(), "test", "TEST", "1h", from, to, &trendStrategy{}, nil); err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+
+	if len(updates) == 0 {
+		t.Fatalf("expected progress updates")
+	}
+
+	var sawPrepare bool
+	var sawReplayStart bool
+	var sawReplayDone bool
+	for _, update := range updates {
+		switch update.Phase {
+		case ProgressPhasePrepare:
+			sawPrepare = true
+		case ProgressPhaseReplay:
+			if update.Current == 0 && update.Total == 100 {
+				sawReplayStart = true
+			}
+			if update.Completed && update.Current == 100 && update.Total == 100 {
+				sawReplayDone = true
+			}
+		}
+	}
+
+	if !sawPrepare {
+		t.Fatalf("expected prepare progress update")
+	}
+	if !sawReplayStart {
+		t.Fatalf("expected replay start progress update")
+	}
+	if !sawReplayDone {
+		t.Fatalf("expected replay completion progress update")
+	}
+}

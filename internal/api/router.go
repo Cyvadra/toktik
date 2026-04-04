@@ -7,21 +7,54 @@ import (
 )
 
 // NewRouter builds the Gin engine with all API routes registered.
-func NewRouter(cos CryptoOptionsQuerier) *gin.Engine {
+func NewRouter(cos CryptoOptionsQuerier, usStocks USStocksQuerier, usOptions USOptionsQuerier, infra InfraProvider, features FeatureProvider) *gin.Engine {
 	r := gin.Default()
-	h := NewHandler(cos)
+	h := NewHandler(cos, usStocks, usOptions, infra, features)
 
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
+	r.GET("/ready", h.GetReadiness)
 
 	v1 := r.Group("/api/v1")
 	{
+		infraGroup := v1.Group("/infra")
+		infraGroup.GET("/markets", h.GetMarkets)
+		infraGroup.GET("/datasets", h.GetDatasets)
+
+		featuresGroup := v1.Group("/features")
+		featuresGroup.GET("/volatility-snapshot", h.GetVolatilitySnapshot)
+		featuresGroup.GET("/volatility-history", h.GetVolatilityHistory)
+		featuresGroup.GET("/term-structure-snapshot", h.GetTermStructureSnapshot)
+		featuresGroup.GET("/skew-snapshot", h.GetSkewSnapshot)
+		featuresGroup.GET("/liquidity-snapshot", h.GetLiquiditySnapshot)
+		featuresGroup.GET("/liquidity-history", h.GetLiquidityHistory)
+		featuresGroup.GET("/event-window-snapshot", h.GetEventWindowSnapshot)
+		featuresGroup.GET("/event-window-history", h.GetEventWindowHistory)
+		featuresGroup.GET("/daily-feature-panel", h.GetDailyFeaturePanel)
+
 		co := v1.Group("/crypto-options")
 		co.GET("/bars", h.GetBars)
 		co.GET("/symbols", h.GetSymbols)
 		co.GET("/greeks", h.GetGreeks)
 		co.POST("/backtest", h.RunBacktest)
+
+		markets := v1.Group("/markets")
+		marketCryptoOptions := markets.Group("/crypto-options")
+		marketCryptoOptions.GET("/bars", h.GetBars)
+		marketCryptoOptions.GET("/symbols", h.GetSymbols)
+		marketCryptoOptions.GET("/greeks", h.GetGreeks)
+		marketCryptoOptions.POST("/backtest", h.RunBacktest)
+
+		marketUSStocks := markets.Group("/us-stocks")
+		marketUSStocks.GET("/bars", h.GetUSStockBars)
+		marketUSStocks.GET("/symbols", h.GetUSStockSymbols)
+
+		marketUSOptions := markets.Group("/us-options")
+		marketUSOptions.GET("/bars", h.GetUSOptionBars)
+		marketUSOptions.GET("/symbols", h.GetUSOptionSymbols)
+		marketUSOptions.GET("/greeks", h.GetUSOptionGreeks)
+		marketUSOptions.GET("/chain", h.GetUSOptionChain)
 	}
 
 	return r

@@ -43,7 +43,11 @@ func main() {
 	}
 
 	svc := service.NewCryptoOptionsService(conn)
-	router := api.NewRouter(svc)
+	usStocksSvc := service.NewUSStocksService(conn)
+	usOptionsSvc := service.NewUSOptionsService(conn)
+	infraSvc := service.NewInfraService(conn)
+	featureSvc := service.NewFeatureService(conn)
+	router := api.NewRouter(svc, usStocksSvc, usOptionsSvc, infraSvc, featureSvc)
 
 	srv := &http.Server{
 		Addr:              *addr,

@@ -22,13 +22,16 @@ const (
 	defaultPremiumCap       = 20.0
 	defaultNotionalCap      = 500.0
 	defaultMarginWarn       = 0.60
+	defaultMarginExit       = 0.90
 	defaultTakeProfitPct    = 0.175
 	defaultStopLossBTC      = 20.0
 	defaultDeltaTrigger     = 15.0
 	defaultDeltaTarget      = 3.0
+	defaultIVSpikeMultiple  = 1.35
 	defaultSessionDays      = 30
 	defaultRVLookbackDays   = 7
 	defaultMinPremium       = 0.001
+	defaultMove5mCircuit    = 0.03
 
 	entryStartHour = 2
 	entryEndHour   = 5
@@ -40,7 +43,8 @@ const (
 	preloadColMove5m       = "lvol_move_5m"
 	preloadColRV7d         = "lvol_rv7d"
 
-	yearSeconds = 365.0 * 24.0 * 60.0 * 60.0
+	contractsPerStrangle = 2.0
+	yearSeconds          = 365.0 * 24.0 * 60.0 * 60.0
 )
 
 func init() {
@@ -63,13 +67,14 @@ func init() {
 				premiumCap:       defaultPremiumCap,
 				notionalCap:      defaultNotionalCap,
 				marginWarn:       defaultMarginWarn,
+				marginExit:       defaultMarginExit,
 				takeProfitPct:    defaultTakeProfitPct,
 				stopLossBTC:      defaultStopLossBTC,
 				deltaTrigger:     defaultDeltaTrigger,
 				deltaTarget:      defaultDeltaTarget,
+				ivSpikeMultiple:  defaultIVSpikeMultiple,
 				minPremium:       catalog.FloatOrDefault(cfg.MinPremium, defaultMinPremium),
 			}
-			strategy.ApplyPricingDefaults()
 			return strategy, nil
 		},
 	})
@@ -85,14 +90,17 @@ type strategy struct {
 	premiumCap       float64
 	notionalCap      float64
 	marginWarn       float64
+	marginExit       float64
 	takeProfitPct    float64
 	stopLossBTC      float64
 	deltaTrigger     float64
 	deltaTarget      float64
+	ivSpikeMultiple  float64
 	minPremium       float64
 
 	activeSpreadID  int
 	entryPremium    float64
+	entryATMIV      float64
 	entryDayKey     int
 	lastEntryDayKey int
 }
@@ -105,9 +113,74 @@ type shortStrangleSelection struct {
 	qty       float64
 }
 
+type positionMetrics struct {
+	optionPnL     float64
+	optionDelta   float64
+	hedgeQty      float64
+	netDelta      float64
+	grossNotional float64
+	marginUsage   float64
+}
+
 func (s *strategy) Name() string { return "LVolScalper" }
 
+func (s *strategy) applyDefaults() {
+	s.ApplyPricingDefaults()
+	if s.targetExpiryDays <= 0 {
+		s.targetExpiryDays = defaultTargetExpiryDays
+	}
+	if s.minExpiryDays <= 0 {
+		s.minExpiryDays = defaultMinExpiryDays
+	}
+	if s.maxExpiryDays <= 0 {
+		s.maxExpiryDays = defaultMaxExpiryDays
+	}
+	if s.safetyFactor <= 0 {
+		s.safetyFactor = defaultSafetyFactor
+	}
+	if s.premiumCap <= 0 {
+		s.premiumCap = defaultPremiumCap
+	}
+	if s.notionalCap <= 0 {
+		s.notionalCap = defaultNotionalCap
+	}
+	if s.marginWarn <= 0 {
+		s.marginWarn = defaultMarginWarn
+	}
+	if s.marginExit <= 0 || s.marginExit <= s.marginWarn {
+		s.marginExit = defaultMarginExit
+	}
+	if s.takeProfitPct <= 0 {
+		s.takeProfitPct = defaultTakeProfitPct
+	}
+	if s.stopLossBTC <= 0 {
+		s.stopLossBTC = defaultStopLossBTC
+	}
+	if s.deltaTrigger <= 0 {
+		s.deltaTrigger = defaultDeltaTrigger
+	}
+	if s.deltaTarget < 0 {
+		s.deltaTarget = defaultDeltaTarget
+	}
+	if s.ivSpikeMultiple <= 1 {
+		s.ivSpikeMultiple = defaultIVSpikeMultiple
+	}
+	if s.minPremium <= 0 {
+		s.minPremium = defaultMinPremium
+	}
+}
+
+func (s *strategy) resetRuntimeState() {
+	s.activeSpreadID = 0
+	s.entryPremium = 0
+	s.entryATMIV = 0
+	s.entryDayKey = 0
+	s.lastEntryDayKey = 0
+}
+
 func (s *strategy) Init(ctx *backtest.SetupContext) error {
+	s.applyDefaults()
+	s.resetRuntimeState()
 	ctx.SetWarmup((defaultSessionDays + defaultRVLookbackDays + 2) * 24 * time.Hour)
 	ctx.SetParam("target_expiry_days", s.targetExpiryDays)
 	ctx.SetParam("min_expiry_days", s.minExpiryDays)
@@ -115,10 +188,13 @@ func (s *strategy) Init(ctx *backtest.SetupContext) error {
 	ctx.SetParam("safety_factor", s.safetyFactor)
 	ctx.SetParam("premium_cap", s.premiumCap)
 	ctx.SetParam("notional_cap", s.notionalCap)
+	ctx.SetParam("margin_warn", s.marginWarn)
+	ctx.SetParam("margin_exit", s.marginExit)
 	ctx.SetParam("delta_trigger", s.deltaTrigger)
 	ctx.SetParam("delta_target", s.deltaTarget)
 	ctx.SetParam("take_profit_pct", s.takeProfitPct)
 	ctx.SetParam("stop_loss_btc", s.stopLossBTC)
+	ctx.SetParam("iv_spike_multiple", s.ivSpikeMultiple)
 	return nil
 }
 
@@ -216,6 +292,7 @@ func (s *strategy) OnBar(ctx *backtest.BarContext) {
 
 	s.activeSpreadID = spreadID
 	s.entryPremium = selection.qty * (selection.callPrice + selection.putPrice)
+	s.entryATMIV = atmIV
 	s.entryDayKey = dayKey
 	s.lastEntryDayKey = dayKey
 	s.hedgeDelta(ctx, contractMap, primary)
@@ -235,29 +312,36 @@ func (s *strategy) handleExit(ctx *backtest.BarContext, contractMap optutil.Cont
 	}
 
 	move5m := ctx.Field(preloadColMove5m)
-	if !math.IsNaN(move5m) && math.Abs(move5m) >= 0.03 {
+	if !math.IsNaN(move5m) && math.Abs(move5m) >= defaultMove5mCircuit {
 		s.closeAll(ctx, spread, contractMap, primary, "circuit_breaker_5m_3pct")
 		return true
 	}
 
-	optionPnL, netDelta, grossNotional, ok := s.positionState(ctx, spread, contractMap, primary)
+	metrics, ok := s.positionState(ctx, spread, contractMap, primary)
 	if !ok {
 		return false
 	}
 
-	if s.entryPremium > 0 && optionPnL >= s.entryPremium*s.takeProfitPct {
+	rvFloor := ctx.Field(preloadColRVP20)
+	atmIV, hasATMIV := currentATMIV(ctx.OptionsChain(), now, s.minExpiryDays, s.maxExpiryDays, s.targetExpiryDays)
+	if hasATMIV && s.shouldExitForIVSpike(atmIV, rvFloor) {
+		s.closeAll(ctx, spread, contractMap, primary, "iv_spike_proxy")
+		return true
+	}
+
+	if s.entryPremium > 0 && metrics.optionPnL >= s.entryPremium*s.takeProfitPct {
 		s.closeAll(ctx, spread, contractMap, primary, "take_profit")
 		return true
 	}
-	if optionPnL <= -s.stopLossBTC {
+	if metrics.optionPnL <= -s.stopLossBTC {
 		s.closeAll(ctx, spread, contractMap, primary, "stop_loss")
 		return true
 	}
-	if ctx.Equity() > 0 && grossNotional/ctx.Equity() >= 1.0/s.marginWarn {
+	if metrics.marginUsage >= s.marginExit {
 		s.closeAll(ctx, spread, contractMap, primary, "risk_deleveraging")
 		return true
 	}
-	if math.Abs(netDelta) >= 4*s.deltaTrigger {
+	if math.Abs(metrics.netDelta) >= 4*s.deltaTrigger {
 		s.closeAll(ctx, spread, contractMap, primary, "delta_runaway")
 		return true
 	}
@@ -274,16 +358,16 @@ func (s *strategy) hedgeDelta(ctx *backtest.BarContext, contractMap optutil.Cont
 		return
 	}
 
-	_, netDelta, _, ok := s.positionState(ctx, spread, contractMap, primary)
+	metrics, ok := s.positionState(ctx, spread, contractMap, primary)
 	if !ok {
 		return
 	}
-	if math.Abs(netDelta) < s.deltaTrigger {
+	if math.Abs(metrics.netDelta) < s.deltaTrigger {
 		return
 	}
 
-	targetNet := math.Copysign(s.deltaTarget, netDelta)
-	adjustment := netDelta - targetNet
+	targetNet := math.Copysign(s.deltaTarget, metrics.netDelta)
+	adjustment := metrics.netDelta - targetNet
 	if adjustment > 0 {
 		ctx.SellNowWithNote(primary, adjustment, "delta_hedge_sell")
 		return
@@ -291,14 +375,11 @@ func (s *strategy) hedgeDelta(ctx *backtest.BarContext, contractMap optutil.Cont
 	ctx.BuyNowWithNote(primary, -adjustment, "delta_hedge_buy")
 }
 
-func (s *strategy) positionState(ctx *backtest.BarContext, spread *backtest.SpreadPosition, contractMap optutil.ContractMap, primary backtest.SecurityRef) (float64, float64, float64, bool) {
+func (s *strategy) positionState(ctx *backtest.BarContext, spread *backtest.SpreadPosition, contractMap optutil.ContractMap, primary backtest.SecurityRef) (positionMetrics, bool) {
+	var metrics positionMetrics
 	if spread == nil {
-		return 0, 0, 0, false
+		return metrics, false
 	}
-
-	optionPnL := 0.0
-	optionDelta := 0.0
-	grossNotional := 0.0
 
 	for i := range spread.Legs {
 		leg := spread.Legs[i]
@@ -308,25 +389,30 @@ func (s *strategy) positionState(ctx *backtest.BarContext, spread *backtest.Spre
 		contract := optutil.ResolveContract(leg.Contract, contractMap)
 		mark := s.ValuationPriceMode.ExitPrice(leg.Side, contract)
 		if !isFinitePositive(mark) {
-			return 0, 0, 0, false
+			return positionMetrics{}, false
 		}
-		optionPnL += leg.UnrealizedPnL(mark)
+		metrics.optionPnL += leg.UnrealizedPnL(mark)
 		signedQty := leg.Qty
 		if leg.Side == backtest.Sell {
 			signedQty = -signedQty
 		}
-		optionDelta += signedQty * contract.Delta
-		grossNotional += math.Abs(leg.Qty * contract.UnderlyingPrice)
+		metrics.optionDelta += signedQty * contract.Delta
+		metrics.grossNotional += math.Abs(leg.Qty)
 	}
 
-	netDelta := optionDelta + ctx.Position(primary)
-	return optionPnL, netDelta, grossNotional, true
+	metrics.hedgeQty = ctx.Position(primary)
+	metrics.netDelta = metrics.optionDelta + metrics.hedgeQty
+	metrics.grossNotional += math.Abs(metrics.hedgeQty)
+	if equity := ctx.Equity(); equity > 0 {
+		metrics.marginUsage = metrics.grossNotional / equity
+	}
+	return metrics, true
 }
 
 func (s *strategy) closeAll(ctx *backtest.BarContext, spread *backtest.SpreadPosition, contractMap optutil.ContractMap, primary backtest.SecurityRef, reason string) {
 	if spread != nil {
-		for i := range spread.Legs {
-			leg := spread.Legs[i]
+		for _, legIndex := range spreadCloseOrder(spread, contractMap, ctx.Close()) {
+			leg := spread.Legs[legIndex]
 			if leg.Closed {
 				continue
 			}
@@ -334,7 +420,7 @@ func (s *strategy) closeAll(ctx *backtest.BarContext, spread *backtest.SpreadPos
 			if !isFinitePositive(exitPrice) {
 				continue
 			}
-			ctx.CloseSpreadLegWithReason(spread.ID, i, exitPrice, reason)
+			ctx.CloseSpreadLegWithReason(spread.ID, legIndex, exitPrice, reason)
 		}
 	}
 	s.flattenPrimaryNow(ctx, primary, reason)
@@ -355,6 +441,7 @@ func (s *strategy) flattenPrimaryNow(ctx *backtest.BarContext, primary backtest.
 func (s *strategy) resetPositionState() {
 	s.activeSpreadID = 0
 	s.entryPremium = 0
+	s.entryATMIV = 0
 	s.entryDayKey = 0
 }
 
@@ -410,8 +497,10 @@ func (s *strategy) selectContracts(chain *backtest.OptionsChain, spot, sessionSi
 	}
 
 	premiumQty := s.premiumCap / premiumPerSet
-	notionalQty := s.notionalCap / (2 * spot)
-	marginQty := (equity * s.marginWarn) / (2 * spot)
+	// Deribit BTC option contracts are naturally expressed in BTC notional, so the
+	// notional and margin proxies operate on contract count rather than USD spot.
+	notionalQty := s.notionalCap / contractsPerStrangle
+	marginQty := (equity * s.marginWarn) / contractsPerStrangle
 	qty := math.Min(premiumQty, math.Min(notionalQty, marginQty))
 	if !isFinitePositive(qty) {
 		return nil, false
@@ -424,6 +513,74 @@ func (s *strategy) selectContracts(chain *backtest.OptionsChain, spot, sessionSi
 		putPrice:  putPrice,
 		qty:       qty,
 	}, true
+}
+
+func (s *strategy) shouldExitForIVSpike(atmIV, rvFloor float64) bool {
+	if !isFinitePositive(atmIV) {
+		return false
+	}
+	threshold := math.NaN()
+	if isFinitePositive(s.entryATMIV) {
+		threshold = s.entryATMIV * s.ivSpikeMultiple
+	}
+	if isFinitePositive(rvFloor) {
+		rvThreshold := rvFloor * s.ivSpikeMultiple
+		if math.IsNaN(threshold) || rvThreshold > threshold {
+			threshold = rvThreshold
+		}
+	}
+	return isFinitePositive(threshold) && atmIV >= threshold
+}
+
+func spreadCloseOrder(spread *backtest.SpreadPosition, contractMap optutil.ContractMap, fallbackSpot float64) []int {
+	if spread == nil {
+		return nil
+	}
+	indices := make([]int, 0, len(spread.Legs))
+	for i := range spread.Legs {
+		if !spread.Legs[i].Closed {
+			indices = append(indices, i)
+		}
+	}
+	sort.SliceStable(indices, func(i, j int) bool {
+		leftBucket, leftDistance := closePriority(spread.Legs[indices[i]], contractMap, fallbackSpot)
+		rightBucket, rightDistance := closePriority(spread.Legs[indices[j]], contractMap, fallbackSpot)
+		if leftBucket != rightBucket {
+			return leftBucket < rightBucket
+		}
+		if leftDistance != rightDistance {
+			return leftDistance < rightDistance
+		}
+		return indices[i] < indices[j]
+	})
+	return indices
+}
+
+func closePriority(leg backtest.SpreadLeg, contractMap optutil.ContractMap, fallbackSpot float64) (int, float64) {
+	contract := optutil.ResolveContract(leg.Contract, contractMap)
+	spot := fallbackSpot
+	if isFinitePositive(contract.UnderlyingPrice) {
+		spot = contract.UnderlyingPrice
+	}
+	bucket := 1
+	if optionIntrinsicValue(contract, spot) > 0 {
+		bucket = 0
+	}
+	return bucket, math.Abs(contract.StrikePrice - spot)
+}
+
+func optionIntrinsicValue(contract backtest.OptionContract, spot float64) float64 {
+	if !isFinitePositive(spot) {
+		return 0
+	}
+	switch contract.Type {
+	case backtest.Call:
+		return math.Max(spot-contract.StrikePrice, 0)
+	case backtest.Put:
+		return math.Max(contract.StrikePrice-spot, 0)
+	default:
+		return 0
+	}
 }
 
 func nearestExpiry(contracts []backtest.OptionContract, now time.Time, targetDays int) (time.Time, bool) {

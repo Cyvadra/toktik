@@ -3,9 +3,9 @@ BUILD_DIR := bin
 GOFLAGS := -trimpath
 LDFLAGS := -s -w
 
-.PHONY: build-convert build-import build-missing-days build-kline-backfill build-kline-migrate-utc build-api build-backtest-example build-backtest-portfolio build-backtest-btc-portfolio build-us-market-import build-all build-win-arm clean
+.PHONY: build-convert build-import build-missing-days build-kline-backfill build-kline-migrate-utc build-api build-backtest-example build-backtest-portfolio build-backtest-btc-portfolio build-us-market-import build-feature-store-backfill build-all build-win-arm clean
 
-build-all: build-convert build-import build-missing-days build-kline-backfill build-kline-migrate-utc build-api build-backtest-example build-backtest-portfolio build-us-market-import
+build-all: build-convert build-import build-missing-days build-kline-backfill build-kline-migrate-utc build-api build-backtest-example build-backtest-portfolio build-us-market-import build-feature-store-backfill
 
 build-convert:
 	@mkdir -p $(BUILD_DIR)
@@ -44,6 +44,10 @@ build-backtest-btc-portfolio: build-backtest-portfolio
 build-us-market-import:
 	@mkdir -p $(BUILD_DIR)
 	go build $(GOFLAGS) -ldflags '$(LDFLAGS)' -o $(BUILD_DIR)/us-market-import ./cmd/us-market-import
+
+build-feature-store-backfill:
+	@mkdir -p $(BUILD_DIR)
+	go build $(GOFLAGS) -ldflags '$(LDFLAGS)' -o $(BUILD_DIR)/feature-store-backfill ./cmd/feature-store-backfill
 
 build-win-arm:
 	@mkdir -p $(BUILD_DIR)

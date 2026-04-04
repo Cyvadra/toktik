@@ -16,3 +16,37 @@ type CryptoOptionsQuerier interface {
 	QueryGreeks(ctx context.Context, req dto.GreeksRequest) (*dto.GreeksResponse, error)
 	RunBacktest(ctx context.Context, req dto.BacktestRequest) (*backtest.Result, error)
 }
+
+// USStocksQuerier defines the operations needed for low-level US stock endpoints.
+type USStocksQuerier interface {
+	QueryBars(ctx context.Context, req dto.USStockBarRequest) (*dto.USStockBarResponse, error)
+	QuerySymbols(ctx context.Context, req dto.USStockSymbolRequest) (*dto.USStockSymbolResponse, error)
+}
+
+// USOptionsQuerier defines the operations needed for low-level US option endpoints.
+type USOptionsQuerier interface {
+	QueryBars(ctx context.Context, req dto.USOptionBarRequest) (*dto.USOptionBarResponse, error)
+	QuerySymbols(ctx context.Context, req dto.USOptionSymbolRequest) (*dto.USOptionSymbolResponse, error)
+	QueryGreeks(ctx context.Context, req dto.USOptionGreeksRequest) (*dto.USOptionGreeksResponse, error)
+	QueryChain(ctx context.Context, req dto.USOptionChainRequest) (*dto.USOptionChainResponse, error)
+}
+
+// InfraProvider describes non-business infrastructure endpoints exposed by the API.
+type InfraProvider interface {
+	Readiness(ctx context.Context) (*dto.ReadinessResponse, error)
+	ListMarkets(ctx context.Context) (*dto.MarketCatalogResponse, error)
+	ListDatasets(ctx context.Context, req dto.DatasetQueryRequest) (*dto.DatasetCatalogResponse, error)
+}
+
+// FeatureProvider describes derived infra feature endpoints.
+type FeatureProvider interface {
+	QueryVolatilitySnapshot(ctx context.Context, req dto.FeatureVolatilitySnapshotRequest) (*dto.FeatureVolatilitySnapshotResponse, error)
+	QueryVolatilityHistory(ctx context.Context, req dto.FeatureVolatilityHistoryRequest) (*dto.FeatureVolatilityHistoryResponse, error)
+	QueryTermStructureSnapshot(ctx context.Context, req dto.FeatureSurfaceSnapshotRequest) (*dto.FeatureTermStructureSnapshotResponse, error)
+	QuerySkewSnapshot(ctx context.Context, req dto.FeatureSurfaceSnapshotRequest) (*dto.FeatureSkewSnapshotResponse, error)
+	QueryLiquiditySnapshot(ctx context.Context, req dto.FeatureSurfaceSnapshotRequest) (*dto.FeatureLiquiditySnapshotResponse, error)
+	QueryLiquidityHistory(ctx context.Context, req dto.FeatureLiquidityHistoryRequest) (*dto.FeatureLiquidityHistoryResponse, error)
+	QueryEventWindowSnapshot(ctx context.Context, req dto.FeatureUnderlyingSnapshotRequest) (*dto.FeatureEventWindowSnapshotResponse, error)
+	QueryEventWindowHistory(ctx context.Context, req dto.FeatureUnderlyingHistoryRequest) (*dto.FeatureEventWindowHistoryResponse, error)
+	QueryDailyFeaturePanel(ctx context.Context, req dto.FeatureDailyPanelRequest) (*dto.FeatureDailyPanelResponse, error)
+}

@@ -7,6 +7,28 @@ import (
 	"github.com/Cyvadra/toktik/internal/backtest"
 )
 
+func TestShouldUseCachedChainSnapshots(t *testing.T) {
+	tests := []struct {
+		name            string
+		resolution      time.Duration
+		cacheResolution time.Duration
+		want            bool
+	}{
+		{name: "daily request may use daily cache", resolution: 24 * time.Hour, cacheResolution: 24 * time.Hour, want: true},
+		{name: "hourly request must use bar snapshots", resolution: time.Hour, cacheResolution: 24 * time.Hour, want: false},
+		{name: "minute request must use bar snapshots", resolution: time.Minute, cacheResolution: 24 * time.Hour, want: false},
+		{name: "missing cache resolution falls back to cache usage", resolution: time.Minute, cacheResolution: 0, want: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := shouldUseCachedChainSnapshots(tt.resolution, tt.cacheResolution); got != tt.want {
+				t.Fatalf("shouldUseCachedChainSnapshots(%s, %s) = %v, want %v", tt.resolution, tt.cacheResolution, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestResolveCryptoChainCacheIntervalFallsBackToDaily(t *testing.T) {
 	t.Parallel()
 
