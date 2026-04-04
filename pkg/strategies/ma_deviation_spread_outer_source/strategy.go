@@ -668,13 +668,20 @@ func csvColumnIndex(header []string) map[string]int {
 }
 
 func isEntrySignalRecord(record []string, typeIndex int, hasType bool, signalIndex int, hasSignal bool) bool {
+	// First check the type column if available - exit types take precedence
 	if hasType && typeIndex < len(record) {
 		entryType := strings.TrimSpace(strings.ToLower(record[typeIndex]))
+		// Explicitly check for exit types first - these should never be treated as entries
+		if strings.Contains(entryType, "出场") || strings.Contains(entryType, "平仓") || strings.Contains(entryType, "exit") || strings.Contains(entryType, "close") {
+			return false
+		}
+		// Check for entry types
 		if strings.Contains(entryType, "进场") || strings.Contains(entryType, "开仓") || strings.Contains(entryType, "entry") || strings.Contains(entryType, "open") {
 			return true
 		}
 	}
 
+	// Fall back to signal column only if type column didn't determine the result
 	if hasSignal && signalIndex < len(record) {
 		signal := strings.TrimSpace(strings.ToLower(record[signalIndex]))
 		if strings.Contains(signal, "做空") || strings.Contains(signal, "空头") || strings.Contains(signal, "bearish") || strings.Contains(signal, "divergence") {

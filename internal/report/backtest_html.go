@@ -1924,10 +1924,16 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
 		  <h2 class="!mb-1">图表时间轴</h2>
 		  <p class="text-xs text-slate-400">忽略空闲时段以压缩无变化的平坦区间（应用于下方所有图表）。</p>
 		</div>
-		<label class="inline-flex items-center gap-2 rounded-md border border-white/10 px-3 py-2 text-sm text-slate-200 cursor-pointer select-none">
-		  <input id="toggle-ignore-idle" type="checkbox" class="accent-teal-400" />
-		  <span>忽略空闲时段</span>
-		</label>
+		<div class="flex flex-wrap items-center gap-3">
+		  <label class="inline-flex items-center gap-2 rounded-md border border-white/10 px-3 py-2 text-sm text-slate-200 cursor-pointer select-none">
+			<input id="toggle-ignore-idle" type="checkbox" class="accent-teal-400" />
+			<span>忽略空闲时段</span>
+		  </label>
+		  <select id="timezone-select" class="rounded-md border border-white/10 bg-transparent px-3 py-2 text-sm text-slate-200 cursor-pointer">
+			<option value="utc">UTC</option>
+			<option value="local">本地时间</option>
+		  </select>
+		</div>
 	  </div>
 	</div>
 
@@ -2051,9 +2057,17 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
     {{ end }}
 
     <div class="section">
-	<h2>权益曲线</h2>
-	<p class="text-xs text-slate-400 mb-3">范围 {{ .EquityMin }} 至 {{ .EquityMax }} · 手续费 {{ .TotalFees }}</p>
-		{{ if .HasBuyHoldBenchmark }}<p class="text-xs text-slate-400 mb-3">Buy&amp;Hold（USD）范围 {{ .BuyHoldMin }} 至 {{ .BuyHoldMax }} · {{ .BuyHoldNote }}</p>{{ end }}
+	<div class="flex flex-wrap items-center justify-between gap-3 mb-3">
+		<div>
+			<h2 class="!mb-1">权益曲线</h2>
+			<p class="text-xs text-slate-400">范围 {{ .EquityMin }} 至 {{ .EquityMax }} · 手续费 {{ .TotalFees }}</p>
+			{{ if .HasBuyHoldBenchmark }}<p class="text-xs text-slate-400">Buy&amp;Hold（USD）范围 {{ .BuyHoldMin }} 至 {{ .BuyHoldMax }} · {{ .BuyHoldNote }}</p>{{ end }}
+		</div>
+		<label class="inline-flex items-center gap-2 rounded-md border border-white/10 px-3 py-2 text-sm text-slate-200 cursor-pointer select-none" data-equity-mode="settled">
+			<input id="toggle-settled-equity" type="checkbox" class="accent-teal-400" />
+			<span>仅显示已结算权益</span>
+		</label>
+	</div>
       <div class="chart-box p-1">
         <div id="equity-chart" style="width:100%;height:300px;"></div>
       </div>
@@ -2202,10 +2216,63 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
     const underlyingMarkers = {{ .UnderlyingMarkerData }};
 	const hoverColumns = {{ .HoverColumnsData }};
     const equitySeries = {{ .EquitySeriesData }};
+	const settledEquitySeries = {{ .EquitySeriesData }};
 	const buyHoldSeries = {{ .BuyHoldSeriesData }};
     const drawdownSeries = {{ .DrawdownSeriesData }};
     const pnlUSDSeries = {{ .PnLUSDSeriesData }};
 	const activeTimes = {{ .ActiveTimeData }};
+
+	// Timezone mode utilities
+	function detectDefaultTimeZoneMode() {
+		try {
+			var tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+			return (tz && tz !== 'UTC') ? 'local' : 'utc';
+		} catch (e) {
+			return 'utc';
+		}
+	}
+
+	function formatDateTimeForMode(timeValue, mode) {
+		var unixSeconds = normalizeUnixSeconds(timeValue);
+		if (unixSeconds === null) return '';
+		var date = new Date(unixSeconds * 1000);
+		if (mode === 'local') {
+			return date.getFullYear() + '-' +
+				String(date.getMonth() + 1).padStart(2, '0') + '-' +
+				String(date.getDate()).padStart(2, '0') + ' ' +
+				String(date.getHours()).padStart(2, '0') + ':' +
+				String(date.getMinutes()).padStart(2, '0');
+		}
+		return date.getUTCFullYear() + '-' +
+			String(date.getUTCMonth() + 1).padStart(2, '0') + '-' +
+			String(date.getUTCDate()).padStart(2, '0') + ' ' +
+			String(date.getUTCHours()).padStart(2, '0') + ':' +
+			String(date.getUTCMinutes()).padStart(2, '0') + ' UTC';
+	}
+
+	function rewriteVisibleDateText(mode) {
+		var dateElements = document.querySelectorAll('[data-utc-time]');
+		dateElements.forEach(function(el) {
+			var utcTime = parseInt(el.getAttribute('data-utc-time'), 10);
+			if (!isNaN(utcTime)) {
+				el.textContent = formatDateTimeForMode(utcTime, mode);
+			}
+		});
+	}
+
+	function applyTimeZoneMode(mode) {
+		var select = document.getElementById('timezone-select');
+		if (select) select.value = mode;
+		rewriteVisibleDateText(mode);
+	}
+
+	// Settled equity mode utilities
+	function renderEquitySeriesMode(showSettled) {
+		if (!equityPlot) return;
+		var series = showSettled ? settledEquitySeries : equitySeries;
+		var filteredSeries = filterLineSeriesByTimes(series, activeSet, currentIdleFilterEnabled);
+		equityPlot.setData(filteredSeries);
+	}
 
     const chartTheme = {
       layout: {
@@ -2921,6 +2988,23 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
 						group.open = action === 'expand';
 					});
 				});
+			});
+		}
+
+		// Initialize timezone selector
+		var timezoneSelect = document.getElementById('timezone-select');
+		if (timezoneSelect) {
+			timezoneSelect.addEventListener('change', function(e) {
+				applyTimeZoneMode(e.target.value);
+			});
+		}
+		applyTimeZoneMode(detectDefaultTimeZoneMode());
+
+		// Initialize settled equity toggle
+		var settledToggle = document.getElementById('toggle-settled-equity');
+		if (settledToggle) {
+			settledToggle.addEventListener('change', function(e) {
+				renderEquitySeriesMode(e.target.checked);
 			});
 		}
   </script>
