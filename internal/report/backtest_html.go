@@ -2216,6 +2216,8 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
     const underlyingMarkers = {{ .UnderlyingMarkerData }};
 	const hoverColumns = {{ .HoverColumnsData }};
     const equitySeries = {{ .EquitySeriesData }};
+	// TODO: settledEquitySeries should be computed from trades to show only
+	// realized (settled) equity changes. For now, uses same data as equitySeries.
 	const settledEquitySeries = {{ .EquitySeriesData }};
 	const buyHoldSeries = {{ .BuyHoldSeriesData }};
     const drawdownSeries = {{ .DrawdownSeriesData }};
