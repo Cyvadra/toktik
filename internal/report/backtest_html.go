@@ -160,6 +160,7 @@ type spreadRowView struct {
 	EventTime       string
 	HeaderTimeLabel string
 	HeaderTime      string
+	UnderlyingPrice string
 	RelatedLink     string
 	RelatedText     string
 	eventUnix       int64
@@ -169,6 +170,7 @@ type spreadRowView struct {
 	DaysHeld        string
 	RealizedPnL     string
 	StatusClass     string
+	ReportMetrics   []spreadReportMetricView
 	Legs            []spreadLegRowView
 }
 
@@ -207,6 +209,14 @@ type spreadLegRowView struct {
 	CloseReason    string
 	RealizedPnL    string
 	SideClass      string
+}
+
+type spreadReportMetricView struct {
+	Label     string
+	Source    string
+	Value     string
+	KindLabel string
+	KindClass string
 }
 
 type chartCandlePoint struct {
@@ -249,6 +259,17 @@ type markerKey struct {
 	Position string
 	Color    string
 	Shape    string
+}
+
+type spreadMetricResolver struct {
+	timestamps []time.Time
+	columns    []backtest.ReportColumn
+	series     map[string][]float64
+}
+
+type underlyingPriceResolver struct {
+	timestamps []time.Time
+	series     map[string][]float64
 }
 
 var (
@@ -583,8 +604,10 @@ func buildHTMLView(result *backtest.Result, meta HTMLMeta) htmlReportView {
 	view.TradeOverview = buildTradeOverviewView(result.TradeOverview, result.AccountUnit)
 	view.EquityAnalysis = buildEquityAnalysisView(result.EquityAnalysis, result.AccountUnit)
 	view.Trades = buildTradeRows(result.Trades, result.AccountUnit)
-	view.Spreads = buildSpreadRows(result.SpreadPositions, result.AccountUnit)
-	view.SpreadGroups, view.UngroupedSpreads = buildSpreadGroupViews(result.SpreadGroups, result.SpreadPositions, result.AccountUnit)
+	metricResolver := newSpreadMetricResolver(result)
+	priceResolver := newUnderlyingPriceResolver(result)
+	view.Spreads = buildSpreadRows(result.SpreadPositions, result.AccountUnit, metricResolver, priceResolver)
+	view.SpreadGroups, view.UngroupedSpreads = buildSpreadGroupViews(result.SpreadGroups, result.SpreadPositions, result.AccountUnit, metricResolver, priceResolver)
 
 	if result.SpreadSummary != nil {
 		s := result.SpreadSummary
@@ -728,14 +751,20 @@ func buildTradeRows(trades []backtest.Trade, unit string) []tradeRowView {
 	return rows
 }
 
-func buildSpreadRows(spreads []backtest.SpreadPositionReport, unit string) []spreadRowView {
+func buildSpreadRows(spreads []backtest.SpreadPositionReport, unit string, metricResolver spreadMetricResolver, priceResolver underlyingPriceResolver) []spreadRowView {
 	rows := make([]spreadRowView, 0, len(spreads)*2)
 	for _, spread := range spreads {
 		displayTag := stripExecDeltaTagSuffix(spread.Tag)
 		displayCloseNote := stripExecDeltaTagSuffix(spread.CloseNote)
+		openMetrics := metricResolver.valuesAt(spread.OpenTime)
+		openUnderlyingPrice := priceResolver.valueAt(spread.OpenTime)
 		legs := make([]spreadLegRowView, 0, len(spread.Legs))
 		for _, leg := range spread.Legs {
 			expiryOpenDays := leg.Expiration.Sub(leg.EntryTime).Hours() / 24
+			entryDelta := leg.Delta
+			if leg.EntryDelta != nil {
+				entryDelta = *leg.EntryDelta
+			}
 			closeTimeLabel := "平仓时间"
 			legView := spreadLegRowView{
 				Symbol:         leg.Symbol,
@@ -743,7 +772,7 @@ func buildSpreadRows(spreads []backtest.SpreadPositionReport, unit string) []spr
 				Type:           translateOptionType(string(leg.Type)),
 				StrikePrice:    currency(leg.StrikePrice),
 				Expiration:     formatDate(leg.Expiration),
-				OpenSelect:     expiryOpenDelta(expiryOpenDays, leg.Delta),
+				OpenSelect:     expiryOpenDelta(expiryOpenDays, entryDelta),
 				Qty:            decimal(leg.Qty),
 				EntryPrice:     amount4(leg.EntryPrice, unit),
 				EntryAmount:    amount4(leg.Qty*leg.EntryPrice, unit),
@@ -777,6 +806,7 @@ func buildSpreadRows(spreads []backtest.SpreadPositionReport, unit string) []spr
 			EventTime:       formatDateTime(spread.OpenTime),
 			HeaderTimeLabel: "下单",
 			HeaderTime:      formatDateTime(spread.OpenTime),
+			UnderlyingPrice: openUnderlyingPrice,
 			Status:          "已开仓",
 			eventUnix:       spread.OpenTime.Unix(),
 			OpenTime:        formatDateTime(spread.OpenTime),
@@ -784,6 +814,7 @@ func buildSpreadRows(spreads []backtest.SpreadPositionReport, unit string) []spr
 			DaysHeld:        "-",
 			RealizedPnL:     "-",
 			StatusClass:     statusClass("open"),
+			ReportMetrics:   openMetrics,
 			Legs:            legs,
 		}
 		if spread.CloseTime != nil {
@@ -805,6 +836,8 @@ func buildSpreadRows(spreads []backtest.SpreadPositionReport, unit string) []spr
 			if strings.TrimSpace(displayCloseNote) != "" {
 				closeTag = displayCloseNote
 			}
+			closeMetrics := metricResolver.valuesAt(*closeEventTime)
+			closeUnderlyingPrice := priceResolver.valueAt(*closeEventTime)
 			rows = append(rows, spreadRowView{
 				ID:              spread.ID,
 				Tag:             closeTag,
@@ -815,6 +848,7 @@ func buildSpreadRows(spreads []backtest.SpreadPositionReport, unit string) []spr
 				EventTime:       formatDateTime(*closeEventTime),
 				HeaderTimeLabel: closeHeaderLabel,
 				HeaderTime:      closeHeaderTime,
+				UnderlyingPrice: closeUnderlyingPrice,
 				RelatedLink:     openAnchor,
 				RelatedText:     "跳转到开仓",
 				Status:          translateSpreadStatus(spread.Status),
@@ -824,6 +858,7 @@ func buildSpreadRows(spreads []backtest.SpreadPositionReport, unit string) []spr
 				DaysHeld:        fmt.Sprintf("%.2f 天", spread.DaysHeld),
 				RealizedPnL:     signedAmount(spread.RealizedPnL, unit),
 				StatusClass:     statusClass(spread.Status),
+				ReportMetrics:   closeMetrics,
 				Legs:            legs,
 			})
 		}
@@ -845,7 +880,7 @@ func buildSpreadRows(spreads []backtest.SpreadPositionReport, unit string) []spr
 	return rows
 }
 
-func buildSpreadGroupViews(groups []backtest.SpreadGroupReport, spreads []backtest.SpreadPositionReport, unit string) ([]spreadGroupView, []spreadRowView) {
+func buildSpreadGroupViews(groups []backtest.SpreadGroupReport, spreads []backtest.SpreadPositionReport, unit string, metricResolver spreadMetricResolver, priceResolver underlyingPriceResolver) ([]spreadGroupView, []spreadRowView) {
 	if len(spreads) == 0 {
 		return nil, nil
 	}
@@ -878,7 +913,7 @@ func buildSpreadGroupViews(groups []backtest.SpreadGroupReport, spreads []backte
 
 		report, hasReport := groupReports[groupID]
 		orderedSpreads := orderedGroupedSpreads(report, groupedSpreads, spreadMap)
-		rows := buildSpreadRows(orderedSpreads, unit)
+		rows := buildSpreadRows(orderedSpreads, unit, metricResolver, priceResolver)
 
 		openTime := earliestSpreadOpenTime(orderedSpreads)
 		if hasReport && !report.OpenTime.IsZero() {
@@ -919,7 +954,7 @@ func buildSpreadGroupViews(groups []backtest.SpreadGroupReport, spreads []backte
 		return views[i].ID < views[j].ID
 	})
 
-	return views, buildSpreadRows(ungrouped, unit)
+	return views, buildSpreadRows(ungrouped, unit, metricResolver, priceResolver)
 }
 
 func orderedGroupedSpreads(report backtest.SpreadGroupReport, spreads []backtest.SpreadPositionReport, spreadMap map[int]backtest.SpreadPositionReport) []backtest.SpreadPositionReport {
@@ -1267,6 +1302,105 @@ func buildHoverColumns(result *backtest.Result) []hoverColumnPayload {
 		return []hoverColumnPayload{}
 	}
 	return payload
+}
+
+func newSpreadMetricResolver(result *backtest.Result) spreadMetricResolver {
+	if result == nil || len(result.ReportColumns) == 0 || len(result.Timestamps) == 0 || len(result.Series) == 0 {
+		return spreadMetricResolver{}
+	}
+	return spreadMetricResolver{
+		timestamps: result.Timestamps,
+		columns:    result.ReportColumns,
+		series:     result.Series,
+	}
+}
+
+func newUnderlyingPriceResolver(result *backtest.Result) underlyingPriceResolver {
+	if result == nil || len(result.Timestamps) == 0 || len(result.Series) == 0 {
+		return underlyingPriceResolver{}
+	}
+	return underlyingPriceResolver{
+		timestamps: result.Timestamps,
+		series:     result.Series,
+	}
+}
+
+func (resolver underlyingPriceResolver) valueAt(eventTime time.Time) string {
+	if eventTime.IsZero() || len(resolver.timestamps) == 0 || len(resolver.series) == 0 {
+		return ""
+	}
+	index := reportColumnIndexAtOrBefore(resolver.timestamps, eventTime)
+	if index < 0 {
+		return ""
+	}
+	for _, key := range []string{"close", "open", "high", "low"} {
+		values := resolver.series[key]
+		if index >= len(values) {
+			continue
+		}
+		value := values[index]
+		if chartValueValid(value) {
+			return currency(value)
+		}
+	}
+	return ""
+}
+
+func (resolver spreadMetricResolver) valuesAt(eventTime time.Time) []spreadReportMetricView {
+	if eventTime.IsZero() || len(resolver.timestamps) == 0 || len(resolver.columns) == 0 || len(resolver.series) == 0 {
+		return nil
+	}
+	index := reportColumnIndexAtOrBefore(resolver.timestamps, eventTime)
+	if index < 0 {
+		return nil
+	}
+	metrics := make([]spreadReportMetricView, 0, len(resolver.columns))
+	for _, column := range resolver.columns {
+		values := resolver.series[column.Source]
+		if index >= len(values) {
+			continue
+		}
+		value := values[index]
+		if !chartValueValid(value) {
+			continue
+		}
+		kindLabel := "子图"
+		kindClass := "bg-teal-500/10 text-teal-200 ring-1 ring-teal-400/20"
+		if column.Overlay {
+			kindLabel = "叠加"
+			kindClass = "bg-sky-500/10 text-sky-200 ring-1 ring-sky-400/20"
+		}
+		metrics = append(metrics, spreadReportMetricView{
+			Label:     fallbackText(strings.TrimSpace(column.Label), column.Source),
+			Source:    column.Source,
+			Value:     formatReportMetricValue(value, column.Decimals),
+			KindLabel: kindLabel,
+			KindClass: kindClass,
+		})
+	}
+	if len(metrics) == 0 {
+		return nil
+	}
+	return metrics
+}
+
+func reportColumnIndexAtOrBefore(timestamps []time.Time, eventTime time.Time) int {
+	if len(timestamps) == 0 || eventTime.IsZero() {
+		return -1
+	}
+	idx := sort.Search(len(timestamps), func(i int) bool {
+		return timestamps[i].After(eventTime)
+	})
+	if idx == 0 {
+		if timestamps[0].After(eventTime) {
+			return -1
+		}
+		return 0
+	}
+	if idx >= len(timestamps) {
+		return len(timestamps) - 1
+	}
+	return idx - 1
 }
 
 func buildLineSeries(times []time.Time, values []float64) []chartLinePoint {
@@ -1698,6 +1832,16 @@ func nullableAmount4(value float64, ok bool, unit string) string {
 	return amount4(value, unit)
 }
 
+func formatReportMetricValue(value float64, decimals int) string {
+	if !chartValueValid(value) {
+		return "-"
+	}
+	if decimals < 0 {
+		decimals = 0
+	}
+	return fmt.Sprintf("%.*f", decimals, value)
+}
+
 func fallbackText(value, fallback string) string {
 	if strings.TrimSpace(value) == "" {
 		return fallback
@@ -1794,6 +1938,7 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
 			{{ if gt .GroupID 0 }}<span class="mono text-xs px-2 py-0.5 rounded bg-violet-500/15 text-violet-300 ring-1 ring-violet-400/30">组 #{{ .GroupID }}</span>{{ end }}
 			<span class="mono text-xs px-2 py-0.5 rounded {{ .StatusClass }}">{{ .Status }}</span>
 			<span class="mono text-xs text-slate-400">{{ .HeaderTimeLabel }} {{ .HeaderTime }}</span>
+			{{ if .UnderlyingPrice }}<span class="mono text-xs text-slate-400">标的 {{ .UnderlyingPrice }}</span>{{ end }}
 		</div>
 		<div class="flex gap-5 text-xs text-slate-400">
 			{{ if ne .EventTime .HeaderTime }}<span>{{ if eq .EventType "OPEN" }}开仓{{ else }}平仓{{ end }} {{ .EventTime }}</span>{{ end }}
@@ -1801,6 +1946,28 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
 			{{ if .RelatedLink }}<a class="text-sky-300 hover:text-sky-200 underline underline-offset-2" href="#{{ .RelatedLink }}">{{ .RelatedText }}</a>{{ end }}
 		</div>
 	</div>
+	{{ if .ReportMetrics }}
+	<div class="px-4 py-3 border-b border-white/5 bg-white/[0.02]">
+		<div class="flex flex-wrap items-center gap-3 mb-3">
+			<span class="mono text-[11px] uppercase tracking-[0.22em] text-slate-500">策略列快照</span>
+			<span class="text-xs text-slate-500">取事件时点最近可用 bar 的 report columns 值</span>
+		</div>
+		<div class="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+			{{ range .ReportMetrics }}
+			<div class="spread-metric-card">
+				<div class="flex items-start justify-between gap-3">
+					<div>
+						<div class="text-[11px] mono uppercase tracking-[0.16em] text-slate-500">{{ .Label }}</div>
+						<div class="mt-1 mono text-sm text-slate-100">{{ .Value }}</div>
+					</div>
+					<span class="mono text-[10px] px-2 py-0.5 rounded-full {{ .KindClass }}">{{ .KindLabel }}</span>
+				</div>
+				<div class="mt-3 mono text-[11px] text-slate-500">{{ .Source }}</div>
+			</div>
+			{{ end }}
+		</div>
+	</div>
+	{{ end }}
 	<div class="overflow-x-auto">
 		<table class="w-full text-sm">
 			<thead>
@@ -1883,6 +2050,7 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
 		.feature-empty-state { border: 1px dashed rgba(255,255,255,0.1); border-radius: 10px; padding: 18px; text-align: center; color: #94a3b8; font-size: 12px; }
 		.feature-legend-swatch { display: inline-block; width: 10px; height: 10px; border-radius: 999px; }
 		.feature-legend-value { color: #f8fafc; }
+		.spread-metric-card { background: linear-gradient(180deg, rgba(255,255,255,0.045), rgba(255,255,255,0.02)); border: 1px solid rgba(255,255,255,0.07); border-radius: 12px; padding: 12px 14px; min-height: 84px; }
 		.spread-group-summary { list-style: none; }
 		.spread-group-summary::-webkit-details-marker { display: none; }
 		.spread-group-chevron { transition: transform 140ms ease; }
@@ -3023,7 +3191,7 @@ const combinedHTMLTemplate = `{{ define "combinedSpreadEventCard" }}
 				<span class="rounded-full px-2.5 py-1 text-[11px] font-mono ring-1 {{ .StatusClass }}">{{ .Status }}</span>
 				{{ if .RelatedLink }}<a href="#{{ .RelatedLink }}" class="font-mono text-xs text-steel underline underline-offset-2 hover:text-white">{{ .RelatedText }}</a>{{ end }}
 			</div>
-			<p class="mt-2 text-sm text-slate-300">事件时间 {{ .EventTime }} · 开仓 {{ .OpenTime }} · 平仓 {{ .CloseTime }} · 持有 {{ .DaysHeld }}</p>
+			<p class="mt-2 text-sm text-slate-300">事件时间 {{ .EventTime }}{{ if .UnderlyingPrice }} · 标的 {{ .UnderlyingPrice }}{{ end }} · 开仓 {{ .OpenTime }} · 平仓 {{ .CloseTime }} · 持有 {{ .DaysHeld }}</p>
 		</div>
 		<div class="grid grid-cols-1 gap-4 text-sm lg:text-right">
 			<div><div class="text-slate-400">已实现盈亏</div><div class="font-mono text-white">{{ .RealizedPnL }}</div></div>

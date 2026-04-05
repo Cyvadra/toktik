@@ -19,26 +19,33 @@ const (
 	strategyAlias = "dual_spreads_btc_volatility"
 
 	amountBase             = 2.0
+	minDTE                 = 20
 	targetDTE              = 40
 	maxDTE                 = 40
-	volLookbackBars        = 100
-	defaultVolPercentile   = 60.0
-	entryIVPercentileMax   = 66.0
+	hvPercentileLookback   = 100
+	ivPercentileLookback   = 200
+	defaultVolPercentile   = 66.0
+	tvAnnualizationDays    = 365.0
+	initDVOLFallbackMax    = 60.0
 	rollProfitPct          = 0.50
 	rollDeltaIncrease      = 0.20
 	decayFactor            = 0.90
-	allowRepeatedEntries   = true
 	minLongDelta           = 0.20
 	maxLongDelta           = 0.80
 	minShortDelta          = 0.10
 	maxShortDelta          = 0.80
 	shortStrikeMinMultiple = 1.20
-	strategyRunInterval    = "1h"
-	dvolInterval           = "12h"
+	interval12h            = "12h"
 
-	signalCSVPath        = "pkg/strategies/dual_spreads_btc_volatility/another_format_utc8.csv"
-	hvPercentileColumn   = "hv_pr_100_12h"
-	dvolPercentileColumn = "dvol_pr_100_12h"
+	signalCSVPath      = "pkg/strategies/dual_spreads_btc_volatility/another_format_utc8.csv"
+	hvReturnColumn     = "log_ret_12h"
+	hvValueColumn      = "hv_100_12h"
+	hvPercentileColumn = "hv_pr_100_12h"
+	hvThresholdColumn  = "hv_q66_100_12h"
+	dvolValueColumn    = "dvol_12h"
+	ivPercentileColumn = "iv_pr_200_12h"
+	ivThresholdColumn  = "iv_q66_200_12h"
+	dvolBarIndexColumn = "dvol_12h_bar_index"
 )
 
 type signalType int
@@ -48,6 +55,11 @@ const (
 	signalInit
 	signalAdd
 )
+
+type signalEvent struct {
+	time    time.Time
+	sigType signalType
+}
 
 func init() {
 	catalog.Register(catalog.Registration{
@@ -81,10 +93,10 @@ type strategy struct {
 	optutil.PricingMixin
 	logf func(format string, args ...any)
 
-	signals              map[int64]signalType
-	processedSignalTimes map[int64]struct{}
-	dvolRef              backtest.FactorRef
-	activeGroups         []activeGroup
+	signals      []signalEvent
+	ref12h       backtest.SecurityRef
+	dvolRef      backtest.FactorRef
+	activeGroups []activeGroup
 }
 
 type spreadSelection struct {
@@ -103,26 +115,28 @@ func (s *strategy) Name() string { return "DualSpreadsBTCVolatility" }
 func (s *strategy) ReportColumns() []backtest.ReportColumn {
 	return []backtest.ReportColumn{
 		{Source: "entry_signal", Label: "Entry Signal", Decimals: 0},
+		{Source: hvValueColumn, Label: "HV 100 12H", Decimals: 2},
+		{Source: dvolValueColumn, Label: "DVOL 12H", Decimals: 2},
 		{Source: hvPercentileColumn, Label: "HV PR100 12H", Decimals: 1},
-		{Source: "factor.dvol." + dvolInterval + ".close", Label: "DVOL 12H", Decimals: 2},
-		{Source: "factor.dvol." + dvolInterval + "." + dvolPercentileColumn, Label: "IV PR100 12H", Decimals: 1},
+		{Source: ivPercentileColumn, Label: "DVOL PR200 12H", Decimals: 1},
+		{Source: hvThresholdColumn, Label: "HV Q66 12H", Decimals: 2},
+		{Source: ivThresholdColumn, Label: "IV Q66 12H", Decimals: 2},
 	}
 }
 
 func (s *strategy) Init(ctx *backtest.SetupContext) error {
-	if s.processedSignalTimes == nil {
-		s.processedSignalTimes = make(map[int64]struct{}, len(s.signals))
-	}
+	primary := ctx.PrimaryRef()
+	s.ref12h = ctx.AddSecurity(primary.Market, primary.Symbol, interval12h)
 
-	ctx.Register("ret_12h", optutil.PercentChange("close"))
-	ctx.Register("hv_100_12h", optutil.RollingStdDevIndicator("ret_12h", volLookbackBars))
-	ctx.Register(hvPercentileColumn, optutil.PercentileRank("hv_100_12h", volLookbackBars))
+	ctx.RegisterOn(s.ref12h, hvReturnColumn, logReturnIndicator("close"))
+	ctx.RegisterOn(s.ref12h, hvValueColumn, tradingViewHVIndicator(hvReturnColumn, 10))
+	ctx.RegisterOn(s.ref12h, hvPercentileColumn, optutil.PercentileRank(hvValueColumn, hvPercentileLookback))
 
-	s.dvolRef = ctx.AddFactor("dvol", dvolInterval)
-	ctx.RegisterFactor(s.dvolRef, dvolPercentileColumn, optutil.PercentileRank("close", volLookbackBars))
+	s.dvolRef = ctx.AddFactor("dvol", interval12h)
+	ctx.RegisterFactor(s.dvolRef, ivPercentileColumn, optutil.PercentileRank("close", ivPercentileLookback))
+
 	ctx.SetWarmup(120 * 24 * time.Hour)
 	ctx.SetParam("amount_base", amountBase)
-	ctx.SetParam("strategy_interval", strategyRunInterval)
 	ctx.SetParam("signal_count", float64(len(s.signals)))
 	return nil
 }
@@ -132,20 +146,70 @@ func (s *strategy) Preload(ctx *backtest.PreloadContext) error {
 	if primary == nil || primary.Len() == 0 {
 		return nil
 	}
+	htf := ctx.Security(s.ref12h)
+	if htf == nil || htf.Len() == 0 {
+		return fmt.Errorf("12h security unavailable")
+	}
+	dvol := ctx.Factor(s.dvolRef)
+	if dvol == nil || dvol.Len() == 0 {
+		return fmt.Errorf("12h dvol factor unavailable")
+	}
 
-	entrySignal := make([]float64, primary.Len())
-	for i, ts := range primary.Timestamps() {
-		utcUnix := ts.UTC().Unix()
-		if sigType, ok := s.signals[utcUnix]; ok {
-			switch sigType {
-			case signalInit:
-				entrySignal[i] = 1
-			case signalAdd:
-				entrySignal[i] = 2
-			}
+	entrySignal12h := buildSignalColumn(htf.Timestamps(), s.signals)
+	entrySignal := buildTriggeredAlignedSignalColumn(htf.AlignMap(), entrySignal12h, primary.Len())
+	if err := primary.SetColumn("entry_signal", entrySignal); err != nil {
+		return err
+	}
+
+	if err := htf.Quantile(hvThresholdColumn, hvValueColumn, hvPercentileLookback, defaultVolPercentile/100); err != nil {
+		return err
+	}
+	if err := dvol.Quantile(ivThresholdColumn, "close", ivPercentileLookback, defaultVolPercentile/100); err != nil {
+		return err
+	}
+
+	ivPercentile12h, err := alignSeriesValues(htf.Timestamps(), dvol.Timestamps(), dvol.Column(ivPercentileColumn))
+	if err != nil {
+		return err
+	}
+	if err := htf.SetColumn(ivPercentileColumn, ivPercentile12h); err != nil {
+		return err
+	}
+	ivThreshold12h, err := alignSeriesValues(htf.Timestamps(), dvol.Timestamps(), dvol.Column(ivThresholdColumn))
+	if err != nil {
+		return err
+	}
+	if err := htf.SetColumn(ivThresholdColumn, ivThreshold12h); err != nil {
+		return err
+	}
+
+	for _, name := range []string{hvValueColumn, hvPercentileColumn, hvThresholdColumn} {
+		aligned, err := ctx.ColumnAlignedToPrimary(s.ref12h, name)
+		if err != nil {
+			return err
+		}
+		if err := primary.SetColumn(name, aligned); err != nil {
+			return err
 		}
 	}
-	return primary.SetColumn("entry_signal", entrySignal)
+	dvolValue, err := ctx.ColumnAlignedFactorToPrimary(s.dvolRef, "close")
+	if err != nil {
+		return err
+	}
+	if err := primary.SetColumn(dvolValueColumn, dvolValue); err != nil {
+		return err
+	}
+	for _, name := range []string{ivPercentileColumn, ivThresholdColumn} {
+		aligned, err := ctx.ColumnAlignedToPrimary(s.ref12h, name)
+		if err != nil {
+			return err
+		}
+		if err := primary.SetColumn(name, aligned); err != nil {
+			return err
+		}
+	}
+
+	return primary.SetColumn(dvolBarIndexColumn, buildAlignedIndexColumn(dvol.AlignMap(), primary.Len()))
 }
 
 func (s *strategy) OnBar(ctx *backtest.BarContext) {
@@ -159,20 +223,10 @@ func (s *strategy) OnBar(ctx *backtest.BarContext) {
 		return
 	}
 
-	signalTime := ctx.Time().UTC().Unix()
-	if s.signalProcessed(signalTime) {
+	if sigType == signalInit && !s.initEntryAllowed(ctx) {
 		return
 	}
 
-	if sigType == signalInit && !s.dvolFilter(ctx) {
-		s.markSignalProcessed(signalTime)
-		return
-	}
-
-	s.markSignalProcessed(signalTime)
-	if !allowRepeatedEntries && s.hasActiveGroups() {
-		return
-	}
 	s.openNewGroup(ctx, chain, amountBase)
 }
 
@@ -191,27 +245,28 @@ func signalTypeFromIndicator(value float64) (signalType, bool) {
 	}
 }
 
-func (s *strategy) signalProcessed(signalTime int64) bool {
-	if s.processedSignalTimes == nil {
+func (s *strategy) initEntryAllowed(ctx *backtest.BarContext) bool {
+	hv := s.currentHV(ctx)
+	dvol := s.currentDVOL(ctx)
+	hvThreshold := ctx.Ind(hvThresholdColumn)
+	ivThreshold := ctx.Ind(ivThresholdColumn)
+	return initEntryAllowedByMetrics(hv, dvol, hvThreshold, ivThreshold, s.currentDVOLBarCount(ctx))
+}
+
+func initEntryAllowedByMetrics(hv, dvol, hvThreshold, ivThreshold float64, dvolBarCount int) bool {
+	if math.IsNaN(hv) || hv <= 0 || math.IsNaN(dvol) || dvol <= 0 {
 		return false
 	}
-	_, ok := s.processedSignalTimes[signalTime]
-	return ok
-}
-
-func (s *strategy) markSignalProcessed(signalTime int64) {
-	if s.processedSignalTimes == nil {
-		s.processedSignalTimes = make(map[int64]struct{})
+	if !math.IsNaN(hvThreshold) && hv <= hvThreshold {
+		return true
 	}
-	s.processedSignalTimes[signalTime] = struct{}{}
-}
-
-func (s *strategy) hasActiveGroups() bool {
-	return len(s.activeGroups) > 0
-}
-
-func (s *strategy) dvolFilter(ctx *backtest.BarContext) bool {
-	return s.currentIVPercentile(ctx) <= entryIVPercentileMax
+	if dvolBarCount < ivPercentileLookback {
+		return dvol/hv <= initDVOLFallbackMax
+	}
+	if !math.IsNaN(ivThreshold) && dvol <= ivThreshold {
+		return true
+	}
+	return false
 }
 
 func (s *strategy) logSelection(format string, args ...any) {
@@ -228,9 +283,9 @@ func (s *strategy) selectSpread(now time.Time, chain *backtest.OptionsChain, amo
 		return nil, false
 	}
 
-	eligibleCalls := chain.Calls().ExpiryMax(maxDTE)
+	eligibleCalls := chain.Calls().ExpiryRange(minDTE, maxDTE)
 	if eligibleCalls.Len() == 0 {
-		s.logSelection("[%s] %s: skip selection, no call contracts with dte <= %d\n", now.Format(time.RFC3339), scope, maxDTE)
+		s.logSelection("[%s] %s: skip selection, no call contracts with dte in [%d,%d]\n", now.Format(time.RFC3339), scope, minDTE, maxDTE)
 		return nil, false
 	}
 
@@ -294,7 +349,7 @@ func (s *strategy) selectSpread(now time.Time, chain *backtest.OptionsChain, amo
 		}, true
 	}
 
-	s.logSelection("[%s] %s: no usable expiry found within dte <= %d\n", now.Format(time.RFC3339), scope, maxDTE)
+	s.logSelection("[%s] %s: no usable expiry found within dte in [%d,%d]\n", now.Format(time.RFC3339), scope, minDTE, maxDTE)
 	return nil, false
 }
 
@@ -581,7 +636,7 @@ func (s *strategy) openRollSpread(ctx *backtest.BarContext, chain *backtest.Opti
 	return spreadID
 }
 
-func loadSignals(relPath string) (map[int64]signalType, error) {
+func loadSignals(relPath string) ([]signalEvent, error) {
 	path := relPath
 	if _, err := os.Stat(path); err != nil {
 		wd, _ := os.Getwd()
@@ -604,7 +659,7 @@ func loadSignals(relPath string) (map[int64]signalType, error) {
 	}
 
 	utc8 := time.FixedZone("UTC+8", 8*3600)
-	signals := make(map[int64]signalType)
+	events := make([]signalEvent, 0, len(records))
 
 	for i, record := range records {
 		if i == 0 {
@@ -632,14 +687,16 @@ func loadSignals(relPath string) (map[int64]signalType, error) {
 			continue
 		}
 
-		utcUnix := ts.UTC().Unix()
-		if existing, ok := signals[utcUnix]; ok && existing == signalInit {
-			continue
-		}
-		signals[utcUnix] = sigType
+		events = append(events, signalEvent{time: ts.UTC(), sigType: sigType})
 	}
 
-	return signals, nil
+	sort.Slice(events, func(i, j int) bool {
+		if !events[i].time.Equal(events[j].time) {
+			return events[i].time.Before(events[j].time)
+		}
+		return events[i].sigType < events[j].sigType
+	})
+	return events, nil
 }
 
 func (s *strategy) currentHVPercentile(ctx *backtest.BarContext) float64 {
@@ -651,11 +708,27 @@ func (s *strategy) currentHVPercentile(ctx *backtest.BarContext) float64 {
 }
 
 func (s *strategy) currentIVPercentile(ctx *backtest.BarContext) float64 {
-	value := ctx.Factor(s.dvolRef).Ind(dvolPercentileColumn)
+	value := ctx.Ind(ivPercentileColumn)
 	if math.IsNaN(value) {
 		return defaultVolPercentile
 	}
 	return value
+}
+
+func (s *strategy) currentHV(ctx *backtest.BarContext) float64 {
+	return ctx.Ind(hvValueColumn)
+}
+
+func (s *strategy) currentDVOL(ctx *backtest.BarContext) float64 {
+	return ctx.Ind(dvolValueColumn)
+}
+
+func (s *strategy) currentDVOLBarCount(ctx *backtest.BarContext) int {
+	value := ctx.Ind(dvolBarIndexColumn)
+	if math.IsNaN(value) || value < 0 {
+		return 0
+	}
+	return int(value) + 1
 }
 
 func dynamicLongDelta(hvPercentile, ivPercentile float64) float64 {
@@ -678,4 +751,150 @@ func deltaBoundaryDistance(delta, minDelta, maxDelta float64) float64 {
 		return delta - maxDelta
 	}
 	return 0
+}
+
+func logReturnIndicator(source string) backtest.Indicator {
+	return backtest.Custom(
+		[]string{source},
+		func(inputs map[string][]float64) []float64 {
+			series := inputs[source]
+			out := make([]float64, len(series))
+			for i := range out {
+				out[i] = math.NaN()
+			}
+			for i := 1; i < len(series); i++ {
+				prev := series[i-1]
+				curr := series[i]
+				if math.IsNaN(prev) || math.IsNaN(curr) || prev <= 0 || curr <= 0 {
+					continue
+				}
+				out[i] = math.Log(curr / prev)
+			}
+			return out
+		},
+	)
+}
+
+func tradingViewHVIndicator(source string, period int) backtest.Indicator {
+	return backtest.Custom(
+		[]string{source},
+		func(inputs map[string][]float64) []float64 {
+			stddev := optutil.RollingStdDev(inputs[source], period)
+			out := make([]float64, len(stddev))
+			factor := math.Sqrt(tvAnnualizationDays) * 100.0
+			for i, value := range stddev {
+				if math.IsNaN(value) {
+					out[i] = math.NaN()
+					continue
+				}
+				out[i] = value * factor
+			}
+			return out
+		},
+	)
+}
+
+func buildAlignedIndexColumn(alignMap []int, length int) []float64 {
+	values := make([]float64, length)
+	for i := range values {
+		values[i] = math.NaN()
+	}
+	for i := 0; i < length && i < len(alignMap); i++ {
+		if alignMap[i] < 0 {
+			continue
+		}
+		values[i] = float64(alignMap[i])
+	}
+	return values
+}
+
+func buildSignalColumn(primaryTimestamps []time.Time, events []signalEvent) []float64 {
+	values := make([]float64, len(primaryTimestamps))
+	if len(primaryTimestamps) == 0 || len(events) == 0 {
+		return values
+	}
+
+	assigned := make(map[int]signalEvent)
+	for _, event := range events {
+		idx := primaryBarIndexForSignal(primaryTimestamps, event.time)
+		if idx < 0 {
+			continue
+		}
+		existing, ok := assigned[idx]
+		if !ok || event.time.Before(existing.time) || (event.time.Equal(existing.time) && event.sigType == signalInit && existing.sigType != signalInit) {
+			assigned[idx] = event
+		}
+	}
+
+	for idx, event := range assigned {
+		switch event.sigType {
+		case signalInit:
+			values[idx] = 1
+		case signalAdd:
+			values[idx] = 2
+		}
+	}
+	return values
+}
+
+func buildTriggeredAlignedSignalColumn(alignMap []int, values []float64, length int) []float64 {
+	out := make([]float64, length)
+	prevMapped := -1
+	for i := 0; i < length; i++ {
+		mapped := -1
+		if i < len(alignMap) {
+			mapped = alignMap[i]
+		}
+		if mapped < 0 || mapped >= len(values) {
+			prevMapped = mapped
+			continue
+		}
+		if mapped != prevMapped && values[mapped] != 0 {
+			out[i] = values[mapped]
+		}
+		prevMapped = mapped
+	}
+	return out
+}
+
+func primaryBarIndexForSignal(primaryTimestamps []time.Time, eventTime time.Time) int {
+	if len(primaryTimestamps) == 0 || eventTime.IsZero() {
+		return -1
+	}
+	idx := sort.Search(len(primaryTimestamps), func(i int) bool {
+		return primaryTimestamps[i].After(eventTime)
+	})
+	if idx == 0 {
+		if primaryTimestamps[0].After(eventTime) {
+			return -1
+		}
+		return 0
+	}
+	if idx >= len(primaryTimestamps) {
+		return len(primaryTimestamps) - 1
+	}
+	return idx - 1
+}
+
+func alignSeriesValues(targetTimes, sourceTimes []time.Time, sourceValues []float64) ([]float64, error) {
+	if len(sourceTimes) != len(sourceValues) {
+		return nil, fmt.Errorf("timestamp/value length mismatch: %d vs %d", len(sourceTimes), len(sourceValues))
+	}
+	out := make([]float64, len(targetTimes))
+	for i := range out {
+		out[i] = math.NaN()
+	}
+	if len(targetTimes) == 0 || len(sourceTimes) == 0 {
+		return out, nil
+	}
+	for i, ts := range targetTimes {
+		idx := sort.Search(len(sourceTimes), func(j int) bool {
+			return sourceTimes[j].After(ts)
+		}) - 1
+		if idx < 0 || idx >= len(sourceValues) {
+			continue
+		}
+		out[i] = sourceValues[idx]
+	}
+	return out, nil
 }

@@ -11,8 +11,8 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
-// DefaultBackfillWindows is intentionally limited to daily precision for US market backfills.
-var DefaultBackfillWindows = []string{"1d"}
+// DefaultBackfillWindows covers every precomputed US stock/option kline interval.
+var DefaultBackfillWindows = []string{"5m", "15m", "30m", "1h", "2h", "4h", "1d"}
 
 // KlineBackfillOptions controls US kline/chain backfill behavior.
 type KlineBackfillOptions struct {
@@ -34,18 +34,26 @@ func BackfillKlineWindows(ctx context.Context, conn driver.Conn, opts KlineBackf
 	}
 
 	asset := strings.ToUpper(strings.TrimSpace(opts.Asset))
+	intervalToConfig := make(map[string]KlineInterval, len(KlineIntervals))
+	for _, iv := range KlineIntervals {
+		intervalToConfig[iv.Suffix] = iv
+	}
+
 	for _, interval := range intervals {
-		if interval != "1d" {
-			return fmt.Errorf("unsupported interval %q for us market backfill; only 1d is allowed", interval)
+		iv, ok := intervalToConfig[interval]
+		if !ok {
+			return fmt.Errorf("interval %q is not precomputed for us market", interval)
 		}
 
-		if err := backfillOption1D(ctx, conn, opts.From, opts.To, asset, opts.Replace); err != nil {
+		if err := backfillOptionInterval(ctx, conn, iv, opts.From, opts.To, asset, opts.Replace); err != nil {
 			return fmt.Errorf("backfill us option interval %s: %w", interval, err)
 		}
-		if err := backfillOptionChain1D(ctx, conn, opts.From, opts.To, asset, opts.Replace); err != nil {
-			return fmt.Errorf("backfill us option chain interval %s: %w", interval, err)
+		if _, ok := ChainPrecomputedIntervals[interval]; ok {
+			if err := backfillOptionChainInterval(ctx, conn, iv, opts.From, opts.To, asset, opts.Replace); err != nil {
+				return fmt.Errorf("backfill us option chain interval %s: %w", interval, err)
+			}
 		}
-		if err := backfillStock1D(ctx, conn, opts.From, opts.To, asset, opts.Replace); err != nil {
+		if err := backfillStockInterval(ctx, conn, iv, opts.From, opts.To, asset, opts.Replace); err != nil {
 			return fmt.Errorf("backfill us stock interval %s: %w", interval, err)
 		}
 	}
@@ -73,7 +81,7 @@ func normalizeBackfillIntervals(input []string) ([]string, error) {
 			continue
 		}
 		if _, ok := allowed[iv]; !ok {
-			return nil, fmt.Errorf("unsupported interval %q for us market backfill; only 1d is allowed", iv)
+			return nil, fmt.Errorf("unsupported interval %q for us market backfill", iv)
 		}
 		if _, ok := seen[iv]; ok {
 			continue
@@ -87,92 +95,120 @@ func normalizeBackfillIntervals(input []string) ([]string, error) {
 	return out, nil
 }
 
-func backfillOption1D(ctx context.Context, conn driver.Conn, from, to time.Time, asset string, replace bool) error {
-	const aggTable = "us_options_bar_1d_agg"
-	hasRows, err := usOptionAggHasRows(ctx, conn, aggTable, from, to, asset)
+type usBackfillWindow struct {
+	From time.Time
+	To   time.Time
+}
+
+func backfillOptionInterval(ctx context.Context, conn driver.Conn, iv KlineInterval, from, to time.Time, asset string, replace bool) error {
+	aggTable := "us_options_bar_" + iv.Suffix + "_agg"
+	windows, err := resolveUSBackfillWindows(ctx, conn, "us_options_bar_1m", "underlying", asset, from, to)
 	if err != nil {
-		return err
+		return fmt.Errorf("resolve option backfill windows: %w", err)
 	}
-	if hasRows && !replace {
-		log.Printf("[us-kline-backfill] skip options 1d: target table already has rows in selected scope")
+	if len(windows) == 0 {
+		log.Printf("[us-kline-backfill] skip options %s: no source rows in selected scope", iv.Suffix)
 		return nil
 	}
-	if hasRows && replace {
-		if err := usOptionAggDeleteScope(ctx, conn, aggTable, from, to, asset); err != nil {
-			return fmt.Errorf("clear existing options 1d scope: %w", err)
-		}
-	}
 
-	query := fmt.Sprintf(`INSERT INTO %s
+	for idx, window := range windows {
+		hasRows, err := usOptionAggHasRows(ctx, conn, aggTable, window.From, window.To, asset)
+		if err != nil {
+			return err
+		}
+		if hasRows && !replace {
+			log.Printf("[us-kline-backfill] skip options %s chunk %d/%d: target rows already exist in %s to %s", iv.Suffix, idx+1, len(windows), window.From.Format(time.RFC3339), window.To.Format(time.RFC3339))
+			continue
+		}
+		if hasRows && replace {
+			if err := usOptionAggDeleteScope(ctx, conn, aggTable, window.From, window.To, asset); err != nil {
+				return fmt.Errorf("clear existing options %s scope: %w", iv.Suffix, err)
+			}
+		}
+
+		query := fmt.Sprintf(`INSERT INTO %s
 SELECT
-    toDateTime(market_date, 'UTC')            AS ts,
+    %s AS ts,
     symbol,
     underlying,
     option_type,
     expiration,
     strike,
-    argMinState(open, timestamp)              AS open_state,
-    maxState(high)                            AS high_state,
-    minState(low)                             AS low_state,
-    argMaxState(close, timestamp)             AS close_state,
-    argMaxState(underlying_close, timestamp)  AS underlying_close_state,
+    argMinState(open, timestamp)               AS open_state,
+    maxState(high)                             AS high_state,
+    minState(low)                              AS low_state,
+    argMaxState(close, timestamp)              AS close_state,
+    argMaxState(underlying_close, timestamp)   AS underlying_close_state,
     argMaxState(implied_volatility, timestamp) AS implied_volatility_state,
-    argMaxState(delta, timestamp)             AS delta_state,
-    argMaxState(gamma, timestamp)             AS gamma_state,
-    argMaxState(vega, timestamp)              AS vega_state,
-    argMaxState(theta, timestamp)             AS theta_state,
-    argMaxState(rho, timestamp)               AS rho_state,
-    sumState(volume)                          AS volume_state,
-    sumState(transactions)                    AS transactions_state
+    argMaxState(delta, timestamp)              AS delta_state,
+    argMaxState(gamma, timestamp)              AS gamma_state,
+    argMaxState(vega, timestamp)               AS vega_state,
+    argMaxState(theta, timestamp)              AS theta_state,
+    argMaxState(rho, timestamp)                AS rho_state,
+    sumState(volume)                           AS volume_state,
+    sumState(transactions)                     AS transactions_state
 FROM us_options_bar_1m
 %s
-GROUP BY ts, symbol, underlying, option_type, expiration, strike`, aggTable, usOptionSourceWhere(from, to, asset))
+GROUP BY ts, symbol, underlying, option_type, expiration, strike`, aggTable, klineTimeFunc(iv), usOptionSourceWhere(window.From, window.To, asset))
 
-	if err := conn.Exec(ctx, query, usOptionSourceArgs(from, to, asset)...); err != nil {
-		return fmt.Errorf("insert us options 1d rows: %w", err)
+		if err := conn.Exec(ctx, query, usOptionSourceArgs(window.From, window.To, asset)...); err != nil {
+			return fmt.Errorf("insert us options %s rows: %w", iv.Suffix, err)
+		}
+		log.Printf("[us-kline-backfill] options interval %s chunk %d/%d completed", iv.Suffix, idx+1, len(windows))
 	}
-	log.Printf("[us-kline-backfill] options interval 1d completed")
+
+	log.Printf("[us-kline-backfill] options interval %s completed", iv.Suffix)
 	return nil
 }
 
-func backfillOptionChain1D(ctx context.Context, conn driver.Conn, from, to time.Time, asset string, replace bool) error {
-	const aggTable = "us_options_chain_1d_agg"
-	hasRows, err := usOptionChainAggHasRows(ctx, conn, aggTable, from, to, asset)
+func backfillOptionChainInterval(ctx context.Context, conn driver.Conn, iv KlineInterval, from, to time.Time, asset string, replace bool) error {
+	aggTable := "us_options_chain_" + iv.Suffix + "_agg"
+	windows, err := resolveUSBackfillWindows(ctx, conn, "us_options_bar_1m", "underlying", asset, from, to)
 	if err != nil {
-		return err
+		return fmt.Errorf("resolve option chain backfill windows: %w", err)
 	}
-	if hasRows && !replace {
-		log.Printf("[us-kline-backfill] skip option chain 1d: target table already has rows in selected scope")
+	if len(windows) == 0 {
+		log.Printf("[us-kline-backfill] skip option chain %s: no source rows in selected scope", iv.Suffix)
 		return nil
 	}
-	if hasRows && replace {
-		if err := usOptionChainAggDeleteScope(ctx, conn, aggTable, from, to, asset); err != nil {
-			return fmt.Errorf("clear existing option chain 1d scope: %w", err)
-		}
-	}
 
-	query := fmt.Sprintf(`INSERT INTO %s
+	for idx, window := range windows {
+		hasRows, err := usOptionChainAggHasRows(ctx, conn, aggTable, window.From, window.To, asset)
+		if err != nil {
+			return err
+		}
+		if hasRows && !replace {
+			log.Printf("[us-kline-backfill] skip option chain %s chunk %d/%d: target rows already exist in %s to %s", iv.Suffix, idx+1, len(windows), window.From.Format(time.RFC3339), window.To.Format(time.RFC3339))
+			continue
+		}
+		if hasRows && replace {
+			if err := usOptionChainAggDeleteScope(ctx, conn, aggTable, window.From, window.To, asset); err != nil {
+				return fmt.Errorf("clear existing option chain %s scope: %w", iv.Suffix, err)
+			}
+		}
+
+		query := fmt.Sprintf(`INSERT INTO %s
 SELECT
     ts,
     underlying,
     symbol,
-		argMaxState(option_type, last_ts)          AS option_type_state,
-		argMaxState(expiration, last_ts)           AS expiration_state,
-		argMaxState(strike, last_ts)               AS strike_state,
-		argMaxState(close, last_ts)                AS close_state,
-		argMaxState(underlying_close, last_ts)     AS underlying_close_state,
-		argMaxState(implied_volatility, last_ts)   AS implied_volatility_state,
-		argMaxState(delta, last_ts)                AS delta_state,
-		argMaxState(gamma, last_ts)                AS gamma_state,
-		argMaxState(vega, last_ts)                 AS vega_state,
-		argMaxState(theta, last_ts)                AS theta_state,
-		argMaxState(rho, last_ts)                  AS rho_state,
+    argMaxState(option_type, last_ts)          AS option_type_state,
+    argMaxState(expiration, last_ts)           AS expiration_state,
+    argMaxState(strike, last_ts)               AS strike_state,
+    argMaxState(close, last_ts)                AS close_state,
+    argMaxState(underlying_close, last_ts)     AS underlying_close_state,
+    argMaxState(implied_volatility, last_ts)   AS implied_volatility_state,
+    argMaxState(delta, last_ts)                AS delta_state,
+    argMaxState(gamma, last_ts)                AS gamma_state,
+    argMaxState(vega, last_ts)                 AS vega_state,
+    argMaxState(theta, last_ts)                AS theta_state,
+    argMaxState(rho, last_ts)                  AS rho_state,
     sumState(volume)                           AS volume_state,
     sumState(transactions)                     AS transactions_state
 FROM
 (
     SELECT
-        toDateTime(market_date, 'UTC')          AS ts,
+        %s AS ts,
         symbol,
         underlying,
         option_type,
@@ -188,39 +224,52 @@ FROM
         argMax(rho, timestamp)                AS rho,
         sum(volume)                           AS volume,
         sum(transactions)                     AS transactions,
-		max(timestamp)                        AS last_ts
+        max(timestamp)                        AS last_ts
     FROM us_options_bar_1m
     %s
     GROUP BY ts, symbol, underlying, option_type, expiration, strike
 )
-GROUP BY ts, underlying, symbol`, aggTable, usOptionSourceWhere(from, to, asset))
+GROUP BY ts, underlying, symbol`, aggTable, klineTimeFunc(iv), usOptionSourceWhere(window.From, window.To, asset))
 
-	if err := conn.Exec(ctx, query, usOptionSourceArgs(from, to, asset)...); err != nil {
-		return fmt.Errorf("insert us option chain 1d rows: %w", err)
+		if err := conn.Exec(ctx, query, usOptionSourceArgs(window.From, window.To, asset)...); err != nil {
+			return fmt.Errorf("insert us option chain %s rows: %w", iv.Suffix, err)
+		}
+		log.Printf("[us-kline-backfill] option chain interval %s chunk %d/%d completed", iv.Suffix, idx+1, len(windows))
 	}
-	log.Printf("[us-kline-backfill] option chain interval 1d completed")
+
+	log.Printf("[us-kline-backfill] option chain interval %s completed", iv.Suffix)
 	return nil
 }
 
-func backfillStock1D(ctx context.Context, conn driver.Conn, from, to time.Time, asset string, replace bool) error {
-	const aggTable = "us_stocks_bar_1d_agg"
-	hasRows, err := usStockAggHasRows(ctx, conn, aggTable, from, to, asset)
+func backfillStockInterval(ctx context.Context, conn driver.Conn, iv KlineInterval, from, to time.Time, asset string, replace bool) error {
+	aggTable := "us_stocks_bar_" + iv.Suffix + "_agg"
+	windows, err := resolveUSBackfillWindows(ctx, conn, "us_stocks_bar_1m", "symbol", asset, from, to)
 	if err != nil {
-		return err
+		return fmt.Errorf("resolve stock backfill windows: %w", err)
 	}
-	if hasRows && !replace {
-		log.Printf("[us-kline-backfill] skip stocks 1d: target table already has rows in selected scope")
+	if len(windows) == 0 {
+		log.Printf("[us-kline-backfill] skip stocks %s: no source rows in selected scope", iv.Suffix)
 		return nil
 	}
-	if hasRows && replace {
-		if err := usStockAggDeleteScope(ctx, conn, aggTable, from, to, asset); err != nil {
-			return fmt.Errorf("clear existing stocks 1d scope: %w", err)
-		}
-	}
 
-	query := fmt.Sprintf(`INSERT INTO %s
+	for idx, window := range windows {
+		hasRows, err := usStockAggHasRows(ctx, conn, aggTable, window.From, window.To, asset)
+		if err != nil {
+			return err
+		}
+		if hasRows && !replace {
+			log.Printf("[us-kline-backfill] skip stocks %s chunk %d/%d: target rows already exist in %s to %s", iv.Suffix, idx+1, len(windows), window.From.Format(time.RFC3339), window.To.Format(time.RFC3339))
+			continue
+		}
+		if hasRows && replace {
+			if err := usStockAggDeleteScope(ctx, conn, aggTable, window.From, window.To, asset); err != nil {
+				return fmt.Errorf("clear existing stocks %s scope: %w", iv.Suffix, err)
+			}
+		}
+
+		query := fmt.Sprintf(`INSERT INTO %s
 SELECT
-    toDateTime(market_date, 'UTC')            AS ts,
+    %s AS ts,
     symbol,
     argMinState(open, timestamp)              AS open_state,
     maxState(high)                            AS high_state,
@@ -230,13 +279,101 @@ SELECT
     sumState(transactions)                    AS transactions_state
 FROM us_stocks_bar_1m
 %s
-GROUP BY ts, symbol`, aggTable, usStockSourceWhere(from, to, asset))
+GROUP BY ts, symbol`, aggTable, klineTimeFunc(iv), usStockSourceWhere(window.From, window.To, asset))
 
-	if err := conn.Exec(ctx, query, usStockSourceArgs(from, to, asset)...); err != nil {
-		return fmt.Errorf("insert us stocks 1d rows: %w", err)
+		if err := conn.Exec(ctx, query, usStockSourceArgs(window.From, window.To, asset)...); err != nil {
+			return fmt.Errorf("insert us stocks %s rows: %w", iv.Suffix, err)
+		}
+		log.Printf("[us-kline-backfill] stocks interval %s chunk %d/%d completed", iv.Suffix, idx+1, len(windows))
 	}
-	log.Printf("[us-kline-backfill] stocks interval 1d completed")
+
+	log.Printf("[us-kline-backfill] stocks interval %s completed", iv.Suffix)
 	return nil
+}
+
+func resolveUSBackfillWindows(ctx context.Context, conn driver.Conn, tableName, assetColumn, asset string, from, to time.Time) ([]usBackfillWindow, error) {
+	if !from.IsZero() || !to.IsZero() {
+		return splitUSBackfillWindows(from, to), nil
+	}
+
+	fromBound, toBound, hasRows, err := resolveUSSourceBounds(ctx, conn, tableName, assetColumn, asset)
+	if err != nil {
+		return nil, err
+	}
+	if !hasRows {
+		return nil, nil
+	}
+	return splitUSBackfillWindows(fromBound, toBound), nil
+}
+
+func resolveUSSourceBounds(ctx context.Context, conn driver.Conn, tableName, assetColumn, asset string) (time.Time, time.Time, bool, error) {
+	query := fmt.Sprintf(`SELECT min(market_date), max(market_date)
+FROM %s
+WHERE is_regular_session = 1`, tableName)
+	args := make([]interface{}, 0, 1)
+	if asset != "" {
+		query += fmt.Sprintf(" AND %s = {asset:String}", assetColumn)
+		args = append(args, clickhouse.Named("asset", asset))
+	}
+
+	rows, err := conn.Query(ctx, query, args...)
+	if err != nil {
+		return time.Time{}, time.Time{}, false, fmt.Errorf("query %s source bounds: %w", tableName, err)
+	}
+	defer rows.Close()
+
+	var (
+		minDate time.Time
+		maxDate time.Time
+	)
+	if rows.Next() {
+		if err := rows.Scan(&minDate, &maxDate); err != nil {
+			return time.Time{}, time.Time{}, false, fmt.Errorf("scan %s source bounds: %w", tableName, err)
+		}
+	}
+	if minDate.IsZero() || maxDate.IsZero() {
+		return time.Time{}, time.Time{}, false, nil
+	}
+
+	from := normalizeUTCDay(minDate)
+	to := normalizeUTCDay(maxDate).Add(24 * time.Hour)
+	return from, to, true, nil
+}
+
+func splitUSBackfillWindows(from, to time.Time) []usBackfillWindow {
+	if from.IsZero() && to.IsZero() {
+		return nil
+	}
+	if from.IsZero() {
+		from = normalizeUTCDay(to.Add(-24 * time.Hour))
+	}
+	if to.IsZero() {
+		to = normalizeUTCDay(from).Add(24 * time.Hour)
+	}
+	if !to.After(from) {
+		return nil
+	}
+
+	windows := make([]usBackfillWindow, 0, int(to.Sub(from)/(24*time.Hour))+1)
+	cursor := from.UTC()
+	for cursor.Before(to) {
+		next := normalizeUTCDay(cursor).Add(24 * time.Hour)
+		if !next.After(cursor) {
+			next = cursor.Add(24 * time.Hour)
+		}
+		if next.After(to) {
+			next = to.UTC()
+		}
+		windows = append(windows, usBackfillWindow{From: cursor, To: next})
+		cursor = next
+	}
+
+	return windows
+}
+
+func normalizeUTCDay(ts time.Time) time.Time {
+	ts = ts.UTC()
+	return time.Date(ts.Year(), ts.Month(), ts.Day(), 0, 0, 0, 0, time.UTC)
 }
 
 func usOptionSourceWhere(from, to time.Time, asset string) string {

@@ -20,7 +20,7 @@ func main() {
 	from := flag.String("from", "", "Optional start date/time (YYYY-MM-DD or RFC3339), inclusive")
 	to := flag.String("to", "", "Optional end date/time (YYYY-MM-DD or RFC3339), exclusive for RFC3339, next-day exclusive for YYYY-MM-DD")
 	baseAsset := flag.String("base-asset", "", "Optional asset filter, e.g. BTC (crypto base_asset / US underlying+symbol)")
-	intervals := flag.String("intervals", strings.Join(cryptooptions.DefaultKlineWindows, ","), "Comma-separated intervals to generate")
+	intervals := flag.String("intervals", "", "Comma-separated intervals to generate (defaults depend on market)")
 	replace := flag.Bool("replace", false, "Replace existing rows in target aggregation scope before backfill")
 	flag.Parse()
 
@@ -37,13 +37,13 @@ func main() {
 	}
 
 	ivList := splitCSV(*intervals)
-	if len(ivList) == 0 {
-		log.Fatalf("--intervals cannot be empty")
-	}
 
 	ctx := context.Background()
 	switch strings.ToLower(strings.TrimSpace(*market)) {
 	case "crypto":
+		if len(ivList) == 0 {
+			ivList = append([]string(nil), cryptooptions.DefaultKlineWindows...)
+		}
 		conn, err := appCli.ConnectClickHouse(ctx, *dsn, &appCli.SchemaInit{
 			Kline:      true,
 			SpotKline:  true,
@@ -76,6 +76,9 @@ func main() {
 		}
 		if err := usmarket.InitOptionChainCacheSchema(ctx, conn); err != nil {
 			log.Fatalf("init us chain cache schema: %v", err)
+		}
+		if len(ivList) == 0 {
+			ivList = append([]string(nil), usmarket.DefaultBackfillWindows...)
 		}
 
 		opts := usmarket.KlineBackfillOptions{

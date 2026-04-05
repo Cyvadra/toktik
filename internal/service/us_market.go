@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/Cyvadra/toktik/internal/dto"
+	"github.com/Cyvadra/toktik/internal/usmarket"
 )
 
 var usStockBarIntervals = map[string]string{
@@ -99,7 +100,7 @@ func normalizeUSChainInterval(interval string) (string, error) {
 	if value == "" {
 		value = "1d"
 	}
-	if value != "1d" {
+	if _, ok := usmarket.ChainPrecomputedIntervals[value]; !ok {
 		return "", dto.NewValidationError("unsupported us-options chain interval %q", interval)
 	}
 	return value, nil

@@ -10,18 +10,29 @@ import (
 )
 
 // ChainPrecomputedIntervals maps US option chain intervals to cached view names.
-// US options chain consumers are currently daily-only.
 var ChainPrecomputedIntervals = map[string]string{
-	"1d": "us_options_chain_1d",
+	"5m":  "us_options_chain_5m",
+	"15m": "us_options_chain_15m",
+	"30m": "us_options_chain_30m",
+	"1h":  "us_options_chain_1h",
+	"2h":  "us_options_chain_2h",
+	"4h":  "us_options_chain_4h",
+	"1d":  "us_options_chain_1d",
 }
 
 // DefaultChainCacheIntervals is the set of US chain cache resolutions we maintain.
 var DefaultChainCacheIntervals = []KlineInterval{
+	{Suffix: "5m", Seconds: 300},
+	{Suffix: "15m", Seconds: 900},
+	{Suffix: "30m", Seconds: 1800},
+	{Suffix: "1h", Seconds: 3600},
+	{Suffix: "2h", Seconds: 7200},
+	{Suffix: "4h", Seconds: 14400},
 	{Suffix: "1d", Seconds: 0},
 }
 
 // InitOptionChainCacheSchema creates option-chain cache tables/materialized views
-// for daily US option intervals. Cache is regular-session only.
+// for precomputed US option intervals. Cache is regular-session only.
 func InitOptionChainCacheSchema(ctx context.Context, conn driver.Conn) error {
 	for _, iv := range DefaultChainCacheIntervals {
 		if err := migrateOptionChainAggregateIfNeeded(ctx, conn, iv.Suffix); err != nil {

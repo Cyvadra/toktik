@@ -48,6 +48,7 @@ func buildSpreadPositionReports(tracker *SpreadTracker, endTime time.Time) []Spr
 				Type:        leg.Contract.Type,
 				StrikePrice: leg.Contract.StrikePrice,
 				Expiration:  leg.Contract.Expiration,
+				EntryDelta:  tradeCustomDataFloat(leg.EntryCustomData, TradeCustomDataKeyEntryDelta),
 				Delta:       leg.Contract.Delta,
 				Qty:         leg.Qty,
 				EntryPrice:  leg.EntryPrice,
