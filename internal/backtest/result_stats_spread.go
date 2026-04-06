@@ -214,6 +214,10 @@ func buildSpreadGroupReports(groupTracker *SpreadGroupTracker, spreadTracker *Sp
 	}
 	reports := make([]SpreadGroupReport, 0, len(groupTracker.All()))
 	for _, group := range groupTracker.All() {
+		if len(group.SpreadIDs) == 0 {
+			continue
+		}
+
 		report := SpreadGroupReport{
 			ID:          group.ID,
 			Tag:         group.Tag,

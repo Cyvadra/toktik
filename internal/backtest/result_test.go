@@ -330,6 +330,39 @@ func TestBuildSpreadPositionReportsIncludesCloseNote(t *testing.T) {
 	}
 }
 
+func TestBuildSpreadGroupReportsSkipsEmptyGroups(t *testing.T) {
+	groupTracker := NewSpreadGroupTracker()
+	spreadTracker := NewSpreadTracker()
+	openTime := time.Date(2024, time.January, 3, 9, 0, 0, 0, time.UTC)
+
+	emptyGroupID := groupTracker.Open("retracement-ratio-protective-spread|trend", 2, 0.9, openTime)
+	groupTracker.Close(emptyGroupID)
+
+	nonEmptyGroupID := groupTracker.Open("retracement-ratio-protective-spread|ambush", 5, 1, openTime)
+	spreadID := spreadTracker.OpenFull([]SpreadLeg{{
+		Contract: OptionContract{
+			Symbol:      "BTC-OPT-C-100",
+			Type:        Call,
+			StrikePrice: 100,
+			Expiration:  openTime.Add(7 * 24 * time.Hour),
+			Delta:       0.3,
+		},
+		Side:       Sell,
+		Qty:        1,
+		EntryPrice: 5,
+		EntryTime:  openTime,
+	}}, openTime, 0, "首仓开仓", "", nonEmptyGroupID)
+	groupTracker.AddSpread(nonEmptyGroupID, spreadID)
+
+	reports := buildSpreadGroupReports(groupTracker, spreadTracker, openTime.Add(24*time.Hour))
+	if len(reports) != 1 {
+		t.Fatalf("len(reports) = %d, want 1", len(reports))
+	}
+	if reports[0].ID != nonEmptyGroupID {
+		t.Fatalf("reports[0].ID = %d, want %d", reports[0].ID, nonEmptyGroupID)
+	}
+}
+
 func TestBuildSpreadPositionReportsIncludesCloseDelta(t *testing.T) {
 	tracker := NewSpreadTracker()
 	openTime := time.Date(2024, time.January, 3, 9, 0, 0, 0, time.UTC)

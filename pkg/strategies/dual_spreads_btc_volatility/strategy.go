@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -37,15 +39,16 @@ const (
 	shortStrikeMinMultiple = 1.20
 	interval12h            = "12h"
 
-	signalCSVPath      = "pkg/strategies/dual_spreads_btc_volatility/another_format_utc8.csv"
-	hvReturnColumn     = "log_ret_12h"
-	hvValueColumn      = "hv_100_12h"
-	hvPercentileColumn = "hv_pr_100_12h"
-	hvThresholdColumn  = "hv_q66_100_12h"
-	dvolValueColumn    = "dvol_12h"
-	ivPercentileColumn = "iv_pr_200_12h"
-	ivThresholdColumn  = "iv_q66_200_12h"
-	dvolBarIndexColumn = "dvol_12h_bar_index"
+	signalCSVPath       = "pkg/strategies/dual_spreads_btc_volatility/another_format_utc8.csv"
+	entryAddCountColumn = "entry_add_count"
+	hvReturnColumn      = "log_ret_12h"
+	hvValueColumn       = "hv_100_12h"
+	hvPercentileColumn  = "hv_pr_100_12h"
+	hvThresholdColumn   = "hv_q66_100_12h"
+	dvolValueColumn     = "dvol_12h"
+	ivPercentileColumn  = "iv_pr_200_12h"
+	ivThresholdColumn   = "iv_q66_200_12h"
+	dvolBarIndexColumn  = "dvol_12h_bar_index"
 )
 
 type signalType int
@@ -57,9 +60,12 @@ const (
 )
 
 type signalEvent struct {
-	time    time.Time
-	sigType signalType
+	time     time.Time
+	sigType  signalType
+	addCount int
 }
+
+var trailingDigitsPattern = regexp.MustCompile(`(\d+)\s*$`)
 
 func init() {
 	catalog.Register(catalog.Registration{
@@ -160,6 +166,10 @@ func (s *strategy) Preload(ctx *backtest.PreloadContext) error {
 	if err := primary.SetColumn("entry_signal", entrySignal); err != nil {
 		return err
 	}
+	entryAddCount12h := buildSignalAddCountColumn(htf.Timestamps(), s.signals)
+	if err := primary.SetColumn(entryAddCountColumn, buildTriggeredAlignedSignalColumn(htf.AlignMap(), entryAddCount12h, primary.Len())); err != nil {
+		return err
+	}
 
 	if err := htf.Quantile(hvThresholdColumn, hvValueColumn, hvPercentileLookback, defaultVolPercentile/100); err != nil {
 		return err
@@ -227,7 +237,7 @@ func (s *strategy) OnBar(ctx *backtest.BarContext) {
 		return
 	}
 
-	s.openNewGroup(ctx, chain, amountBase)
+	s.openNewGroup(ctx, chain, amountBase*signalEntryCoefficient(s.currentSignalAddCount(ctx)))
 }
 
 func signalTypeFromIndicator(value float64) (signalType, bool) {
@@ -669,25 +679,28 @@ func loadSignals(relPath string) ([]signalEvent, error) {
 			continue
 		}
 
-		sigStr := strings.TrimSpace(record[3])
-		lower := strings.ToLower(sigStr)
-
-		var sigType signalType
-		if strings.Contains(lower, "init") {
-			sigType = signalInit
-		} else if strings.Contains(lower, "add") {
-			sigType = signalAdd
-		} else {
+		sigType, addCount, ok := parseSignalMetadata(record[3])
+		if !ok {
 			continue
 		}
 
-		dateStr := strings.TrimSpace(record[2])
-		ts, err := time.ParseInLocation("2006-01-02 15:04", dateStr, utc8)
-		if err != nil {
+		dateStr := strings.TrimSpace(record[2]) // "日期和时间" column
+		// Try multiple layouts for date parsing
+		var ts time.Time
+		layouts := []string{"2006/1/2 15:04", "2006-01-02 15:04", "2006/01/02 15:04"}
+		parsed := false
+		for _, layout := range layouts {
+			if t, err := time.ParseInLocation(layout, dateStr, utc8); err == nil {
+				ts = t
+				parsed = true
+				break
+			}
+		}
+		if !parsed {
 			continue
 		}
 
-		events = append(events, signalEvent{time: ts.UTC(), sigType: sigType})
+		events = append(events, signalEvent{time: ts.UTC(), sigType: sigType, addCount: addCount})
 	}
 
 	sort.Slice(events, func(i, j int) bool {
@@ -697,6 +710,30 @@ func loadSignals(relPath string) ([]signalEvent, error) {
 		return events[i].sigType < events[j].sigType
 	})
 	return events, nil
+}
+
+func parseSignalMetadata(raw string) (signalType, int, bool) {
+	lower := strings.ToLower(strings.TrimSpace(raw))
+	switch {
+	case strings.Contains(lower, "爆发"), strings.Contains(lower, "顺势"), strings.Contains(lower, "首仓"), strings.Contains(lower, "init"):
+		return signalInit, 0, true
+	case strings.Contains(lower, "加仓"), strings.Contains(lower, "add"):
+		return signalAdd, extractTrailingInt(lower, 1), true
+	default:
+		return signalNone, 0, false
+	}
+}
+
+func extractTrailingInt(value string, fallback int) int {
+	match := trailingDigitsPattern.FindStringSubmatch(value)
+	if len(match) != 2 {
+		return fallback
+	}
+	parsed, err := strconv.Atoi(match[1])
+	if err != nil {
+		return fallback
+	}
+	return parsed
 }
 
 func (s *strategy) currentHVPercentile(ctx *backtest.BarContext) float64 {
@@ -729,6 +766,21 @@ func (s *strategy) currentDVOLBarCount(ctx *backtest.BarContext) int {
 		return 0
 	}
 	return int(value) + 1
+}
+
+func (s *strategy) currentSignalAddCount(ctx *backtest.BarContext) int {
+	value := ctx.Ind(entryAddCountColumn)
+	if math.IsNaN(value) || value <= 0 {
+		return 0
+	}
+	return int(value)
+}
+
+func signalEntryCoefficient(addCount int) float64 {
+	if addCount <= 0 {
+		return 1
+	}
+	return math.Pow(decayFactor, float64(addCount))
 }
 
 func dynamicLongDelta(hvPercentile, ivPercentile float64) float64 {
@@ -833,6 +885,30 @@ func buildSignalColumn(primaryTimestamps []time.Time, events []signalEvent) []fl
 		case signalAdd:
 			values[idx] = 2
 		}
+	}
+	return values
+}
+
+func buildSignalAddCountColumn(primaryTimestamps []time.Time, events []signalEvent) []float64 {
+	values := make([]float64, len(primaryTimestamps))
+	if len(primaryTimestamps) == 0 || len(events) == 0 {
+		return values
+	}
+
+	assigned := make(map[int]signalEvent)
+	for _, event := range events {
+		idx := primaryBarIndexForSignal(primaryTimestamps, event.time)
+		if idx < 0 {
+			continue
+		}
+		existing, ok := assigned[idx]
+		if !ok || event.time.Before(existing.time) || (event.time.Equal(existing.time) && event.sigType == signalInit && existing.sigType != signalInit) {
+			assigned[idx] = event
+		}
+	}
+
+	for idx, event := range assigned {
+		values[idx] = float64(event.addCount)
 	}
 	return values
 }

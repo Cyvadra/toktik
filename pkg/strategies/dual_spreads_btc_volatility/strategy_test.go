@@ -73,11 +73,20 @@ func TestLoadSignalsDeduplicatesWithinUTC8HalfDayBucket(t *testing.T) {
 	if !signals[0].time.Equal(firstTime.UTC()) || signals[0].sigType != signalInit {
 		t.Fatalf("signals[0] = %#v, want init at %s", signals[0], firstTime.UTC())
 	}
+	if signals[0].addCount != 0 {
+		t.Fatalf("signals[0].addCount = %d, want 0", signals[0].addCount)
+	}
 	if !signals[1].time.Equal(thirdTime.UTC()) || signals[1].sigType != signalAdd {
 		t.Fatalf("signals[1] = %#v, want add at %s", signals[1], thirdTime.UTC())
 	}
+	if signals[1].addCount != 1 {
+		t.Fatalf("signals[1].addCount = %d, want 1", signals[1].addCount)
+	}
 	if !signals[2].time.Equal(secondTime.UTC()) || signals[2].sigType != signalAdd {
 		t.Fatalf("signals[2] = %#v, want add at %s", signals[2], secondTime.UTC())
+	}
+	if signals[2].addCount != 2 {
+		t.Fatalf("signals[2].addCount = %d, want 2", signals[2].addCount)
 	}
 }
 
@@ -88,9 +97,9 @@ func TestBuildSignalColumnAssignsSignalsToPrimaryBars(t *testing.T) {
 		time.Date(2024, time.January, 2, 0, 0, 0, 0, time.UTC),
 	}
 	events := []signalEvent{
-		{time: time.Date(2024, time.January, 1, 2, 0, 0, 0, time.UTC), sigType: signalAdd},
-		{time: time.Date(2024, time.January, 1, 1, 0, 0, 0, time.UTC), sigType: signalInit},
-		{time: time.Date(2024, time.January, 1, 13, 0, 0, 0, time.UTC), sigType: signalAdd},
+		{time: time.Date(2024, time.January, 1, 2, 0, 0, 0, time.UTC), sigType: signalAdd, addCount: 1},
+		{time: time.Date(2024, time.January, 1, 1, 0, 0, 0, time.UTC), sigType: signalInit, addCount: 0},
+		{time: time.Date(2024, time.January, 1, 13, 0, 0, 0, time.UTC), sigType: signalAdd, addCount: 2},
 	}
 
 	got := buildSignalColumn(primaryTimestamps, events)
@@ -99,6 +108,33 @@ func TestBuildSignalColumnAssignsSignalsToPrimaryBars(t *testing.T) {
 	}
 	if got[0] != 1 {
 		t.Fatalf("got[0] = %v, want 1", got[0])
+	}
+	if got[1] != 2 {
+		t.Fatalf("got[1] = %v, want 2", got[1])
+	}
+	if got[2] != 0 {
+		t.Fatalf("got[2] = %v, want 0", got[2])
+	}
+}
+
+func TestBuildSignalAddCountColumnAssignsAddCountsToPrimaryBars(t *testing.T) {
+	primaryTimestamps := []time.Time{
+		time.Date(2024, time.January, 1, 0, 0, 0, 0, time.UTC),
+		time.Date(2024, time.January, 1, 12, 0, 0, 0, time.UTC),
+		time.Date(2024, time.January, 2, 0, 0, 0, 0, time.UTC),
+	}
+	events := []signalEvent{
+		{time: time.Date(2024, time.January, 1, 2, 0, 0, 0, time.UTC), sigType: signalAdd, addCount: 1},
+		{time: time.Date(2024, time.January, 1, 1, 0, 0, 0, time.UTC), sigType: signalInit, addCount: 0},
+		{time: time.Date(2024, time.January, 1, 13, 0, 0, 0, time.UTC), sigType: signalAdd, addCount: 2},
+	}
+
+	got := buildSignalAddCountColumn(primaryTimestamps, events)
+	if len(got) != 3 {
+		t.Fatalf("len(got) = %d, want 3", len(got))
+	}
+	if got[0] != 0 {
+		t.Fatalf("got[0] = %v, want 0", got[0])
 	}
 	if got[1] != 2 {
 		t.Fatalf("got[1] = %v, want 2", got[1])
@@ -118,6 +154,51 @@ func TestBuildTriggeredAlignedSignalColumnFiresOncePer12HBar(t *testing.T) {
 		if got[i] != want[i] {
 			t.Fatalf("got[%d] = %v, want %v (full=%v)", i, got[i], want[i], got)
 		}
+	}
+}
+
+func TestSignalEntryCoefficient(t *testing.T) {
+	tests := []struct {
+		name     string
+		addCount int
+		want     float64
+	}{
+		{name: "init uses full amount", addCount: 0, want: 1},
+		{name: "first add decays once", addCount: 1, want: 0.9},
+		{name: "second add decays twice", addCount: 2, want: 0.81},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := signalEntryCoefficient(tt.addCount)
+			if math.Abs(got-tt.want) > 1e-9 {
+				t.Fatalf("signalEntryCoefficient(%d) = %v, want %v", tt.addCount, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestParseSignalMetadata(t *testing.T) {
+	tests := []struct {
+		name     string
+		raw      string
+		wantType signalType
+		wantAdd  int
+		wantOK   bool
+	}{
+		{name: "init chinese", raw: "首仓_爆发", wantType: signalInit, wantAdd: 0, wantOK: true},
+		{name: "add chinese", raw: "加仓2", wantType: signalAdd, wantAdd: 2, wantOK: true},
+		{name: "add english", raw: "Long_Add_1", wantType: signalAdd, wantAdd: 1, wantOK: true},
+		{name: "unknown", raw: "收盘回落平仓", wantType: signalNone, wantAdd: 0, wantOK: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotType, gotAdd, gotOK := parseSignalMetadata(tt.raw)
+			if gotType != tt.wantType || gotAdd != tt.wantAdd || gotOK != tt.wantOK {
+				t.Fatalf("parseSignalMetadata(%q) = (%v, %d, %v), want (%v, %d, %v)", tt.raw, gotType, gotAdd, gotOK, tt.wantType, tt.wantAdd, tt.wantOK)
+			}
+		})
 	}
 }
 
