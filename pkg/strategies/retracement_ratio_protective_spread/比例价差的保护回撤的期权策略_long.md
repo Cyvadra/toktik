@@ -9,7 +9,7 @@
 ### 1.1 入场条件与波动率引擎
 
 - IV 过滤：DeVol 历史分位 < 95 分位。
-- 合约期限：优选 70 天左右到期（范围 50-70 天）。
+- 合约期限：优选 70 天左右到期（范围 55-85 天）。
 
 ### 1.2 比例价差构建 (1:2 Zero-Cost Ratio Spread)
 
@@ -55,9 +55,10 @@ $$
   - B = 200根12h K线， DVOL 的 分位数 
   - 记录行权价 KBuy
   - 按delta选取 Call 期权买入腿
+  - 选取 DTE ∈ [25,40] 天，最接近 35 天的期权
 
 $$
-|\Delta_{L}| = \text{Clamp} \left( 0.2, 0.8, \left( \frac{2A + B}{300} \right) - 0.1 \right)
+|\Delta_{L}| = \text{Clamp} \left( 0.2, 0.8, \left( \frac{2A + B}{300} \right) \right)
 $$
 
 - 卖出腿 ：

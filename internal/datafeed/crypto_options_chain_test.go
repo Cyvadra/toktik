@@ -29,14 +29,17 @@ func TestShouldUseCachedChainSnapshots(t *testing.T) {
 	}
 }
 
-func TestResolveCryptoChainCacheIntervalFallsBackToDaily(t *testing.T) {
+func TestResolveCryptoChainCacheIntervalPrefersRequestedWindow(t *testing.T) {
 	t.Parallel()
 
-	if got := resolveCryptoChainCacheInterval("1h"); got != "1d" {
-		t.Fatalf("expected 1h to fall back to 1d cache, got %q", got)
+	if got := resolveCryptoChainCacheInterval("1h"); got != "1h" {
+		t.Fatalf("expected 1h to resolve to matching cache, got %q", got)
 	}
 	if got := resolveCryptoChainCacheInterval("1d"); got != "1d" {
 		t.Fatalf("expected 1d to resolve to itself, got %q", got)
+	}
+	if got := resolveCryptoChainCacheInterval("1m"); got != "1d" {
+		t.Fatalf("expected 1m to fall back to 1d cache, got %q", got)
 	}
 }
 

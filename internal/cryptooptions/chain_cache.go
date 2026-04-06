@@ -8,19 +8,22 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
-// ChainPrecomputedIntervals maps option chain intervals to precomputed chain
-// cache view names. Crypto chain consumers only require daily precision.
-var ChainPrecomputedIntervals = map[string]string{
-	"1d": "crypto_options_chain_1d",
-}
-
 // DefaultChainCacheIntervals is the set of crypto chain cache resolutions we
-// maintain in ClickHouse.
-var DefaultChainCacheIntervals = []KlineInterval{
-	{Suffix: "1d", TimeFunc: "toStartOfDay(timestamp)"},
-}
+// maintain in ClickHouse. We keep these aligned with the precomputed option
+// K-line windows so backtests can load matching chain snapshots directly.
+var DefaultChainCacheIntervals = append([]KlineInterval(nil), KlineIntervals...)
 
-// InitChainCacheSchema creates daily option-chain cache tables/materialized views.
+// ChainPrecomputedIntervals maps option chain intervals to precomputed chain
+// cache view names.
+var ChainPrecomputedIntervals = func() map[string]string {
+	views := make(map[string]string, len(DefaultChainCacheIntervals))
+	for _, iv := range DefaultChainCacheIntervals {
+		views[iv.Suffix] = fmt.Sprintf("crypto_options_chain_%s", iv.Suffix)
+	}
+	return views
+}()
+
+// InitChainCacheSchema creates option-chain cache tables/materialized views.
 func InitChainCacheSchema(ctx context.Context, conn driver.Conn) error {
 	for _, iv := range DefaultChainCacheIntervals {
 		stmts := chainCacheDDL(iv)

@@ -554,7 +554,8 @@ bin/options-kline-backfill \
 
 Notes:
 - Command renamed to `options-kline-backfill`, supporting `--market crypto|us`.
-- Crypto chain cache is daily-only (`1d`) and US kline/chain backfill currently only supports `1d`.
+- Crypto chain cache is generated for the same precomputed windows as crypto option K-lines (`5m,15m,30m,1h,2h,3h,4h,6h,8h,12h,1d`). A `1m` chain request still falls back to raw bar snapshots.
+- To build matching crypto chain caches for backtests, include the target interval in `--intervals`, for example `--intervals "1h,2h,1d"`.
 - Without `--replace`, intervals with existing rows in the selected scope are skipped to avoid duplicate aggregation states.
 - Add `--replace` to rebuild selected intervals in-range.
 - After re-importing spot `1m` bars, use `--replace` if you need to overwrite existing higher spot windows from the new base data.

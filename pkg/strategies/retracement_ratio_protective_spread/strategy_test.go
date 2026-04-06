@@ -1,6 +1,7 @@
 package retracementratioprotectivespread
 
 import (
+	"context"
 	"math"
 	"os"
 	"path/filepath"
@@ -179,7 +180,7 @@ func TestAmbushLegQuantitiesCanDifferBetweenShortAndLongWings(t *testing.T) {
 
 func TestSelectTrendLongSideUsesCallDebitSpread(t *testing.T) {
 	now := time.Date(2024, 1, 10, 0, 0, 0, 0, time.UTC)
-	expiry := now.AddDate(0, 0, 63)
+	expiry := now.AddDate(0, 0, 35)
 
 	contracts := []backtest.OptionContract{
 		{Symbol: "C-50000", Type: backtest.Call, StrikePrice: 50000, Expiration: expiry, Delta: 0.60, BidPrice: 5.8, AskPrice: 6.2, MarkPrice: 6.0},
@@ -211,7 +212,7 @@ func TestSelectTrendLongSideUsesCallDebitSpread(t *testing.T) {
 
 func TestSelectTrendRejectsLongLegOutsideDocumentedDeltaRange(t *testing.T) {
 	now := time.Date(2024, 1, 10, 0, 0, 0, 0, time.UTC)
-	expiry := now.AddDate(0, 0, 63)
+	expiry := now.AddDate(0, 0, 35)
 
 	contracts := []backtest.OptionContract{
 		{Symbol: "C-50000", Type: backtest.Call, StrikePrice: 50000, Expiration: expiry, Delta: 0.05, BidPrice: 5.8, AskPrice: 6.2, MarkPrice: 6.0},
@@ -222,5 +223,176 @@ func TestSelectTrendRejectsLongLegOutsideDocumentedDeltaRange(t *testing.T) {
 	s.ApplyPricingDefaults()
 	if _, ok := s.selectTrend(backtest.NewOptionsChain(contracts, now), now, 75, 60, 2.0, sideLong); ok {
 		t.Fatalf("selectTrend() unexpectedly accepted a long leg with |delta| below 0.1")
+	}
+}
+
+type scriptedDataFeed struct {
+	timestamps []time.Time
+	closes     []float64
+}
+
+func (f *scriptedDataFeed) Fields() []string {
+	return []string{"open", "high", "low", "close", "volume"}
+}
+
+func (f *scriptedDataFeed) Load(_ context.Context, _ backtest.DataRequest) (*backtest.DataSet, error) {
+	ds := backtest.NewDataSet(len(f.timestamps))
+	ts := append([]time.Time(nil), f.timestamps...)
+	open := append([]float64(nil), f.closes...)
+	high := make([]float64, len(f.closes))
+	low := make([]float64, len(f.closes))
+	volume := make([]float64, len(f.closes))
+	for i, closePrice := range f.closes {
+		high[i] = closePrice + 1
+		low[i] = closePrice - 1
+		volume[i] = 1
+	}
+	ds.SetTimestamps(ts)
+	ds.AddColumn("open", open)
+	ds.AddColumn("high", high)
+	ds.AddColumn("low", low)
+	ds.AddColumn("close", append([]float64(nil), f.closes...))
+	ds.AddColumn("volume", volume)
+	return ds, nil
+}
+
+type scriptedFactorFeed struct {
+	timestamps []time.Time
+	values     []float64
+}
+
+func (f *scriptedFactorFeed) Fields() []string { return []string{"close"} }
+
+func (f *scriptedFactorFeed) Load(_ context.Context, _ backtest.FactorRequest) (*backtest.DataSet, error) {
+	ds := backtest.NewDataSet(len(f.timestamps))
+	ds.SetTimestamps(append([]time.Time(nil), f.timestamps...))
+	ds.AddColumn("close", append([]float64(nil), f.values...))
+	return ds, nil
+}
+
+type ambushExpiryChainProvider struct {
+	tpTime time.Time
+	expiry time.Time
+}
+
+func (p *ambushExpiryChainProvider) AvailableContracts(t time.Time) []backtest.OptionContract {
+	shortBid := 5.0
+	shortAsk := 5.2
+	shortMark := 5.1
+	upperBid := 2.4
+	upperAsk := 2.6
+	upperMark := 2.5
+	lowerBid := 2.2
+	lowerAsk := 2.4
+	lowerMark := 2.3
+	farBid := 1.8
+	farAsk := 2.0
+	farMark := 1.9
+	farthestBid := 1.4
+	farthestAsk := 1.6
+	farthestMark := 1.5
+
+	if !t.Before(p.tpTime) {
+		shortBid = 5.3
+		shortAsk = 5.5
+		shortMark = 5.4
+		upperBid = 3.9
+		upperAsk = 4.1
+		upperMark = 4.0
+		lowerBid = 3.4
+		lowerAsk = 3.6
+		lowerMark = 3.5
+		farBid = 2.8
+		farAsk = 3.0
+		farMark = 2.9
+		farthestBid = 2.2
+		farthestAsk = 2.4
+		farthestMark = 2.3
+	}
+
+	return []backtest.OptionContract{
+		{Symbol: "C-50000", Type: backtest.Call, StrikePrice: 50000, Expiration: p.expiry, Delta: 0.50, BidPrice: shortBid, AskPrice: shortAsk, MarkPrice: shortMark},
+		{Symbol: "C-52000", Type: backtest.Call, StrikePrice: 52000, Expiration: p.expiry, Delta: 0.39, BidPrice: upperBid, AskPrice: upperAsk, MarkPrice: upperMark},
+		{Symbol: "C-53000", Type: backtest.Call, StrikePrice: 53000, Expiration: p.expiry, Delta: 0.31, BidPrice: lowerBid, AskPrice: lowerAsk, MarkPrice: lowerMark},
+		{Symbol: "C-54000", Type: backtest.Call, StrikePrice: 54000, Expiration: p.expiry, Delta: 0.24, BidPrice: farBid, AskPrice: farAsk, MarkPrice: farMark},
+		{Symbol: "C-55000", Type: backtest.Call, StrikePrice: 55000, Expiration: p.expiry, Delta: 0.18, BidPrice: farthestBid, AskPrice: farthestAsk, MarkPrice: farthestMark},
+	}
+}
+
+func TestAmbushClosesRemainingTranchesBeforeExpiryAfterPartialTakeProfit(t *testing.T) {
+	openTime := time.Date(2024, 6, 20, 0, 0, 0, 0, time.UTC)
+	tpTime := openTime.Add(2 * time.Hour)
+	expiry := openTime.AddDate(0, 0, 70)
+	warmupStart := openTime.Add(-160 * 24 * time.Hour)
+	endTime := expiry.Add(48 * time.Hour)
+
+	timestamps := make([]time.Time, 0, int(endTime.Sub(warmupStart)/(2*time.Hour))+1)
+	closes := make([]float64, 0, cap(timestamps))
+	for ts := warmupStart; !ts.After(endTime); ts = ts.Add(2 * time.Hour) {
+		timestamps = append(timestamps, ts)
+		closePrice := 100.0
+		if !ts.Before(tpTime) {
+			closePrice = 150.0
+		}
+		closes = append(closes, closePrice)
+	}
+
+	factorValues := make([]float64, len(timestamps))
+	for i := range factorValues {
+		factorValues[i] = 50
+	}
+
+	engine := backtest.NewEngine(backtest.Config{InitialCapital: 1})
+	engine.RegisterDataFeed("test", &scriptedDataFeed{timestamps: timestamps, closes: closes})
+	engine.RegisterFactorFeed("dvol", &scriptedFactorFeed{timestamps: timestamps, values: factorValues})
+	engine.SetOptionsChainProvider(&ambushExpiryChainProvider{tpTime: tpTime, expiry: expiry})
+
+	s := &strategy{
+		longEntryTimes:  map[int64]struct{}{openTime.Unix(): {}},
+		shortEntryTimes: map[int64]struct{}{},
+	}
+
+	result, err := engine.Run(context.Background(), "test", "BTC", "2h", openTime, endTime, s, nil)
+	if err != nil {
+		t.Fatalf("engine.Run() error = %v", err)
+	}
+	if result.SpreadSummary == nil {
+		t.Fatal("result.SpreadSummary = nil, want summary")
+	}
+	if result.SpreadSummary.OpenSpreads != 0 {
+		t.Fatalf("OpenSpreads = %d, want 0", result.SpreadSummary.OpenSpreads)
+	}
+	if len(result.SpreadPositions) != 3 {
+		t.Fatalf("len(SpreadPositions) = %d, want 3", len(result.SpreadPositions))
+	}
+
+	closedAtTP := 0
+	closedNearExpiry := 0
+	for _, spread := range result.SpreadPositions {
+		if spread.Status != "closed" {
+			t.Fatalf("spread %d status = %q, want closed", spread.ID, spread.Status)
+		}
+		if spread.CloseTime == nil {
+			t.Fatalf("spread %d CloseTime = nil, want close timestamp", spread.ID)
+		}
+		if spread.CloseTime.Equal(tpTime) {
+			closedAtTP++
+			continue
+		}
+		if !spread.CloseTime.Before(expiry.Add(-24 * time.Hour)) {
+			closedNearExpiry++
+		}
+	}
+	if closedAtTP != 1 {
+		t.Fatalf("closedAtTP = %d, want 1", closedAtTP)
+	}
+	if closedNearExpiry != 2 {
+		t.Fatalf("closedNearExpiry = %d, want 2", closedNearExpiry)
+	}
+	if len(result.SpreadGroups) != 1 {
+		t.Fatalf("len(SpreadGroups) = %d, want 1", len(result.SpreadGroups))
+	}
+	if result.SpreadGroups[0].Status != "closed" {
+		t.Fatalf("group status = %q, want closed", result.SpreadGroups[0].Status)
 	}
 }
