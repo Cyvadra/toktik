@@ -7,9 +7,12 @@ import (
 )
 
 // NewRouter builds the Gin engine with all API routes registered.
-func NewRouter(cos CryptoOptionsQuerier, usStocks USStocksQuerier, usOptions USOptionsQuerier, infra InfraProvider, features FeatureProvider, strategyBacktests StrategyBacktestProvider) *gin.Engine {
+func NewRouter(cos CryptoOptionsQuerier, usStocks USStocksQuerier, usOptions USOptionsQuerier, infra InfraProvider, features FeatureProvider, strategyBacktests StrategyBacktestProvider, cryptoSpot CryptoSpotQuerier, screener ScreenerProvider, strategyCatalog StrategyCatalogProvider) *gin.Engine {
 	r := gin.Default()
-	h := NewHandler(cos, usStocks, usOptions, infra, features, strategyBacktests)
+	h := NewHandler(cos, usStocks, usOptions, infra, features, strategyBacktests, cryptoSpot, screener, strategyCatalog)
+
+	// Apply middleware
+	r.Use(CORSMiddleware())
 
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
@@ -31,7 +34,9 @@ func NewRouter(cos CryptoOptionsQuerier, usStocks USStocksQuerier, usOptions USO
 		featuresGroup.GET("/volatility-snapshot", h.GetVolatilitySnapshot)
 		featuresGroup.GET("/volatility-history", h.GetVolatilityHistory)
 		featuresGroup.GET("/term-structure-snapshot", h.GetTermStructureSnapshot)
+		featuresGroup.GET("/term-structure-history", h.GetTermStructureHistory)
 		featuresGroup.GET("/skew-snapshot", h.GetSkewSnapshot)
+		featuresGroup.GET("/skew-history", h.GetSkewHistory)
 		featuresGroup.GET("/liquidity-snapshot", h.GetLiquiditySnapshot)
 		featuresGroup.GET("/liquidity-history", h.GetLiquidityHistory)
 		featuresGroup.GET("/event-window-snapshot", h.GetEventWindowSnapshot)
@@ -51,6 +56,10 @@ func NewRouter(cos CryptoOptionsQuerier, usStocks USStocksQuerier, usOptions USO
 		marketCryptoOptions.GET("/greeks", h.GetGreeks)
 		marketCryptoOptions.POST("/backtest", h.RunBacktest)
 
+		marketCryptoSpot := markets.Group("/crypto-spot")
+		marketCryptoSpot.GET("/bars", h.GetCryptoSpotBars)
+		marketCryptoSpot.GET("/symbols", h.GetCryptoSpotSymbols)
+
 		marketUSStocks := markets.Group("/us-stocks")
 		marketUSStocks.GET("/bars", h.GetUSStockBars)
 		marketUSStocks.GET("/symbols", h.GetUSStockSymbols)
@@ -60,6 +69,12 @@ func NewRouter(cos CryptoOptionsQuerier, usStocks USStocksQuerier, usOptions USO
 		marketUSOptions.GET("/symbols", h.GetUSOptionSymbols)
 		marketUSOptions.GET("/greeks", h.GetUSOptionGreeks)
 		marketUSOptions.GET("/chain", h.GetUSOptionChain)
+
+		screenerGroup := v1.Group("/screener")
+		screenerGroup.GET("/underlyings", h.ScreenUnderlyings)
+		screenerGroup.GET("/options", h.ScreenOptions)
+
+		v1.GET("/strategies", h.ListStrategies)
 	}
 
 	return r

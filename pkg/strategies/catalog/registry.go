@@ -160,6 +160,40 @@ func Available() []string {
 	return names
 }
 
+// RegistrationInfo is a read-only snapshot of a registered strategy's metadata.
+type RegistrationInfo struct {
+	Name    string
+	Aliases []string
+	Groups  []string
+	Profile StrategyProfile
+}
+
+// ListRegistrations returns metadata for all registered strategies.
+func ListRegistrations() []RegistrationInfo {
+	registryMu.RLock()
+	defer registryMu.RUnlock()
+
+	out := make([]RegistrationInfo, 0, len(orderedStrategies))
+	for _, name := range orderedStrategies {
+		spec := strategiesByName[name]
+		if spec == nil {
+			continue
+		}
+		groups := make([]string, 0, len(spec.groups))
+		for g := range spec.groups {
+			groups = append(groups, g)
+		}
+		sort.Strings(groups)
+		out = append(out, RegistrationInfo{
+			Name:    spec.name,
+			Aliases: append([]string(nil), spec.aliases...),
+			Groups:  groups,
+			Profile: spec.profile,
+		})
+	}
+	return out
+}
+
 func resolveOneLocked(name string, cfg Config, baseAsset string) ([]ResolvedStrategy, error) {
 	key := normalize(name)
 	if key == "" {

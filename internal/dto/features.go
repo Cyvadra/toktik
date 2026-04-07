@@ -238,3 +238,49 @@ type FeatureVolatilitySnapshotResponse struct {
 	IVPercentile      *float64   `json:"iv_percentile,omitempty"`
 	IVRank            *float64   `json:"iv_rank,omitempty"`
 }
+
+// FeatureTermStructureHistoryRequest defines a range query for IV term structure history.
+type FeatureTermStructureHistoryRequest struct {
+	Market          string `form:"market" binding:"required"`
+	Underlying      string `form:"underlying" binding:"required"`
+	From            string `form:"from" binding:"required"`
+	To              string `form:"to" binding:"required"`
+	MinDaysToExpiry int    `form:"min_days_to_expiry" binding:"omitempty"`
+	MaxDaysToExpiry int    `form:"max_days_to_expiry" binding:"omitempty"`
+}
+
+// FeatureTermStructureHistoryRow is one daily term structure record.
+type FeatureTermStructureHistoryRow struct {
+	AsOfDate time.Time `json:"as_of_date"`
+	FeatureTermStructureSnapshotRow
+}
+
+// FeatureTermStructureHistoryResponse returns a range of term structure rows.
+type FeatureTermStructureHistoryResponse struct {
+	Market     string                           `json:"market"`
+	Underlying string                           `json:"underlying"`
+	Data       []FeatureTermStructureHistoryRow `json:"data"`
+}
+
+// FeatureSkewHistoryRequest defines a range query for put-call skew history.
+type FeatureSkewHistoryRequest struct {
+	Market          string `form:"market" binding:"required"`
+	Underlying      string `form:"underlying" binding:"required"`
+	From            string `form:"from" binding:"required"`
+	To              string `form:"to" binding:"required"`
+	MinDaysToExpiry int    `form:"min_days_to_expiry" binding:"omitempty"`
+	MaxDaysToExpiry int    `form:"max_days_to_expiry" binding:"omitempty"`
+}
+
+// FeatureSkewHistoryRow is one daily skew record.
+type FeatureSkewHistoryRow struct {
+	AsOfDate time.Time `json:"as_of_date"`
+	FeatureSkewSnapshotRow
+}
+
+// FeatureSkewHistoryResponse returns a range of skew rows.
+type FeatureSkewHistoryResponse struct {
+	Market     string                  `json:"market"`
+	Underlying string                  `json:"underlying"`
+	Data       []FeatureSkewHistoryRow `json:"data"`
+}

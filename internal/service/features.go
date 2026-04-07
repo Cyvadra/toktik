@@ -430,6 +430,152 @@ func (s *FeatureService) QueryDailyFeaturePanel(ctx context.Context, req dto.Fea
 	return &dto.FeatureDailyPanelResponse{Market: market, Underlying: underlying, LookbackDays: lookbackDays, Data: panelRows}, nil
 }
 
+// QueryTermStructureHistory returns a range of pre-computed term structure rows.
+func (s *FeatureService) QueryTermStructureHistory(ctx context.Context, req dto.FeatureTermStructureHistoryRequest) (*dto.FeatureTermStructureHistoryResponse, error) {
+	market := strings.ToLower(strings.TrimSpace(req.Market))
+	underlying := strings.ToUpper(strings.TrimSpace(req.Underlying))
+	if market == "" || underlying == "" {
+		return nil, dto.NewValidationError("market and underlying are required")
+	}
+	fromT, toT, err := dto.ParseTimeRange(req.From, req.To)
+	if err != nil {
+		return nil, err
+	}
+	minDTE, maxDTE, err := normalizeFeatureDTEBounds(req.MinDaysToExpiry, req.MaxDaysToExpiry)
+	if err != nil {
+		return nil, err
+	}
+
+	exists, err := s.featureStoreRelationExists(ctx, featureTermStructureTable)
+	if err != nil {
+		return nil, err
+	}
+	resp := &dto.FeatureTermStructureHistoryResponse{Market: market, Underlying: underlying, Data: make([]dto.FeatureTermStructureHistoryRow, 0)}
+	if !exists {
+		return resp, nil
+	}
+
+	rows, err := s.conn.Query(ctx, fmt.Sprintf(`SELECT
+	as_of_date,
+	expiration,
+	days_to_expiry,
+	atm_iv,
+	call_iv,
+	put_iv,
+	contract_count
+FROM %s
+WHERE market = {market:String}
+  AND underlying = {underlying:String}
+  AND as_of_date >= toDate({from:String})
+  AND as_of_date <= toDate({to:String})
+  AND days_to_expiry >= {min_dte:Int32}
+  AND days_to_expiry <= {max_dte:Int32}
+ORDER BY as_of_date ASC, expiration ASC`, featureTermStructureTable),
+		clickhouse.Named("market", market),
+		clickhouse.Named("underlying", underlying),
+		clickhouse.Named("from", fromT.Format("2006-01-02")),
+		clickhouse.Named("to", toT.Format("2006-01-02")),
+		clickhouse.Named("min_dte", minDTE),
+		clickhouse.Named("max_dte", maxDTE),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query term structure history: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var (
+			row           dto.FeatureTermStructureHistoryRow
+			daysToExpiry  uint16
+			contractCount uint32
+		)
+		if err := rows.Scan(&row.AsOfDate, &row.Expiration, &daysToExpiry, &row.ATMIV, &row.CallIV, &row.PutIV, &contractCount); err != nil {
+			return nil, fmt.Errorf("scan term structure history row: %w", err)
+		}
+		row.AsOfDate = row.AsOfDate.UTC()
+		row.Expiration = row.Expiration.UTC()
+		row.DaysToExpiry = int(daysToExpiry)
+		row.ContractCount = int(contractCount)
+		resp.Data = append(resp.Data, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate term structure history rows: %w", err)
+	}
+	return resp, nil
+}
+
+// QuerySkewHistory returns a range of pre-computed skew rows.
+func (s *FeatureService) QuerySkewHistory(ctx context.Context, req dto.FeatureSkewHistoryRequest) (*dto.FeatureSkewHistoryResponse, error) {
+	market := strings.ToLower(strings.TrimSpace(req.Market))
+	underlying := strings.ToUpper(strings.TrimSpace(req.Underlying))
+	if market == "" || underlying == "" {
+		return nil, dto.NewValidationError("market and underlying are required")
+	}
+	fromT, toT, err := dto.ParseTimeRange(req.From, req.To)
+	if err != nil {
+		return nil, err
+	}
+	minDTE, maxDTE, err := normalizeFeatureDTEBounds(req.MinDaysToExpiry, req.MaxDaysToExpiry)
+	if err != nil {
+		return nil, err
+	}
+
+	exists, err := s.featureStoreRelationExists(ctx, featureSkewTable)
+	if err != nil {
+		return nil, err
+	}
+	resp := &dto.FeatureSkewHistoryResponse{Market: market, Underlying: underlying, Data: make([]dto.FeatureSkewHistoryRow, 0)}
+	if !exists {
+		return resp, nil
+	}
+
+	rows, err := s.conn.Query(ctx, fmt.Sprintf(`SELECT
+	as_of_date,
+	expiration,
+	days_to_expiry,
+	otm_call_iv,
+	otm_put_iv,
+	put_call_skew,
+	contract_count
+FROM %s
+WHERE market = {market:String}
+  AND underlying = {underlying:String}
+  AND as_of_date >= toDate({from:String})
+  AND as_of_date <= toDate({to:String})
+  AND days_to_expiry >= {min_dte:Int32}
+  AND days_to_expiry <= {max_dte:Int32}
+ORDER BY as_of_date ASC, expiration ASC`, featureSkewTable),
+		clickhouse.Named("market", market),
+		clickhouse.Named("underlying", underlying),
+		clickhouse.Named("from", fromT.Format("2006-01-02")),
+		clickhouse.Named("to", toT.Format("2006-01-02")),
+		clickhouse.Named("min_dte", minDTE),
+		clickhouse.Named("max_dte", maxDTE),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query skew history: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var (
+			row           dto.FeatureSkewHistoryRow
+			daysToExpiry  uint16
+			contractCount uint32
+		)
+		if err := rows.Scan(&row.AsOfDate, &row.Expiration, &daysToExpiry, &row.OTMCallIV, &row.OTMPutIV, &row.PutCallSkew, &contractCount); err != nil {
+			return nil, fmt.Errorf("scan skew history row: %w", err)
+		}
+		row.AsOfDate = row.AsOfDate.UTC()
+		row.Expiration = row.Expiration.UTC()
+		row.DaysToExpiry = int(daysToExpiry)
+		row.ContractCount = int(contractCount)
+		resp.Data = append(resp.Data, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate skew history rows: %w", err)
+	}
+	return resp, nil
+}
+
 // BackfillFeatureSnapshots computes and stores all currently supported feature-store snapshots.
 func (s *FeatureService) BackfillFeatureSnapshots(ctx context.Context, opts FeatureBackfillOptions) (FeatureBackfillStats, error) {
 	lookbackDays := clamp(opts.LookbackDays, defaultFeatureLookbackDays, maxFeatureLookbackDays)

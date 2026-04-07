@@ -43,7 +43,9 @@ type FeatureProvider interface {
 	QueryVolatilitySnapshot(ctx context.Context, req dto.FeatureVolatilitySnapshotRequest) (*dto.FeatureVolatilitySnapshotResponse, error)
 	QueryVolatilityHistory(ctx context.Context, req dto.FeatureVolatilityHistoryRequest) (*dto.FeatureVolatilityHistoryResponse, error)
 	QueryTermStructureSnapshot(ctx context.Context, req dto.FeatureSurfaceSnapshotRequest) (*dto.FeatureTermStructureSnapshotResponse, error)
+	QueryTermStructureHistory(ctx context.Context, req dto.FeatureTermStructureHistoryRequest) (*dto.FeatureTermStructureHistoryResponse, error)
 	QuerySkewSnapshot(ctx context.Context, req dto.FeatureSurfaceSnapshotRequest) (*dto.FeatureSkewSnapshotResponse, error)
+	QuerySkewHistory(ctx context.Context, req dto.FeatureSkewHistoryRequest) (*dto.FeatureSkewHistoryResponse, error)
 	QueryLiquiditySnapshot(ctx context.Context, req dto.FeatureSurfaceSnapshotRequest) (*dto.FeatureLiquiditySnapshotResponse, error)
 	QueryLiquidityHistory(ctx context.Context, req dto.FeatureLiquidityHistoryRequest) (*dto.FeatureLiquidityHistoryResponse, error)
 	QueryEventWindowSnapshot(ctx context.Context, req dto.FeatureUnderlyingSnapshotRequest) (*dto.FeatureEventWindowSnapshotResponse, error)
@@ -55,4 +57,21 @@ type StrategyBacktestProvider interface {
 	StartStrategyBacktest(ctx context.Context, req dto.StrategyBacktestRunRequest) (*dto.StrategyBacktestRunAccepted, error)
 	GetStrategyBacktestRun(ctx context.Context, runID string) (*dto.StrategyBacktestRunStatus, error)
 	SubscribeStrategyBacktest(ctx context.Context, runID string) (<-chan dto.StrategyBacktestSSEvent, func(), error)
+}
+
+// CryptoSpotQuerier defines operations for crypto spot market data.
+type CryptoSpotQuerier interface {
+	QueryBars(ctx context.Context, req dto.CryptoSpotBarRequest) (*dto.CryptoSpotBarResponse, error)
+	QuerySymbols(ctx context.Context, req dto.CryptoSpotSymbolRequest) (*dto.CryptoSpotSymbolResponse, error)
+}
+
+// ScreenerProvider defines operations for underlying and options screening.
+type ScreenerProvider interface {
+	ScreenUnderlyings(ctx context.Context, req dto.ScreenUnderlyingRequest) (*dto.ScreenUnderlyingResponse, error)
+	ScreenOptions(ctx context.Context, req dto.ScreenOptionRequest) (*dto.ScreenOptionResponse, error)
+}
+
+// StrategyCatalogProvider defines operations for listing registered strategies.
+type StrategyCatalogProvider interface {
+	ListStrategies(ctx context.Context, req dto.StrategyCatalogListRequest) (*dto.StrategyCatalogResponse, error)
 }

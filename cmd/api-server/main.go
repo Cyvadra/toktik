@@ -61,7 +61,10 @@ func main() {
 	infraSvc := service.NewInfraService(conn)
 	featureSvc := service.NewFeatureService(conn)
 	strategyBacktestSvc := service.NewPortfolioBacktestService(conn, factorStore)
-	router := api.NewRouter(svc, usStocksSvc, usOptionsSvc, infraSvc, featureSvc, strategyBacktestSvc)
+	cryptoSpotSvc := service.NewCryptoSpotService(conn)
+	screenerSvc := service.NewScreenerService(conn)
+	strategyCatalogSvc := service.NewStrategyCatalogService()
+	router := api.NewRouter(svc, usStocksSvc, usOptionsSvc, infraSvc, featureSvc, strategyBacktestSvc, cryptoSpotSvc, screenerSvc, strategyCatalogSvc)
 
 	srv := &http.Server{
 		Addr:              *addr,

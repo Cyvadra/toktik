@@ -151,6 +151,14 @@ func (m *mockFeature) QueryDailyFeaturePanel(_ context.Context, _ dto.FeatureDai
 	return m.panelResp, m.err
 }
 
+func (m *mockFeature) QueryTermStructureHistory(_ context.Context, _ dto.FeatureTermStructureHistoryRequest) (*dto.FeatureTermStructureHistoryResponse, error) {
+	return nil, m.err
+}
+
+func (m *mockFeature) QuerySkewHistory(_ context.Context, _ dto.FeatureSkewHistoryRequest) (*dto.FeatureSkewHistoryResponse, error) {
+	return nil, m.err
+}
+
 func (m *mockStrategyBacktests) StartStrategyBacktest(_ context.Context, _ dto.StrategyBacktestRunRequest) (*dto.StrategyBacktestRunAccepted, error) {
 	return m.startResp, m.err
 }
@@ -175,7 +183,7 @@ func (m *mockStrategyBacktests) SubscribeStrategyBacktest(_ context.Context, _ s
 
 func setupRouter(q CryptoOptionsQuerier) *gin.Engine {
 	gin.SetMode(gin.TestMode)
-	return NewRouter(q, &mockUSStocksQuerier{}, &mockUSOptionsQuerier{}, &mockInfra{}, &mockFeature{}, nil)
+	return NewRouter(q, &mockUSStocksQuerier{}, &mockUSOptionsQuerier{}, &mockInfra{}, &mockFeature{}, nil, nil, nil, nil)
 }
 
 // --- GetBars ---
@@ -411,7 +419,7 @@ func TestHealthEndpoint(t *testing.T) {
 
 func TestReadinessEndpoint(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	r := NewRouter(&mockQuerier{}, &mockUSStocksQuerier{}, &mockUSOptionsQuerier{}, &mockInfra{readyResp: &dto.ReadinessResponse{Status: "ready"}}, &mockFeature{}, nil)
+	r := NewRouter(&mockQuerier{}, &mockUSStocksQuerier{}, &mockUSOptionsQuerier{}, &mockInfra{readyResp: &dto.ReadinessResponse{Status: "ready"}}, &mockFeature{}, nil, nil, nil, nil)
 
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest("GET", "/ready", nil)
@@ -431,7 +439,7 @@ func TestReadinessEndpoint(t *testing.T) {
 
 func TestMarketCatalogEndpoint(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	r := NewRouter(&mockQuerier{}, &mockUSStocksQuerier{}, &mockUSOptionsQuerier{}, &mockInfra{marketsResp: &dto.MarketCatalogResponse{Markets: []dto.MarketDescriptor{{Name: "crypto-options", Status: "available"}}}}, &mockFeature{}, nil)
+	r := NewRouter(&mockQuerier{}, &mockUSStocksQuerier{}, &mockUSOptionsQuerier{}, &mockInfra{marketsResp: &dto.MarketCatalogResponse{Markets: []dto.MarketDescriptor{{Name: "crypto-options", Status: "available"}}}}, &mockFeature{}, nil, nil, nil, nil)
 
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest("GET", "/api/v1/infra/markets", nil)
@@ -451,7 +459,7 @@ func TestMarketCatalogEndpoint(t *testing.T) {
 
 func TestDatasetCatalogEndpoint(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	r := NewRouter(&mockQuerier{}, &mockUSStocksQuerier{}, &mockUSOptionsQuerier{}, &mockInfra{datasetsResp: &dto.DatasetCatalogResponse{Summary: dto.DatasetSummary{Total: 1, Ready: 1}, Datasets: []dto.DatasetDescriptor{{Name: "crypto-options-bars", Status: "ready"}}}}, &mockFeature{}, nil)
+	r := NewRouter(&mockQuerier{}, &mockUSStocksQuerier{}, &mockUSOptionsQuerier{}, &mockInfra{datasetsResp: &dto.DatasetCatalogResponse{Summary: dto.DatasetSummary{Total: 1, Ready: 1}, Datasets: []dto.DatasetDescriptor{{Name: "crypto-options-bars", Status: "ready"}}}}, &mockFeature{}, nil, nil, nil, nil)
 
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest("GET", "/api/v1/infra/datasets", nil)
@@ -474,7 +482,7 @@ func TestDatasetCatalogEndpoint(t *testing.T) {
 
 func TestDatasetCatalogEndpointWithFilters(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	r := NewRouter(&mockQuerier{}, &mockUSStocksQuerier{}, &mockUSOptionsQuerier{}, &mockInfra{datasetsResp: &dto.DatasetCatalogResponse{Summary: dto.DatasetSummary{Total: 1, Ready: 1}, Datasets: []dto.DatasetDescriptor{{Name: "us-options-bars", Market: "us-options", Status: "ready"}}}}, &mockFeature{}, nil)
+	r := NewRouter(&mockQuerier{}, &mockUSStocksQuerier{}, &mockUSOptionsQuerier{}, &mockInfra{datasetsResp: &dto.DatasetCatalogResponse{Summary: dto.DatasetSummary{Total: 1, Ready: 1}, Datasets: []dto.DatasetDescriptor{{Name: "us-options-bars", Market: "us-options", Status: "ready"}}}}, &mockFeature{}, nil, nil, nil, nil)
 
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest("GET", "/api/v1/infra/datasets?market=us-options&status=ready", nil)
@@ -510,6 +518,7 @@ func TestUSStocksBarsRoute(t *testing.T) {
 		&mockInfra{},
 		&mockFeature{},
 		nil,
+		nil, nil, nil,
 	)
 
 	w := httptest.NewRecorder()
@@ -530,6 +539,7 @@ func TestUSStocksSymbolsRoute(t *testing.T) {
 		&mockInfra{},
 		&mockFeature{},
 		nil,
+		nil, nil, nil,
 	)
 
 	w := httptest.NewRecorder()
@@ -550,6 +560,7 @@ func TestUSOptionsBarsRoute(t *testing.T) {
 		&mockInfra{},
 		&mockFeature{},
 		nil,
+		nil, nil, nil,
 	)
 
 	w := httptest.NewRecorder()
@@ -570,6 +581,7 @@ func TestUSOptionsSymbolsRoute(t *testing.T) {
 		&mockInfra{},
 		&mockFeature{},
 		nil,
+		nil, nil, nil,
 	)
 
 	w := httptest.NewRecorder()
@@ -590,6 +602,7 @@ func TestUSOptionsGreeksRoute(t *testing.T) {
 		&mockInfra{},
 		&mockFeature{},
 		nil,
+		nil, nil, nil,
 	)
 
 	w := httptest.NewRecorder()
@@ -610,6 +623,7 @@ func TestUSOptionsChainRoute(t *testing.T) {
 		&mockInfra{},
 		&mockFeature{},
 		nil,
+		nil, nil, nil,
 	)
 
 	w := httptest.NewRecorder()
@@ -632,6 +646,7 @@ func TestFeatureVolatilitySnapshotRoute(t *testing.T) {
 		&mockInfra{},
 		&mockFeature{volResp: &dto.FeatureVolatilitySnapshotResponse{Market: "us-options", Underlying: "AAPL", LookbackDays: 252, HV10: &hv10, IVPercentile: &ivPercentile}},
 		nil,
+		nil, nil, nil,
 	)
 
 	w := httptest.NewRecorder()
@@ -663,6 +678,7 @@ func TestFeatureVolatilityHistoryRoute(t *testing.T) {
 		&mockInfra{},
 		&mockFeature{historyResp: &dto.FeatureVolatilityHistoryResponse{Market: "crypto-options", Underlying: "BTC", LookbackDays: 252, Data: []dto.FeatureVolatilityHistoryRow{{Date: time.Date(2024, 1, 2, 0, 0, 0, 0, time.UTC), HV20: &hv20}}}},
 		nil,
+		nil, nil, nil,
 	)
 
 	w := httptest.NewRecorder()
@@ -694,6 +710,7 @@ func TestFeatureTermStructureSnapshotRoute(t *testing.T) {
 		&mockInfra{},
 		&mockFeature{termStructureResp: &dto.FeatureTermStructureSnapshotResponse{Market: "us-options", Underlying: "AAPL", Data: []dto.FeatureTermStructureSnapshotRow{{Expiration: time.Date(2024, 2, 16, 0, 0, 0, 0, time.UTC), DaysToExpiry: 45, ATMIV: &atmIV}}}},
 		nil,
+		nil, nil, nil,
 	)
 
 	w := httptest.NewRecorder()
@@ -722,6 +739,7 @@ func TestFeatureSkewSnapshotRoute(t *testing.T) {
 		&mockInfra{},
 		&mockFeature{skewResp: &dto.FeatureSkewSnapshotResponse{Market: "us-options", Underlying: "AAPL", Data: []dto.FeatureSkewSnapshotRow{{Expiration: time.Date(2024, 2, 16, 0, 0, 0, 0, time.UTC), DaysToExpiry: 45, PutCallSkew: &skew}}}},
 		nil,
+		nil, nil, nil,
 	)
 
 	w := httptest.NewRecorder()
@@ -751,6 +769,7 @@ func TestFeatureLiquiditySnapshotRoute(t *testing.T) {
 		&mockInfra{},
 		&mockFeature{liquidityResp: &dto.FeatureLiquiditySnapshotResponse{Market: "crypto-options", Underlying: "BTC", Data: []dto.FeatureLiquiditySnapshotRow{{Expiration: time.Date(2024, 2, 16, 0, 0, 0, 0, time.UTC), DaysToExpiry: 45, RelativeSpread: &spread, TradabilityRatio: &ratio, ContractCount: 8}}}},
 		nil,
+		nil, nil, nil,
 	)
 
 	w := httptest.NewRecorder()
@@ -779,6 +798,7 @@ func TestFeatureLiquidityHistoryRoute(t *testing.T) {
 		&mockInfra{},
 		&mockFeature{liquidityHistResp: &dto.FeatureLiquidityHistoryResponse{Market: "us-options", Underlying: "AAPL", Data: []dto.FeatureLiquidityHistoryRow{{AsOfDate: time.Date(2024, 1, 2, 0, 0, 0, 0, time.UTC), FeatureLiquiditySnapshotRow: dto.FeatureLiquiditySnapshotRow{Expiration: time.Date(2024, 2, 16, 0, 0, 0, 0, time.UTC), ActivityRatio: &ratio, Volume: 1200, ContractCount: 10}}}}},
 		nil,
+		nil, nil, nil,
 	)
 
 	w := httptest.NewRecorder()
@@ -807,6 +827,7 @@ func TestFeatureEventWindowSnapshotRoute(t *testing.T) {
 		&mockInfra{},
 		&mockFeature{eventWindowResp: &dto.FeatureEventWindowSnapshotResponse{Market: "us-options", Underlying: "AAPL", DaysToNextHoliday: &daysToNext}},
 		nil,
+		nil, nil, nil,
 	)
 
 	w := httptest.NewRecorder()
@@ -835,6 +856,7 @@ func TestFeatureEventWindowHistoryRoute(t *testing.T) {
 		&mockInfra{},
 		&mockFeature{eventWindowHistResp: &dto.FeatureEventWindowHistoryResponse{Market: "us-options", Underlying: "AAPL", Data: []dto.FeatureEventWindowHistoryRow{{Date: time.Date(2024, 1, 3, 0, 0, 0, 0, time.UTC), FeatureEventWindowSnapshotResponse: dto.FeatureEventWindowSnapshotResponse{Market: "us-options", Underlying: "AAPL", DaysFromPrevHoliday: &daysFromPrev}}}}},
 		nil,
+		nil, nil, nil,
 	)
 
 	w := httptest.NewRecorder()
@@ -863,6 +885,7 @@ func TestFeatureDailyPanelRoute(t *testing.T) {
 		&mockInfra{},
 		&mockFeature{panelResp: &dto.FeatureDailyPanelResponse{Market: "us-options", Underlying: "AAPL", LookbackDays: 252, Data: []dto.FeatureDailyPanelRow{{Date: time.Date(2024, 1, 3, 0, 0, 0, 0, time.UTC), HV20: &hv20, LiquidityVolume: 1200}}}},
 		nil,
+		nil, nil, nil,
 	)
 
 	w := httptest.NewRecorder()
@@ -896,6 +919,7 @@ func TestStartStrategyBacktestRoute(t *testing.T) {
 			StatusURL: "/api/v1/backtests/runs/run-123",
 			EventsURL: "/api/v1/backtests/runs/run-123/events",
 		}},
+		nil, nil, nil,
 	)
 
 	body := `{"asset":"BTC","from":"2026-01-01","to":"2026-02-01","capital":5}`
@@ -932,6 +956,7 @@ func TestGetStrategyBacktestRunRoute(t *testing.T) {
 			UpdatedAt: time.Date(2026, 4, 7, 8, 0, 1, 0, time.UTC),
 			Progress:  &dto.StrategyBacktestProgress{Phase: "prepare", Current: 10, Total: 100, Percent: 10},
 		}},
+		nil, nil, nil,
 	)
 
 	w := httptest.NewRecorder()
@@ -980,6 +1005,7 @@ func TestStreamStrategyBacktestEventsRoute(t *testing.T) {
 			},
 			stream: stream,
 		},
+		nil, nil, nil,
 	)
 
 	w := httptest.NewRecorder()

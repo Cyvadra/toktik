@@ -19,10 +19,13 @@ type Handler struct {
 	infra             InfraProvider
 	features          FeatureProvider
 	strategyBacktests StrategyBacktestProvider
+	cryptoSpot        CryptoSpotQuerier
+	screener          ScreenerProvider
+	strategyCatalog   StrategyCatalogProvider
 }
 
-func NewHandler(cos CryptoOptionsQuerier, usStocks USStocksQuerier, usOptions USOptionsQuerier, infra InfraProvider, features FeatureProvider, strategyBacktests StrategyBacktestProvider) *Handler {
-	return &Handler{cryptoOptions: cos, usStocks: usStocks, usOptions: usOptions, infra: infra, features: features, strategyBacktests: strategyBacktests}
+func NewHandler(cos CryptoOptionsQuerier, usStocks USStocksQuerier, usOptions USOptionsQuerier, infra InfraProvider, features FeatureProvider, strategyBacktests StrategyBacktestProvider, cryptoSpot CryptoSpotQuerier, screener ScreenerProvider, strategyCatalog StrategyCatalogProvider) *Handler {
+	return &Handler{cryptoOptions: cos, usStocks: usStocks, usOptions: usOptions, infra: infra, features: features, strategyBacktests: strategyBacktests, cryptoSpot: cryptoSpot, screener: screener, strategyCatalog: strategyCatalog}
 }
 
 // handleServiceError maps service-level errors to appropriate HTTP responses.
@@ -571,6 +574,161 @@ func (h *Handler) GetUSOptionChain(c *gin.Context) {
 	}
 
 	resp, err := h.usOptions.QueryChain(c.Request.Context(), req)
+	if err != nil {
+		handleServiceError(c, err)
+		return
+	}
+
+	c.JSON(http.StatusOK, resp)
+}
+
+// --- Crypto Spot handlers ---
+
+// GetCryptoSpotBars handles GET /api/v1/markets/crypto-spot/bars.
+func (h *Handler) GetCryptoSpotBars(c *gin.Context) {
+	var req dto.CryptoSpotBarRequest
+	if err := c.ShouldBindQuery(&req); err != nil {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: err.Error()})
+		return
+	}
+	if h.cryptoSpot == nil {
+		c.JSON(http.StatusNotImplemented, dto.ErrorResponse{Error: "crypto-spot provider not configured"})
+		return
+	}
+
+	resp, err := h.cryptoSpot.QueryBars(c.Request.Context(), req)
+	if err != nil {
+		handleServiceError(c, err)
+		return
+	}
+
+	c.JSON(http.StatusOK, resp)
+}
+
+// GetCryptoSpotSymbols handles GET /api/v1/markets/crypto-spot/symbols.
+func (h *Handler) GetCryptoSpotSymbols(c *gin.Context) {
+	var req dto.CryptoSpotSymbolRequest
+	if err := c.ShouldBindQuery(&req); err != nil {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: err.Error()})
+		return
+	}
+	if h.cryptoSpot == nil {
+		c.JSON(http.StatusNotImplemented, dto.ErrorResponse{Error: "crypto-spot provider not configured"})
+		return
+	}
+
+	resp, err := h.cryptoSpot.QuerySymbols(c.Request.Context(), req)
+	if err != nil {
+		handleServiceError(c, err)
+		return
+	}
+
+	c.JSON(http.StatusOK, resp)
+}
+
+// --- Feature history handlers ---
+
+// GetTermStructureHistory handles GET /api/v1/features/term-structure-history.
+func (h *Handler) GetTermStructureHistory(c *gin.Context) {
+	var req dto.FeatureTermStructureHistoryRequest
+	if err := c.ShouldBindQuery(&req); err != nil {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: err.Error()})
+		return
+	}
+	if h.features == nil {
+		c.JSON(http.StatusNotImplemented, dto.ErrorResponse{Error: "feature provider not configured"})
+		return
+	}
+
+	resp, err := h.features.QueryTermStructureHistory(c.Request.Context(), req)
+	if err != nil {
+		handleServiceError(c, err)
+		return
+	}
+
+	c.JSON(http.StatusOK, resp)
+}
+
+// GetSkewHistory handles GET /api/v1/features/skew-history.
+func (h *Handler) GetSkewHistory(c *gin.Context) {
+	var req dto.FeatureSkewHistoryRequest
+	if err := c.ShouldBindQuery(&req); err != nil {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: err.Error()})
+		return
+	}
+	if h.features == nil {
+		c.JSON(http.StatusNotImplemented, dto.ErrorResponse{Error: "feature provider not configured"})
+		return
+	}
+
+	resp, err := h.features.QuerySkewHistory(c.Request.Context(), req)
+	if err != nil {
+		handleServiceError(c, err)
+		return
+	}
+
+	c.JSON(http.StatusOK, resp)
+}
+
+// --- Screener handlers ---
+
+// ScreenUnderlyings handles GET /api/v1/screener/underlyings.
+func (h *Handler) ScreenUnderlyings(c *gin.Context) {
+	var req dto.ScreenUnderlyingRequest
+	if err := c.ShouldBindQuery(&req); err != nil {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: err.Error()})
+		return
+	}
+	if h.screener == nil {
+		c.JSON(http.StatusNotImplemented, dto.ErrorResponse{Error: "screener provider not configured"})
+		return
+	}
+
+	resp, err := h.screener.ScreenUnderlyings(c.Request.Context(), req)
+	if err != nil {
+		handleServiceError(c, err)
+		return
+	}
+
+	c.JSON(http.StatusOK, resp)
+}
+
+// ScreenOptions handles GET /api/v1/screener/options.
+func (h *Handler) ScreenOptions(c *gin.Context) {
+	var req dto.ScreenOptionRequest
+	if err := c.ShouldBindQuery(&req); err != nil {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: err.Error()})
+		return
+	}
+	if h.screener == nil {
+		c.JSON(http.StatusNotImplemented, dto.ErrorResponse{Error: "screener provider not configured"})
+		return
+	}
+
+	resp, err := h.screener.ScreenOptions(c.Request.Context(), req)
+	if err != nil {
+		handleServiceError(c, err)
+		return
+	}
+
+	c.JSON(http.StatusOK, resp)
+}
+
+// --- Strategy Catalog handlers ---
+
+// ListStrategies handles GET /api/v1/strategies.
+func (h *Handler) ListStrategies(c *gin.Context) {
+	var req dto.StrategyCatalogListRequest
+	if err := c.ShouldBindQuery(&req); err != nil {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: err.Error()})
+		return
+	}
+	if h.strategyCatalog == nil {
+		c.JSON(http.StatusNotImplemented, dto.ErrorResponse{Error: "strategy catalog provider not configured"})
+		return
+	}
+
+	resp, err := h.strategyCatalog.ListStrategies(c.Request.Context(), req)
 	if err != nil {
 		handleServiceError(c, err)
 		return
