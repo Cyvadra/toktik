@@ -15,6 +15,7 @@ type CryptoOptionsQuerier interface {
 	QuerySymbols(ctx context.Context, req dto.SymbolRequest) (*dto.SymbolResponse, error)
 	QueryGreeks(ctx context.Context, req dto.GreeksRequest) (*dto.GreeksResponse, error)
 	RunBacktest(ctx context.Context, req dto.BacktestRequest) (*backtest.Result, error)
+	QueryChain(ctx context.Context, req dto.CryptoOptionChainRequest) (*dto.CryptoOptionChainResponse, error)
 }
 
 // USStocksQuerier defines the operations needed for low-level US stock endpoints.
@@ -74,4 +75,10 @@ type ScreenerProvider interface {
 // StrategyCatalogProvider defines operations for listing registered strategies.
 type StrategyCatalogProvider interface {
 	ListStrategies(ctx context.Context, req dto.StrategyCatalogListRequest) (*dto.StrategyCatalogResponse, error)
+}
+
+// FactorProvider defines operations for factor feed catalog and data queries.
+type FactorProvider interface {
+	ListFactors(ctx context.Context) (*dto.FactorCatalogResponse, error)
+	QueryFactorBars(ctx context.Context, req dto.FactorBarRequest) (*dto.FactorBarResponse, error)
 }

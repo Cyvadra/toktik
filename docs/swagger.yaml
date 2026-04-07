@@ -1,0 +1,2770 @@
+basePath: /api/v1
+definitions:
+  github_com_Cyvadra_toktik_internal_dto.BacktestRequest:
+    properties:
+      capital:
+        type: number
+      commission_model:
+        type: string
+      commission_value:
+        type: number
+      fill_mode:
+        type: string
+      from:
+        type: string
+      interval:
+        type: string
+      params:
+        items:
+          type: integer
+        type: array
+      slippage_pct:
+        type: number
+      strategy:
+        type: string
+      symbol:
+        type: string
+      to:
+        type: string
+      trigger_mode:
+        type: string
+      valuation_mode:
+        type: string
+    required:
+    - from
+    - interval
+    - symbol
+    - to
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.BarResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.BarRow'
+        type: array
+      next_cursor:
+        type: string
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.BarRow:
+    properties:
+      ask_close:
+        type: number
+      ask_high:
+        type: number
+      ask_iv_open:
+        type: number
+      ask_low:
+        type: number
+      ask_open:
+        type: number
+      base_asset:
+        type: string
+      bid_close:
+        type: number
+      bid_high:
+        type: number
+      bid_iv_open:
+        type: number
+      bid_low:
+        type: number
+      bid_open:
+        type: number
+      delta:
+        type: number
+      gamma:
+        type: number
+      last_close:
+        type: number
+      last_high:
+        type: number
+      last_low:
+        type: number
+      last_open:
+        type: number
+      mark_close:
+        type: number
+      mark_high:
+        type: number
+      mark_iv_close:
+        type: number
+      mark_iv_open:
+        type: number
+      mark_low:
+        type: number
+      mark_open:
+        type: number
+      open_interest:
+        type: number
+      rho:
+        type: number
+      symbol_id:
+        type: integer
+      theta:
+        type: number
+      tick_count:
+        type: integer
+      timestamp:
+        type: string
+      underlying_price_close:
+        type: number
+      underlying_price_high:
+        type: number
+      underlying_price_low:
+        type: number
+      underlying_price_open:
+        type: number
+      vega:
+        type: number
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.CryptoOptionChainContract:
+    properties:
+      ask_close:
+        type: number
+      bid_close:
+        type: number
+      delta:
+        type: number
+      expiration:
+        type: string
+      gamma:
+        type: number
+      mark_close:
+        type: number
+      mark_iv:
+        type: number
+      open_interest:
+        type: number
+      option_type:
+        type: string
+      rho:
+        type: number
+      strike:
+        type: number
+      symbol:
+        type: string
+      symbol_id:
+        type: integer
+      theta:
+        type: number
+      tick_count:
+        type: integer
+      underlying_close:
+        type: number
+      vega:
+        type: number
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.CryptoOptionChainResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.CryptoOptionChainSnapshot'
+        type: array
+      next_cursor:
+        type: string
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.CryptoOptionChainSnapshot:
+    properties:
+      base_asset:
+        type: string
+      contracts:
+        items:
+          $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.CryptoOptionChainContract'
+        type: array
+      timestamp:
+        type: string
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.CryptoSpotBarResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.CryptoSpotBarRow'
+        type: array
+      next_cursor:
+        type: string
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.CryptoSpotBarRow:
+    properties:
+      close:
+        type: number
+      high:
+        type: number
+      low:
+        type: number
+      open:
+        type: number
+      symbol:
+        type: string
+      tick_count:
+        type: integer
+      timestamp:
+        type: string
+      volume:
+        type: number
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.CryptoSpotSymbolResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.CryptoSpotSymbolRow'
+        type: array
+      next_cursor:
+        type: string
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.CryptoSpotSymbolRow:
+    properties:
+      symbol:
+        type: string
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.DatasetCatalogResponse:
+    properties:
+      datasets:
+        items:
+          $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.DatasetDescriptor'
+        type: array
+      summary:
+        $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.DatasetSummary'
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.DatasetDescriptor:
+    properties:
+      age_seconds:
+        type: integer
+      freshness:
+        type: string
+      last_timestamp:
+        type: string
+      market:
+        type: string
+      name:
+        type: string
+      relation:
+        type: string
+      row_count:
+        type: integer
+      status:
+        type: string
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.DatasetMarketSummary:
+    properties:
+      empty:
+        type: integer
+      market:
+        type: string
+      missing:
+        type: integer
+      ready:
+        type: integer
+      stale:
+        type: integer
+      total:
+        type: integer
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.DatasetSummary:
+    properties:
+      empty:
+        type: integer
+      markets:
+        items:
+          $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.DatasetMarketSummary'
+        type: array
+      missing:
+        type: integer
+      ready:
+        type: integer
+      stale:
+        type: integer
+      total:
+        type: integer
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.ErrorResponse:
+    properties:
+      error:
+        type: string
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.FactorBarResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.FactorBarRow'
+        type: array
+      next_cursor:
+        type: string
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.FactorBarRow:
+    properties:
+      close:
+        type: number
+      high:
+        type: number
+      low:
+        type: number
+      open:
+        type: number
+      symbol:
+        type: string
+      timestamp:
+        type: string
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.FactorCatalogResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.FactorInfo'
+        type: array
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.FactorInfo:
+    properties:
+      fields:
+        items:
+          type: string
+        type: array
+      name:
+        example: dvol
+        type: string
+      source_windows:
+        example:
+        - 1h
+        - 12h
+        - 1d
+        items:
+          type: string
+        type: array
+      symbols:
+        example:
+        - BTC
+        - ETH
+        items:
+          type: string
+        type: array
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.FeatureDailyPanelResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.FeatureDailyPanelRow'
+        type: array
+      lookback_days:
+        type: integer
+      market:
+        type: string
+      underlying:
+        type: string
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.FeatureDailyPanelRow:
+    properties:
+      current_iv:
+        type: number
+      date:
+        type: string
+      days_from_prev_holiday:
+        type: integer
+      days_to_next_holiday:
+        type: integer
+      front_atm_iv:
+        type: number
+      front_days_to_expiry:
+        type: integer
+      front_expiration:
+        type: string
+      front_put_call_skew:
+        type: number
+      hv10:
+        type: number
+      hv20:
+        type: number
+      hv30:
+        type: number
+      is_early_close:
+        type: boolean
+      iv_observations:
+        type: integer
+      iv_percentile:
+        type: number
+      iv_rank:
+        type: number
+      liquidity_active_contract_count:
+        type: integer
+      liquidity_activity_ratio:
+        type: number
+      liquidity_contract_count:
+        type: integer
+      liquidity_open_interest:
+        type: number
+      liquidity_relative_spread:
+        type: number
+      liquidity_tick_count:
+        type: integer
+      liquidity_tradability_ratio:
+        type: number
+      liquidity_tradable_contract_count:
+        type: integer
+      liquidity_transactions:
+        type: integer
+      liquidity_volume:
+        type: integer
+      price_observations:
+        type: integer
+      surface_contract_count:
+        type: integer
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.FeatureEventWindowHistoryResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.FeatureEventWindowHistoryRow'
+        type: array
+      market:
+        type: string
+      underlying:
+        type: string
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.FeatureEventWindowHistoryRow:
+    properties:
+      as_of_date:
+        type: string
+      date:
+        type: string
+      days_from_prev_holiday:
+        type: integer
+      days_to_next_holiday:
+        type: integer
+      is_early_close:
+        type: boolean
+      market:
+        type: string
+      next_holiday_date:
+        type: string
+      previous_holiday_date:
+        type: string
+      underlying:
+        type: string
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.FeatureEventWindowSnapshotResponse:
+    properties:
+      as_of_date:
+        type: string
+      days_from_prev_holiday:
+        type: integer
+      days_to_next_holiday:
+        type: integer
+      is_early_close:
+        type: boolean
+      market:
+        type: string
+      next_holiday_date:
+        type: string
+      previous_holiday_date:
+        type: string
+      underlying:
+        type: string
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.FeatureLiquidityHistoryResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.FeatureLiquidityHistoryRow'
+        type: array
+      market:
+        type: string
+      underlying:
+        type: string
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.FeatureLiquidityHistoryRow:
+    properties:
+      active_contract_count:
+        type: integer
+      activity_ratio:
+        type: number
+      as_of_date:
+        type: string
+      avg_ask_close:
+        type: number
+      avg_bid_close:
+        type: number
+      avg_mark_close:
+        type: number
+      contract_count:
+        type: integer
+      days_to_expiry:
+        type: integer
+      expiration:
+        type: string
+      open_interest:
+        type: number
+      relative_spread:
+        type: number
+      tick_count:
+        type: integer
+      tradability_ratio:
+        type: number
+      tradable_contract_count:
+        type: integer
+      transactions:
+        type: integer
+      volume:
+        type: integer
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.FeatureLiquiditySnapshotResponse:
+    properties:
+      as_of:
+        type: string
+      data:
+        items:
+          $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.FeatureLiquiditySnapshotRow'
+        type: array
+      market:
+        type: string
+      underlying:
+        type: string
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.FeatureLiquiditySnapshotRow:
+    properties:
+      active_contract_count:
+        type: integer
+      activity_ratio:
+        type: number
+      avg_ask_close:
+        type: number
+      avg_bid_close:
+        type: number
+      avg_mark_close:
+        type: number
+      contract_count:
+        type: integer
+      days_to_expiry:
+        type: integer
+      expiration:
+        type: string
+      open_interest:
+        type: number
+      relative_spread:
+        type: number
+      tick_count:
+        type: integer
+      tradability_ratio:
+        type: number
+      tradable_contract_count:
+        type: integer
+      transactions:
+        type: integer
+      volume:
+        type: integer
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.FeatureSkewHistoryResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.FeatureSkewHistoryRow'
+        type: array
+      market:
+        type: string
+      underlying:
+        type: string
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.FeatureSkewHistoryRow:
+    properties:
+      as_of_date:
+        type: string
+      contract_count:
+        type: integer
+      days_to_expiry:
+        type: integer
+      expiration:
+        type: string
+      otm_call_iv:
+        type: number
+      otm_put_iv:
+        type: number
+      put_call_skew:
+        type: number
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.FeatureSkewSnapshotResponse:
+    properties:
+      as_of:
+        type: string
+      data:
+        items:
+          $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.FeatureSkewSnapshotRow'
+        type: array
+      market:
+        type: string
+      underlying:
+        type: string
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.FeatureSkewSnapshotRow:
+    properties:
+      contract_count:
+        type: integer
+      days_to_expiry:
+        type: integer
+      expiration:
+        type: string
+      otm_call_iv:
+        type: number
+      otm_put_iv:
+        type: number
+      put_call_skew:
+        type: number
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.FeatureTermStructureHistoryResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.FeatureTermStructureHistoryRow'
+        type: array
+      market:
+        type: string
+      underlying:
+        type: string
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.FeatureTermStructureHistoryRow:
+    properties:
+      as_of_date:
+        type: string
+      atm_iv:
+        type: number
+      call_iv:
+        type: number
+      contract_count:
+        type: integer
+      days_to_expiry:
+        type: integer
+      expiration:
+        type: string
+      put_iv:
+        type: number
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.FeatureTermStructureSnapshotResponse:
+    properties:
+      as_of:
+        type: string
+      data:
+        items:
+          $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.FeatureTermStructureSnapshotRow'
+        type: array
+      market:
+        type: string
+      underlying:
+        type: string
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.FeatureTermStructureSnapshotRow:
+    properties:
+      atm_iv:
+        type: number
+      call_iv:
+        type: number
+      contract_count:
+        type: integer
+      days_to_expiry:
+        type: integer
+      expiration:
+        type: string
+      put_iv:
+        type: number
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.FeatureVolatilityHistoryResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.FeatureVolatilityHistoryRow'
+        type: array
+      lookback_days:
+        type: integer
+      market:
+        type: string
+      underlying:
+        type: string
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.FeatureVolatilityHistoryRow:
+    properties:
+      current_iv:
+        type: number
+      date:
+        type: string
+      hv10:
+        type: number
+      hv20:
+        type: number
+      hv30:
+        type: number
+      iv_observations:
+        type: integer
+      iv_percentile:
+        type: number
+      iv_rank:
+        type: number
+      price_observations:
+        type: integer
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.FeatureVolatilitySnapshotResponse:
+    properties:
+      current_iv:
+        type: number
+      hv10:
+        type: number
+      hv20:
+        type: number
+      hv30:
+        type: number
+      iv_as_of:
+        type: string
+      iv_observations:
+        type: integer
+      iv_percentile:
+        type: number
+      iv_rank:
+        type: number
+      lookback_days:
+        type: integer
+      market:
+        type: string
+      price_as_of:
+        type: string
+      price_observations:
+        type: integer
+      underlying:
+        type: string
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.GreeksResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.GreeksRow'
+        type: array
+      next_cursor:
+        type: string
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.GreeksRow:
+    properties:
+      delta:
+        type: number
+      gamma:
+        type: number
+      mark_iv_close:
+        type: number
+      mark_iv_open:
+        type: number
+      open_interest:
+        type: number
+      rho:
+        type: number
+      symbol_id:
+        type: integer
+      theta:
+        type: number
+      timestamp:
+        type: string
+      underlying_price_close:
+        type: number
+      underlying_price_high:
+        type: number
+      underlying_price_low:
+        type: number
+      underlying_price_open:
+        type: number
+      vega:
+        type: number
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.MarketCatalogResponse:
+    properties:
+      markets:
+        items:
+          $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.MarketDescriptor'
+        type: array
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.MarketDescriptor:
+    properties:
+      capabilities:
+        items:
+          type: string
+        type: array
+      name:
+        type: string
+      status:
+        type: string
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.ReadinessResponse:
+    properties:
+      status:
+        type: string
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.ScreenOptionResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ScreenedOption'
+        type: array
+      next_cursor:
+        type: string
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.ScreenUnderlyingResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ScreenedUnderlying'
+        type: array
+      next_cursor:
+        type: string
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.ScreenedOption:
+    properties:
+      ask_close:
+        type: number
+      bid_close:
+        type: number
+      close:
+        type: number
+      days_to_expiry:
+        type: integer
+      delta:
+        type: number
+      expiration:
+        type: string
+      gamma:
+        type: number
+      implied_volatility:
+        type: number
+      open_interest:
+        type: number
+      option_type:
+        type: string
+      relative_spread:
+        type: number
+      strike:
+        type: number
+      symbol:
+        type: string
+      theta:
+        type: number
+      underlying:
+        type: string
+      underlying_close:
+        type: number
+      vega:
+        type: number
+      volume:
+        type: integer
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.ScreenedUnderlying:
+    properties:
+      activity_ratio:
+        type: number
+      as_of_date:
+        type: string
+      current_iv:
+        type: number
+      hv10:
+        type: number
+      hv20:
+        type: number
+      hv30:
+        type: number
+      iv_percentile:
+        type: number
+      iv_rank:
+        type: number
+      market:
+        type: string
+      open_interest:
+        type: number
+      tradability_ratio:
+        type: number
+      underlying:
+        type: string
+      volume:
+        type: integer
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.StrategyBacktestProgress:
+    properties:
+      completed:
+        type: boolean
+      current:
+        type: integer
+      message:
+        type: string
+      percent:
+        type: number
+      phase:
+        type: string
+      started_at:
+        type: string
+      timestamp:
+        type: string
+      total:
+        type: integer
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.StrategyBacktestRunAccepted:
+    properties:
+      created_at:
+        type: string
+      events_url:
+        type: string
+      run_id:
+        type: string
+      status:
+        type: string
+      status_url:
+        type: string
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.StrategyBacktestRunRequest:
+    properties:
+      asset:
+        type: string
+      capital:
+        type: number
+      commission_model:
+        type: string
+      commission_value:
+        type: number
+      direction:
+        type: string
+      from:
+        type: string
+      html_output:
+        type: string
+      instrument:
+        type: string
+      interval:
+        type: string
+      long_delta_max:
+        type: number
+      long_delta_min:
+        type: number
+      ma_period:
+        type: integer
+      market:
+        type: string
+      max_hold_hours:
+        type: number
+      min_expiry_days:
+        type: integer
+      min_premium:
+        type: number
+      p_threshold:
+        type: number
+      position_size:
+        type: number
+      short_delta_max:
+        type: number
+      short_delta_min:
+        type: number
+      signal_source:
+        type: string
+      slippage_pct:
+        type: number
+      spread_entry_price_mode:
+        type: string
+      spread_exit_price_mode:
+        type: string
+      spread_valuation_price_mode:
+        type: string
+      strategy:
+        type: string
+      target_expiry_days:
+        type: integer
+      to:
+        type: string
+    required:
+    - asset
+    - capital
+    - from
+    - to
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.StrategyBacktestRunResult:
+    properties:
+      overview_html_path:
+        type: string
+      summaries:
+        items:
+          $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.StrategyBacktestSummary'
+        type: array
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.StrategyBacktestRunStatus:
+    properties:
+      completed_at:
+        type: string
+      created_at:
+        type: string
+      error:
+        type: string
+      progress:
+        $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.StrategyBacktestProgress'
+      request:
+        $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.StrategyBacktestRunRequest'
+      result:
+        $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.StrategyBacktestRunResult'
+      run_id:
+        type: string
+      started_at:
+        type: string
+      status:
+        type: string
+      updated_at:
+        type: string
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.StrategyBacktestSpreadSummary:
+    properties:
+      closed_spreads:
+        type: integer
+      losing_spreads:
+        type: integer
+      open_spreads:
+        type: integer
+      total_pnl:
+        type: number
+      total_spreads:
+        type: integer
+      win_rate:
+        type: number
+      winning_spreads:
+        type: integer
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.StrategyBacktestSummary:
+    properties:
+      account_unit:
+        type: string
+      annualized_return:
+        type: number
+      avg_loss:
+        type: number
+      avg_win:
+        type: number
+      bars_count:
+        type: integer
+      capital_mode:
+        type: string
+      capital_note:
+        type: string
+      capital_profile:
+        type: string
+      end_time:
+        type: string
+      final_equity:
+        type: number
+      html_path:
+        type: string
+      initial_capital:
+        type: number
+      losing_trades:
+        type: integer
+      max_drawdown:
+        type: number
+      profit_factor:
+        type: number
+      sharpe_ratio:
+        type: number
+      spread_summary:
+        $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.StrategyBacktestSpreadSummary'
+      start_time:
+        type: string
+      strategy_name:
+        type: string
+      total_fees:
+        type: number
+      total_return:
+        type: number
+      total_trades:
+        type: integer
+      win_rate:
+        type: number
+      winning_trades:
+        type: integer
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.StrategyCatalogEntry:
+    properties:
+      aliases:
+        items:
+          type: string
+        type: array
+      groups:
+        items:
+          type: string
+        type: array
+      name:
+        type: string
+      profile_label:
+        type: string
+      regular_trade:
+        type: string
+      uses_options:
+        type: boolean
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.StrategyCatalogResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.StrategyCatalogEntry'
+        type: array
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.SymbolResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.SymbolRow'
+        type: array
+      next_cursor:
+        type: string
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.SymbolRow:
+    properties:
+      base_asset:
+        type: string
+      expiration:
+        type: string
+      option_type:
+        type: string
+      strike_price:
+        type: number
+      symbol:
+        type: string
+      symbol_id:
+        type: integer
+      underlying_index:
+        type: string
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.USOptionBarResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.USOptionBarRow'
+        type: array
+      next_cursor:
+        type: string
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.USOptionBarRow:
+    properties:
+      close:
+        type: number
+      delta:
+        type: number
+      expiration:
+        type: string
+      gamma:
+        type: number
+      high:
+        type: number
+      implied_volatility:
+        type: number
+      low:
+        type: number
+      open:
+        type: number
+      option_type:
+        type: string
+      rho:
+        type: number
+      strike:
+        type: number
+      symbol:
+        type: string
+      theta:
+        type: number
+      timestamp:
+        type: string
+      transactions:
+        type: integer
+      underlying:
+        type: string
+      underlying_close:
+        type: number
+      vega:
+        type: number
+      volume:
+        type: integer
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.USOptionChainContract:
+    properties:
+      close:
+        type: number
+      delta:
+        type: number
+      expiration:
+        type: string
+      gamma:
+        type: number
+      implied_volatility:
+        type: number
+      option_type:
+        type: string
+      rho:
+        type: number
+      strike:
+        type: number
+      symbol:
+        type: string
+      theta:
+        type: number
+      transactions:
+        type: integer
+      underlying_close:
+        type: number
+      vega:
+        type: number
+      volume:
+        type: integer
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.USOptionChainResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.USOptionChainSnapshot'
+        type: array
+      next_cursor:
+        type: string
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.USOptionChainSnapshot:
+    properties:
+      contracts:
+        items:
+          $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.USOptionChainContract'
+        type: array
+      timestamp:
+        type: string
+      underlying:
+        type: string
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.USOptionGreeksResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.USOptionGreeksRow'
+        type: array
+      next_cursor:
+        type: string
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.USOptionGreeksRow:
+    properties:
+      delta:
+        type: number
+      expiration:
+        type: string
+      gamma:
+        type: number
+      implied_volatility:
+        type: number
+      option_type:
+        type: string
+      rho:
+        type: number
+      strike:
+        type: number
+      symbol:
+        type: string
+      theta:
+        type: number
+      timestamp:
+        type: string
+      transactions:
+        type: integer
+      underlying:
+        type: string
+      underlying_close:
+        type: number
+      vega:
+        type: number
+      volume:
+        type: integer
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.USOptionSymbolResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.USOptionSymbolRow'
+        type: array
+      next_cursor:
+        type: string
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.USOptionSymbolRow:
+    properties:
+      expiration:
+        type: string
+      option_type:
+        type: string
+      strike:
+        type: number
+      symbol:
+        type: string
+      underlying:
+        type: string
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.USStockBarResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.USStockBarRow'
+        type: array
+      next_cursor:
+        type: string
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.USStockBarRow:
+    properties:
+      close:
+        type: number
+      high:
+        type: number
+      low:
+        type: number
+      open:
+        type: number
+      symbol:
+        type: string
+      timestamp:
+        type: string
+      transactions:
+        type: integer
+      volume:
+        type: integer
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.USStockSymbolResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.USStockSymbolRow'
+        type: array
+      next_cursor:
+        type: string
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.USStockSymbolRow:
+    properties:
+      symbol:
+        type: string
+    type: object
+host: localhost:8080
+info:
+  contact:
+    email: dev@toktik.dev
+    name: Toktik Dev Team
+    url: https://toktik.dev
+  description: Backend data services for multi-market options analytics, including
+    market data retrieval, feature/factor queries, screening, strategy catalog, and
+    backtesting.
+  license:
+    name: Proprietary
+    url: https://toktik.dev/license
+  termsOfService: https://toktik.dev/terms
+  title: Toktik Options Platform API
+  version: "1.0"
+paths:
+  /backtests/runs:
+    post:
+      consumes:
+      - application/json
+      description: Submits a strategy backtest run that executes asynchronously. Poll
+        the run status via GET /backtests/runs/:runID.
+      parameters:
+      - description: Backtest run configuration
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.StrategyBacktestRunRequest'
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: Accepted
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.StrategyBacktestRunAccepted'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+      summary: Start an async strategy backtest
+      tags:
+      - Backtests
+  /backtests/runs/{runID}:
+    get:
+      description: Returns the current status and results of a strategy backtest run.
+      parameters:
+      - description: Backtest run ID
+        in: path
+        name: runID
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.StrategyBacktestRunStatus'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+      summary: Get backtest run status
+      tags:
+      - Backtests
+  /backtests/runs/{runID}/events:
+    get:
+      description: Returns a server-sent events stream for real-time backtest progress
+        updates.
+      parameters:
+      - description: Backtest run ID
+        in: path
+        name: runID
+        required: true
+        type: string
+      produces:
+      - text/event-stream
+      responses:
+        "200":
+          description: SSE stream of backtest events
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+      summary: Stream backtest run events (SSE)
+      tags:
+      - Backtests
+  /crypto-options/backtest:
+    post:
+      consumes:
+      - application/json
+      deprecated: true
+      description: 'Runs a synchronous backtest on a crypto options strategy. Deprecated:
+        use POST /backtests/runs instead.'
+      parameters:
+      - description: Backtest configuration
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.BacktestRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+      summary: Run crypto options backtest (legacy, sync)
+      tags:
+      - CryptoOptions
+  /crypto-options/bars:
+    get:
+      description: Returns OHLCV bars with Greeks and IV for a crypto option symbol.
+      parameters:
+      - description: Option symbol
+        in: query
+        name: symbol
+        required: true
+        type: string
+      - description: Bar interval (1m,5m,15m,30m,1h,2h,4h,1d)
+        in: query
+        name: interval
+        required: true
+        type: string
+      - description: Start time (RFC3339 or YYYY-MM-DD)
+        in: query
+        name: from
+        required: true
+        type: string
+      - description: End time (RFC3339 or YYYY-MM-DD)
+        in: query
+        name: to
+        required: true
+        type: string
+      - description: Max rows (default 1000, max 10000)
+        in: query
+        name: limit
+        type: integer
+      - description: Opaque pagination cursor
+        in: query
+        name: cursor
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.BarResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+      summary: Get crypto option bars
+      tags:
+      - CryptoOptions
+  /crypto-options/greeks:
+    get:
+      description: Returns Greeks snapshots over time for a crypto option symbol.
+      parameters:
+      - description: Option symbol
+        in: query
+        name: symbol
+        required: true
+        type: string
+      - description: Bar interval (default 1m)
+        in: query
+        name: interval
+        type: string
+      - description: Start time (RFC3339 or YYYY-MM-DD)
+        in: query
+        name: from
+        required: true
+        type: string
+      - description: End time (RFC3339 or YYYY-MM-DD)
+        in: query
+        name: to
+        required: true
+        type: string
+      - description: Max rows (default 1000, max 10000)
+        in: query
+        name: limit
+        type: integer
+      - description: Opaque pagination cursor
+        in: query
+        name: cursor
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.GreeksResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+      summary: Get crypto option Greeks time-series
+      tags:
+      - CryptoOptions
+  /crypto-options/symbols:
+    get:
+      description: Returns available crypto option contract symbols with metadata.
+      parameters:
+      - description: Substring match filter
+        in: query
+        name: search
+        type: string
+      - description: Filter by base asset
+        in: query
+        name: base_asset
+        type: string
+      - description: Max rows (default 100, max 1000)
+        in: query
+        name: limit
+        type: integer
+      - description: Opaque pagination cursor
+        in: query
+        name: cursor
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.SymbolResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+      summary: List crypto option symbols
+      tags:
+      - CryptoOptions
+  /factors:
+    get:
+      description: Returns metadata for all registered factor feeds, including supported
+        symbols, windows, and fields.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.FactorCatalogResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+      summary: List available factor feeds
+      tags:
+      - Factors
+  /factors/bars:
+    get:
+      description: Returns OHLC bars for a specific factor feed, symbol, and time
+        window.
+      parameters:
+      - description: Factor feed name (e.g. dvol)
+        in: query
+        name: name
+        required: true
+        type: string
+      - description: Symbol (e.g. BTC)
+        in: query
+        name: symbol
+        required: true
+        type: string
+      - description: Time window (e.g. 1h, 1d)
+        in: query
+        name: window
+        required: true
+        type: string
+      - description: Start time (RFC3339 or YYYY-MM-DD)
+        in: query
+        name: from
+        required: true
+        type: string
+      - description: End time (RFC3339 or YYYY-MM-DD)
+        in: query
+        name: to
+        required: true
+        type: string
+      - description: Max rows (default 1000, max 10000)
+        in: query
+        name: limit
+        type: integer
+      - description: Opaque pagination cursor
+        in: query
+        name: cursor
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.FactorBarResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+      summary: Query factor time-series data
+      tags:
+      - Factors
+  /features/daily-feature-panel:
+    get:
+      description: Returns a consolidated daily panel with volatility, term structure,
+        liquidity, and event features.
+      parameters:
+      - description: Market (crypto-options, us-options)
+        in: query
+        name: market
+        required: true
+        type: string
+      - description: Underlying asset symbol
+        in: query
+        name: underlying
+        required: true
+        type: string
+      - description: Start date (RFC3339 or YYYY-MM-DD)
+        in: query
+        name: from
+        required: true
+        type: string
+      - description: End date (RFC3339 or YYYY-MM-DD)
+        in: query
+        name: to
+        required: true
+        type: string
+      - description: IV percentile lookback window (default 252)
+        in: query
+        name: lookback_days
+        type: integer
+      - description: Min DTE filter
+        in: query
+        name: min_days_to_expiry
+        type: integer
+      - description: Max DTE filter
+        in: query
+        name: max_days_to_expiry
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.FeatureDailyPanelResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+      summary: Get daily feature panel
+      tags:
+      - Features
+  /features/event-window-history:
+    get:
+      description: Returns a range of daily event-window flags for an underlying.
+      parameters:
+      - description: Market (crypto-options, us-options)
+        in: query
+        name: market
+        required: true
+        type: string
+      - description: Underlying asset symbol
+        in: query
+        name: underlying
+        required: true
+        type: string
+      - description: Start date (RFC3339 or YYYY-MM-DD)
+        in: query
+        name: from
+        required: true
+        type: string
+      - description: End date (RFC3339 or YYYY-MM-DD)
+        in: query
+        name: to
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.FeatureEventWindowHistoryResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+      summary: Get event window history
+      tags:
+      - Features
+  /features/event-window-snapshot:
+    get:
+      description: Returns market-session proximity flags (holidays, early close)
+        for an underlying.
+      parameters:
+      - description: Market (crypto-options, us-options)
+        in: query
+        name: market
+        required: true
+        type: string
+      - description: Underlying asset symbol
+        in: query
+        name: underlying
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.FeatureEventWindowSnapshotResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+      summary: Get event window snapshot
+      tags:
+      - Features
+  /features/liquidity-history:
+    get:
+      description: Returns a range of daily liquidity metrics for an underlying.
+      parameters:
+      - description: Market (crypto-options, us-options)
+        in: query
+        name: market
+        required: true
+        type: string
+      - description: Underlying asset symbol
+        in: query
+        name: underlying
+        required: true
+        type: string
+      - description: Start date (RFC3339 or YYYY-MM-DD)
+        in: query
+        name: from
+        required: true
+        type: string
+      - description: End date (RFC3339 or YYYY-MM-DD)
+        in: query
+        name: to
+        required: true
+        type: string
+      - description: Min DTE filter
+        in: query
+        name: min_days_to_expiry
+        type: integer
+      - description: Max DTE filter
+        in: query
+        name: max_days_to_expiry
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.FeatureLiquidityHistoryResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+      summary: Get liquidity history
+      tags:
+      - Features
+  /features/liquidity-snapshot:
+    get:
+      description: Returns option liquidity metrics by expiration bucket for an underlying.
+      parameters:
+      - description: Market (crypto-options, us-options)
+        in: query
+        name: market
+        required: true
+        type: string
+      - description: Underlying asset symbol
+        in: query
+        name: underlying
+        required: true
+        type: string
+      - description: Min DTE filter
+        in: query
+        name: min_days_to_expiry
+        type: integer
+      - description: Max DTE filter
+        in: query
+        name: max_days_to_expiry
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.FeatureLiquiditySnapshotResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+      summary: Get liquidity snapshot
+      tags:
+      - Features
+  /features/skew-history:
+    get:
+      description: Returns historical put-call skew data for an underlying.
+      parameters:
+      - description: Market (crypto-options, us-options)
+        in: query
+        name: market
+        required: true
+        type: string
+      - description: Underlying asset symbol
+        in: query
+        name: underlying
+        required: true
+        type: string
+      - description: Start date (RFC3339 or YYYY-MM-DD)
+        in: query
+        name: from
+        required: true
+        type: string
+      - description: End date (RFC3339 or YYYY-MM-DD)
+        in: query
+        name: to
+        required: true
+        type: string
+      - description: Max rows (default 1000)
+        in: query
+        name: limit
+        type: integer
+      - description: Pagination cursor
+        in: query
+        name: cursor
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.FeatureSkewHistoryResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+      summary: Get skew history
+      tags:
+      - Features
+  /features/skew-snapshot:
+    get:
+      description: Returns the current OTM put-call IV skew by expiration for an underlying.
+      parameters:
+      - description: Market (crypto-options, us-options)
+        in: query
+        name: market
+        required: true
+        type: string
+      - description: Underlying asset symbol
+        in: query
+        name: underlying
+        required: true
+        type: string
+      - description: Min DTE filter
+        in: query
+        name: min_days_to_expiry
+        type: integer
+      - description: Max DTE filter
+        in: query
+        name: max_days_to_expiry
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.FeatureSkewSnapshotResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+      summary: Get put-call skew snapshot
+      tags:
+      - Features
+  /features/term-structure-history:
+    get:
+      description: Returns historical IV term structure data for an underlying.
+      parameters:
+      - description: Market (crypto-options, us-options)
+        in: query
+        name: market
+        required: true
+        type: string
+      - description: Underlying asset symbol
+        in: query
+        name: underlying
+        required: true
+        type: string
+      - description: Start date (RFC3339 or YYYY-MM-DD)
+        in: query
+        name: from
+        required: true
+        type: string
+      - description: End date (RFC3339 or YYYY-MM-DD)
+        in: query
+        name: to
+        required: true
+        type: string
+      - description: Max rows (default 1000)
+        in: query
+        name: limit
+        type: integer
+      - description: Pagination cursor
+        in: query
+        name: cursor
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.FeatureTermStructureHistoryResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+      summary: Get term structure history
+      tags:
+      - Features
+  /features/term-structure-snapshot:
+    get:
+      description: Returns the current ATM IV term structure by expiration for an
+        underlying.
+      parameters:
+      - description: Market (crypto-options, us-options)
+        in: query
+        name: market
+        required: true
+        type: string
+      - description: Underlying asset symbol
+        in: query
+        name: underlying
+        required: true
+        type: string
+      - description: Min DTE filter
+        in: query
+        name: min_days_to_expiry
+        type: integer
+      - description: Max DTE filter
+        in: query
+        name: max_days_to_expiry
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.FeatureTermStructureSnapshotResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+      summary: Get IV term structure snapshot
+      tags:
+      - Features
+  /features/volatility-history:
+    get:
+      description: Returns a range of daily HV and IV metrics for an underlying.
+      parameters:
+      - description: Market (crypto-options, us-options)
+        in: query
+        name: market
+        required: true
+        type: string
+      - description: Underlying asset symbol
+        in: query
+        name: underlying
+        required: true
+        type: string
+      - description: Start date (RFC3339 or YYYY-MM-DD)
+        in: query
+        name: from
+        required: true
+        type: string
+      - description: End date (RFC3339 or YYYY-MM-DD)
+        in: query
+        name: to
+        required: true
+        type: string
+      - description: IV percentile lookback window (default 252)
+        in: query
+        name: lookback_days
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.FeatureVolatilityHistoryResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+      summary: Get volatility history
+      tags:
+      - Features
+  /features/volatility-snapshot:
+    get:
+      description: Returns current HV and IV regime metrics for an underlying.
+      parameters:
+      - description: Market (crypto-options, us-options)
+        in: query
+        name: market
+        required: true
+        type: string
+      - description: Underlying asset symbol
+        in: query
+        name: underlying
+        required: true
+        type: string
+      - description: IV percentile lookback window (default 252)
+        in: query
+        name: lookback_days
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.FeatureVolatilitySnapshotResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+      summary: Get volatility snapshot
+      tags:
+      - Features
+  /infra/datasets:
+    get:
+      description: Returns all dataset descriptors with freshness and row count metadata.
+        Filter by market or status.
+      parameters:
+      - description: Filter by market
+        in: query
+        name: market
+        type: string
+      - description: Filter by status (ready, stale, missing, empty)
+        in: query
+        name: status
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.DatasetCatalogResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+      summary: List datasets and freshness
+      tags:
+      - Infrastructure
+  /infra/markets:
+    get:
+      description: Returns all market domains (crypto-options, us-options, etc.) with
+        their capabilities.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.MarketCatalogResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+      summary: List supported markets
+      tags:
+      - Infrastructure
+  /markets/crypto-options/chain:
+    get:
+      description: Returns option chain snapshots for a crypto base asset, grouped
+        by timestamp.
+      parameters:
+      - description: Base asset (e.g. BTC, ETH)
+        in: query
+        name: base_asset
+        required: true
+        type: string
+      - description: Start time (RFC3339 or YYYY-MM-DD)
+        in: query
+        name: from
+        required: true
+        type: string
+      - description: End time (RFC3339 or YYYY-MM-DD)
+        in: query
+        name: to
+        required: true
+        type: string
+      - description: Chain interval (default 1d)
+        enum:
+        - 5m
+        - 15m
+        - 30m
+        - 1h
+        - 2h
+        - 3h
+        - 4h
+        - 6h
+        - 8h
+        - 12h
+        - 1d
+        in: query
+        name: interval
+        type: string
+      - description: Max rows (default 1000, max 10000)
+        in: query
+        name: limit
+        type: integer
+      - description: Opaque pagination cursor
+        in: query
+        name: cursor
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.CryptoOptionChainResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+      summary: Get crypto option chain snapshots
+      tags:
+      - CryptoOptions
+  /markets/crypto-spot/bars:
+    get:
+      description: Returns OHLCV bars for a crypto spot pair.
+      parameters:
+      - description: Spot pair symbol (e.g. BTCUSDT)
+        in: query
+        name: symbol
+        required: true
+        type: string
+      - description: Bar interval (15m, 1h, 4h, 1d)
+        in: query
+        name: interval
+        required: true
+        type: string
+      - description: Start time (RFC3339 or YYYY-MM-DD)
+        in: query
+        name: from
+        required: true
+        type: string
+      - description: End time (RFC3339 or YYYY-MM-DD)
+        in: query
+        name: to
+        required: true
+        type: string
+      - description: Max rows (default 1000)
+        in: query
+        name: limit
+        type: integer
+      - description: Pagination cursor
+        in: query
+        name: cursor
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.CryptoSpotBarResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+      summary: Get crypto spot bars
+      tags:
+      - CryptoSpot
+  /markets/crypto-spot/symbols:
+    get:
+      description: Returns available crypto spot pair symbols.
+      parameters:
+      - description: Substring match filter
+        in: query
+        name: search
+        type: string
+      - description: Max rows (default 100)
+        in: query
+        name: limit
+        type: integer
+      - description: Pagination cursor
+        in: query
+        name: cursor
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.CryptoSpotSymbolResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+      summary: List crypto spot symbols
+      tags:
+      - CryptoSpot
+  /markets/us-options/bars:
+    get:
+      description: Returns OHLCV bars for a US listed option contract.
+      parameters:
+      - description: Option contract symbol
+        in: query
+        name: symbol
+        required: true
+        type: string
+      - description: Bar interval
+        in: query
+        name: interval
+        required: true
+        type: string
+      - description: Start time (RFC3339 or YYYY-MM-DD)
+        in: query
+        name: from
+        required: true
+        type: string
+      - description: End time (RFC3339 or YYYY-MM-DD)
+        in: query
+        name: to
+        required: true
+        type: string
+      - description: Max rows (default 1000)
+        in: query
+        name: limit
+        type: integer
+      - description: Pagination cursor
+        in: query
+        name: cursor
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.USOptionBarResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+      summary: Get US option bars
+      tags:
+      - USOptions
+  /markets/us-options/chain:
+    get:
+      description: Returns an option chain snapshot for a US underlying, grouped by
+        expiration and strike.
+      parameters:
+      - description: Underlying ticker symbol
+        in: query
+        name: underlying
+        required: true
+        type: string
+      - description: Filter by expiration date
+        in: query
+        name: expiration
+        type: string
+      - description: Filter by option type (call, put)
+        in: query
+        name: type
+        type: string
+      - description: Max contracts (default 100)
+        in: query
+        name: limit
+        type: integer
+      - description: Pagination cursor
+        in: query
+        name: cursor
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.USOptionChainResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+      summary: Get US option chain
+      tags:
+      - USOptions
+  /markets/us-options/greeks:
+    get:
+      description: Returns Greeks snapshots over time for a US listed option contract.
+      parameters:
+      - description: Option contract symbol
+        in: query
+        name: symbol
+        required: true
+        type: string
+      - description: Bar interval (default 1h)
+        in: query
+        name: interval
+        type: string
+      - description: Start time (RFC3339 or YYYY-MM-DD)
+        in: query
+        name: from
+        required: true
+        type: string
+      - description: End time (RFC3339 or YYYY-MM-DD)
+        in: query
+        name: to
+        required: true
+        type: string
+      - description: Max rows (default 1000)
+        in: query
+        name: limit
+        type: integer
+      - description: Pagination cursor
+        in: query
+        name: cursor
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.USOptionGreeksResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+      summary: Get US option Greeks time-series
+      tags:
+      - USOptions
+  /markets/us-options/symbols:
+    get:
+      description: Returns available US listed option contract symbols.
+      parameters:
+      - description: Filter by root symbol
+        in: query
+        name: root
+        type: string
+      - description: Substring match filter
+        in: query
+        name: search
+        type: string
+      - description: Max rows (default 100)
+        in: query
+        name: limit
+        type: integer
+      - description: Pagination cursor
+        in: query
+        name: cursor
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.USOptionSymbolResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+      summary: List US option symbols
+      tags:
+      - USOptions
+  /markets/us-stocks/bars:
+    get:
+      description: Returns OHLCV bars for a US stock symbol.
+      parameters:
+      - description: Stock ticker symbol
+        in: query
+        name: symbol
+        required: true
+        type: string
+      - description: Bar interval
+        in: query
+        name: interval
+        required: true
+        type: string
+      - description: Start time (RFC3339 or YYYY-MM-DD)
+        in: query
+        name: from
+        required: true
+        type: string
+      - description: End time (RFC3339 or YYYY-MM-DD)
+        in: query
+        name: to
+        required: true
+        type: string
+      - description: Max rows (default 1000)
+        in: query
+        name: limit
+        type: integer
+      - description: Pagination cursor
+        in: query
+        name: cursor
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.USStockBarResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+      summary: Get US stock bars
+      tags:
+      - USStocks
+  /markets/us-stocks/symbols:
+    get:
+      description: Returns available US stock ticker symbols.
+      parameters:
+      - description: Substring match filter
+        in: query
+        name: search
+        type: string
+      - description: Max rows (default 100)
+        in: query
+        name: limit
+        type: integer
+      - description: Pagination cursor
+        in: query
+        name: cursor
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.USStockSymbolResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+      summary: List US stock symbols
+      tags:
+      - USStocks
+  /ready:
+    get:
+      description: Returns the readiness status of the API server and its backend
+        dependencies.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ReadinessResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+      summary: Check API readiness
+      tags:
+      - Infrastructure
+  /screener/options:
+    get:
+      description: Filters and ranks individual option contracts by Greeks, volume,
+        open interest, and other criteria.
+      parameters:
+      - description: Market (crypto-options, us-options)
+        in: query
+        name: market
+        required: true
+        type: string
+      - description: Filter by underlying
+        in: query
+        name: underlying
+        type: string
+      - description: Option type (call, put)
+        in: query
+        name: type
+        type: string
+      - description: Minimum days to expiry
+        in: query
+        name: min_dte
+        type: integer
+      - description: Maximum days to expiry
+        in: query
+        name: max_dte
+        type: integer
+      - description: Sort field
+        in: query
+        name: sort_by
+        type: string
+      - description: Sort order (asc, desc)
+        in: query
+        name: order
+        type: string
+      - description: Max rows (default 50)
+        in: query
+        name: limit
+        type: integer
+      - description: Pagination cursor
+        in: query
+        name: cursor
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ScreenOptionResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+      summary: Screen option contracts
+      tags:
+      - Screener
+  /screener/underlyings:
+    get:
+      description: Filters and ranks underlying assets by IV, volume, and other criteria.
+      parameters:
+      - description: Market (crypto-options, us-options)
+        in: query
+        name: market
+        required: true
+        type: string
+      - description: Sort field
+        in: query
+        name: sort_by
+        type: string
+      - description: Sort order (asc, desc)
+        in: query
+        name: order
+        type: string
+      - description: Max rows (default 50)
+        in: query
+        name: limit
+        type: integer
+      - description: Pagination cursor
+        in: query
+        name: cursor
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ScreenUnderlyingResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+      summary: Screen underlyings
+      tags:
+      - Screener
+  /strategies:
+    get:
+      description: Returns all available strategy templates with metadata and group
+        classification.
+      parameters:
+      - description: Filter by strategy group
+        in: query
+        name: group
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.StrategyCatalogResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+      summary: List registered strategies
+      tags:
+      - Strategies
+securityDefinitions:
+  ApiKeyAuth:
+    in: header
+    name: X-API-Key
+    type: apiKey
+swagger: "2.0"

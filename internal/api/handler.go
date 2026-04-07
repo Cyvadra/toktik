@@ -22,10 +22,11 @@ type Handler struct {
 	cryptoSpot        CryptoSpotQuerier
 	screener          ScreenerProvider
 	strategyCatalog   StrategyCatalogProvider
+	factors           FactorProvider
 }
 
-func NewHandler(cos CryptoOptionsQuerier, usStocks USStocksQuerier, usOptions USOptionsQuerier, infra InfraProvider, features FeatureProvider, strategyBacktests StrategyBacktestProvider, cryptoSpot CryptoSpotQuerier, screener ScreenerProvider, strategyCatalog StrategyCatalogProvider) *Handler {
-	return &Handler{cryptoOptions: cos, usStocks: usStocks, usOptions: usOptions, infra: infra, features: features, strategyBacktests: strategyBacktests, cryptoSpot: cryptoSpot, screener: screener, strategyCatalog: strategyCatalog}
+func NewHandler(cos CryptoOptionsQuerier, usStocks USStocksQuerier, usOptions USOptionsQuerier, infra InfraProvider, features FeatureProvider, strategyBacktests StrategyBacktestProvider, cryptoSpot CryptoSpotQuerier, screener ScreenerProvider, strategyCatalog StrategyCatalogProvider, factors FactorProvider) *Handler {
+	return &Handler{cryptoOptions: cos, usStocks: usStocks, usOptions: usOptions, infra: infra, features: features, strategyBacktests: strategyBacktests, cryptoSpot: cryptoSpot, screener: screener, strategyCatalog: strategyCatalog, factors: factors}
 }
 
 // handleServiceError maps service-level errors to appropriate HTTP responses.
@@ -68,6 +69,14 @@ func writeSSEEvent(c *gin.Context, event string, payload any) error {
 }
 
 // GetReadiness handles GET /ready.
+//
+// @Summary      Check API readiness
+// @Description  Returns the readiness status of the API server and its backend dependencies.
+// @Tags         Infrastructure
+// @Produce      json
+// @Success      200  {object}  dto.ReadinessResponse
+// @Failure      500  {object}  dto.ErrorResponse
+// @Router       /ready [get]
 func (h *Handler) GetReadiness(c *gin.Context) {
 	if h.infra == nil {
 		c.JSON(http.StatusNotImplemented, dto.ErrorResponse{Error: "infra provider not configured"})
@@ -84,6 +93,14 @@ func (h *Handler) GetReadiness(c *gin.Context) {
 }
 
 // GetMarkets handles GET /api/v1/infra/markets.
+//
+// @Summary      List supported markets
+// @Description  Returns all market domains (crypto-options, us-options, etc.) with their capabilities.
+// @Tags         Infrastructure
+// @Produce      json
+// @Success      200  {object}  dto.MarketCatalogResponse
+// @Failure      500  {object}  dto.ErrorResponse
+// @Router       /infra/markets [get]
 func (h *Handler) GetMarkets(c *gin.Context) {
 	if h.infra == nil {
 		c.JSON(http.StatusNotImplemented, dto.ErrorResponse{Error: "infra provider not configured"})
@@ -100,6 +117,17 @@ func (h *Handler) GetMarkets(c *gin.Context) {
 }
 
 // GetDatasets handles GET /api/v1/infra/datasets.
+//
+// @Summary      List datasets and freshness
+// @Description  Returns all dataset descriptors with freshness and row count metadata. Filter by market or status.
+// @Tags         Infrastructure
+// @Produce      json
+// @Param        market  query     string  false  "Filter by market"
+// @Param        status  query     string  false  "Filter by status (ready, stale, missing, empty)"
+// @Success      200     {object}  dto.DatasetCatalogResponse
+// @Failure      400     {object}  dto.ErrorResponse
+// @Failure      500     {object}  dto.ErrorResponse
+// @Router       /infra/datasets [get]
 func (h *Handler) GetDatasets(c *gin.Context) {
 	var req dto.DatasetQueryRequest
 	if err := c.ShouldBindQuery(&req); err != nil {
@@ -121,6 +149,18 @@ func (h *Handler) GetDatasets(c *gin.Context) {
 }
 
 // GetVolatilitySnapshot handles GET /api/v1/features/volatility-snapshot.
+//
+// @Summary      Get volatility snapshot
+// @Description  Returns current HV and IV regime metrics for an underlying.
+// @Tags         Features
+// @Produce      json
+// @Param        market         query     string  true   "Market (crypto-options, us-options)"
+// @Param        underlying     query     string  true   "Underlying asset symbol"
+// @Param        lookback_days  query     int     false  "IV percentile lookback window (default 252)"
+// @Success      200            {object}  dto.FeatureVolatilitySnapshotResponse
+// @Failure      400            {object}  dto.ErrorResponse
+// @Failure      500            {object}  dto.ErrorResponse
+// @Router       /features/volatility-snapshot [get]
 func (h *Handler) GetVolatilitySnapshot(c *gin.Context) {
 	var req dto.FeatureVolatilitySnapshotRequest
 	if err := c.ShouldBindQuery(&req); err != nil {
@@ -142,6 +182,20 @@ func (h *Handler) GetVolatilitySnapshot(c *gin.Context) {
 }
 
 // GetVolatilityHistory handles GET /api/v1/features/volatility-history.
+//
+// @Summary      Get volatility history
+// @Description  Returns a range of daily HV and IV metrics for an underlying.
+// @Tags         Features
+// @Produce      json
+// @Param        market         query     string  true   "Market (crypto-options, us-options)"
+// @Param        underlying     query     string  true   "Underlying asset symbol"
+// @Param        from           query     string  true   "Start date (RFC3339 or YYYY-MM-DD)"
+// @Param        to             query     string  true   "End date (RFC3339 or YYYY-MM-DD)"
+// @Param        lookback_days  query     int     false  "IV percentile lookback window (default 252)"
+// @Success      200            {object}  dto.FeatureVolatilityHistoryResponse
+// @Failure      400            {object}  dto.ErrorResponse
+// @Failure      500            {object}  dto.ErrorResponse
+// @Router       /features/volatility-history [get]
 func (h *Handler) GetVolatilityHistory(c *gin.Context) {
 	var req dto.FeatureVolatilityHistoryRequest
 	if err := c.ShouldBindQuery(&req); err != nil {
@@ -163,6 +217,19 @@ func (h *Handler) GetVolatilityHistory(c *gin.Context) {
 }
 
 // GetTermStructureSnapshot handles GET /api/v1/features/term-structure-snapshot.
+//
+// @Summary      Get IV term structure snapshot
+// @Description  Returns the current ATM IV term structure by expiration for an underlying.
+// @Tags         Features
+// @Produce      json
+// @Param        market               query     string  true   "Market (crypto-options, us-options)"
+// @Param        underlying           query     string  true   "Underlying asset symbol"
+// @Param        min_days_to_expiry   query     int     false  "Min DTE filter"
+// @Param        max_days_to_expiry   query     int     false  "Max DTE filter"
+// @Success      200                  {object}  dto.FeatureTermStructureSnapshotResponse
+// @Failure      400                  {object}  dto.ErrorResponse
+// @Failure      500                  {object}  dto.ErrorResponse
+// @Router       /features/term-structure-snapshot [get]
 func (h *Handler) GetTermStructureSnapshot(c *gin.Context) {
 	var req dto.FeatureSurfaceSnapshotRequest
 	if err := c.ShouldBindQuery(&req); err != nil {
@@ -184,6 +251,19 @@ func (h *Handler) GetTermStructureSnapshot(c *gin.Context) {
 }
 
 // GetSkewSnapshot handles GET /api/v1/features/skew-snapshot.
+//
+// @Summary      Get put-call skew snapshot
+// @Description  Returns the current OTM put-call IV skew by expiration for an underlying.
+// @Tags         Features
+// @Produce      json
+// @Param        market               query     string  true   "Market (crypto-options, us-options)"
+// @Param        underlying           query     string  true   "Underlying asset symbol"
+// @Param        min_days_to_expiry   query     int     false  "Min DTE filter"
+// @Param        max_days_to_expiry   query     int     false  "Max DTE filter"
+// @Success      200                  {object}  dto.FeatureSkewSnapshotResponse
+// @Failure      400                  {object}  dto.ErrorResponse
+// @Failure      500                  {object}  dto.ErrorResponse
+// @Router       /features/skew-snapshot [get]
 func (h *Handler) GetSkewSnapshot(c *gin.Context) {
 	var req dto.FeatureSurfaceSnapshotRequest
 	if err := c.ShouldBindQuery(&req); err != nil {
@@ -205,6 +285,19 @@ func (h *Handler) GetSkewSnapshot(c *gin.Context) {
 }
 
 // GetLiquiditySnapshot handles GET /api/v1/features/liquidity-snapshot.
+//
+// @Summary      Get liquidity snapshot
+// @Description  Returns option liquidity metrics by expiration bucket for an underlying.
+// @Tags         Features
+// @Produce      json
+// @Param        market               query     string  true   "Market (crypto-options, us-options)"
+// @Param        underlying           query     string  true   "Underlying asset symbol"
+// @Param        min_days_to_expiry   query     int     false  "Min DTE filter"
+// @Param        max_days_to_expiry   query     int     false  "Max DTE filter"
+// @Success      200                  {object}  dto.FeatureLiquiditySnapshotResponse
+// @Failure      400                  {object}  dto.ErrorResponse
+// @Failure      500                  {object}  dto.ErrorResponse
+// @Router       /features/liquidity-snapshot [get]
 func (h *Handler) GetLiquiditySnapshot(c *gin.Context) {
 	var req dto.FeatureSurfaceSnapshotRequest
 	if err := c.ShouldBindQuery(&req); err != nil {
@@ -226,6 +319,21 @@ func (h *Handler) GetLiquiditySnapshot(c *gin.Context) {
 }
 
 // GetLiquidityHistory handles GET /api/v1/features/liquidity-history.
+//
+// @Summary      Get liquidity history
+// @Description  Returns a range of daily liquidity metrics for an underlying.
+// @Tags         Features
+// @Produce      json
+// @Param        market               query     string  true   "Market (crypto-options, us-options)"
+// @Param        underlying           query     string  true   "Underlying asset symbol"
+// @Param        from                 query     string  true   "Start date (RFC3339 or YYYY-MM-DD)"
+// @Param        to                   query     string  true   "End date (RFC3339 or YYYY-MM-DD)"
+// @Param        min_days_to_expiry   query     int     false  "Min DTE filter"
+// @Param        max_days_to_expiry   query     int     false  "Max DTE filter"
+// @Success      200                  {object}  dto.FeatureLiquidityHistoryResponse
+// @Failure      400                  {object}  dto.ErrorResponse
+// @Failure      500                  {object}  dto.ErrorResponse
+// @Router       /features/liquidity-history [get]
 func (h *Handler) GetLiquidityHistory(c *gin.Context) {
 	var req dto.FeatureLiquidityHistoryRequest
 	if err := c.ShouldBindQuery(&req); err != nil {
@@ -247,6 +355,17 @@ func (h *Handler) GetLiquidityHistory(c *gin.Context) {
 }
 
 // GetEventWindowSnapshot handles GET /api/v1/features/event-window-snapshot.
+//
+// @Summary      Get event window snapshot
+// @Description  Returns market-session proximity flags (holidays, early close) for an underlying.
+// @Tags         Features
+// @Produce      json
+// @Param        market      query     string  true  "Market (crypto-options, us-options)"
+// @Param        underlying  query     string  true  "Underlying asset symbol"
+// @Success      200         {object}  dto.FeatureEventWindowSnapshotResponse
+// @Failure      400         {object}  dto.ErrorResponse
+// @Failure      500         {object}  dto.ErrorResponse
+// @Router       /features/event-window-snapshot [get]
 func (h *Handler) GetEventWindowSnapshot(c *gin.Context) {
 	var req dto.FeatureUnderlyingSnapshotRequest
 	if err := c.ShouldBindQuery(&req); err != nil {
@@ -268,6 +387,19 @@ func (h *Handler) GetEventWindowSnapshot(c *gin.Context) {
 }
 
 // GetEventWindowHistory handles GET /api/v1/features/event-window-history.
+//
+// @Summary      Get event window history
+// @Description  Returns a range of daily event-window flags for an underlying.
+// @Tags         Features
+// @Produce      json
+// @Param        market      query     string  true  "Market (crypto-options, us-options)"
+// @Param        underlying  query     string  true  "Underlying asset symbol"
+// @Param        from        query     string  true  "Start date (RFC3339 or YYYY-MM-DD)"
+// @Param        to          query     string  true  "End date (RFC3339 or YYYY-MM-DD)"
+// @Success      200         {object}  dto.FeatureEventWindowHistoryResponse
+// @Failure      400         {object}  dto.ErrorResponse
+// @Failure      500         {object}  dto.ErrorResponse
+// @Router       /features/event-window-history [get]
 func (h *Handler) GetEventWindowHistory(c *gin.Context) {
 	var req dto.FeatureUnderlyingHistoryRequest
 	if err := c.ShouldBindQuery(&req); err != nil {
@@ -289,6 +421,22 @@ func (h *Handler) GetEventWindowHistory(c *gin.Context) {
 }
 
 // GetDailyFeaturePanel handles GET /api/v1/features/daily-feature-panel.
+//
+// @Summary      Get daily feature panel
+// @Description  Returns a consolidated daily panel with volatility, term structure, liquidity, and event features.
+// @Tags         Features
+// @Produce      json
+// @Param        market               query     string  true   "Market (crypto-options, us-options)"
+// @Param        underlying           query     string  true   "Underlying asset symbol"
+// @Param        from                 query     string  true   "Start date (RFC3339 or YYYY-MM-DD)"
+// @Param        to                   query     string  true   "End date (RFC3339 or YYYY-MM-DD)"
+// @Param        lookback_days        query     int     false  "IV percentile lookback window (default 252)"
+// @Param        min_days_to_expiry   query     int     false  "Min DTE filter"
+// @Param        max_days_to_expiry   query     int     false  "Max DTE filter"
+// @Success      200                  {object}  dto.FeatureDailyPanelResponse
+// @Failure      400                  {object}  dto.ErrorResponse
+// @Failure      500                  {object}  dto.ErrorResponse
+// @Router       /features/daily-feature-panel [get]
 func (h *Handler) GetDailyFeaturePanel(c *gin.Context) {
 	var req dto.FeatureDailyPanelRequest
 	if err := c.ShouldBindQuery(&req); err != nil {
@@ -310,6 +458,21 @@ func (h *Handler) GetDailyFeaturePanel(c *gin.Context) {
 }
 
 // GetBars handles GET /api/v1/crypto-options/bars
+//
+// @Summary      Get crypto option bars
+// @Description  Returns OHLCV bars with Greeks and IV for a crypto option symbol.
+// @Tags         CryptoOptions
+// @Produce      json
+// @Param        symbol    query     string  true   "Option symbol"
+// @Param        interval  query     string  true   "Bar interval (1m,5m,15m,30m,1h,2h,4h,1d)"
+// @Param        from      query     string  true   "Start time (RFC3339 or YYYY-MM-DD)"
+// @Param        to        query     string  true   "End time (RFC3339 or YYYY-MM-DD)"
+// @Param        limit     query     int     false  "Max rows (default 1000, max 10000)"
+// @Param        cursor    query     string  false  "Opaque pagination cursor"
+// @Success      200       {object}  dto.BarResponse
+// @Failure      400       {object}  dto.ErrorResponse
+// @Failure      500       {object}  dto.ErrorResponse
+// @Router       /crypto-options/bars [get]
 func (h *Handler) GetBars(c *gin.Context) {
 	var req dto.BarRequest
 	if err := c.ShouldBindQuery(&req); err != nil {
@@ -327,6 +490,19 @@ func (h *Handler) GetBars(c *gin.Context) {
 }
 
 // GetSymbols handles GET /api/v1/crypto-options/symbols
+//
+// @Summary      List crypto option symbols
+// @Description  Returns available crypto option contract symbols with metadata.
+// @Tags         CryptoOptions
+// @Produce      json
+// @Param        search      query     string  false  "Substring match filter"
+// @Param        base_asset  query     string  false  "Filter by base asset"
+// @Param        limit       query     int     false  "Max rows (default 100, max 1000)"
+// @Param        cursor      query     string  false  "Opaque pagination cursor"
+// @Success      200         {object}  dto.SymbolResponse
+// @Failure      400         {object}  dto.ErrorResponse
+// @Failure      500         {object}  dto.ErrorResponse
+// @Router       /crypto-options/symbols [get]
 func (h *Handler) GetSymbols(c *gin.Context) {
 	var req dto.SymbolRequest
 	if err := c.ShouldBindQuery(&req); err != nil {
@@ -344,6 +520,21 @@ func (h *Handler) GetSymbols(c *gin.Context) {
 }
 
 // GetGreeks handles GET /api/v1/crypto-options/greeks
+//
+// @Summary      Get crypto option Greeks time-series
+// @Description  Returns Greeks snapshots over time for a crypto option symbol.
+// @Tags         CryptoOptions
+// @Produce      json
+// @Param        symbol    query     string  true   "Option symbol"
+// @Param        interval  query     string  false  "Bar interval (default 1m)"
+// @Param        from      query     string  true   "Start time (RFC3339 or YYYY-MM-DD)"
+// @Param        to        query     string  true   "End time (RFC3339 or YYYY-MM-DD)"
+// @Param        limit     query     int     false  "Max rows (default 1000, max 10000)"
+// @Param        cursor    query     string  false  "Opaque pagination cursor"
+// @Success      200       {object}  dto.GreeksResponse
+// @Failure      400       {object}  dto.ErrorResponse
+// @Failure      500       {object}  dto.ErrorResponse
+// @Router       /crypto-options/greeks [get]
 func (h *Handler) GetGreeks(c *gin.Context) {
 	var req dto.GreeksRequest
 	if err := c.ShouldBindQuery(&req); err != nil {
@@ -361,6 +552,18 @@ func (h *Handler) GetGreeks(c *gin.Context) {
 }
 
 // RunBacktest handles POST /api/v1/crypto-options/backtest
+//
+// @Summary      Run crypto options backtest (legacy, sync)
+// @Description  Runs a synchronous backtest on a crypto options strategy. Deprecated: use POST /backtests/runs instead.
+// @Tags         CryptoOptions
+// @Accept       json
+// @Produce      json
+// @Param        body  body      dto.BacktestRequest  true  "Backtest configuration"
+// @Success      200   {object}  object
+// @Failure      400   {object}  dto.ErrorResponse
+// @Failure      500   {object}  dto.ErrorResponse
+// @Deprecated
+// @Router       /crypto-options/backtest [post]
 func (h *Handler) RunBacktest(c *gin.Context) {
 	var req dto.BacktestRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -377,6 +580,18 @@ func (h *Handler) RunBacktest(c *gin.Context) {
 	c.JSON(http.StatusOK, resp)
 }
 
+// StartStrategyBacktest handles POST /api/v1/backtests/runs.
+//
+// @Summary      Start an async strategy backtest
+// @Description  Submits a strategy backtest run that executes asynchronously. Poll the run status via GET /backtests/runs/:runID.
+// @Tags         Backtests
+// @Accept       json
+// @Produce      json
+// @Param        body  body      dto.StrategyBacktestRunRequest  true  "Backtest run configuration"
+// @Success      202   {object}  dto.StrategyBacktestRunAccepted
+// @Failure      400   {object}  dto.ErrorResponse
+// @Failure      500   {object}  dto.ErrorResponse
+// @Router       /backtests/runs [post]
 func (h *Handler) StartStrategyBacktest(c *gin.Context) {
 	var req dto.StrategyBacktestRunRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -397,6 +612,17 @@ func (h *Handler) StartStrategyBacktest(c *gin.Context) {
 	c.JSON(http.StatusAccepted, resp)
 }
 
+// GetStrategyBacktestRun handles GET /api/v1/backtests/runs/:runID.
+//
+// @Summary      Get backtest run status
+// @Description  Returns the current status and results of a strategy backtest run.
+// @Tags         Backtests
+// @Produce      json
+// @Param        runID  path      string  true  "Backtest run ID"
+// @Success      200    {object}  dto.StrategyBacktestRunStatus
+// @Failure      404    {object}  dto.ErrorResponse
+// @Failure      500    {object}  dto.ErrorResponse
+// @Router       /backtests/runs/{runID} [get]
 func (h *Handler) GetStrategyBacktestRun(c *gin.Context) {
 	if h.strategyBacktests == nil {
 		c.JSON(http.StatusNotImplemented, dto.ErrorResponse{Error: "strategy backtest provider not configured"})
@@ -412,6 +638,17 @@ func (h *Handler) GetStrategyBacktestRun(c *gin.Context) {
 	c.JSON(http.StatusOK, resp)
 }
 
+// StreamStrategyBacktestEvents handles GET /api/v1/backtests/runs/:runID/events.
+//
+// @Summary      Stream backtest run events (SSE)
+// @Description  Returns a server-sent events stream for real-time backtest progress updates.
+// @Tags         Backtests
+// @Produce      text/event-stream
+// @Param        runID  path  string  true  "Backtest run ID"
+// @Success      200    "SSE stream of backtest events"
+// @Failure      404    {object}  dto.ErrorResponse
+// @Failure      500    {object}  dto.ErrorResponse
+// @Router       /backtests/runs/{runID}/events [get]
 func (h *Handler) StreamStrategyBacktestEvents(c *gin.Context) {
 	if h.strategyBacktests == nil {
 		c.JSON(http.StatusNotImplemented, dto.ErrorResponse{Error: "strategy backtest provider not configured"})
@@ -457,6 +694,21 @@ func (h *Handler) StreamStrategyBacktestEvents(c *gin.Context) {
 }
 
 // GetUSStockBars handles GET /api/v1/markets/us-stocks/bars.
+//
+// @Summary      Get US stock bars
+// @Description  Returns OHLCV bars for a US stock symbol.
+// @Tags         USStocks
+// @Produce      json
+// @Param        symbol    query     string  true   "Stock ticker symbol"
+// @Param        interval  query     string  true   "Bar interval"
+// @Param        from      query     string  true   "Start time (RFC3339 or YYYY-MM-DD)"
+// @Param        to        query     string  true   "End time (RFC3339 or YYYY-MM-DD)"
+// @Param        limit     query     int     false  "Max rows (default 1000)"
+// @Param        cursor    query     string  false  "Pagination cursor"
+// @Success      200       {object}  dto.USStockBarResponse
+// @Failure      400       {object}  dto.ErrorResponse
+// @Failure      500       {object}  dto.ErrorResponse
+// @Router       /markets/us-stocks/bars [get]
 func (h *Handler) GetUSStockBars(c *gin.Context) {
 	var req dto.USStockBarRequest
 	if err := c.ShouldBindQuery(&req); err != nil {
@@ -478,6 +730,18 @@ func (h *Handler) GetUSStockBars(c *gin.Context) {
 }
 
 // GetUSStockSymbols handles GET /api/v1/markets/us-stocks/symbols.
+//
+// @Summary      List US stock symbols
+// @Description  Returns available US stock ticker symbols.
+// @Tags         USStocks
+// @Produce      json
+// @Param        search  query     string  false  "Substring match filter"
+// @Param        limit   query     int     false  "Max rows (default 100)"
+// @Param        cursor  query     string  false  "Pagination cursor"
+// @Success      200     {object}  dto.USStockSymbolResponse
+// @Failure      400     {object}  dto.ErrorResponse
+// @Failure      500     {object}  dto.ErrorResponse
+// @Router       /markets/us-stocks/symbols [get]
 func (h *Handler) GetUSStockSymbols(c *gin.Context) {
 	var req dto.USStockSymbolRequest
 	if err := c.ShouldBindQuery(&req); err != nil {
@@ -499,6 +763,21 @@ func (h *Handler) GetUSStockSymbols(c *gin.Context) {
 }
 
 // GetUSOptionBars handles GET /api/v1/markets/us-options/bars.
+//
+// @Summary      Get US option bars
+// @Description  Returns OHLCV bars for a US listed option contract.
+// @Tags         USOptions
+// @Produce      json
+// @Param        symbol    query     string  true   "Option contract symbol"
+// @Param        interval  query     string  true   "Bar interval"
+// @Param        from      query     string  true   "Start time (RFC3339 or YYYY-MM-DD)"
+// @Param        to        query     string  true   "End time (RFC3339 or YYYY-MM-DD)"
+// @Param        limit     query     int     false  "Max rows (default 1000)"
+// @Param        cursor    query     string  false  "Pagination cursor"
+// @Success      200       {object}  dto.USOptionBarResponse
+// @Failure      400       {object}  dto.ErrorResponse
+// @Failure      500       {object}  dto.ErrorResponse
+// @Router       /markets/us-options/bars [get]
 func (h *Handler) GetUSOptionBars(c *gin.Context) {
 	var req dto.USOptionBarRequest
 	if err := c.ShouldBindQuery(&req); err != nil {
@@ -520,6 +799,19 @@ func (h *Handler) GetUSOptionBars(c *gin.Context) {
 }
 
 // GetUSOptionSymbols handles GET /api/v1/markets/us-options/symbols.
+//
+// @Summary      List US option symbols
+// @Description  Returns available US listed option contract symbols.
+// @Tags         USOptions
+// @Produce      json
+// @Param        root    query     string  false  "Filter by root symbol"
+// @Param        search  query     string  false  "Substring match filter"
+// @Param        limit   query     int     false  "Max rows (default 100)"
+// @Param        cursor  query     string  false  "Pagination cursor"
+// @Success      200     {object}  dto.USOptionSymbolResponse
+// @Failure      400     {object}  dto.ErrorResponse
+// @Failure      500     {object}  dto.ErrorResponse
+// @Router       /markets/us-options/symbols [get]
 func (h *Handler) GetUSOptionSymbols(c *gin.Context) {
 	var req dto.USOptionSymbolRequest
 	if err := c.ShouldBindQuery(&req); err != nil {
@@ -541,6 +833,21 @@ func (h *Handler) GetUSOptionSymbols(c *gin.Context) {
 }
 
 // GetUSOptionGreeks handles GET /api/v1/markets/us-options/greeks.
+//
+// @Summary      Get US option Greeks time-series
+// @Description  Returns Greeks snapshots over time for a US listed option contract.
+// @Tags         USOptions
+// @Produce      json
+// @Param        symbol    query     string  true   "Option contract symbol"
+// @Param        interval  query     string  false  "Bar interval (default 1h)"
+// @Param        from      query     string  true   "Start time (RFC3339 or YYYY-MM-DD)"
+// @Param        to        query     string  true   "End time (RFC3339 or YYYY-MM-DD)"
+// @Param        limit     query     int     false  "Max rows (default 1000)"
+// @Param        cursor    query     string  false  "Pagination cursor"
+// @Success      200       {object}  dto.USOptionGreeksResponse
+// @Failure      400       {object}  dto.ErrorResponse
+// @Failure      500       {object}  dto.ErrorResponse
+// @Router       /markets/us-options/greeks [get]
 func (h *Handler) GetUSOptionGreeks(c *gin.Context) {
 	var req dto.USOptionGreeksRequest
 	if err := c.ShouldBindQuery(&req); err != nil {
@@ -562,6 +869,20 @@ func (h *Handler) GetUSOptionGreeks(c *gin.Context) {
 }
 
 // GetUSOptionChain handles GET /api/v1/markets/us-options/chain.
+//
+// @Summary      Get US option chain
+// @Description  Returns an option chain snapshot for a US underlying, grouped by expiration and strike.
+// @Tags         USOptions
+// @Produce      json
+// @Param        underlying  query     string  true   "Underlying ticker symbol"
+// @Param        expiration  query     string  false  "Filter by expiration date"
+// @Param        type        query     string  false  "Filter by option type (call, put)"
+// @Param        limit       query     int     false  "Max contracts (default 100)"
+// @Param        cursor      query     string  false  "Pagination cursor"
+// @Success      200         {object}  dto.USOptionChainResponse
+// @Failure      400         {object}  dto.ErrorResponse
+// @Failure      500         {object}  dto.ErrorResponse
+// @Router       /markets/us-options/chain [get]
 func (h *Handler) GetUSOptionChain(c *gin.Context) {
 	var req dto.USOptionChainRequest
 	if err := c.ShouldBindQuery(&req); err != nil {
@@ -585,6 +906,21 @@ func (h *Handler) GetUSOptionChain(c *gin.Context) {
 // --- Crypto Spot handlers ---
 
 // GetCryptoSpotBars handles GET /api/v1/markets/crypto-spot/bars.
+//
+// @Summary      Get crypto spot bars
+// @Description  Returns OHLCV bars for a crypto spot pair.
+// @Tags         CryptoSpot
+// @Produce      json
+// @Param        symbol    query     string  true   "Spot pair symbol (e.g. BTCUSDT)"
+// @Param        interval  query     string  true   "Bar interval (15m, 1h, 4h, 1d)"
+// @Param        from      query     string  true   "Start time (RFC3339 or YYYY-MM-DD)"
+// @Param        to        query     string  true   "End time (RFC3339 or YYYY-MM-DD)"
+// @Param        limit     query     int     false  "Max rows (default 1000)"
+// @Param        cursor    query     string  false  "Pagination cursor"
+// @Success      200       {object}  dto.CryptoSpotBarResponse
+// @Failure      400       {object}  dto.ErrorResponse
+// @Failure      500       {object}  dto.ErrorResponse
+// @Router       /markets/crypto-spot/bars [get]
 func (h *Handler) GetCryptoSpotBars(c *gin.Context) {
 	var req dto.CryptoSpotBarRequest
 	if err := c.ShouldBindQuery(&req); err != nil {
@@ -606,6 +942,18 @@ func (h *Handler) GetCryptoSpotBars(c *gin.Context) {
 }
 
 // GetCryptoSpotSymbols handles GET /api/v1/markets/crypto-spot/symbols.
+//
+// @Summary      List crypto spot symbols
+// @Description  Returns available crypto spot pair symbols.
+// @Tags         CryptoSpot
+// @Produce      json
+// @Param        search  query     string  false  "Substring match filter"
+// @Param        limit   query     int     false  "Max rows (default 100)"
+// @Param        cursor  query     string  false  "Pagination cursor"
+// @Success      200     {object}  dto.CryptoSpotSymbolResponse
+// @Failure      400     {object}  dto.ErrorResponse
+// @Failure      500     {object}  dto.ErrorResponse
+// @Router       /markets/crypto-spot/symbols [get]
 func (h *Handler) GetCryptoSpotSymbols(c *gin.Context) {
 	var req dto.CryptoSpotSymbolRequest
 	if err := c.ShouldBindQuery(&req); err != nil {
@@ -629,6 +977,21 @@ func (h *Handler) GetCryptoSpotSymbols(c *gin.Context) {
 // --- Feature history handlers ---
 
 // GetTermStructureHistory handles GET /api/v1/features/term-structure-history.
+//
+// @Summary      Get term structure history
+// @Description  Returns historical IV term structure data for an underlying.
+// @Tags         Features
+// @Produce      json
+// @Param        market      query     string  true   "Market (crypto-options, us-options)"
+// @Param        underlying  query     string  true   "Underlying asset symbol"
+// @Param        from        query     string  true   "Start date (RFC3339 or YYYY-MM-DD)"
+// @Param        to          query     string  true   "End date (RFC3339 or YYYY-MM-DD)"
+// @Param        limit       query     int     false  "Max rows (default 1000)"
+// @Param        cursor      query     string  false  "Pagination cursor"
+// @Success      200         {object}  dto.FeatureTermStructureHistoryResponse
+// @Failure      400         {object}  dto.ErrorResponse
+// @Failure      500         {object}  dto.ErrorResponse
+// @Router       /features/term-structure-history [get]
 func (h *Handler) GetTermStructureHistory(c *gin.Context) {
 	var req dto.FeatureTermStructureHistoryRequest
 	if err := c.ShouldBindQuery(&req); err != nil {
@@ -650,6 +1013,21 @@ func (h *Handler) GetTermStructureHistory(c *gin.Context) {
 }
 
 // GetSkewHistory handles GET /api/v1/features/skew-history.
+//
+// @Summary      Get skew history
+// @Description  Returns historical put-call skew data for an underlying.
+// @Tags         Features
+// @Produce      json
+// @Param        market      query     string  true   "Market (crypto-options, us-options)"
+// @Param        underlying  query     string  true   "Underlying asset symbol"
+// @Param        from        query     string  true   "Start date (RFC3339 or YYYY-MM-DD)"
+// @Param        to          query     string  true   "End date (RFC3339 or YYYY-MM-DD)"
+// @Param        limit       query     int     false  "Max rows (default 1000)"
+// @Param        cursor      query     string  false  "Pagination cursor"
+// @Success      200         {object}  dto.FeatureSkewHistoryResponse
+// @Failure      400         {object}  dto.ErrorResponse
+// @Failure      500         {object}  dto.ErrorResponse
+// @Router       /features/skew-history [get]
 func (h *Handler) GetSkewHistory(c *gin.Context) {
 	var req dto.FeatureSkewHistoryRequest
 	if err := c.ShouldBindQuery(&req); err != nil {
@@ -673,6 +1051,20 @@ func (h *Handler) GetSkewHistory(c *gin.Context) {
 // --- Screener handlers ---
 
 // ScreenUnderlyings handles GET /api/v1/screener/underlyings.
+//
+// @Summary      Screen underlyings
+// @Description  Filters and ranks underlying assets by IV, volume, and other criteria.
+// @Tags         Screener
+// @Produce      json
+// @Param        market     query     string   true   "Market (crypto-options, us-options)"
+// @Param        sort_by    query     string   false  "Sort field"
+// @Param        order      query     string   false  "Sort order (asc, desc)"
+// @Param        limit      query     int      false  "Max rows (default 50)"
+// @Param        cursor     query     string   false  "Pagination cursor"
+// @Success      200        {object}  dto.ScreenUnderlyingResponse
+// @Failure      400        {object}  dto.ErrorResponse
+// @Failure      500        {object}  dto.ErrorResponse
+// @Router       /screener/underlyings [get]
 func (h *Handler) ScreenUnderlyings(c *gin.Context) {
 	var req dto.ScreenUnderlyingRequest
 	if err := c.ShouldBindQuery(&req); err != nil {
@@ -694,6 +1086,24 @@ func (h *Handler) ScreenUnderlyings(c *gin.Context) {
 }
 
 // ScreenOptions handles GET /api/v1/screener/options.
+//
+// @Summary      Screen option contracts
+// @Description  Filters and ranks individual option contracts by Greeks, volume, open interest, and other criteria.
+// @Tags         Screener
+// @Produce      json
+// @Param        market      query     string  true   "Market (crypto-options, us-options)"
+// @Param        underlying  query     string  false  "Filter by underlying"
+// @Param        type        query     string  false  "Option type (call, put)"
+// @Param        min_dte     query     int     false  "Minimum days to expiry"
+// @Param        max_dte     query     int     false  "Maximum days to expiry"
+// @Param        sort_by     query     string  false  "Sort field"
+// @Param        order       query     string  false  "Sort order (asc, desc)"
+// @Param        limit       query     int     false  "Max rows (default 50)"
+// @Param        cursor      query     string  false  "Pagination cursor"
+// @Success      200         {object}  dto.ScreenOptionResponse
+// @Failure      400         {object}  dto.ErrorResponse
+// @Failure      500         {object}  dto.ErrorResponse
+// @Router       /screener/options [get]
 func (h *Handler) ScreenOptions(c *gin.Context) {
 	var req dto.ScreenOptionRequest
 	if err := c.ShouldBindQuery(&req); err != nil {
@@ -717,6 +1127,16 @@ func (h *Handler) ScreenOptions(c *gin.Context) {
 // --- Strategy Catalog handlers ---
 
 // ListStrategies handles GET /api/v1/strategies.
+//
+// @Summary      List registered strategies
+// @Description  Returns all available strategy templates with metadata and group classification.
+// @Tags         Strategies
+// @Produce      json
+// @Param        group  query     string  false  "Filter by strategy group"
+// @Success      200    {object}  dto.StrategyCatalogResponse
+// @Failure      400    {object}  dto.ErrorResponse
+// @Failure      500    {object}  dto.ErrorResponse
+// @Router       /strategies [get]
 func (h *Handler) ListStrategies(c *gin.Context) {
 	var req dto.StrategyCatalogListRequest
 	if err := c.ShouldBindQuery(&req); err != nil {
@@ -729,6 +1149,103 @@ func (h *Handler) ListStrategies(c *gin.Context) {
 	}
 
 	resp, err := h.strategyCatalog.ListStrategies(c.Request.Context(), req)
+	if err != nil {
+		handleServiceError(c, err)
+		return
+	}
+
+	c.JSON(http.StatusOK, resp)
+}
+
+// --- Crypto Option Chain handler ---
+
+// GetCryptoOptionChain handles GET /api/v1/markets/crypto-options/chain.
+//
+// @Summary      Get crypto option chain snapshots
+// @Description  Returns option chain snapshots for a crypto base asset, grouped by timestamp.
+// @Tags         CryptoOptions
+// @Produce      json
+// @Param        base_asset  query     string  true   "Base asset (e.g. BTC, ETH)"
+// @Param        from        query     string  true   "Start time (RFC3339 or YYYY-MM-DD)"
+// @Param        to          query     string  true   "End time (RFC3339 or YYYY-MM-DD)"
+// @Param        interval    query     string  false  "Chain interval (default 1d)"  Enums(5m,15m,30m,1h,2h,3h,4h,6h,8h,12h,1d)
+// @Param        limit       query     int     false  "Max rows (default 1000, max 10000)"
+// @Param        cursor      query     string  false  "Opaque pagination cursor"
+// @Success      200         {object}  dto.CryptoOptionChainResponse
+// @Failure      400         {object}  dto.ErrorResponse
+// @Failure      500         {object}  dto.ErrorResponse
+// @Router       /markets/crypto-options/chain [get]
+func (h *Handler) GetCryptoOptionChain(c *gin.Context) {
+	var req dto.CryptoOptionChainRequest
+	if err := c.ShouldBindQuery(&req); err != nil {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: err.Error()})
+		return
+	}
+
+	resp, err := h.cryptoOptions.QueryChain(c.Request.Context(), req)
+	if err != nil {
+		handleServiceError(c, err)
+		return
+	}
+
+	c.JSON(http.StatusOK, resp)
+}
+
+// --- Factor handlers ---
+
+// ListFactors handles GET /api/v1/factors.
+//
+// @Summary      List available factor feeds
+// @Description  Returns metadata for all registered factor feeds, including supported symbols, windows, and fields.
+// @Tags         Factors
+// @Produce      json
+// @Success      200  {object}  dto.FactorCatalogResponse
+// @Failure      500  {object}  dto.ErrorResponse
+// @Router       /factors [get]
+func (h *Handler) ListFactors(c *gin.Context) {
+	if h.factors == nil {
+		c.JSON(http.StatusNotImplemented, dto.ErrorResponse{Error: "factor provider not configured"})
+		return
+	}
+
+	resp, err := h.factors.ListFactors(c.Request.Context())
+	if err != nil {
+		handleServiceError(c, err)
+		return
+	}
+
+	c.JSON(http.StatusOK, resp)
+}
+
+// GetFactorBars handles GET /api/v1/factors/bars.
+//
+// @Summary      Query factor time-series data
+// @Description  Returns OHLC bars for a specific factor feed, symbol, and time window.
+// @Tags         Factors
+// @Produce      json
+// @Param        name    query     string  true   "Factor feed name (e.g. dvol)"
+// @Param        symbol  query     string  true   "Symbol (e.g. BTC)"
+// @Param        window  query     string  true   "Time window (e.g. 1h, 1d)"
+// @Param        from    query     string  true   "Start time (RFC3339 or YYYY-MM-DD)"
+// @Param        to      query     string  true   "End time (RFC3339 or YYYY-MM-DD)"
+// @Param        limit   query     int     false  "Max rows (default 1000, max 10000)"
+// @Param        cursor  query     string  false  "Opaque pagination cursor"
+// @Success      200     {object}  dto.FactorBarResponse
+// @Failure      400     {object}  dto.ErrorResponse
+// @Failure      500     {object}  dto.ErrorResponse
+// @Router       /factors/bars [get]
+func (h *Handler) GetFactorBars(c *gin.Context) {
+	var req dto.FactorBarRequest
+	if err := c.ShouldBindQuery(&req); err != nil {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: err.Error()})
+		return
+	}
+	if h.factors == nil {
+		c.JSON(http.StatusNotImplemented, dto.ErrorResponse{Error: "factor provider not configured"})
+		return
+	}
+
+	resp, err := h.factors.QueryFactorBars(c.Request.Context(), req)
 	if err != nil {
 		handleServiceError(c, err)
 		return

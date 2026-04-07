@@ -333,3 +333,156 @@ func decodeCursorUint32(cursor string) (uint32, error) {
 	}
 	return uint32(v), nil
 }
+
+// QueryChain returns crypto option chain snapshots for a base asset over a time range.
+func (s *CryptoOptionsService) QueryChain(ctx context.Context, req dto.CryptoOptionChainRequest) (*dto.CryptoOptionChainResponse, error) {
+	from, to, err := dto.ParseTimeRange(req.From, req.To)
+	if err != nil {
+		return nil, &dto.ValidationError{Message: fmt.Sprintf("invalid time range: %v", err)}
+	}
+	limit := clamp(req.Limit, defaultBarLimit, maxBarLimit)
+
+	interval := req.Interval
+	if interval == "" {
+		interval = "1d"
+	}
+	chainView, ok := cryptooptions.ChainPrecomputedIntervals[interval]
+	if !ok {
+		return nil, &dto.ValidationError{Message: fmt.Sprintf("unsupported chain interval %q", interval)}
+	}
+
+	if req.Cursor != "" {
+		cursorTime, cerr := decodeCursor(req.Cursor)
+		if cerr != nil {
+			return nil, invalidCursorError(cerr)
+		}
+		from = cursorTime.Add(time.Nanosecond)
+	}
+
+	query := fmt.Sprintf(`
+SELECT
+    c.timestamp,
+    m.symbol_id,
+    m.symbol,
+    m.option_type,
+    m.expiration,
+    m.strike_price,
+    c.mark_close,
+    c.bid_close,
+    c.ask_close,
+    c.mark_iv,
+    c.delta,
+    c.gamma,
+    c.vega,
+    c.theta,
+    c.rho,
+    c.open_interest,
+    c.tick_count,
+    c.underlying_close
+FROM %s AS c
+INNER JOIN crypto_options_symbol_meta FINAL AS m ON m.symbol_id = c.symbol_id
+WHERE c.base_asset = {base_asset:String}
+  AND c.timestamp >= {from:DateTime('UTC')}
+  AND c.timestamp <= {to:DateTime('UTC')}
+ORDER BY c.timestamp ASC, m.strike_price ASC
+LIMIT {limit:UInt32}
+`, chainView)
+
+	rows, err := s.conn.Query(ctx, query,
+		clickhouse.Named("base_asset", req.BaseAsset),
+		clickhouse.DateNamed("from", from, clickhouse.NanoSeconds),
+		clickhouse.DateNamed("to", to, clickhouse.NanoSeconds),
+		clickhouse.Named("limit", uint32(limit+1)),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query crypto option chain: %w", err)
+	}
+	defer rows.Close()
+
+	type rawRow struct {
+		timestamp       time.Time
+		symbolID        uint32
+		symbol          string
+		optionType      string
+		expiration      time.Time
+		strike          float32
+		markClose       float32
+		bidClose        float32
+		askClose        float32
+		markIV          float32
+		delta           float32
+		gamma           float32
+		vega            float32
+		theta           float32
+		rho             float32
+		openInterest    float32
+		tickCount       uint16
+		underlyingClose float32
+	}
+	var allRows []rawRow
+	for rows.Next() {
+		var r rawRow
+		if err := rows.Scan(
+			&r.timestamp, &r.symbolID, &r.symbol, &r.optionType,
+			&r.expiration, &r.strike,
+			&r.markClose, &r.bidClose, &r.askClose,
+			&r.markIV, &r.delta, &r.gamma, &r.vega, &r.theta, &r.rho,
+			&r.openInterest, &r.tickCount, &r.underlyingClose,
+		); err != nil {
+			return nil, fmt.Errorf("scan chain row: %w", err)
+		}
+		allRows = append(allRows, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate chain rows: %w", err)
+	}
+
+	// Group by timestamp into snapshots
+	snapshots := make([]dto.CryptoOptionChainSnapshot, 0)
+	var cur *dto.CryptoOptionChainSnapshot
+	for _, r := range allRows {
+		if cur == nil || !cur.Timestamp.Equal(r.timestamp) {
+			if cur != nil {
+				snapshots = append(snapshots, *cur)
+			}
+			cur = &dto.CryptoOptionChainSnapshot{
+				Timestamp: r.timestamp,
+				BaseAsset: req.BaseAsset,
+				Contracts: make([]dto.CryptoOptionChainContract, 0),
+			}
+		}
+		cur.Contracts = append(cur.Contracts, dto.CryptoOptionChainContract{
+			SymbolID:        r.symbolID,
+			Symbol:          r.symbol,
+			OptionType:      r.optionType,
+			Expiration:      r.expiration,
+			Strike:          r.strike,
+			MarkClose:       r.markClose,
+			BidClose:        r.bidClose,
+			AskClose:        r.askClose,
+			MarkIV:          r.markIV,
+			Delta:           r.delta,
+			Gamma:           r.gamma,
+			Vega:            r.vega,
+			Theta:           r.theta,
+			Rho:             r.rho,
+			OpenInterest:    r.openInterest,
+			TickCount:       r.tickCount,
+			UnderlyingClose: r.underlyingClose,
+		})
+	}
+	if cur != nil {
+		snapshots = append(snapshots, *cur)
+	}
+
+	resp := &dto.CryptoOptionChainResponse{}
+	if len(allRows) > limit {
+		// Trim last snapshot if it exceeds the limit
+		resp.Data = snapshots
+		lastTs := allRows[limit-1].timestamp
+		resp.NextCursor = encodeCursor(lastTs)
+	} else {
+		resp.Data = snapshots
+	}
+	return resp, nil
+}

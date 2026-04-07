@@ -1,3 +1,22 @@
+// @title           Toktik Options Platform API
+// @version         1.0
+// @description     Backend data services for multi-market options analytics, including market data retrieval, feature/factor queries, screening, strategy catalog, and backtesting.
+// @termsOfService  https://toktik.dev/terms
+
+// @contact.name   Toktik Dev Team
+// @contact.url    https://toktik.dev
+// @contact.email  dev@toktik.dev
+
+// @license.name  Proprietary
+// @license.url   https://toktik.dev/license
+
+// @host      localhost:8080
+// @BasePath  /api/v1
+
+// @securityDefinitions.apikey ApiKeyAuth
+// @in header
+// @name X-API-Key
+
 package main
 
 import (
@@ -10,6 +29,7 @@ import (
 	"syscall"
 	"time"
 
+	_ "github.com/Cyvadra/toktik/docs"
 	"github.com/Cyvadra/toktik/internal/api"
 	appCli "github.com/Cyvadra/toktik/internal/cli"
 	"github.com/Cyvadra/toktik/internal/service"
@@ -64,7 +84,8 @@ func main() {
 	cryptoSpotSvc := service.NewCryptoSpotService(conn)
 	screenerSvc := service.NewScreenerService(conn)
 	strategyCatalogSvc := service.NewStrategyCatalogService()
-	router := api.NewRouter(svc, usStocksSvc, usOptionsSvc, infraSvc, featureSvc, strategyBacktestSvc, cryptoSpotSvc, screenerSvc, strategyCatalogSvc)
+	factorSvc := service.NewFactorService(factorStore)
+	router := api.NewRouter(svc, usStocksSvc, usOptionsSvc, infraSvc, featureSvc, strategyBacktestSvc, cryptoSpotSvc, screenerSvc, strategyCatalogSvc, factorSvc)
 
 	srv := &http.Server{
 		Addr:              *addr,
