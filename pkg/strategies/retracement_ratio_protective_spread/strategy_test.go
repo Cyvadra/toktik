@@ -5,6 +5,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -80,7 +81,7 @@ func TestDynamicLongDeltaClamps(t *testing.T) {
 		want         float64
 	}{
 		{name: "lower clamp", hvPercentile: 0, ivPercentile: 0, want: minLongDelta},
-		{name: "formula", hvPercentile: 75, ivPercentile: 60, want: 0.6},
+		{name: "formula", hvPercentile: 75, ivPercentile: 60, want: 0.7},
 		{name: "upper clamp", hvPercentile: 100, ivPercentile: 100, want: maxLongDelta},
 	}
 
@@ -91,6 +92,17 @@ func TestDynamicLongDeltaClamps(t *testing.T) {
 				t.Fatalf("dynamicLongDelta(%v, %v) = %v, want %v", tc.hvPercentile, tc.ivPercentile, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestAmbushTakeProfitTargetsUseInitialLongSpend(t *testing.T) {
+	state := activeState{ambushLongSpend: 7.5}
+	tp1, tp2 := state.ambushTakeProfitTargets()
+	if math.Abs(tp1-2.475) > 1e-9 {
+		t.Fatalf("tp1 = %v, want 2.475", tp1)
+	}
+	if math.Abs(tp2-4.5) > 1e-9 {
+		t.Fatalf("tp2 = %v, want 4.5", tp2)
 	}
 }
 
@@ -319,6 +331,59 @@ func (p *ambushExpiryChainProvider) AvailableContracts(t time.Time) []backtest.O
 	}
 }
 
+type ambushToTrendSameBarChainProvider struct {
+	tpTime       time.Time
+	ambushExpiry time.Time
+	trendExpiry  time.Time
+}
+
+func (p *ambushToTrendSameBarChainProvider) AvailableContracts(t time.Time) []backtest.OptionContract {
+	ambushShortBid := 5.0
+	ambushShortAsk := 5.2
+	ambushShortMark := 5.1
+	ambushUpperBid := 2.4
+	ambushUpperAsk := 2.6
+	ambushUpperMark := 2.5
+	ambushLowerBid := 2.2
+	ambushLowerAsk := 2.4
+	ambushLowerMark := 2.3
+	ambushFarBid := 1.8
+	ambushFarAsk := 2.0
+	ambushFarMark := 1.9
+	ambushFarthestBid := 1.4
+	ambushFarthestAsk := 1.6
+	ambushFarthestMark := 1.5
+
+	if !t.Before(p.tpTime) {
+		ambushShortBid = 4.8
+		ambushShortAsk = 5.0
+		ambushShortMark = 4.9
+		ambushUpperBid = 4.8
+		ambushUpperAsk = 5.0
+		ambushUpperMark = 4.9
+		ambushLowerBid = 4.4
+		ambushLowerAsk = 4.6
+		ambushLowerMark = 4.5
+		ambushFarBid = 3.0
+		ambushFarAsk = 3.2
+		ambushFarMark = 3.1
+		ambushFarthestBid = 2.6
+		ambushFarthestAsk = 2.8
+		ambushFarthestMark = 2.7
+	}
+
+	return []backtest.OptionContract{
+		{Symbol: "AMB-C-50000", Type: backtest.Call, StrikePrice: 50000, Expiration: p.ambushExpiry, Delta: 0.50, BidPrice: ambushShortBid, AskPrice: ambushShortAsk, MarkPrice: ambushShortMark},
+		{Symbol: "AMB-C-52000", Type: backtest.Call, StrikePrice: 52000, Expiration: p.ambushExpiry, Delta: 0.39, BidPrice: ambushUpperBid, AskPrice: ambushUpperAsk, MarkPrice: ambushUpperMark},
+		{Symbol: "AMB-C-53000", Type: backtest.Call, StrikePrice: 53000, Expiration: p.ambushExpiry, Delta: 0.31, BidPrice: ambushLowerBid, AskPrice: ambushLowerAsk, MarkPrice: ambushLowerMark},
+		{Symbol: "AMB-C-54000", Type: backtest.Call, StrikePrice: 54000, Expiration: p.ambushExpiry, Delta: 0.24, BidPrice: ambushFarBid, AskPrice: ambushFarAsk, MarkPrice: ambushFarMark},
+		{Symbol: "AMB-C-55000", Type: backtest.Call, StrikePrice: 55000, Expiration: p.ambushExpiry, Delta: 0.18, BidPrice: ambushFarthestBid, AskPrice: ambushFarthestAsk, MarkPrice: ambushFarthestMark},
+		{Symbol: "TRD-C-50000", Type: backtest.Call, StrikePrice: 50000, Expiration: p.trendExpiry, Delta: 0.55, BidPrice: 5.8, AskPrice: 6.2, MarkPrice: 6.0},
+		{Symbol: "TRD-C-57000", Type: backtest.Call, StrikePrice: 57000, Expiration: p.trendExpiry, Delta: 0.22, BidPrice: 4.0, AskPrice: 4.2, MarkPrice: 4.1},
+		{Symbol: "TRD-C-58000", Type: backtest.Call, StrikePrice: 58000, Expiration: p.trendExpiry, Delta: 0.20, BidPrice: 3.8, AskPrice: 4.2, MarkPrice: 4.0},
+	}
+}
+
 func TestAmbushClosesRemainingTranchesBeforeExpiryAfterPartialTakeProfit(t *testing.T) {
 	openTime := time.Date(2024, 6, 20, 0, 0, 0, 0, time.UTC)
 	tpTime := openTime.Add(2 * time.Hour)
@@ -394,5 +459,88 @@ func TestAmbushClosesRemainingTranchesBeforeExpiryAfterPartialTakeProfit(t *test
 	}
 	if result.SpreadGroups[0].Status != "closed" {
 		t.Fatalf("group status = %q, want closed", result.SpreadGroups[0].Status)
+	}
+}
+
+func TestAmbushExecutesPartialAndFullTakeProfitOnSameBar(t *testing.T) {
+	openTime := time.Date(2024, 6, 20, 0, 0, 0, 0, time.UTC)
+	tpTime := openTime.Add(2 * time.Hour)
+	ambushExpiry := openTime.AddDate(0, 0, 70)
+	trendExpiry := openTime.AddDate(0, 0, 35)
+	warmupStart := openTime.Add(-160 * 24 * time.Hour)
+	endTime := tpTime.Add(2 * time.Hour)
+
+	timestamps := make([]time.Time, 0, int(endTime.Sub(warmupStart)/(2*time.Hour))+1)
+	closes := make([]float64, 0, cap(timestamps))
+	for ts := warmupStart; !ts.After(endTime); ts = ts.Add(2 * time.Hour) {
+		timestamps = append(timestamps, ts)
+		closePrice := 100.0
+		if !ts.Before(tpTime) {
+			closePrice = 150.0
+		}
+		closes = append(closes, closePrice)
+	}
+
+	factorValues := make([]float64, len(timestamps))
+	for i := range factorValues {
+		factorValues[i] = 50
+	}
+
+	engine := backtest.NewEngine(backtest.Config{InitialCapital: 1})
+	engine.RegisterDataFeed("test", &scriptedDataFeed{timestamps: timestamps, closes: closes})
+	engine.RegisterFactorFeed("dvol", &scriptedFactorFeed{timestamps: timestamps, values: factorValues})
+	engine.SetOptionsChainProvider(&ambushToTrendSameBarChainProvider{tpTime: tpTime, ambushExpiry: ambushExpiry, trendExpiry: trendExpiry})
+
+	s := &strategy{
+		longEntryTimes:  map[int64]struct{}{openTime.Unix(): {}},
+		shortEntryTimes: map[int64]struct{}{},
+	}
+
+	result, err := engine.Run(context.Background(), "test", "BTC", "2h", openTime, endTime, s, nil)
+	if err != nil {
+		t.Fatalf("engine.Run() error = %v", err)
+	}
+	if len(result.SpreadPositions) != 4 {
+		t.Fatalf("len(SpreadPositions) = %d, want 4", len(result.SpreadPositions))
+	}
+
+	partialClosed := 0
+	convertedClosed := 0
+	openTrend := 0
+	for _, spread := range result.SpreadPositions {
+		switch {
+		case strings.Contains(spread.Tag, "一期比例价差"):
+			if spread.CloseTime == nil || !spread.CloseTime.Equal(tpTime) {
+				t.Fatalf("ambush spread %d close time = %v, want %v", spread.ID, spread.CloseTime, tpTime)
+			}
+			switch {
+			case strings.Contains(spread.CloseNote, "一期止盈33%减仓"):
+				partialClosed++
+			case strings.Contains(spread.CloseNote, "一期止盈60%转二期"):
+				convertedClosed++
+			default:
+				t.Fatalf("ambush spread %d close note = %q, want same-bar take-profit note", spread.ID, spread.CloseNote)
+			}
+		case strings.Contains(spread.Tag, "二期借记价差"):
+			if spread.Status != "open" {
+				t.Fatalf("trend spread %d status = %q, want open", spread.ID, spread.Status)
+			}
+			if !spread.OpenTime.Equal(tpTime) {
+				t.Fatalf("trend spread %d open time = %v, want %v", spread.ID, spread.OpenTime, tpTime)
+			}
+			openTrend++
+		default:
+			t.Fatalf("unexpected spread tag %q", spread.Tag)
+		}
+	}
+
+	if partialClosed != 1 {
+		t.Fatalf("partialClosed = %d, want 1", partialClosed)
+	}
+	if convertedClosed != 2 {
+		t.Fatalf("convertedClosed = %d, want 2", convertedClosed)
+	}
+	if openTrend != 1 {
+		t.Fatalf("openTrend = %d, want 1", openTrend)
 	}
 }

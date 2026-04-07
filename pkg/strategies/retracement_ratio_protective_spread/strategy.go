@@ -37,8 +37,8 @@ const (
 	trendMinDTE             = 25
 	trendMaxDTE             = 40
 	ambushPremiumBaseBTC    = 5.0
-	ambushTakeProfit1BTC    = 1.65
-	ambushTakeProfit2BTC    = 3.0
+	ambushTakeProfit1Pct    = 0.33
+	ambushTakeProfit2Pct    = 0.60
 	ambushStopATRMultiplier = 8.0
 	ambushRollMinDTE        = 20.0
 	ambushRollMaxDTE        = 40.0
@@ -82,6 +82,7 @@ type activeState struct {
 	groupID           int
 	spreadIDs         []int
 	partialTaken      bool
+	ambushLongSpend   float64
 	entryUnderlying   float64
 	entryATR          float64
 	entryLongAbsDelta float64
@@ -245,7 +246,24 @@ func (s *strategy) manageActiveStates(ctx *backtest.BarContext, chain *backtest.
 
 func (s *strategy) manageAmbush(ctx *backtest.BarContext, chain *backtest.OptionsChain, contractMap map[string]backtest.OptionContract, state activeState) []activeState {
 	totalPnL := s.totalUnrealizedPnL(ctx, state.spreadIDs, contractMap)
-	if !math.IsNaN(totalPnL) && totalPnL >= ambushTakeProfit2BTC {
+	tp1Threshold, tp2Threshold := state.ambushTakeProfitTargets()
+	tp1Reached := !state.partialTaken && !math.IsNaN(totalPnL) && totalPnL >= tp1Threshold
+	tp2Reached := !math.IsNaN(totalPnL) && totalPnL >= tp2Threshold
+
+	if tp1Reached {
+		spreadID := s.firstOpenSpreadID(ctx, state.spreadIDs)
+		if spreadID > 0 && s.closeSpreadSet(ctx, []int{spreadID}, contractMap, state.note("一期止盈33%减仓")) {
+			state.partialTaken = true
+			state.spreadIDs = s.openSpreadIDs(ctx, state.spreadIDs)
+			if len(state.spreadIDs) == 0 {
+				s.closeGroupIfNeeded(ctx, state.groupID)
+				return nil
+			}
+		}
+	}
+
+	if tp2Reached {
+		state.spreadIDs = s.openSpreadIDs(ctx, state.spreadIDs)
 		if s.closeSpreadSet(ctx, state.spreadIDs, contractMap, state.note("一期止盈60%转二期")) {
 			s.closeGroupIfNeeded(ctx, state.groupID)
 			if nextState, ok := s.openTrendState(ctx, chain, trendAmountBaseBTC, state.side, "一期止盈转换"); ok {
@@ -281,18 +299,6 @@ func (s *strategy) manageAmbush(ctx *backtest.BarContext, chain *backtest.Option
 			return nil
 		}
 		return []activeState{state}
-	}
-
-	if !state.partialTaken && !math.IsNaN(totalPnL) && totalPnL >= ambushTakeProfit1BTC {
-		spreadID := s.firstOpenSpreadID(ctx, state.spreadIDs)
-		if spreadID > 0 && s.closeSpreadSet(ctx, []int{spreadID}, contractMap, state.note("一期止盈33%减仓")) {
-			state.partialTaken = true
-			state.spreadIDs = s.openSpreadIDs(ctx, state.spreadIDs)
-			if len(state.spreadIDs) == 0 {
-				s.closeGroupIfNeeded(ctx, state.groupID)
-				return nil
-			}
-		}
 	}
 
 	return []activeState{state}
@@ -454,6 +460,7 @@ func (s *strategy) openAmbushStateDetailed(ctx *backtest.BarContext, chain *back
 		phase:           phaseAmbush,
 		groupID:         groupID,
 		spreadIDs:       spreadIDs,
+		ambushLongSpend: longQtyTotal * longCostTotal,
 		entryUnderlying: ctx.Close(),
 		entryATR:        ctx.Ind("atr20"),
 	}, true, ""
@@ -943,6 +950,14 @@ func dynamicLongDelta(hvPercentile, ivPercentile float64) float64 {
 		return maxLongDelta
 	}
 	return value
+}
+
+func (state activeState) ambushTakeProfitTargets() (float64, float64) {
+	base := state.ambushLongSpend
+	if math.IsNaN(base) || base <= 0 {
+		base = ambushPremiumBaseBTC
+	}
+	return base * ambushTakeProfit1Pct, base * ambushTakeProfit2Pct
 }
 
 func (side tradeSide) filterChain(chain *backtest.OptionsChain) *backtest.OptionsChain {
