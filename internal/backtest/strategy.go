@@ -30,6 +30,13 @@ type ReportColumnProvider interface {
 	ReportColumns() []ReportColumn
 }
 
+// ReportSeriesProvider is an optional strategy extension point for exposing
+// strategy-generated per-bar series that are not part of the prepared market
+// dataset, such as DSL plot() outputs.
+type ReportSeriesProvider interface {
+	ReportSeries() map[string][]float64
+}
+
 // StrategyPreloader is an optional extension point for one-time precomputation.
 //
 // If implemented, Preload is called during Engine.Prepare after indicators are

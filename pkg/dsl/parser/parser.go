@@ -750,7 +750,14 @@ func (p *Parser) parseIndexSuffix(left ast.Expr) ast.Expr {
 
 func (p *Parser) parseDotSuffix(left ast.Expr) ast.Expr {
 	tok := p.advance() // skip .
-	field := p.expect(token.Ident)
+	// Allow keywords as field names (e.g. input.float, input.int, input.bool, input.string).
+	field := p.cur()
+	if field.Type != token.Ident && !field.Type.IsKeyword() {
+		p.errorf("expected field name after '.', got %s (%q) at line %d col %d",
+			field.Type, field.Literal, field.Line, field.Col)
+		return &ast.DotExpr{Token: tok, Object: left, Field: ""}
+	}
+	p.advance()
 	return &ast.DotExpr{Token: tok, Object: left, Field: field.Literal}
 }
 

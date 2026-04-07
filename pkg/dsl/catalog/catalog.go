@@ -16,7 +16,7 @@ func RegisterDSL(name, source string) error {
 		Name:   name,
 		Groups: []string{"dsl"},
 		Factory: func(cfg catalog.Config) (backtest.Strategy, error) {
-			ds := bridge.New(source)
+			ds := bridge.NewWithOptions(source, bridge.Options{SignalSource: cfg.SignalSource})
 			if errs := ds.ParseErrors(); len(errs) > 0 {
 				return nil, fmt.Errorf("DSL parse errors in %q: %v", name, errs)
 			}

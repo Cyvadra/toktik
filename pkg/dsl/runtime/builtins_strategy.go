@@ -4,7 +4,7 @@ package runtime
 func RegisterStrategyBuiltins(ip *Interpreter) {
 	// strategy.entry(id, direction, qty)
 	// direction: 1 = long, -1 = short
-	ip.RegisterBuiltin("strategy.entry", func(args []Value) Value {
+	ip.RegisterBuiltinWithParams("strategy.entry", []string{"id", "direction", "qty"}, func(args []Value) Value {
 		if ip.Bridge == nil || len(args) < 2 {
 			return NaVal()
 		}
@@ -23,7 +23,7 @@ func RegisterStrategyBuiltins(ip *Interpreter) {
 	})
 
 	// strategy.close(id)
-	ip.RegisterBuiltin("strategy.close", func(args []Value) Value {
+	ip.RegisterBuiltinWithParams("strategy.close", []string{"id"}, func(args []Value) Value {
 		if ip.Bridge == nil || len(args) < 1 {
 			return NaVal()
 		}
@@ -35,7 +35,7 @@ func RegisterStrategyBuiltins(ip *Interpreter) {
 	})
 
 	// strategy.exit(id)
-	ip.RegisterBuiltin("strategy.exit", func(args []Value) Value {
+	ip.RegisterBuiltinWithParams("strategy.exit", []string{"id"}, func(args []Value) Value {
 		if ip.Bridge == nil || len(args) < 1 {
 			return NaVal()
 		}
@@ -43,6 +43,29 @@ func RegisterStrategyBuiltins(ip *Interpreter) {
 		ip.Bridge.ExitLong(id)
 		ip.Bridge.ExitShort(id)
 		return NaVal()
+	})
+
+	ip.RegisterBuiltinWithParams("plot", []string{"series", "title", "overlay", "precision"}, func(args []Value) Value {
+		value := NaVal()
+		if len(args) >= 1 {
+			value = args[0]
+		}
+		title := ""
+		if len(args) >= 2 {
+			title = args[1].Str()
+		}
+		overlay := false
+		if len(args) >= 3 {
+			overlay = args[2].Bool()
+		}
+		precision := 0
+		if len(args) >= 4 {
+			precision = int(args[3].Float())
+			if precision < 0 {
+				precision = 0
+			}
+		}
+		return ip.setPlotValue(title, value, precision, overlay)
 	})
 
 	// buy(qty)

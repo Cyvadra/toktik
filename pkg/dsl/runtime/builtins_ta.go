@@ -236,4 +236,168 @@ func RegisterTABuiltins(ip *Interpreter) {
 		}
 		return FloatVal(sum)
 	})
+
+	// ta.wma(source, length) — linearly-weighted moving average.
+	ip.RegisterBuiltin("ta.wma", func(args []Value) Value {
+		if len(args) < 2 {
+			return NaVal()
+		}
+		s := args[0].SeriesPtr()
+		length := int(args[1].Float())
+		if s == nil || length <= 0 || s.Len() < length {
+			return NaVal()
+		}
+		weightSum := 0.0
+		valueSum := 0.0
+		for i := 0; i < length; i++ {
+			w := float64(length - i)
+			valueSum += s.At(i) * w
+			weightSum += w
+		}
+		return FloatVal(valueSum / weightSum)
+	})
+
+	// ta.bb(source, length, mult) — Bollinger Bands.
+	// Returns an ArrayVal of [upper, basis, lower].
+	ip.RegisterBuiltin("ta.bb", func(args []Value) Value {
+		if len(args) < 3 {
+			return NaVal()
+		}
+		s := args[0].SeriesPtr()
+		length := int(args[1].Float())
+		mult := args[2].Float()
+		if s == nil || length <= 0 || s.Len() < length || math.IsNaN(mult) {
+			return NaVal()
+		}
+		sum := 0.0
+		for i := 0; i < length; i++ {
+			sum += s.At(i)
+		}
+		basis := sum / float64(length)
+		variance := 0.0
+		for i := 0; i < length; i++ {
+			d := s.At(i) - basis
+			variance += d * d
+		}
+		std := math.Sqrt(variance / float64(length))
+		upper := basis + mult*std
+		lower := basis - mult*std
+		return ArrayVal([]Value{FloatVal(upper), FloatVal(basis), FloatVal(lower)})
+	})
+
+	// ta.bb_upper(source, length, mult) — convenience for the upper band.
+	ip.RegisterBuiltin("ta.bb_upper", func(args []Value) Value {
+		if len(args) < 3 {
+			return NaVal()
+		}
+		s := args[0].SeriesPtr()
+		length := int(args[1].Float())
+		mult := args[2].Float()
+		if s == nil || length <= 0 || s.Len() < length || math.IsNaN(mult) {
+			return NaVal()
+		}
+		sum := 0.0
+		for i := 0; i < length; i++ {
+			sum += s.At(i)
+		}
+		basis := sum / float64(length)
+		variance := 0.0
+		for i := 0; i < length; i++ {
+			d := s.At(i) - basis
+			variance += d * d
+		}
+		return FloatVal(basis + mult*math.Sqrt(variance/float64(length)))
+	})
+
+	// ta.bb_lower(source, length, mult) — convenience for the lower band.
+	ip.RegisterBuiltin("ta.bb_lower", func(args []Value) Value {
+		if len(args) < 3 {
+			return NaVal()
+		}
+		s := args[0].SeriesPtr()
+		length := int(args[1].Float())
+		mult := args[2].Float()
+		if s == nil || length <= 0 || s.Len() < length || math.IsNaN(mult) {
+			return NaVal()
+		}
+		sum := 0.0
+		for i := 0; i < length; i++ {
+			sum += s.At(i)
+		}
+		basis := sum / float64(length)
+		variance := 0.0
+		for i := 0; i < length; i++ {
+			d := s.At(i) - basis
+			variance += d * d
+		}
+		return FloatVal(basis - mult*math.Sqrt(variance/float64(length)))
+	})
+
+	// ta.barssince(condition) — number of bars since condition was true (0 = current bar).
+	// condition must be a Series; function scans history from offset 0 backward.
+	ip.RegisterBuiltin("ta.barssince", func(args []Value) Value {
+		if len(args) < 1 {
+			return NaVal()
+		}
+		s := args[0].SeriesPtr()
+		if s == nil || s.Len() == 0 {
+			return NaVal()
+		}
+		for i := 0; i < s.Len(); i++ {
+			v := s.At(i)
+			if !math.IsNaN(v) && v != 0 {
+				return FloatVal(float64(i))
+			}
+		}
+		return NaVal()
+	})
+
+	// ta.valuewhen(condition, source, occurrence) — value of source the n-th time condition was true.
+	// occurrence=0 means most recent.
+	ip.RegisterBuiltin("ta.valuewhen", func(args []Value) Value {
+		if len(args) < 3 {
+			return NaVal()
+		}
+		cond := args[0].SeriesPtr()
+		src := args[1].SeriesPtr()
+		occurrence := int(args[2].Float())
+		if cond == nil || src == nil {
+			return NaVal()
+		}
+		count := 0
+		maxLen := cond.Len()
+		if src.Len() < maxLen {
+			maxLen = src.Len()
+		}
+		for i := 0; i < maxLen; i++ {
+			v := cond.At(i)
+			if !math.IsNaN(v) && v != 0 {
+				if count == occurrence {
+					return FloatVal(src.At(i))
+				}
+				count++
+			}
+		}
+		return NaVal()
+	})
+
+	// ta.percentrank(source, length) — percent rank of the current value in last length bars.
+	ip.RegisterBuiltin("ta.percentrank", func(args []Value) Value {
+		if len(args) < 2 {
+			return NaVal()
+		}
+		s := args[0].SeriesPtr()
+		length := int(args[1].Float())
+		if s == nil || length <= 0 || s.Len() < length {
+			return NaVal()
+		}
+		current := s.At(0)
+		count := 0
+		for i := 1; i < length; i++ {
+			if s.At(i) <= current {
+				count++
+			}
+		}
+		return FloatVal(float64(count) / float64(length-1) * 100)
+	})
 }

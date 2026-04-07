@@ -145,6 +145,8 @@ All list endpoints support cursor-based pagination (`cursor` / `next_cursor`). S
 
 Strategies implement the `backtest.Strategy` interface (`Init` + `OnBar`) and are registered in `pkg/strategies/catalog`. Options strategies embed reusable mixins from `pkg/strategies/optutil`:
 
+Toktik DSL documentation: [docs/dsl.md](docs/dsl.md)
+
 - **PricingMixin** — entry/exit/valuation price modes for spread legs
 - **GroupMixin** — position group lifecycle tracking
 - **PendingRefCounter** — scheduled spread open resolution

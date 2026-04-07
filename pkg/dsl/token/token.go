@@ -114,6 +114,11 @@ func (t Type) String() string {
 	return "UNKNOWN"
 }
 
+// IsKeyword reports whether the token type is a language keyword.
+func (t Type) IsKeyword() bool {
+	return t >= KwStrategy && t <= KwConst
+}
+
 var typeNames = [...]string{
 	Illegal: "ILLEGAL",
 	EOF:     "EOF",

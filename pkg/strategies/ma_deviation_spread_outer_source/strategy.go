@@ -1,17 +1,14 @@
 package madeviationspread
 
 import (
-	"bufio"
-	"encoding/csv"
 	"fmt"
 	"math"
-	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/Cyvadra/toktik/internal/backtest"
+	"github.com/Cyvadra/toktik/internal/signals"
 	"github.com/Cyvadra/toktik/pkg/strategies/catalog"
 	"github.com/Cyvadra/toktik/pkg/strategies/optutil"
 )
@@ -573,88 +570,30 @@ func (s *strategy) allowsEntry() bool {
 }
 
 func buildEntrySignalSeries(timestamps []time.Time, entryTimes map[int64]struct{}) []float64 {
-	out := make([]float64, len(timestamps))
-	for i, ts := range timestamps {
-		if _, ok := entryTimes[ts.UTC().Unix()]; ok {
-			out[i] = 1
-		}
-	}
-	return out
+	return signals.BuildBinarySeries(timestamps, entryTimes)
 }
 
 func loadEntrySignalTimes(path string) (map[int64]struct{}, error) {
-	resolvedPath, err := resolveSignalFilePath(path)
-	if err != nil {
-		return nil, err
-	}
-
-	f, err := os.Open(resolvedPath)
-	if err != nil {
-		return nil, fmt.Errorf("open entry signal file %s: %w", resolvedPath, err)
-	}
-	defer f.Close()
-
-	reader := csv.NewReader(f)
-	records, err := reader.ReadAll()
-	if err != nil {
-		return loadTextEntrySignalTimes(resolvedPath)
-	}
-	if len(records) == 0 {
-		return map[int64]struct{}{}, nil
-	}
-
-	columns := csvColumnIndex(records[0])
-	timeIndex, ok := columns["日期和时间"]
-	if !ok {
-		return loadTextEntrySignalTimes(resolvedPath)
-	}
-	typeIndex, hasType := columns["类型"]
-	signalIndex, hasSignal := columns["信号"]
-	if !hasType && !hasSignal {
-		return nil, fmt.Errorf("entry signal csv %s missing 类型/信号 columns", resolvedPath)
-	}
-
-	utc8 := time.FixedZone("UTC+8", 8*3600)
-
-	entryTimes := make(map[int64]struct{})
-	for rowIndex, record := range records[1:] {
-		if timeIndex >= len(record) {
-			continue
-		}
-		if !isEntrySignalRecord(record, typeIndex, hasType, signalIndex, hasSignal) {
-			continue
-		}
-
-		dateStr := strings.TrimSpace(record[timeIndex])
-		if dateStr == "" {
-			continue
-		}
-
-		ts, err := time.ParseInLocation(entrySignalTimeLayout, dateStr, utc8)
-		if err != nil {
-			return nil, fmt.Errorf("parse entry signal row %d (%q): %w", rowIndex+2, dateStr, err)
-		}
-		entryTimes[ts.UTC().Unix()] = struct{}{}
-	}
-
-	return entryTimes, nil
+	return signals.LoadTimes(signals.Config{
+		Paths:            []string{path},
+		TimestampColumns: []string{"日期和时间"},
+		TypeColumns:      []string{"类型"},
+		SignalColumns:    []string{"信号"},
+		TimeLayouts:      []string{entrySignalTimeLayout, txtTimeLayout},
+		Location:         time.FixedZone("UTC+8", 8*3600),
+		TextLocation:     time.UTC,
+		EntryMatchers:    []string{"进场", "开仓", "entry", "open", "做空", "空头", "bearish", "divergence"},
+	})
 }
 
 func resolveSignalFilePath(path string) (string, error) {
-	if _, err := os.Stat(path); err == nil {
-		return path, nil
-	}
-
-	wd, err := os.Getwd()
+	resolvedPath, found, err := signals.ResolvePath(path)
 	if err != nil {
-		return "", fmt.Errorf("get working directory for signal file %s: %w", path, err)
+		return "", err
 	}
-
-	resolvedPath := filepath.Join(wd, path)
-	if _, err := os.Stat(resolvedPath); err == nil {
+	if found {
 		return resolvedPath, nil
 	}
-
 	return "", fmt.Errorf("entry signal file not found: %s", path)
 }
 
@@ -693,29 +632,11 @@ func isEntrySignalRecord(record []string, typeIndex int, hasType bool, signalInd
 }
 
 func loadTextEntrySignalTimes(path string) (map[int64]struct{}, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, fmt.Errorf("open entry signal text %s: %w", path, err)
-	}
-	defer f.Close()
-
-	scanner := bufio.NewScanner(f)
-	entryTimes := make(map[int64]struct{})
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
-			continue
-		}
-		ts, err := time.ParseInLocation(txtTimeLayout, line, time.UTC)
-		if err != nil {
-			continue
-		}
-		entryTimes[ts.UTC().Unix()] = struct{}{}
-	}
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("scan entry signal text %s: %w", path, err)
-	}
-	return entryTimes, nil
+	return signals.LoadTimes(signals.Config{
+		Paths:       []string{path},
+		TimeLayouts: []string{txtTimeLayout},
+		Location:    time.UTC,
+	})
 }
 
 func expiryDTEsWithin(chain *backtest.OptionsChain, now time.Time, minDTE, maxDTE int) []float64 {

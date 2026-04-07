@@ -1,7 +1,6 @@
 package retracementratioprotectivespread
 
 import (
-	"encoding/csv"
 	"fmt"
 	"math"
 	"os"
@@ -10,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Cyvadra/toktik/internal/backtest"
+	"github.com/Cyvadra/toktik/internal/signals"
 	"github.com/Cyvadra/toktik/pkg/strategies/catalog"
 	"github.com/Cyvadra/toktik/pkg/strategies/optutil"
 )
@@ -19,10 +19,12 @@ const (
 	strategyAlias = "retracement_ratio_protective_spread"
 
 	signalSourceEnv    = "RETRACEMENT_RATIO_PROTECTIVE_SPREAD_SIGNAL_SOURCE"
-	signalPath12hShort = "pkg/strategies/retracement_ratio_protective_spread/12h_short.csv"
-	signalPath1dShort  = "pkg/strategies/retracement_ratio_protective_spread/1d_short.csv"
-	signalPath12hLong  = "pkg/strategies/retracement_ratio_protective_spread/12h_long.csv"
-	signalPath1dLong   = "pkg/strategies/retracement_ratio_protective_spread/1d_long.csv"
+	signalPath12hShort = "data/signals/retracement_ratio_protective_spread/12h_short.csv"
+	signalPath1dShort  = "data/signals/retracement_ratio_protective_spread/1d_short.csv"
+	signalPath12hLong  = "data/signals/retracement_ratio_protective_spread/12h_long.csv"
+	signalPath1dLong   = "data/signals/retracement_ratio_protective_spread/1d_long.csv"
+
+	signalTimeCol = "日期和时间"
 
 	atrPeriod            = 20
 	ivLookbackBars       = 200
@@ -1148,41 +1150,11 @@ func signalPathForSide(source string, side tradeSide) (string, error) {
 }
 
 func loadSignalTimesFromCSV(relPath string) (map[int64]struct{}, error) {
-	path := relPath
-	if _, err := os.Stat(path); err != nil {
-		wd, _ := os.Getwd()
-		path = wd + "/" + relPath
-		if _, err := os.Stat(path); err != nil {
-			return nil, fmt.Errorf("signal file not found: %s", relPath)
-		}
-	}
-
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, fmt.Errorf("open signal file %s: %w", path, err)
-	}
-	defer f.Close()
-
-	records, err := csv.NewReader(f).ReadAll()
-	if err != nil {
-		return nil, fmt.Errorf("parse csv %s: %w", path, err)
-	}
-
 	utc8 := time.FixedZone("UTC+8", 8*3600)
-	times := make(map[int64]struct{}, len(records))
-	for i, record := range records {
-		if i == 0 || len(record) < 3 {
-			continue
-		}
-		dateStr := strings.TrimSpace(record[2])
-		if dateStr == "" {
-			continue
-		}
-		ts, err := time.ParseInLocation(signalTimeLayout, dateStr, utc8)
-		if err != nil {
-			continue
-		}
-		times[ts.UTC().Unix()] = struct{}{}
-	}
-	return times, nil
+	return signals.LoadTimes(signals.Config{
+		Paths:            []string{relPath},
+		TimestampColumns: []string{signalTimeCol},
+		TimeLayouts:      []string{signalTimeLayout},
+		Location:         utc8,
+	})
 }

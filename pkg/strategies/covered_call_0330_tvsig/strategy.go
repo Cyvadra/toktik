@@ -1,17 +1,15 @@
 package coveredcall0330tvsig
 
 import (
-	"bufio"
 	"fmt"
 	"math"
 	"os"
-	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/Cyvadra/toktik/internal/backtest"
+	"github.com/Cyvadra/toktik/internal/signals"
 	"github.com/Cyvadra/toktik/pkg/strategies/catalog"
 	"github.com/Cyvadra/toktik/pkg/strategies/optutil"
 )
@@ -50,8 +48,8 @@ const (
 
 	expiryCloseLeadDays = 1 // close 1 day before expiry
 
-	signalPath12h = "pkg/strategies/covered_call_0330_tvsig/12h.txt"
-	signalPath6h  = "pkg/strategies/covered_call_0330_tvsig/6h.txt"
+	signalPath12h = "data/signals/covered_call_0330_tvsig/12h.txt"
+	signalPath6h  = "data/signals/covered_call_0330_tvsig/6h.txt"
 
 	txtTimeLayout = "Jan 2, 2006, 15:04" // format used in signal txt files (UTC)
 
@@ -765,57 +763,19 @@ func loadSignalTimesFromMultiple(paths ...string) (map[int64]struct{}, error) {
 // timestamp in the format "Jan 2, 2006, 15:04".  Lines may optionally start
 // with a numeric index ("1 Jan 2, 2006, 15:04") which is stripped.
 func loadSignalTimesFromFile(relPath string) (map[int64]struct{}, error) {
-	resolved := resolveSignalPath(relPath)
-	if resolved == "" {
-		return map[int64]struct{}{}, nil // file not found → empty, not an error
-	}
-
-	f, err := os.Open(resolved)
-	if err != nil {
-		return nil, fmt.Errorf("open %s: %w", resolved, err)
-	}
-	defer f.Close()
-
-	result := make(map[int64]struct{})
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		line = strings.TrimPrefix(line, "\ufeff") // strip BOM
-		if line == "" {
-			continue
-		}
-
-		// Strip optional leading numeric index.
-		fields := strings.Fields(line)
-		if len(fields) >= 2 {
-			if _, convErr := strconv.Atoi(fields[0]); convErr == nil {
-				line = strings.TrimSpace(strings.TrimPrefix(line, fields[0]))
-			}
-		}
-
-		t, parseErr := time.Parse(txtTimeLayout, strings.TrimSpace(line))
-		if parseErr != nil {
-			continue // skip unrecognised lines
-		}
-		result[t.UTC().Unix()] = struct{}{}
-	}
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("scan %s: %w", resolved, err)
-	}
-	return result, nil
+	return signals.LoadTimes(signals.Config{
+		Paths:             []string{relPath},
+		TimeLayouts:       []string{txtTimeLayout},
+		Location:          time.UTC,
+		SkipMissing:       true,
+		TextOptionalIndex: true,
+	})
 }
 
 func resolveSignalPath(relPath string) string {
-	if _, err := os.Stat(relPath); err == nil {
-		return relPath
-	}
-	wd, err := os.Getwd()
-	if err != nil {
-		return ""
-	}
-	p := filepath.Join(wd, relPath)
-	if _, err := os.Stat(p); err == nil {
-		return p
+	resolved, found, _ := signals.ResolvePath(relPath)
+	if found {
+		return resolved
 	}
 	return ""
 }

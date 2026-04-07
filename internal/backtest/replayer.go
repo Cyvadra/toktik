@@ -38,6 +38,27 @@ func buildReportSeries(primary map[string][]float64, primaryLen int, factorColum
 	return merged
 }
 
+func mergeReportSeries(base map[string][]float64, extra map[string][]float64) map[string][]float64 {
+	if len(extra) == 0 {
+		return base
+	}
+	if len(base) == 0 {
+		merged := make(map[string][]float64, len(extra))
+		for name, data := range extra {
+			merged[name] = data
+		}
+		return merged
+	}
+	merged := make(map[string][]float64, len(base)+len(extra))
+	for name, data := range base {
+		merged[name] = data
+	}
+	for name, data := range extra {
+		merged[name] = data
+	}
+	return merged
+}
+
 func factorSeriesKey(ref FactorRef, name string) string {
 	return "factor." + ref.Name + "." + ref.Interval + "." + name
 }
@@ -151,10 +172,6 @@ func (r *Replayer) Replay(prepared *PreparedData, strategy Strategy, params map[
 	spreadPricing := DefaultSpreadPricingConfig()
 	if provider, ok := strategy.(SpreadPricingProvider); ok {
 		spreadPricing = provider.SpreadPricingConfig().WithDefaults()
-	}
-	var reportColumns []ReportColumn
-	if provider, ok := strategy.(ReportColumnProvider); ok {
-		reportColumns = provider.ReportColumns()
 	}
 
 	barCtx := &BarContext{
@@ -353,6 +370,11 @@ func (r *Replayer) Replay(prepared *PreparedData, strategy Strategy, params map[
 		}
 	}
 
+	var reportColumns []ReportColumn
+	if provider, ok := strategy.(ReportColumnProvider); ok {
+		reportColumns = provider.ReportColumns()
+	}
+
 	result := computeResult(
 		strategy.Name(),
 		broker.Trades(),
@@ -360,7 +382,15 @@ func (r *Replayer) Replay(prepared *PreparedData, strategy Strategy, params map[
 		prepared.PrimaryDS.Timestamps,
 		r.config.InitialCapital,
 		r.config.AccountUnit,
-		buildReportSeries(secColumns[0], prepared.PrimaryDS.Len, factorColumns, prepared.FactorAlignMaps, prepared.Factors),
+		mergeReportSeries(
+			buildReportSeries(secColumns[0], prepared.PrimaryDS.Len, factorColumns, prepared.FactorAlignMaps, prepared.Factors),
+			func() map[string][]float64 {
+				if provider, ok := strategy.(ReportSeriesProvider); ok {
+					return provider.ReportSeries()
+				}
+				return nil
+			}(),
+		),
 		reportColumns,
 	)
 

@@ -73,12 +73,9 @@ type rateBucket struct {
 	lastRefill time.Time
 }
 
-const rateBucketTTL = 10 * time.Minute
-
 // RateLimitMiddleware returns a gin middleware enforcing rate limits.
 // Rate is configured via RATE_LIMIT_RPS env var (requests per second, default 50).
 // Burst is 2× the RPS. Keyed by X-API-Key header or remote IP.
-// Inactive buckets are evicted after rateBucketTTL to prevent unbounded memory growth.
 func RateLimitMiddleware() gin.HandlerFunc {
 	rps := 50.0
 	if v := os.Getenv("RATE_LIMIT_RPS"); v != "" {
@@ -90,7 +87,6 @@ func RateLimitMiddleware() gin.HandlerFunc {
 
 	var mu sync.Mutex
 	buckets := make(map[string]*rateBucket)
-	lastCleanup := time.Now()
 
 	return func(c *gin.Context) {
 		key := c.GetHeader("X-API-Key")
@@ -99,24 +95,13 @@ func RateLimitMiddleware() gin.HandlerFunc {
 		}
 
 		mu.Lock()
-		now := time.Now()
-
-		// Periodically evict buckets that have been idle for rateBucketTTL.
-		if now.Sub(lastCleanup) > rateBucketTTL {
-			for k, bucket := range buckets {
-				if now.Sub(bucket.lastRefill) > rateBucketTTL {
-					delete(buckets, k)
-				}
-			}
-			lastCleanup = now
-		}
-
 		b, ok := buckets[key]
 		if !ok {
-			b = &rateBucket{tokens: burst, lastRefill: now}
+			b = &rateBucket{tokens: burst, lastRefill: time.Now()}
 			buckets[key] = b
 		}
 
+		now := time.Now()
 		elapsed := now.Sub(b.lastRefill).Seconds()
 		b.tokens += elapsed * rps
 		if b.tokens > burst {

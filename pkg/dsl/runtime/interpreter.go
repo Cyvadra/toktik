@@ -3,10 +3,20 @@ package runtime
 import (
 	"fmt"
 	"math"
+	"strings"
 
 	"github.com/Cyvadra/toktik/pkg/dsl/ast"
 	"github.com/Cyvadra/toktik/pkg/dsl/token"
 )
+
+type PlotSpec struct {
+	Source    string
+	Title     string
+	Decimals  int
+	Overlay   bool
+	series    *Series
+	lastValue Value
+}
 
 // signal types returned by control flow statements.
 type signal int
@@ -34,7 +44,13 @@ type Interpreter struct {
 	seriesMap map[string]*Series
 
 	// Builtins registered at init time.
-	builtins map[string]Value
+	builtins     map[string]Value
+	plots        []*PlotSpec
+	queuedFields map[string]float64
+
+	// Inputs: user-supplied parameter overrides keyed by input title.
+	// When an input(defval, title=T) call is evaluated, Inputs[T] takes priority.
+	Inputs map[string]float64
 
 	// Bridge for strategy/trading calls (set externally).
 	Bridge Bridge
@@ -76,18 +92,24 @@ type Bridge interface {
 // NewInterpreter creates a new interpreter for the given program.
 func NewInterpreter(prog *ast.Program) *Interpreter {
 	return &Interpreter{
-		Program:   prog,
-		Global:    NewScope(),
-		persist:   make(map[string]Value),
-		varip:     make(map[string]Value),
-		seriesMap: make(map[string]*Series),
-		builtins:  make(map[string]Value),
+		Program:      prog,
+		Global:       NewScope(),
+		persist:      make(map[string]Value),
+		varip:        make(map[string]Value),
+		seriesMap:    make(map[string]*Series),
+		builtins:     make(map[string]Value),
+		queuedFields: make(map[string]float64),
 	}
 }
 
 // RegisterBuiltin adds a native function.
 func (ip *Interpreter) RegisterBuiltin(name string, fn func(args []Value) Value) {
-	ip.builtins[name] = FnVal(&Fn{Name: name, Native: fn})
+	ip.RegisterBuiltinWithParams(name, nil, fn)
+}
+
+// RegisterBuiltinWithParams adds a native function with named-argument metadata.
+func (ip *Interpreter) RegisterBuiltinWithParams(name string, params []string, fn func(args []Value) Value) {
+	ip.builtins[name] = FnVal(&Fn{Name: name, Params: params, Native: fn})
 }
 
 // RegisterNamespace adds a namespace object (e.g. strategy.*, ta.*).
@@ -120,8 +142,80 @@ func (ip *Interpreter) OnBar() {
 		ip.setBarField("volume", ip.Bridge.Volume())
 		ip.Global.Set("bar_index", FloatVal(float64(ip.Bridge.BarIndex())))
 	}
+	for name, value := range ip.queuedFields {
+		ip.setBarField(name, value)
+		delete(ip.queuedFields, name)
+	}
+	for _, plot := range ip.plots {
+		plot.series.Append(math.NaN())
+		plot.lastValue = NaVal()
+	}
 
 	ip.execBlock(ip.Program.Stmts, ip.Global)
+}
+
+func (ip *Interpreter) registerPlot(title string, decimals int, overlay bool) *PlotSpec {
+	trimmedTitle := strings.TrimSpace(title)
+	if trimmedTitle == "" {
+		trimmedTitle = fmt.Sprintf("plot_%d", len(ip.plots)+1)
+	}
+	for _, plot := range ip.plots {
+		if plot.Title == trimmedTitle {
+			plot.Decimals = decimals
+			plot.Overlay = overlay
+			return plot
+		}
+	}
+	series := NewSeries()
+	for i := 0; i < ip.BarIndex; i++ {
+		series.Append(math.NaN())
+	}
+	plot := &PlotSpec{
+		Source:   fmt.Sprintf("plot.%d", len(ip.plots)+1),
+		Title:    trimmedTitle,
+		Decimals: decimals,
+		Overlay:  overlay,
+		series:   series,
+	}
+	ip.plots = append(ip.plots, plot)
+	return plot
+}
+
+func (ip *Interpreter) setPlotValue(title string, value Value, decimals int, overlay bool) Value {
+	plot := ip.registerPlot(title, decimals, overlay)
+	plot.lastValue = value
+	plot.series.Set(value.Float())
+	return value
+}
+
+func (ip *Interpreter) PlotColumns() []PlotSpec {
+	if len(ip.plots) == 0 {
+		return nil
+	}
+	out := make([]PlotSpec, len(ip.plots))
+	for i, plot := range ip.plots {
+		out[i] = PlotSpec{
+			Source:   plot.Source,
+			Title:    plot.Title,
+			Decimals: plot.Decimals,
+			Overlay:  plot.Overlay,
+		}
+	}
+	return out
+}
+
+func (ip *Interpreter) PlotSeries() map[string][]float64 {
+	if len(ip.plots) == 0 {
+		return nil
+	}
+	out := make(map[string][]float64, len(ip.plots))
+	for _, plot := range ip.plots {
+		data := plot.series.Data()
+		dup := make([]float64, len(data))
+		copy(dup, data)
+		out[plot.Source] = dup
+	}
+	return out
 }
 
 func (ip *Interpreter) setBarField(name string, val float64) {
@@ -132,6 +226,36 @@ func (ip *Interpreter) setBarField(name string, val float64) {
 	}
 	s.Append(val)
 	ip.Global.Set(name, SeriesVal(s))
+}
+
+func (ip *Interpreter) SetNamedField(name string, val float64) {
+	if strings.TrimSpace(name) == "" {
+		return
+	}
+	ip.queuedFields[name] = val
+}
+
+func (ip *Interpreter) CaptureSeries(name string, val float64) Value {
+	trimmed := strings.TrimSpace(name)
+	if trimmed == "" {
+		return FloatVal(val)
+	}
+	s, ok := ip.seriesMap[trimmed]
+	if !ok {
+		s = NewSeries()
+		for i := 0; i < ip.BarIndex-1; i++ {
+			s.Append(math.NaN())
+		}
+		ip.seriesMap[trimmed] = s
+	}
+	if s.Len() < ip.BarIndex {
+		s.Append(val)
+	} else {
+		s.Set(val)
+	}
+	v := SeriesVal(s)
+	ip.Global.Set(trimmed, v)
+	return v
 }
 
 // ---------- statement execution ----------
@@ -221,13 +345,19 @@ func (ip *Interpreter) execVarDecl(d *ast.VarDecl, scope *Scope) Value {
 	val := ip.evalExpr(d.Value, scope)
 	scope.Set(d.Name, val)
 
-	// Track in series map.
-	s, ok := ip.seriesMap[d.Name]
-	if !ok {
-		s = NewSeries()
-		ip.seriesMap[d.Name] = s
+	// Track in series map for scalar/bool/series types so history subscript
+	// and TA builtins (ta.sma, ta.barssince, etc.) work correctly.
+	// Array/object values are NOT series-promoted — keep them as-is.
+	if val.tag == TagFloat || val.tag == TagBool || val.tag == TagNa || val.tag == TagSeries {
+		s, ok := ip.seriesMap[d.Name]
+		if !ok {
+			s = NewSeries()
+			ip.seriesMap[d.Name] = s
+		}
+		s.Append(val.Float())
+		// Update scope to SeriesVal so history subscript and TA builtins work.
+		scope.Set(d.Name, SeriesVal(s))
 	}
-	s.Append(val.Float())
 
 	return val
 }
@@ -654,6 +784,9 @@ func (ip *Interpreter) evalIndex(e *ast.IndexExpr, scope *Scope) Value {
 func valEqual(a, b Value) bool {
 	if a.tag == TagNa || b.tag == TagNa {
 		return a.tag == TagNa && b.tag == TagNa
+	}
+	if a.tag == TagSeries || b.tag == TagSeries {
+		return a.Float() == b.Float()
 	}
 	switch a.tag {
 	case TagFloat:
