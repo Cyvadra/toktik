@@ -50,3 +50,9 @@ type FeatureProvider interface {
 	QueryEventWindowHistory(ctx context.Context, req dto.FeatureUnderlyingHistoryRequest) (*dto.FeatureEventWindowHistoryResponse, error)
 	QueryDailyFeaturePanel(ctx context.Context, req dto.FeatureDailyPanelRequest) (*dto.FeatureDailyPanelResponse, error)
 }
+
+type StrategyBacktestProvider interface {
+	StartStrategyBacktest(ctx context.Context, req dto.StrategyBacktestRunRequest) (*dto.StrategyBacktestRunAccepted, error)
+	GetStrategyBacktestRun(ctx context.Context, runID string) (*dto.StrategyBacktestRunStatus, error)
+	SubscribeStrategyBacktest(ctx context.Context, runID string) (<-chan dto.StrategyBacktestSSEvent, func(), error)
+}

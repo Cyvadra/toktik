@@ -7,9 +7,9 @@ import (
 )
 
 // NewRouter builds the Gin engine with all API routes registered.
-func NewRouter(cos CryptoOptionsQuerier, usStocks USStocksQuerier, usOptions USOptionsQuerier, infra InfraProvider, features FeatureProvider) *gin.Engine {
+func NewRouter(cos CryptoOptionsQuerier, usStocks USStocksQuerier, usOptions USOptionsQuerier, infra InfraProvider, features FeatureProvider, strategyBacktests StrategyBacktestProvider) *gin.Engine {
 	r := gin.Default()
-	h := NewHandler(cos, usStocks, usOptions, infra, features)
+	h := NewHandler(cos, usStocks, usOptions, infra, features, strategyBacktests)
 
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
@@ -18,6 +18,11 @@ func NewRouter(cos CryptoOptionsQuerier, usStocks USStocksQuerier, usOptions USO
 
 	v1 := r.Group("/api/v1")
 	{
+		backtestsGroup := v1.Group("/backtests")
+		backtestsGroup.POST("/runs", h.StartStrategyBacktest)
+		backtestsGroup.GET("/runs/:runID", h.GetStrategyBacktestRun)
+		backtestsGroup.GET("/runs/:runID/events", h.StreamStrategyBacktestEvents)
+
 		infraGroup := v1.Group("/infra")
 		infraGroup.GET("/markets", h.GetMarkets)
 		infraGroup.GET("/datasets", h.GetDatasets)

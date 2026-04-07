@@ -118,6 +118,9 @@ Key design decisions:
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/ready` | GET | Health / readiness check |
+| `/api/v1/backtests/runs` | POST | Start an async strategy backtest run |
+| `/api/v1/backtests/runs/{run_id}` | GET | Query async strategy backtest status/result |
+| `/api/v1/backtests/runs/{run_id}/events` | GET | Subscribe to async strategy backtest progress via SSE |
 | `/api/v1/infra/markets` | GET | List available markets and capabilities |
 | `/api/v1/infra/datasets` | GET | Dataset row counts, freshness, summary aggregates |
 | `/api/v1/crypto-options/bars` | GET | OHLCV bars (interval routing: 1m→base, 5m+→precomputed views) |
@@ -518,6 +521,113 @@ Sample response:
   ]
 }
 ```
+
+### 4. Run Strategy Backtests via API
+
+The strategy backtest API is asynchronous. Submit a run first, then poll the run status or subscribe to its SSE event stream.
+
+Supported request fields mirror the `backtest-portfolio` CLI where practical, including:
+- `market`: `crypto` or `us`
+- `instrument`: `auto`, `spot`, `contract`, or `mixed`
+- `asset`, `interval`, `from`, `to`, `capital`, `strategy`
+- spread pricing fields such as `spread_entry_price_mode`, `spread_exit_price_mode`, `spread_valuation_price_mode`
+- strategy tuning fields such as `direction`, `position_size`, `target_expiry_days`, `short_delta_min`, and `long_delta_max`
+- `signal_source`: per-request external signal source override for strategies that support it
+
+Completed runs return HTML report file paths only, not inline HTML content.
+
+**Start an async backtest run:**
+```bash
+curl -X POST http://localhost:8080/api/v1/backtests/runs \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "market": "crypto",
+    "instrument": "contract",
+    "asset": "BTC",
+    "from": "2023-01-01",
+    "to": "2025-12-31",
+    "strategy": "retracement-ratio-protective-spread",
+    "interval": "2h",
+    "capital": 100,
+    "signal_source": "12h",
+    "spread_entry_price_mode": "mark_close",
+    "spread_exit_price_mode": "mark_close",
+    "spread_valuation_price_mode": "mark_close",
+    "direction": "long_only"
+  }'
+```
+
+Sample response:
+```json
+{
+  "run_id": "c40505f1a16f02f33380b4ccbe4f74db",
+  "status": "queued",
+  "created_at": "2026-04-07T09:45:08.974090366Z",
+  "status_url": "/api/v1/backtests/runs/c40505f1a16f02f33380b4ccbe4f74db",
+  "events_url": "/api/v1/backtests/runs/c40505f1a16f02f33380b4ccbe4f74db/events"
+}
+```
+
+This request is equivalent to the CLI command:
+```bash
+RETRACEMENT_RATIO_PROTECTIVE_SPREAD_SIGNAL_SOURCE=12h go run ./cmd/backtest-portfolio/main.go \
+  --asset BTC \
+  --from 2023-01-01 \
+  --to 2025-12-31 \
+  --strategy retracement-ratio-protective-spread \
+  --interval 2h \
+  --capital 100 \
+  --spread-entry-price-mode mark_close \
+  --spread-exit-price-mode mark_close \
+  --spread-valuation-price-mode mark_close \
+  --direction long_only
+```
+
+**Poll run status:**
+```bash
+curl "http://localhost:8080/api/v1/backtests/runs/c40505f1a16f02f33380b4ccbe4f74db"
+```
+
+Sample terminal result excerpt:
+```json
+{
+  "run_id": "c40505f1a16f02f33380b4ccbe4f74db",
+  "status": "completed",
+  "progress": {
+    "phase": "replay",
+    "current": 216,
+    "total": 216,
+    "percent": 100,
+    "completed": true
+  },
+  "result": {
+    "summaries": [
+      {
+        "strategy_name": "RetracementRatioProtectiveSpread",
+        "html_path": "reports/backtests/api/c40505f1a16f02f33380b4ccbe4f74db/retracement-ratio-protective-spread_btc_2h_20230101_20251231.html"
+      }
+    ]
+  }
+}
+```
+
+**Subscribe to SSE progress updates:**
+```bash
+curl -N "http://localhost:8080/api/v1/backtests/runs/c40505f1a16f02f33380b4ccbe4f74db/events"
+```
+
+SSE emits at most 1 message per second and uses event names such as `status`, `progress`, `completed`, and `failed`.
+
+Example SSE payload:
+```text
+event: completed
+data: {"run_id":"c40505f1a16f02f33380b4ccbe4f74db","status":"completed",...}
+```
+
+Notes:
+- If a strategy supports request-level `signal_source`, the request value takes precedence.
+- If `signal_source` is omitted, compatible strategies may still fall back to their historical environment variables.
+- Multi-strategy runs return one `html_path` per strategy plus `overview_html_path` for the combined overview page.
 
 **Get a merged daily feature panel:**
 ```bash

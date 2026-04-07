@@ -125,7 +125,10 @@ func init() {
 		Groups:  []string{"options", "spread", "timed"},
 		Profile: catalog.StrategyProfile{UsesOptions: true, RegularTrade: catalog.RegularTradeNone},
 		Factory: func(cfg catalog.Config) (backtest.Strategy, error) {
-			source := mustGetSignalSource()
+			source, err := resolveSignalSource(cfg.SignalSource)
+			if err != nil {
+				return nil, err
+			}
 			shortEntryTimes, longEntryTimes, err := loadSignalTimesForDirection(source, cfg.Direction)
 			if err != nil {
 				return nil, fmt.Errorf("load signal times for %s=%q direction=%q: %w", signalSourceEnv, source, cfg.Direction, err)
@@ -1071,14 +1074,20 @@ func contractsForExpiry(contracts []backtest.OptionContract, expiry time.Time) [
 	return filtered
 }
 
-func mustGetSignalSource() string {
+func resolveSignalSource(override string) (string, error) {
+	if source, err := parseSignalSource(override); err == nil {
+		return source, nil
+	}
+
 	raw := strings.TrimSpace(os.Getenv(signalSourceEnv))
 	source, err := parseSignalSource(raw)
 	if err != nil {
-		fmt.Printf("[%s] invalid or missing %s=%q; expected one of: 12h, 1d\n", strategyName, signalSourceEnv, raw)
-		panic(err.Error())
+		if strings.TrimSpace(override) != "" {
+			return "", fmt.Errorf("invalid signal_source %q; expected one of: 12h, 1d", override)
+		}
+		return "", err
 	}
-	return source
+	return source, nil
 }
 
 func parseSignalSource(raw string) (string, error) {

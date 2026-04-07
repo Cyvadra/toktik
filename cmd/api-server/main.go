@@ -13,6 +13,8 @@ import (
 	"github.com/Cyvadra/toktik/internal/api"
 	appCli "github.com/Cyvadra/toktik/internal/cli"
 	"github.com/Cyvadra/toktik/internal/service"
+	"github.com/Cyvadra/toktik/pkg/feeds"
+	_ "github.com/Cyvadra/toktik/pkg/feeds/dvol"
 )
 
 func main() {
@@ -42,12 +44,24 @@ func main() {
 		os.Exit(1)
 	}
 
+	factorStore, err := feeds.NewStore(ctx, *dsn)
+	if err != nil {
+		slog.Error("connect factor store", "error", err)
+		os.Exit(1)
+	}
+	defer func() {
+		if closeErr := factorStore.Close(); closeErr != nil {
+			slog.Error("close factor store", "error", closeErr)
+		}
+	}()
+
 	svc := service.NewCryptoOptionsService(conn)
 	usStocksSvc := service.NewUSStocksService(conn)
 	usOptionsSvc := service.NewUSOptionsService(conn)
 	infraSvc := service.NewInfraService(conn)
 	featureSvc := service.NewFeatureService(conn)
-	router := api.NewRouter(svc, usStocksSvc, usOptionsSvc, infraSvc, featureSvc)
+	strategyBacktestSvc := service.NewPortfolioBacktestService(conn, factorStore)
+	router := api.NewRouter(svc, usStocksSvc, usOptionsSvc, infraSvc, featureSvc, strategyBacktestSvc)
 
 	srv := &http.Server{
 		Addr:              *addr,

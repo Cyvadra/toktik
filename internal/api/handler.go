@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -12,15 +13,16 @@ import (
 
 // Handler holds references to service layer dependencies.
 type Handler struct {
-	cryptoOptions CryptoOptionsQuerier
-	usStocks      USStocksQuerier
-	usOptions     USOptionsQuerier
-	infra         InfraProvider
-	features      FeatureProvider
+	cryptoOptions     CryptoOptionsQuerier
+	usStocks          USStocksQuerier
+	usOptions         USOptionsQuerier
+	infra             InfraProvider
+	features          FeatureProvider
+	strategyBacktests StrategyBacktestProvider
 }
 
-func NewHandler(cos CryptoOptionsQuerier, usStocks USStocksQuerier, usOptions USOptionsQuerier, infra InfraProvider, features FeatureProvider) *Handler {
-	return &Handler{cryptoOptions: cos, usStocks: usStocks, usOptions: usOptions, infra: infra, features: features}
+func NewHandler(cos CryptoOptionsQuerier, usStocks USStocksQuerier, usOptions USOptionsQuerier, infra InfraProvider, features FeatureProvider, strategyBacktests StrategyBacktestProvider) *Handler {
+	return &Handler{cryptoOptions: cos, usStocks: usStocks, usOptions: usOptions, infra: infra, features: features, strategyBacktests: strategyBacktests}
 }
 
 // handleServiceError maps service-level errors to appropriate HTTP responses.
@@ -30,12 +32,36 @@ func handleServiceError(c *gin.Context, err error) {
 		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: err.Error()})
 		return
 	}
+	var ne *dto.NotFoundError
+	if errors.As(err, &ne) {
+		c.JSON(http.StatusNotFound, dto.ErrorResponse{Error: err.Error()})
+		return
+	}
 	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
 		c.JSON(http.StatusGatewayTimeout, dto.ErrorResponse{Error: "request timeout"})
 		return
 	}
 	slog.Error("internal error", "error", err)
 	c.JSON(http.StatusInternalServerError, dto.ErrorResponse{Error: "internal server error"})
+}
+
+func writeSSEEvent(c *gin.Context, event string, payload any) error {
+	c.Writer.Header().Set("Content-Type", "text/event-stream")
+	c.Writer.Header().Set("Cache-Control", "no-cache")
+	c.Writer.Header().Set("Connection", "keep-alive")
+
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	if _, err := c.Writer.WriteString("event: " + event + "\n"); err != nil {
+		return err
+	}
+	if _, err := c.Writer.WriteString("data: " + string(data) + "\n\n"); err != nil {
+		return err
+	}
+	c.Writer.Flush()
+	return nil
 }
 
 // GetReadiness handles GET /ready.
@@ -346,6 +372,85 @@ func (h *Handler) RunBacktest(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, resp)
+}
+
+func (h *Handler) StartStrategyBacktest(c *gin.Context) {
+	var req dto.StrategyBacktestRunRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: err.Error()})
+		return
+	}
+	if h.strategyBacktests == nil {
+		c.JSON(http.StatusNotImplemented, dto.ErrorResponse{Error: "strategy backtest provider not configured"})
+		return
+	}
+
+	resp, err := h.strategyBacktests.StartStrategyBacktest(c.Request.Context(), req)
+	if err != nil {
+		handleServiceError(c, err)
+		return
+	}
+
+	c.JSON(http.StatusAccepted, resp)
+}
+
+func (h *Handler) GetStrategyBacktestRun(c *gin.Context) {
+	if h.strategyBacktests == nil {
+		c.JSON(http.StatusNotImplemented, dto.ErrorResponse{Error: "strategy backtest provider not configured"})
+		return
+	}
+
+	resp, err := h.strategyBacktests.GetStrategyBacktestRun(c.Request.Context(), c.Param("runID"))
+	if err != nil {
+		handleServiceError(c, err)
+		return
+	}
+
+	c.JSON(http.StatusOK, resp)
+}
+
+func (h *Handler) StreamStrategyBacktestEvents(c *gin.Context) {
+	if h.strategyBacktests == nil {
+		c.JSON(http.StatusNotImplemented, dto.ErrorResponse{Error: "strategy backtest provider not configured"})
+		return
+	}
+
+	runID := c.Param("runID")
+	status, err := h.strategyBacktests.GetStrategyBacktestRun(c.Request.Context(), runID)
+	if err != nil {
+		handleServiceError(c, err)
+		return
+	}
+
+	stream, unsubscribe, err := h.strategyBacktests.SubscribeStrategyBacktest(c.Request.Context(), runID)
+	if err != nil {
+		handleServiceError(c, err)
+		return
+	}
+	defer unsubscribe()
+
+	if status.Status != "completed" && status.Status != "failed" {
+		if err := writeSSEEvent(c, "status", status); err != nil {
+			return
+		}
+	}
+
+	for {
+		select {
+		case <-c.Request.Context().Done():
+			return
+		case event, ok := <-stream:
+			if !ok {
+				return
+			}
+			if event.Status == nil {
+				continue
+			}
+			if err := writeSSEEvent(c, event.Event, event.Status); err != nil {
+				return
+			}
+		}
+	}
 }
 
 // GetUSStockBars handles GET /api/v1/markets/us-stocks/bars.
