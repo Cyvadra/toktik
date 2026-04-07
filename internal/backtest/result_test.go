@@ -330,6 +330,39 @@ func TestBuildSpreadPositionReportsIncludesCloseNote(t *testing.T) {
 	}
 }
 
+func TestBuildSpreadGroupReportsSkipsEmptyGroups(t *testing.T) {
+	groupTracker := NewSpreadGroupTracker()
+	spreadTracker := NewSpreadTracker()
+	openTime := time.Date(2024, time.January, 3, 9, 0, 0, 0, time.UTC)
+
+	emptyGroupID := groupTracker.Open("retracement-ratio-protective-spread|trend", 2, 0.9, openTime)
+	groupTracker.Close(emptyGroupID)
+
+	nonEmptyGroupID := groupTracker.Open("retracement-ratio-protective-spread|ambush", 5, 1, openTime)
+	spreadID := spreadTracker.OpenFull([]SpreadLeg{{
+		Contract: OptionContract{
+			Symbol:      "BTC-OPT-C-100",
+			Type:        Call,
+			StrikePrice: 100,
+			Expiration:  openTime.Add(7 * 24 * time.Hour),
+			Delta:       0.3,
+		},
+		Side:       Sell,
+		Qty:        1,
+		EntryPrice: 5,
+		EntryTime:  openTime,
+	}}, openTime, 0, "首仓开仓", "", nonEmptyGroupID)
+	groupTracker.AddSpread(nonEmptyGroupID, spreadID)
+
+	reports := buildSpreadGroupReports(groupTracker, spreadTracker, openTime.Add(24*time.Hour))
+	if len(reports) != 1 {
+		t.Fatalf("len(reports) = %d, want 1", len(reports))
+	}
+	if reports[0].ID != nonEmptyGroupID {
+		t.Fatalf("reports[0].ID = %d, want %d", reports[0].ID, nonEmptyGroupID)
+	}
+}
+
 func TestBuildSpreadPositionReportsIncludesCloseDelta(t *testing.T) {
 	tracker := NewSpreadTracker()
 	openTime := time.Date(2024, time.January, 3, 9, 0, 0, 0, time.UTC)
@@ -366,6 +399,49 @@ func TestBuildSpreadPositionReportsIncludesCloseDelta(t *testing.T) {
 	}
 	if *reports[0].Legs[0].CloseDelta != -0.4321 {
 		t.Fatalf("*reports[0].Legs[0].CloseDelta = %v, want %v", *reports[0].Legs[0].CloseDelta, -0.4321)
+	}
+}
+
+func TestBuildSpreadPositionReportsIncludesEntryDeltaSnapshot(t *testing.T) {
+	tracker := NewSpreadTracker()
+	openTime := time.Date(2024, time.January, 3, 9, 0, 0, 0, time.UTC)
+	contract := OptionContract{
+		Symbol:      "BTC-OPT-C-100",
+		Type:        Call,
+		StrikePrice: 100,
+		Expiration:  openTime.Add(7 * 24 * time.Hour),
+		Delta:       0.3,
+	}
+	spreadID := tracker.Open([]SpreadLeg{{
+		Contract:   contract,
+		Side:       Sell,
+		Qty:        1,
+		EntryPrice: 5,
+		EntryTime:  openTime,
+		EntryCustomData: []TradeCustomData{{
+			Key:   TradeCustomDataKeyEntryDelta,
+			Value: "0.1900",
+		}},
+	}}, openTime, 0, "首仓开仓")
+
+	spread := tracker.Get(spreadID)
+	if spread == nil {
+		t.Fatal("tracker.Get() = nil, want spread")
+	}
+	spread.Legs[0].Contract.Delta = 0.01
+
+	reports := buildSpreadPositionReports(tracker, openTime.Add(time.Hour))
+	if len(reports) != 1 || len(reports[0].Legs) != 1 {
+		t.Fatalf("unexpected reports shape: %#v", reports)
+	}
+	if reports[0].Legs[0].EntryDelta == nil {
+		t.Fatal("reports[0].Legs[0].EntryDelta = nil, want value")
+	}
+	if *reports[0].Legs[0].EntryDelta != 0.19 {
+		t.Fatalf("*reports[0].Legs[0].EntryDelta = %v, want %v", *reports[0].Legs[0].EntryDelta, 0.19)
+	}
+	if reports[0].Legs[0].Delta != 0.01 {
+		t.Fatalf("reports[0].Legs[0].Delta = %v, want %v", reports[0].Legs[0].Delta, 0.01)
 	}
 }
 

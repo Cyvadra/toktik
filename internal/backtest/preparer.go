@@ -25,6 +25,7 @@ type PreparedData struct {
 type DataPreparer struct {
 	feeds       map[string]DataFeed
 	factorFeeds map[string]FactorFeed
+	progress    ProgressFunc
 
 	mu      sync.Mutex
 	dsCache map[DataRequest]*DataSet
@@ -34,6 +35,7 @@ type DataPreparer struct {
 // PreparedData that can be replayed many times with different parameters.
 // The strategy is Init'd once to discover security and indicator registrations.
 func (dp *DataPreparer) Prepare(ctx context.Context, market, symbol, interval string, from, to time.Time, strategy Strategy, params map[string]interface{}) (*PreparedData, error) {
+	startedAt := time.Now()
 	setupCtx := NewSetupContext(market, symbol, interval)
 	for k, v := range params {
 		setupCtx.params[k] = v
@@ -41,6 +43,40 @@ func (dp *DataPreparer) Prepare(ctx context.Context, market, symbol, interval st
 	if err := strategy.Init(setupCtx); err != nil {
 		return nil, fmt.Errorf("strategy init: %w", err)
 	}
+
+	totalSteps := 1 + (len(setupCtx.securities) - 1) + len(setupCtx.factors)
+	for _, sec := range setupCtx.securities {
+		if len(sec.inds) > 0 {
+			totalSteps++
+		}
+	}
+	for _, factor := range setupCtx.factors {
+		if len(factor.inds) > 0 {
+			totalSteps++
+		}
+	}
+	if _, ok := strategy.(StrategyPreloader); ok {
+		totalSteps++
+	}
+	if setupCtx.warmup > 0 {
+		totalSteps++
+	}
+	completedSteps := 0
+	reportStep := func(message string, completed bool) {
+		emitProgress(dp.progress, ProgressUpdate{
+			Phase:     ProgressPhasePrepare,
+			Current:   completedSteps,
+			Total:     totalSteps,
+			Message:   message,
+			StartedAt: startedAt,
+			Completed: completed,
+		})
+	}
+	advanceStep := func(message string) {
+		completedSteps++
+		reportStep(message, false)
+	}
+	reportStep("initializing strategy", false)
 
 	loadFrom := from
 	if setupCtx.warmup > 0 {
@@ -57,8 +93,14 @@ func (dp *DataPreparer) Prepare(ctx context.Context, market, symbol, interval st
 	if err != nil {
 		return nil, fmt.Errorf("load primary data: %w", err)
 	}
+	advanceStep("loaded primary data")
 	if primaryDS.Len == 0 {
 		return nil, fmt.Errorf("no data returned for %s/%s/%s", market, symbol, interval)
+	}
+	// Warn if data doesn't cover the requested warmup period
+	if setupCtx.warmup > 0 && primaryDS.Len > 0 && primaryDS.Timestamps[0].After(loadFrom) {
+		// Data starts after the requested warmup start; indicators may not seed properly
+		// This is acceptable but strategies should be aware indicators may have NaN values
 	}
 
 	// Load secondary datasets in parallel
@@ -102,6 +144,7 @@ func (dp *DataPreparer) Prepare(ctx context.Context, market, symbol, interval st
 				return nil, fmt.Errorf("load security %s/%s: %w", sec.ref.Market, sec.ref.Symbol, r.err)
 			}
 			secDataSets[r.index] = r.ds
+			advanceStep(fmt.Sprintf("loaded security %s/%s", setupCtx.securities[r.index].ref.Market, setupCtx.securities[r.index].ref.Symbol))
 		}
 	}
 
@@ -151,6 +194,7 @@ func (dp *DataPreparer) Prepare(ctx context.Context, market, symbol, interval st
 				return nil, fmt.Errorf("load factor %s/%s: %w", factor.ref.Name, factor.ref.Interval, r.err)
 			}
 			factorDataSets[r.index] = r.ds
+			advanceStep(fmt.Sprintf("loaded factor %s/%s", setupCtx.factors[r.index].ref.Name, setupCtx.factors[r.index].ref.Interval))
 		}
 
 		for i := range factorDataSets {
@@ -165,6 +209,7 @@ func (dp *DataPreparer) Prepare(ctx context.Context, market, symbol, interval st
 			if err := resolveIndicators(sec.inds, ds.Columns); err != nil {
 				return nil, fmt.Errorf("indicators for security[%d] %s: %w", i, sec.ref.Symbol, err)
 			}
+			advanceStep(fmt.Sprintf("computed indicators for %s", sec.ref.Symbol))
 		}
 	}
 
@@ -174,6 +219,7 @@ func (dp *DataPreparer) Prepare(ctx context.Context, market, symbol, interval st
 			if err := resolveIndicators(factor.inds, ds.Columns); err != nil {
 				return nil, fmt.Errorf("indicators for factor[%d] %s: %w", i, factor.ref.Name, err)
 			}
+			advanceStep(fmt.Sprintf("computed indicators for factor %s", factor.ref.Name))
 		}
 	}
 
@@ -191,6 +237,7 @@ func (dp *DataPreparer) Prepare(ctx context.Context, market, symbol, interval st
 		if err := preloader.Preload(preloadCtx); err != nil {
 			return nil, fmt.Errorf("strategy preload: %w", err)
 		}
+		advanceStep("completed strategy preload")
 	}
 
 	if setupCtx.warmup > 0 {
@@ -202,7 +249,9 @@ func (dp *DataPreparer) Prepare(ctx context.Context, market, symbol, interval st
 		secDataSets[0] = primaryDS
 		alignMaps = trimmedAlignMaps
 		factorAlignMaps = trimmedFactorAlignMaps
+		advanceStep("trimmed warmup window")
 	}
+	reportStep("prepared data", true)
 
 	return &PreparedData{
 		PrimaryDS:       primaryDS,

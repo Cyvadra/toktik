@@ -315,6 +315,7 @@ type TradeCustomData struct {
 
 const TradeCustomDataKeyCloseDelta = "close_delta"
 const TradeCustomDataKeyCloseTriggerTime = "close_trigger_time"
+const TradeCustomDataKeyEntryDelta = "entry_delta"
 
 func cloneTradeCustomData(items []TradeCustomData) []TradeCustomData {
 	if len(items) == 0 {

@@ -18,84 +18,95 @@ const (
 	strategyName  = "retracement-ratio-protective-spread"
 	strategyAlias = "retracement_ratio_protective_spread"
 
-	signalSourceEnv = "RETRACEMENT_RATIO_PROTECTIVE_SPREAD_SIGNAL_SOURCE"
-	signalPath12h   = "pkg/strategies/retracement_ratio_protective_spread/12h.csv"
-	signalPath1d    = "pkg/strategies/retracement_ratio_protective_spread/1d.csv"
+	signalSourceEnv    = "RETRACEMENT_RATIO_PROTECTIVE_SPREAD_SIGNAL_SOURCE"
+	signalPath12hShort = "pkg/strategies/retracement_ratio_protective_spread/12h_short.csv"
+	signalPath1dShort  = "pkg/strategies/retracement_ratio_protective_spread/1d_short.csv"
+	signalPath12hLong  = "pkg/strategies/retracement_ratio_protective_spread/12h_long.csv"
+	signalPath1dLong   = "pkg/strategies/retracement_ratio_protective_spread/1d_long.csv"
 
-	atrPeriod               = 20
-	trendChannelPeriod      = 20
-	volLookbackBars         = 100
-	dvolInterval            = "12h"
-	defaultVolPercentile    = 60.0
-	ambushIVPercentileMax   = 55.0
-	trendIVPercentileMax    = 66.0
+	atrPeriod            = 20
+	ivLookbackBars       = 200
+	dvolInterval         = "12h"
+	defaultVolPercentile = 60.0
+	// ambushIVPercentileMax   = 55.0
+	ambushIVPercentileMax   = 95.0
 	ambushTargetDTE         = 70
-	ambushMinDTE            = 50
-	ambushMaxDTE            = 70
-	trendTargetDTE          = 70
-	trendMinDTE             = 50
-	trendMaxDTE             = 70
+	ambushMinDTE            = 55
+	ambushMaxDTE            = 85
+	trendTargetDTE          = 35
+	trendMinDTE             = 25
+	trendMaxDTE             = 40
 	ambushPremiumBaseBTC    = 5.0
-	ambushTakeProfit1BTC    = 1.65
-	ambushTakeProfit2BTC    = 3.0
+	ambushTakeProfit1Pct    = 0.33
+	ambushTakeProfit2Pct    = 0.60
 	ambushStopATRMultiplier = 8.0
-	ambushRollMaxDTE        = 30.0
-	ambushRollATRDistance   = 1.0
+	ambushRollMinDTE        = 20.0
+	ambushRollMaxDTE        = 40.0
+	ambushRollATRDistance   = 2.0
 	ambushTrancheCount      = 3
 	trendAmountBaseBTC      = 2.0
 	trendRollProfitPct      = 0.50
 	trendRollDeltaIncrease  = 0.20
 	trendDecayFactor        = 0.90
-	allowRepeatedEntries    = true
 	minLongDelta            = 0.20
 	maxLongDelta            = 0.80
+	minTrendLegDelta        = 0.10
+	maxTrendLegDelta        = 0.80
 	minShortDelta           = 0.10
 	maxShortDelta           = 0.80
 	shortStrikeMaxMultiple  = 0.80
+	longStrikeMinMultiple   = 1.15
 	signalTimeLayout        = "2006-01-02 15:04"
 
 	hvPercentileColumn = "hv_pr_100"
-	ivPercentileColumn = "iv_pr_100"
+	ivPercentileColumn = "iv_pr_200"
 )
 
 type strategyPhase int
 
 const (
-	phaseNone strategyPhase = iota
-	phaseAmbush
+	phaseAmbush strategyPhase = iota + 1
 	phaseTrend
 )
 
+type tradeSide int
+
+const (
+	sideShort tradeSide = iota + 1
+	sideLong
+)
+
 type activeState struct {
+	side              tradeSide
 	phase             strategyPhase
 	groupID           int
 	spreadIDs         []int
 	partialTaken      bool
+	ambushLongSpend   float64
 	entryUnderlying   float64
 	entryATR          float64
 	entryLongAbsDelta float64
-	entryTime         time.Time
-	baseAmount        float64
-	lastReason        string
 }
 
 type strategy struct {
 	optutil.PricingMixin
 	optutil.GroupMixin
 
-	signalSource         string
-	entryTimes           map[int64]struct{}
-	processedSignalTimes map[int64]struct{}
-	dvolRef              backtest.FactorRef
-	activeStates         []activeState
+	signalSource    string
+	shortEntryTimes map[int64]struct{}
+	longEntryTimes  map[int64]struct{}
+	dvolRef         backtest.FactorRef
+	direction       catalog.TradeDirection
+	activeStates    []activeState
 }
 
 type ambushSelection struct {
-	short      backtest.OptionContract
-	long       backtest.OptionContract
-	shortPrice float64
-	longPrice  float64
-	expiry     time.Time
+	short          backtest.OptionContract
+	longLowerHalf  backtest.OptionContract
+	longUpperHalf  backtest.OptionContract
+	shortPrice     float64
+	longLowerPrice float64
+	longUpperPrice float64
 }
 
 type trendSelection struct {
@@ -105,7 +116,6 @@ type trendSelection struct {
 	shortPrice float64
 	spreadCost float64
 	qty        float64
-	expiry     time.Time
 }
 
 func init() {
@@ -115,10 +125,13 @@ func init() {
 		Groups:  []string{"options", "spread", "timed"},
 		Profile: catalog.StrategyProfile{UsesOptions: true, RegularTrade: catalog.RegularTradeNone},
 		Factory: func(cfg catalog.Config) (backtest.Strategy, error) {
-			source := mustGetSignalSource()
-			entryTimes, err := loadSignalTimesForSource(source)
+			source, err := resolveSignalSource(cfg.SignalSource)
 			if err != nil {
-				return nil, fmt.Errorf("load signal times for %s=%q: %w", signalSourceEnv, source, err)
+				return nil, err
+			}
+			shortEntryTimes, longEntryTimes, err := loadSignalTimesForDirection(source, cfg.Direction)
+			if err != nil {
+				return nil, fmt.Errorf("load signal times for %s=%q direction=%q: %w", signalSourceEnv, source, cfg.Direction, err)
 			}
 			return &strategy{
 				PricingMixin: optutil.PricingMixin{
@@ -126,9 +139,10 @@ func init() {
 					ExitPriceMode:      cfg.ExitPriceMode,
 					ValuationPriceMode: cfg.ValuationPriceMode,
 				},
-				signalSource:         source,
-				entryTimes:           entryTimes,
-				processedSignalTimes: make(map[int64]struct{}, len(entryTimes)),
+				signalSource:    source,
+				shortEntryTimes: shortEntryTimes,
+				longEntryTimes:  longEntryTimes,
+				direction:       cfg.Direction,
 			}, nil
 		},
 	})
@@ -141,26 +155,29 @@ func (s *strategy) ReportColumns() []backtest.ReportColumn {
 		{Source: "entry_signal", Label: "Entry Signal", Decimals: 0},
 		{Source: "atr20", Label: "ATR 20", Decimals: 2},
 		{Source: hvPercentileColumn, Label: "HV PR100", Decimals: 1},
-		{Source: ivPercentileColumn, Label: "IV PR100 12H", Decimals: 1},
-		{Source: "trend_channel_lower", Label: "Trend Lower", Decimals: 2},
+		{Source: ivPercentileColumn, Label: "IV PR200 12H", Decimals: 1},
 	}
 }
 
 func (s *strategy) Init(ctx *backtest.SetupContext) error {
 	s.applyDefaults()
+	fmt.Printf("[%s] using %s=%q direction=%q short_signals=%d long_signals=%d regular_trade_mode=%s\n",
+		s.Name(), signalSourceEnv, s.signalSource, s.direction, len(s.shortEntryTimes), len(s.longEntryTimes), catalog.RegularTradeNone)
 
 	ctx.Register("atr20", backtest.ATR(atrPeriod))
 	ctx.Register("ret", optutil.PercentChange("close"))
-	ctx.Register("hv_100", optutil.RollingStdDevIndicator("ret", volLookbackBars))
-	ctx.Register(hvPercentileColumn, optutil.PercentileRank("hv_100", volLookbackBars))
-	ctx.Register("trend_channel", backtest.Donchian("high", "low", trendChannelPeriod))
+	ctx.Register("hv_100", optutil.RollingStdDevIndicator("ret", 10))
+	ctx.Register(hvPercentileColumn, optutil.PercentileRank("hv_100", 100))
 
 	s.dvolRef = ctx.AddFactor("dvol", dvolInterval)
-	ctx.RegisterFactor(s.dvolRef, ivPercentileColumn, optutil.PercentileRank("close", volLookbackBars))
+	ctx.RegisterFactor(s.dvolRef, ivPercentileColumn, optutil.PercentileRank("close", ivLookbackBars))
 
 	ctx.SetWarmup(160 * 24 * time.Hour)
 	ctx.SetParam("signal_source", s.signalSource)
-	ctx.SetParam("signal_count", float64(len(s.entryTimes)))
+	ctx.SetParam("signal_count", float64(len(s.shortEntryTimes)+len(s.longEntryTimes)))
+	ctx.SetParam("signal_count_short", float64(len(s.shortEntryTimes)))
+	ctx.SetParam("signal_count_long", float64(len(s.longEntryTimes)))
+	ctx.SetParam("direction", string(s.direction))
 	ctx.SetParam("ambush_credit_base_btc", ambushPremiumBaseBTC)
 	ctx.SetParam("trend_amount_base_btc", trendAmountBaseBTC)
 	return nil
@@ -174,7 +191,7 @@ func (s *strategy) Preload(ctx *backtest.PreloadContext) error {
 
 	entrySignal := make([]float64, primary.Len())
 	for i, ts := range primary.Timestamps() {
-		if _, ok := s.entryTimes[ts.UTC().Unix()]; ok {
+		if s.hasEntrySignalAt(ts.UTC().Unix()) {
 			entrySignal[i] = 1
 		}
 	}
@@ -193,20 +210,17 @@ func (s *strategy) OnBar(ctx *backtest.BarContext) {
 	chain := ctx.OptionsChain()
 	contractMap := optutil.BuildContractMap(chain)
 
-	s.handleSignalBookkeeping(ctx)
 	s.manageActiveStates(ctx, chain, contractMap)
-	if !allowRepeatedEntries && s.hasActiveStates() {
+
+	if !s.isEntrySignal(ctx) {
 		return
 	}
 
-	if s.isEntrySignal(ctx) && s.currentIVPercentile(ctx) <= ambushIVPercentileMax {
-		if s.openAmbush(ctx, chain, "外部信号开仓") {
-			return
-		}
+	if s.allowsShortEntries() && s.hasEntrySignalForSideAt(sideShort, ctx.Time().UTC().Unix()) {
+		s.tryOpenAmbushFromSignal(ctx, chain, sideShort, "外部信号开仓")
 	}
-
-	if s.trendBreakTrigger(ctx) && s.currentIVPercentile(ctx) <= trendIVPercentileMax {
-		s.openTrend(ctx, chain, trendAmountBaseBTC, "趋势破位开仓")
+	if s.allowsLongEntries() && s.hasEntrySignalForSideAt(sideLong, ctx.Time().UTC().Unix()) {
+		s.tryOpenAmbushFromSignal(ctx, chain, sideLong, "外部信号开仓")
 	}
 }
 
@@ -235,40 +249,13 @@ func (s *strategy) manageActiveStates(ctx *backtest.BarContext, chain *backtest.
 
 func (s *strategy) manageAmbush(ctx *backtest.BarContext, chain *backtest.OptionsChain, contractMap map[string]backtest.OptionContract, state activeState) []activeState {
 	totalPnL := s.totalUnrealizedPnL(ctx, state.spreadIDs, contractMap)
-	if !math.IsNaN(totalPnL) && totalPnL >= ambushTakeProfit2BTC {
-		if s.closeSpreadSet(ctx, state.spreadIDs, contractMap, "一期止盈60%转二期") {
-			s.closeGroupIfNeeded(ctx, state.groupID)
-			if nextState, ok := s.openTrendState(ctx, chain, trendAmountBaseBTC, "一期止盈转换"); ok {
-				return []activeState{nextState}
-			}
-			return nil
-		}
-		return []activeState{state}
-	}
+	tp1Threshold, tp2Threshold := state.ambushTakeProfitTargets()
+	tp1Reached := !state.partialTaken && !math.IsNaN(totalPnL) && totalPnL >= tp1Threshold
+	tp2Reached := !math.IsNaN(totalPnL) && totalPnL >= tp2Threshold
 
-	stopLevel := state.entryUnderlying + ambushStopATRMultiplier*state.entryATR
-	if !math.IsNaN(stopLevel) && ctx.Close() >= stopLevel {
-		if s.closeSpreadSet(ctx, state.spreadIDs, contractMap, "一期反向8ATR退出") {
-			s.closeGroupIfNeeded(ctx, state.groupID)
-			return nil
-		}
-		return []activeState{state}
-	}
-
-	if s.shouldRollAmbush(ctx, contractMap, state) {
-		if s.closeSpreadSet(ctx, state.spreadIDs, contractMap, "一期近月滚动") {
-			s.closeGroupIfNeeded(ctx, state.groupID)
-			if nextState, ok := s.openAmbushState(ctx, chain, "一期滚动重建"); ok {
-				return []activeState{nextState}
-			}
-			return nil
-		}
-		return []activeState{state}
-	}
-
-	if !state.partialTaken && !math.IsNaN(totalPnL) && totalPnL >= ambushTakeProfit1BTC {
+	if tp1Reached {
 		spreadID := s.firstOpenSpreadID(ctx, state.spreadIDs)
-		if spreadID > 0 && s.closeSpreadSet(ctx, []int{spreadID}, contractMap, "一期止盈33%减仓") {
+		if spreadID > 0 && s.closeSpreadSet(ctx, []int{spreadID}, contractMap, state.note("一期止盈33%减仓")) {
 			state.partialTaken = true
 			state.spreadIDs = s.openSpreadIDs(ctx, state.spreadIDs)
 			if len(state.spreadIDs) == 0 {
@@ -278,7 +265,65 @@ func (s *strategy) manageAmbush(ctx *backtest.BarContext, chain *backtest.Option
 		}
 	}
 
+	if tp2Reached {
+		state.spreadIDs = s.openSpreadIDs(ctx, state.spreadIDs)
+		if s.closeSpreadSet(ctx, state.spreadIDs, contractMap, state.note("一期止盈60%转二期")) {
+			s.closeGroupIfNeeded(ctx, state.groupID)
+			if nextState, ok := s.openTrendState(ctx, chain, trendAmountBaseBTC, state.side, "一期止盈转换"); ok {
+				return []activeState{nextState}
+			}
+			return nil
+		}
+		return []activeState{state}
+	}
+
+	if s.shouldCloseAmbushForExpiry(ctx, contractMap, state) {
+		if s.closeSpreadSet(ctx, state.spreadIDs, contractMap, state.note("一期到期前平仓")) {
+			s.closeGroupIfNeeded(ctx, state.groupID)
+			return nil
+		}
+		return []activeState{state}
+	}
+
+	if state.side.stopTriggered(ctx.Close(), state.entryUnderlying, state.entryATR) {
+		if s.closeSpreadSet(ctx, state.spreadIDs, contractMap, state.note("一期反向8ATR退出")) {
+			s.closeGroupIfNeeded(ctx, state.groupID)
+			return nil
+		}
+		return []activeState{state}
+	}
+
+	if s.shouldRollAmbush(ctx, contractMap, state) {
+		if s.closeSpreadSet(ctx, state.spreadIDs, contractMap, state.note("一期近月滚动")) {
+			s.closeGroupIfNeeded(ctx, state.groupID)
+			if nextState, ok := s.openAmbushState(ctx, chain, state.side, "一期滚动重建"); ok {
+				return []activeState{nextState}
+			}
+			return nil
+		}
+		return []activeState{state}
+	}
+
 	return []activeState{state}
+}
+
+func (s *strategy) shouldCloseAmbushForExpiry(ctx *backtest.BarContext, contractMap map[string]backtest.OptionContract, state activeState) bool {
+	for _, spreadID := range state.spreadIDs {
+		sp := ctx.Spreads().Get(spreadID)
+		if sp == nil {
+			continue
+		}
+		for _, leg := range sp.Legs {
+			if leg.Closed {
+				continue
+			}
+			contract := optutil.ResolveContract(leg.Contract, contractMap)
+			if contract.DaysToExpiry(ctx.Time()) <= 1 {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (s *strategy) manageTrend(ctx *backtest.BarContext, chain *backtest.OptionsChain, contractMap map[string]backtest.OptionContract, state activeState) []activeState {
@@ -305,7 +350,7 @@ func (s *strategy) manageTrend(ctx *backtest.BarContext, chain *backtest.Options
 		}
 	}
 	if needExpiryClose {
-		if s.closeSpreadSet(ctx, []int{spreadID}, contractMap, "二期到期前平仓") {
+		if s.closeSpreadSet(ctx, []int{spreadID}, contractMap, state.note("二期到期前平仓")) {
 			s.closeGroupIfNeeded(ctx, state.groupID)
 			return nil
 		}
@@ -316,6 +361,7 @@ func (s *strategy) manageTrend(ctx *backtest.BarContext, chain *backtest.Options
 	if !shouldRoll {
 		return []activeState{state}
 	}
+	reason = state.note(reason)
 
 	if !s.closeSpreadSet(ctx, []int{spreadID}, contractMap, reason) {
 		return []activeState{state}
@@ -332,7 +378,7 @@ func (s *strategy) manageTrend(ctx *backtest.BarContext, chain *backtest.Options
 		return nil
 	}
 
-	nextState, ok := s.openTrendInGroupState(ctx, chain, amount, state.groupID, reason)
+	nextState, ok := s.openTrendInGroupState(ctx, chain, amount, state.side, state.groupID, reason)
 	if !ok {
 		s.closeGroupIfNeeded(ctx, state.groupID)
 		return nil
@@ -340,8 +386,8 @@ func (s *strategy) manageTrend(ctx *backtest.BarContext, chain *backtest.Options
 	return []activeState{nextState}
 }
 
-func (s *strategy) openAmbush(ctx *backtest.BarContext, chain *backtest.OptionsChain, reason string) bool {
-	state, ok := s.openAmbushState(ctx, chain, reason)
+func (s *strategy) openAmbush(ctx *backtest.BarContext, chain *backtest.OptionsChain, side tradeSide, reason string) bool {
+	state, ok := s.openAmbushState(ctx, chain, side, reason)
 	if !ok {
 		return false
 	}
@@ -349,51 +395,82 @@ func (s *strategy) openAmbush(ctx *backtest.BarContext, chain *backtest.OptionsC
 	return true
 }
 
-func (s *strategy) openAmbushState(ctx *backtest.BarContext, chain *backtest.OptionsChain, reason string) (activeState, bool) {
-	selection, ok := s.selectAmbush(chain, ctx.Time())
+func (s *strategy) tryOpenAmbushFromSignal(ctx *backtest.BarContext, chain *backtest.OptionsChain, side tradeSide, reason string) bool {
+	ivPercentile := s.currentIVPercentile(ctx)
+	if ivPercentile > ambushIVPercentileMax {
+		s.logSkippedSignal(ctx, side, fmt.Sprintf("iv percentile %.2f exceeds max %.2f", ivPercentile, ambushIVPercentileMax))
+		return false
+	}
+
+	state, ok, skipReason := s.openAmbushStateDetailed(ctx, chain, side, reason)
 	if !ok {
-		return activeState{}, false
+		s.logSkippedSignal(ctx, side, skipReason)
+		return false
+	}
+
+	s.activeStates = append(s.activeStates, state)
+	return true
+}
+
+func (s *strategy) openAmbushState(ctx *backtest.BarContext, chain *backtest.OptionsChain, side tradeSide, reason string) (activeState, bool) {
+	state, ok, _ := s.openAmbushStateDetailed(ctx, chain, side, reason)
+	return state, ok
+}
+
+func (s *strategy) openAmbushStateDetailed(ctx *backtest.BarContext, chain *backtest.OptionsChain, side tradeSide, reason string) (activeState, bool, string) {
+	selection, ok, selectionReason := s.selectAmbushDetailed(chain, ctx.Time(), side)
+	if !ok {
+		return activeState{}, false, selectionReason
 	}
 
 	shortQtyTotal := ambushPremiumBaseBTC / selection.shortPrice
+	longCostTotal := selection.longLowerPrice + selection.longUpperPrice
 	if shortQtyTotal <= 0 {
-		return activeState{}, false
+		return activeState{}, false, fmt.Sprintf("non-positive short quantity from shortPrice=%.6f", selection.shortPrice)
+	}
+	if longCostTotal <= 0 {
+		return activeState{}, false, fmt.Sprintf("non-positive combined long cost: %.6f + %.6f", selection.longLowerPrice, selection.longUpperPrice)
+	}
+	longQtyTotal := ambushPremiumBaseBTC / longCostTotal
+	if longQtyTotal <= 0 {
+		return activeState{}, false, fmt.Sprintf("non-positive long quantity from combined long cost=%.6f", longCostTotal)
 	}
 
-	groupID := s.OpenGroup(ctx, "retracement-ratio-protective-spread|ambush", ambushPremiumBaseBTC, 1.0)
+	groupID := s.OpenGroup(ctx, side.groupTag("ambush"), ambushPremiumBaseBTC, 1.0)
 	if groupID <= 0 {
-		return activeState{}, false
+		return activeState{}, false, "failed to open spread group"
 	}
 
-	perTrancheQty := shortQtyTotal / float64(ambushTrancheCount)
+	perTrancheShortQty := shortQtyTotal / float64(ambushTrancheCount)
+	perTrancheLongQty := longQtyTotal / float64(ambushTrancheCount)
 	spreadIDs := make([]int, 0, ambushTrancheCount)
 	for tranche := 0; tranche < ambushTrancheCount; tranche++ {
 		spreadID := s.OpenSpreadInGroup(ctx, []backtest.SpreadLeg{
-			{Contract: selection.short, Side: backtest.Sell, Qty: perTrancheQty, EntryPrice: selection.shortPrice},
-			{Contract: selection.long, Side: backtest.Buy, Qty: 2 * perTrancheQty, EntryPrice: selection.longPrice},
-		}, fmt.Sprintf("一期比例价差|%s|tranche=%d", reason, tranche+1), groupID)
+			{Contract: selection.short, Side: backtest.Sell, Qty: perTrancheShortQty, EntryPrice: selection.shortPrice},
+			{Contract: selection.longLowerHalf, Side: backtest.Buy, Qty: perTrancheLongQty, EntryPrice: selection.longLowerPrice},
+			{Contract: selection.longUpperHalf, Side: backtest.Buy, Qty: perTrancheLongQty, EntryPrice: selection.longUpperPrice},
+		}, side.note(fmt.Sprintf("一期比例价差|%s|tranche=%d", reason, tranche+1)), groupID)
 		if spreadID <= 0 {
-			s.closeSpreadSet(ctx, spreadIDs, optutil.BuildContractMap(chain), "一期开仓回滚")
+			s.closeSpreadSet(ctx, spreadIDs, optutil.BuildContractMap(chain), side.note("一期开仓回滚"))
 			s.closeGroupIfNeeded(ctx, groupID)
-			return activeState{}, false
+			return activeState{}, false, fmt.Sprintf("failed to open tranche %d/%d spread", tranche+1, ambushTrancheCount)
 		}
 		spreadIDs = append(spreadIDs, spreadID)
 	}
 
 	return activeState{
+		side:            side,
 		phase:           phaseAmbush,
 		groupID:         groupID,
 		spreadIDs:       spreadIDs,
+		ambushLongSpend: longQtyTotal * longCostTotal,
 		entryUnderlying: ctx.Close(),
 		entryATR:        ctx.Ind("atr20"),
-		entryTime:       ctx.Time(),
-		baseAmount:      ambushPremiumBaseBTC,
-		lastReason:      reason,
-	}, true
+	}, true, ""
 }
 
-func (s *strategy) openTrend(ctx *backtest.BarContext, chain *backtest.OptionsChain, amount float64, reason string) bool {
-	state, ok := s.openTrendState(ctx, chain, amount, reason)
+func (s *strategy) openTrend(ctx *backtest.BarContext, chain *backtest.OptionsChain, amount float64, side tradeSide, reason string) bool {
+	state, ok := s.openTrendState(ctx, chain, amount, side, reason)
 	if !ok {
 		return false
 	}
@@ -401,12 +478,17 @@ func (s *strategy) openTrend(ctx *backtest.BarContext, chain *backtest.OptionsCh
 	return true
 }
 
-func (s *strategy) openTrendState(ctx *backtest.BarContext, chain *backtest.OptionsChain, amount float64, reason string) (activeState, bool) {
-	groupID := s.OpenGroup(ctx, "retracement-ratio-protective-spread|trend", amount, trendDecayFactor)
+func (s *strategy) openTrendState(ctx *backtest.BarContext, chain *backtest.OptionsChain, amount float64, side tradeSide, reason string) (activeState, bool) {
+	selection, ok := s.selectTrend(chain, ctx.Time(), s.currentHVPercentile(ctx), s.currentIVPercentile(ctx), amount, side)
+	if !ok {
+		return activeState{}, false
+	}
+
+	groupID := s.OpenGroup(ctx, side.groupTag("trend"), amount, trendDecayFactor)
 	if groupID <= 0 {
 		return activeState{}, false
 	}
-	state, ok := s.openTrendInGroupState(ctx, chain, amount, groupID, reason)
+	state, ok := s.openTrendSelectionInGroupState(ctx, selection, amount, side, groupID, reason)
 	if !ok {
 		s.closeGroupIfNeeded(ctx, groupID)
 		return activeState{}, false
@@ -414,111 +496,183 @@ func (s *strategy) openTrendState(ctx *backtest.BarContext, chain *backtest.Opti
 	return state, true
 }
 
-func (s *strategy) openTrendInGroupState(ctx *backtest.BarContext, chain *backtest.OptionsChain, amount float64, groupID int, reason string) (activeState, bool) {
-	selection, ok := s.selectTrend(chain, ctx.Time(), s.currentHVPercentile(ctx), s.currentIVPercentile(ctx), amount)
+func (s *strategy) openTrendInGroupState(ctx *backtest.BarContext, chain *backtest.OptionsChain, amount float64, side tradeSide, groupID int, reason string) (activeState, bool) {
+	selection, ok := s.selectTrend(chain, ctx.Time(), s.currentHVPercentile(ctx), s.currentIVPercentile(ctx), amount, side)
 	if !ok {
+		return activeState{}, false
+	}
+
+	return s.openTrendSelectionInGroupState(ctx, selection, amount, side, groupID, reason)
+}
+
+func (s *strategy) openTrendSelectionInGroupState(ctx *backtest.BarContext, selection *trendSelection, amount float64, side tradeSide, groupID int, reason string) (activeState, bool) {
+	if selection == nil {
 		return activeState{}, false
 	}
 
 	spreadID := s.OpenSpreadInGroup(ctx, []backtest.SpreadLeg{
 		{Contract: selection.long, Side: backtest.Buy, Qty: selection.qty, EntryPrice: selection.longPrice},
 		{Contract: selection.short, Side: backtest.Sell, Qty: selection.qty, EntryPrice: selection.shortPrice},
-	}, fmt.Sprintf("二期借记价差|%s|amt=%.2f", reason, amount), groupID)
+	}, side.note(fmt.Sprintf("二期借记价差|%s|amt=%.2f", reason, amount)), groupID)
 	if spreadID <= 0 {
 		return activeState{}, false
 	}
 
 	return activeState{
+		side:              side,
 		phase:             phaseTrend,
 		groupID:           groupID,
 		spreadIDs:         []int{spreadID},
 		entryUnderlying:   ctx.Close(),
 		entryATR:          ctx.Ind("atr20"),
 		entryLongAbsDelta: math.Abs(selection.long.Delta),
-		entryTime:         ctx.Time(),
-		baseAmount:        amount,
-		lastReason:        reason,
 	}, true
 }
 
-func (s *strategy) selectAmbush(chain *backtest.OptionsChain, now time.Time) (*ambushSelection, bool) {
+func (s *strategy) selectAmbush(chain *backtest.OptionsChain, now time.Time, side tradeSide) (*ambushSelection, bool) {
+	selection, ok, _ := s.selectAmbushDetailed(chain, now, side)
+	return selection, ok
+}
+
+func (s *strategy) selectAmbushDetailed(chain *backtest.OptionsChain, now time.Time, side tradeSide) (*ambushSelection, bool, string) {
 	if chain == nil || chain.Len() == 0 {
-		return nil, false
+		return nil, false, "options chain is empty"
 	}
 
-	puts := chain.Puts().ExpiryRange(ambushMinDTE, ambushMaxDTE)
-	if puts.Len() == 0 {
-		return nil, false
+	contractsBySide := side.filterChain(chain).ExpiryRange(ambushMinDTE, ambushMaxDTE)
+	if contractsBySide.Len() == 0 {
+		return nil, false, fmt.Sprintf("no %s contracts in DTE range [%d,%d]", side.contractLabel(), ambushMinDTE, ambushMaxDTE)
 	}
 
-	expiries := uniqueExpiriesNearest(puts.Contracts(), now, ambushTargetDTE)
+	expiries := uniqueExpiriesNearest(contractsBySide.Contracts(), now, ambushTargetDTE)
 	bestScore := math.Inf(1)
 	var best *ambushSelection
+	shortCandidates := 0
+	invalidShortPrice := 0
+	missingLongPair := 0
 
 	for _, expiry := range expiries {
-		contracts := contractsForExpiry(puts.Contracts(), expiry)
+		contracts := contractsForExpiry(contractsBySide.Contracts(), expiry)
 		sort.Slice(contracts, func(i, j int) bool {
-			di := math.Abs(math.Abs(contracts[i].Delta) - 0.25)
-			dj := math.Abs(math.Abs(contracts[j].Delta) - 0.25)
+			return contracts[i].StrikePrice < contracts[j].StrikePrice
+		})
+
+		orderedShorts := append([]backtest.OptionContract(nil), contracts...)
+		sort.Slice(orderedShorts, func(i, j int) bool {
+			di := math.Abs(math.Abs(orderedShorts[i].Delta) - 0.5)
+			dj := math.Abs(math.Abs(orderedShorts[j].Delta) - 0.5)
 			if di != dj {
 				return di < dj
 			}
-			return contracts[i].StrikePrice > contracts[j].StrikePrice
+			return side.preferLowerStrike(orderedShorts[i].StrikePrice, orderedShorts[j].StrikePrice)
 		})
 
-		for _, short := range contracts {
+		for _, short := range orderedShorts {
+			shortCandidates++
 			shortPrice, ok := s.ValidEntryPrice(backtest.Sell, short)
 			if !ok {
+				invalidShortPrice++
 				continue
 			}
 
-			for _, long := range contracts {
-				if long.StrikePrice >= short.StrikePrice {
-					continue
-				}
-				longPrice, ok := s.ValidEntryPrice(backtest.Buy, long)
-				if !ok {
-					continue
-				}
-
-				creditGap := math.Abs(shortPrice - 2*longPrice)
-				strikeGap := short.StrikePrice - long.StrikePrice
-				score := creditGap + 0.000001*strikeGap
-				if score >= bestScore {
-					continue
-				}
-
-				candidate := &ambushSelection{
-					short:      short,
-					long:       long,
-					shortPrice: shortPrice,
-					longPrice:  longPrice,
-					expiry:     expiry,
-				}
-				best = candidate
-				bestScore = score
+			longLowerHalf, longLowerPrice, longUpperHalf, longUpperPrice, pairScore, ok := s.selectAmbushLongPair(contracts, short, shortPrice, side)
+			if !ok {
+				missingLongPair++
+				continue
 			}
+
+			score := pairScore + math.Abs(math.Abs(short.Delta)-0.5)
+			if score >= bestScore {
+				continue
+			}
+
+			best = &ambushSelection{
+				short:          short,
+				longLowerHalf:  longLowerHalf,
+				longUpperHalf:  longUpperHalf,
+				shortPrice:     shortPrice,
+				longLowerPrice: longLowerPrice,
+				longUpperPrice: longUpperPrice,
+			}
+			bestScore = score
 		}
 	}
 
-	return best, best != nil
+	if best == nil {
+		return nil, false, fmt.Sprintf("no valid ambush ratio spread: side=%s expiries=%d short_candidates=%d invalid_short_price=%d missing_long_pair=%d", side.key(), len(expiries), shortCandidates, invalidShortPrice, missingLongPair)
+	}
+	return best, true, ""
 }
 
-func (s *strategy) selectTrend(chain *backtest.OptionsChain, now time.Time, hvPercentile, ivPercentile, amount float64) (*trendSelection, bool) {
+func (s *strategy) selectAmbushLongPair(contracts []backtest.OptionContract, short backtest.OptionContract, shortPrice float64, side tradeSide) (backtest.OptionContract, float64, backtest.OptionContract, float64, float64, bool) {
+	targetHalf := shortPrice / 2
+	type pricedContract struct {
+		contract backtest.OptionContract
+		price    float64
+		index    int
+	}
+
+	candidates := make([]pricedContract, 0, len(contracts))
+	for index, contract := range contracts {
+		if contract.Symbol == short.Symbol || !side.matchesAmbushWingStrike(contract.StrikePrice, short.StrikePrice) {
+			continue
+		}
+		price, ok := s.ValidEntryPrice(backtest.Buy, contract)
+		if !ok {
+			continue
+		}
+		candidates = append(candidates, pricedContract{contract: contract, price: price, index: index})
+	}
+
+	bestScore := math.Inf(1)
+	var bestLower pricedContract
+	var bestUpper pricedContract
+	for i := 0; i < len(candidates); i++ {
+		for j := i + 1; j < len(candidates); j++ {
+			lower := candidates[i]
+			upper := candidates[j]
+			if lower.price > upper.price {
+				lower, upper = upper, lower
+			}
+			if lower.price > targetHalf || upper.price < targetHalf {
+				continue
+			}
+
+			totalGap := math.Abs((lower.price + upper.price) - shortPrice)
+			halfGap := math.Abs(targetHalf-lower.price) + math.Abs(upper.price-targetHalf)
+			adjacencyPenalty := math.Abs(float64(lower.index-upper.index)-1) * 0.01
+			score := totalGap + 0.5*halfGap + adjacencyPenalty
+			if score >= bestScore {
+				continue
+			}
+
+			bestLower = lower
+			bestUpper = upper
+			bestScore = score
+		}
+	}
+
+	if math.IsInf(bestScore, 1) {
+		return backtest.OptionContract{}, 0, backtest.OptionContract{}, 0, 0, false
+	}
+	return bestLower.contract, bestLower.price, bestUpper.contract, bestUpper.price, bestScore, true
+}
+
+func (s *strategy) selectTrend(chain *backtest.OptionsChain, now time.Time, hvPercentile, ivPercentile, amount float64, side tradeSide) (*trendSelection, bool) {
 	if chain == nil || chain.Len() == 0 || amount <= 0 {
 		return nil, false
 	}
 
-	puts := chain.Puts().ExpiryRange(trendMinDTE, trendMaxDTE)
-	if puts.Len() == 0 {
+	contractsBySide := side.filterChain(chain).ExpiryRange(trendMinDTE, trendMaxDTE)
+	if contractsBySide.Len() == 0 {
 		return nil, false
 	}
 
 	targetLongAbsDelta := dynamicLongDelta(hvPercentile, ivPercentile)
-	expiries := uniqueExpiriesNearest(puts.Contracts(), now, trendTargetDTE)
+	expiries := uniqueExpiriesNearest(contractsBySide.Contracts(), now, trendTargetDTE)
 
 	for _, expiry := range expiries {
-		contracts := contractsForExpiry(puts.Contracts(), expiry)
+		contracts := contractsForExpiry(contractsBySide.Contracts(), expiry)
 		orderedLongs := make([]backtest.OptionContract, 0, len(contracts))
 		for _, contract := range contracts {
 			orderedLongs = append(orderedLongs, contract)
@@ -533,19 +687,23 @@ func (s *strategy) selectTrend(chain *backtest.OptionsChain, now time.Time, hvPe
 		})
 
 		for _, long := range orderedLongs {
+			absLongDelta := math.Abs(long.Delta)
+			if absLongDelta < minTrendLegDelta || absLongDelta > maxTrendLegDelta {
+				continue
+			}
 			longPrice, ok := s.ValidEntryPrice(backtest.Buy, long)
 			if !ok {
 				continue
 			}
 
-			maxShortStrike := long.StrikePrice * shortStrikeMaxMultiple
+			shortStrikeThreshold := side.trendShortStrikeThreshold(long.StrikePrice)
 			var shortCandidates []backtest.OptionContract
 			for _, candidate := range contracts {
 				if candidate.Symbol == long.Symbol {
 					continue
 				}
 				absDelta := math.Abs(candidate.Delta)
-				if candidate.StrikePrice > maxShortStrike || absDelta < minShortDelta || absDelta > maxShortDelta {
+				if absDelta < minTrendLegDelta || absDelta > maxTrendLegDelta || !side.matchesTrendShortStrike(candidate.StrikePrice, shortStrikeThreshold) {
 					continue
 				}
 				shortCandidates = append(shortCandidates, candidate)
@@ -555,12 +713,12 @@ func (s *strategy) selectTrend(chain *backtest.OptionsChain, now time.Time, hvPe
 			}
 
 			sort.Slice(shortCandidates, func(i, j int) bool {
-				di := math.Abs(shortCandidates[i].StrikePrice - maxShortStrike)
-				dj := math.Abs(shortCandidates[j].StrikePrice - maxShortStrike)
+				di := math.Abs(shortCandidates[i].StrikePrice - shortStrikeThreshold)
+				dj := math.Abs(shortCandidates[j].StrikePrice - shortStrikeThreshold)
 				if di != dj {
 					return di < dj
 				}
-				return shortCandidates[i].StrikePrice > shortCandidates[j].StrikePrice
+				return side.preferLowerStrike(shortCandidates[i].StrikePrice, shortCandidates[j].StrikePrice)
 			})
 
 			for _, short := range shortCandidates {
@@ -583,7 +741,6 @@ func (s *strategy) selectTrend(chain *backtest.OptionsChain, now time.Time, hvPe
 					shortPrice: shortPrice,
 					spreadCost: spreadCost,
 					qty:        qty,
-					expiry:     expiry,
 				}, true
 			}
 		}
@@ -615,7 +772,7 @@ func (s *strategy) shouldRollAmbush(ctx *backtest.BarContext, contractMap map[st
 		}
 	}
 
-	if math.IsInf(minDTE, 1) || minDTE >= ambushRollMaxDTE {
+	if math.IsInf(minDTE, 1) || minDTE <= ambushRollMinDTE || minDTE >= ambushRollMaxDTE {
 		return false
 	}
 	atr := ctx.Ind("atr20")
@@ -659,16 +816,6 @@ func (s *strategy) shouldRollTrend(sp *backtest.SpreadPosition, contractMap map[
 	}
 
 	return false, ""
-}
-
-func (s *strategy) trendBreakTrigger(ctx *backtest.BarContext) bool {
-	lower := ctx.Ind("trend_channel_lower")
-	prevLower := ctx.IndAt("trend_channel_lower", 1)
-	prevClose := ctx.FieldAt("close", 1)
-	if math.IsNaN(lower) || math.IsNaN(prevLower) || math.IsNaN(prevClose) {
-		return false
-	}
-	return ctx.Close() < lower && prevClose >= prevLower
 }
 
 func (s *strategy) currentHVPercentile(ctx *backtest.BarContext) float64 {
@@ -762,23 +909,35 @@ func (s *strategy) closeGroupIfNeeded(ctx *backtest.BarContext, groupID int) {
 
 func (s *strategy) applyDefaults() {
 	s.ApplyPricingDefaults()
-	if s.entryTimes == nil {
-		s.entryTimes = map[int64]struct{}{}
+	if s.shortEntryTimes == nil {
+		s.shortEntryTimes = map[int64]struct{}{}
 	}
-	if s.processedSignalTimes == nil {
-		s.processedSignalTimes = map[int64]struct{}{}
+	if s.longEntryTimes == nil {
+		s.longEntryTimes = map[int64]struct{}{}
 	}
 }
 
-func (s *strategy) handleSignalBookkeeping(ctx *backtest.BarContext) {
-	if !s.isEntrySignal(ctx) {
-		return
+func (s *strategy) hasEntrySignalAt(ts int64) bool {
+	return s.hasEntrySignalForSideAt(sideShort, ts) || s.hasEntrySignalForSideAt(sideLong, ts)
+}
+
+func (s *strategy) hasEntrySignalForSideAt(side tradeSide, ts int64) bool {
+	var entryTimes map[int64]struct{}
+	if side == sideLong {
+		entryTimes = s.longEntryTimes
+	} else {
+		entryTimes = s.shortEntryTimes
 	}
-	ts := ctx.Time().UTC().Unix()
-	if _, ok := s.processedSignalTimes[ts]; ok {
-		return
-	}
-	s.processedSignalTimes[ts] = struct{}{}
+	_, ok := entryTimes[ts]
+	return ok
+}
+
+func (s *strategy) allowsShortEntries() bool {
+	return s.direction == "" || s.direction == catalog.DirectionBoth || s.direction == catalog.DirectionShortOnly
+}
+
+func (s *strategy) allowsLongEntries() bool {
+	return s.direction == "" || s.direction == catalog.DirectionBoth || s.direction == catalog.DirectionLongOnly
 }
 
 func (s *strategy) isEntrySignal(ctx *backtest.BarContext) bool {
@@ -787,7 +946,6 @@ func (s *strategy) isEntrySignal(ctx *backtest.BarContext) bool {
 
 func dynamicLongDelta(hvPercentile, ivPercentile float64) float64 {
 	value := ((2 * hvPercentile) + ivPercentile) / 300.0
-	value -= 0.1
 	if value < minLongDelta {
 		return minLongDelta
 	}
@@ -795,6 +953,93 @@ func dynamicLongDelta(hvPercentile, ivPercentile float64) float64 {
 		return maxLongDelta
 	}
 	return value
+}
+
+func (state activeState) ambushTakeProfitTargets() (float64, float64) {
+	base := state.ambushLongSpend
+	if math.IsNaN(base) || base <= 0 {
+		base = ambushPremiumBaseBTC
+	}
+	return base * ambushTakeProfit1Pct, base * ambushTakeProfit2Pct
+}
+
+func (side tradeSide) filterChain(chain *backtest.OptionsChain) *backtest.OptionsChain {
+	if side == sideLong {
+		return chain.Calls()
+	}
+	return chain.Puts()
+}
+
+func (side tradeSide) preferLowerStrike(left, right float64) bool {
+	if side == sideLong {
+		return left < right
+	}
+	return left > right
+}
+
+func (side tradeSide) matchesAmbushWingStrike(candidateStrike, shortStrike float64) bool {
+	if side == sideLong {
+		return candidateStrike > shortStrike
+	}
+	return candidateStrike < shortStrike
+}
+
+func (side tradeSide) trendShortStrikeThreshold(longStrike float64) float64 {
+	if side == sideLong {
+		return longStrike * longStrikeMinMultiple
+	}
+	return longStrike * shortStrikeMaxMultiple
+}
+
+func (side tradeSide) matchesTrendShortStrike(candidateStrike, threshold float64) bool {
+	if side == sideLong {
+		return candidateStrike >= threshold
+	}
+	return candidateStrike <= threshold
+}
+
+func (side tradeSide) stopTriggered(price, entry, atr float64) bool {
+	if math.IsNaN(price) || math.IsNaN(entry) || math.IsNaN(atr) {
+		return false
+	}
+	if side == sideLong {
+		return price <= entry-ambushStopATRMultiplier*atr
+	}
+	return price >= entry+ambushStopATRMultiplier*atr
+}
+
+func (side tradeSide) key() string {
+	if side == sideLong {
+		return "long"
+	}
+	return "short"
+}
+
+func (side tradeSide) contractLabel() string {
+	if side == sideLong {
+		return "call"
+	}
+	return "put"
+}
+
+func (side tradeSide) groupTag(phase string) string {
+	return fmt.Sprintf("retracement-ratio-protective-spread|%s|%s", side.key(), phase)
+}
+
+func (side tradeSide) note(message string) string {
+	return fmt.Sprintf("%s|%s", side.key(), message)
+}
+
+func (state activeState) note(message string) string {
+	return state.side.note(message)
+}
+
+func (s *strategy) logSkippedSignal(ctx *backtest.BarContext, side tradeSide, reason string) {
+	if strings.TrimSpace(reason) == "" {
+		reason = "unknown reason"
+	}
+	fmt.Printf("[%s] csv signal skipped: strategy=%s source=%s side=%s reason=%s\n",
+		ctx.Time().Format(time.RFC3339), s.Name(), s.signalSource, side.key(), reason)
 }
 
 func uniqueExpiriesNearest(contracts []backtest.OptionContract, now time.Time, targetDTE int) []time.Time {
@@ -829,14 +1074,20 @@ func contractsForExpiry(contracts []backtest.OptionContract, expiry time.Time) [
 	return filtered
 }
 
-func mustGetSignalSource() string {
+func resolveSignalSource(override string) (string, error) {
+	if source, err := parseSignalSource(override); err == nil {
+		return source, nil
+	}
+
 	raw := strings.TrimSpace(os.Getenv(signalSourceEnv))
 	source, err := parseSignalSource(raw)
 	if err != nil {
-		fmt.Printf("[%s] invalid or missing %s=%q; expected one of: 12h, 1d\n", strategyName, signalSourceEnv, raw)
-		panic(err.Error())
+		if strings.TrimSpace(override) != "" {
+			return "", fmt.Errorf("invalid signal_source %q; expected one of: 12h, 1d", override)
+		}
+		return "", err
 	}
-	return source
+	return source, nil
 }
 
 func parseSignalSource(raw string) (string, error) {
@@ -851,14 +1102,48 @@ func parseSignalSource(raw string) (string, error) {
 	}
 }
 
-func loadSignalTimesForSource(source string) (map[int64]struct{}, error) {
+func loadSignalTimesForDirection(source string, direction catalog.TradeDirection) (map[int64]struct{}, map[int64]struct{}, error) {
+	shortTimes := map[int64]struct{}{}
+	longTimes := map[int64]struct{}{}
+
+	if direction == "" || direction == catalog.DirectionBoth || direction == catalog.DirectionShortOnly {
+		path, err := signalPathForSide(source, sideShort)
+		if err != nil {
+			return nil, nil, err
+		}
+		shortTimes, err = loadSignalTimesFromCSV(path)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+	if direction == "" || direction == catalog.DirectionBoth || direction == catalog.DirectionLongOnly {
+		path, err := signalPathForSide(source, sideLong)
+		if err != nil {
+			return nil, nil, err
+		}
+		longTimes, err = loadSignalTimesFromCSV(path)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+
+	return shortTimes, longTimes, nil
+}
+
+func signalPathForSide(source string, side tradeSide) (string, error) {
 	switch source {
 	case "12h":
-		return loadSignalTimesFromCSV(signalPath12h)
+		if side == sideLong {
+			return signalPath12hLong, nil
+		}
+		return signalPath12hShort, nil
 	case "1d":
-		return loadSignalTimesFromCSV(signalPath1d)
+		if side == sideLong {
+			return signalPath1dLong, nil
+		}
+		return signalPath1dShort, nil
 	default:
-		return nil, fmt.Errorf("unsupported signal source %q", source)
+		return "", fmt.Errorf("unsupported signal source %q", source)
 	}
 }
 

@@ -160,3 +160,62 @@ func TestCloseSpreadLegStopNowWithExtraSlippage(t *testing.T) {
 		t.Fatalf("close price = %.12f, want %.12f", tracker.closed[0].Legs[0].ClosePrice, wantClose)
 	}
 }
+
+func TestBrokerBaseAssetAccountingMarksUnderlyingByBTCPnL(t *testing.T) {
+	ref := SecurityRef{Market: "crypto-underlying", Symbol: "BTC", Interval: "5m", Index: 0}
+	broker := NewBroker(Config{InitialCapital: 100, AccountUnit: "BTC"})
+	closePrice := 100.0
+	broker.SetPriceFunc(func(_ SecurityRef) BarPrices {
+		return BarPrices{Open: closePrice, High: closePrice, Low: closePrice, Close: closePrice}
+	})
+
+	if _, ok := broker.ExecuteOrderAtCloseNow(Order{Security: ref, Side: Buy, Type: MarketOrder, Qty: 1}, 0, time.Unix(0, 0)); !ok {
+		t.Fatal("expected entry fill")
+	}
+	if cash := broker.Cash(); math.Abs(cash-100) > 1e-9 {
+		t.Fatalf("cash after base-asset entry = %.12f, want 100", cash)
+	}
+	if equity := broker.Equity(); math.Abs(equity-100) > 1e-9 {
+		t.Fatalf("equity at entry = %.12f, want 100", equity)
+	}
+
+	closePrice = 110
+	wantPnL := (110.0 - 100.0) / 110.0
+	if pnl := broker.PositionUnrealizedPnL(ref); math.Abs(pnl-wantPnL) > 1e-9 {
+		t.Fatalf("position unrealized pnl = %.12f, want %.12f", pnl, wantPnL)
+	}
+	if totalPnL := broker.TotalPnL(); math.Abs(totalPnL-wantPnL) > 1e-9 {
+		t.Fatalf("total pnl = %.12f, want %.12f", totalPnL, wantPnL)
+	}
+	if equity := broker.Equity(); math.Abs(equity-(100+wantPnL)) > 1e-9 {
+		t.Fatalf("equity after mark = %.12f, want %.12f", equity, 100+wantPnL)
+	}
+}
+
+func TestBrokerBaseAssetAccountingRealizesUnderlyingPnLInBTC(t *testing.T) {
+	ref := SecurityRef{Market: "crypto-underlying", Symbol: "BTC", Interval: "5m", Index: 0}
+	broker := NewBroker(Config{InitialCapital: 100, AccountUnit: "BTC"})
+	closePrice := 100.0
+	broker.SetPriceFunc(func(_ SecurityRef) BarPrices {
+		return BarPrices{Open: closePrice, High: closePrice, Low: closePrice, Close: closePrice}
+	})
+
+	if _, ok := broker.ExecuteOrderAtCloseNow(Order{Security: ref, Side: Buy, Type: MarketOrder, Qty: 1}, 0, time.Unix(0, 0)); !ok {
+		t.Fatal("expected entry fill")
+	}
+	closePrice = 110
+	if _, ok := broker.ExecuteOrderAtCloseNow(Order{Security: ref, Side: Sell, Type: MarketOrder, Qty: 1}, 1, time.Unix(3600, 0)); !ok {
+		t.Fatal("expected exit fill")
+	}
+
+	wantPnL := (110.0 - 100.0) / 110.0
+	if cash := broker.Cash(); math.Abs(cash-(100+wantPnL)) > 1e-9 {
+		t.Fatalf("cash after close = %.12f, want %.12f", cash, 100+wantPnL)
+	}
+	if qty := broker.Positions().Get(ref).Qty; qty != 0 {
+		t.Fatalf("position qty = %.12f, want 0", qty)
+	}
+	if equity := broker.Equity(); math.Abs(equity-(100+wantPnL)) > 1e-9 {
+		t.Fatalf("equity after close = %.12f, want %.12f", equity, 100+wantPnL)
+	}
+}

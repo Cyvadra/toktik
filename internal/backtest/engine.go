@@ -55,6 +55,12 @@ func (e *Engine) SetOptionsChainProvider(p OptionsChainProvider) {
 	e.replayer.chainProvider = p
 }
 
+// SetProgressFunc registers an optional progress callback for prepare and replay.
+func (e *Engine) SetProgressFunc(fn ProgressFunc) {
+	e.preparer.progress = fn
+	e.replayer.progress = fn
+}
+
 // Prepare loads data and computes base indicators for a strategy, returning a
 // PreparedData that can be replayed many times with different parameters.
 func (e *Engine) Prepare(ctx context.Context, market, symbol, interval string, from, to time.Time, strategy Strategy, params map[string]interface{}) (*PreparedData, error) {

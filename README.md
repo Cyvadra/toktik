@@ -1,21 +1,162 @@
 # toktik
 
-Quantitative backtesting and market data platform for crypto options trading, built in Go.
+Unified multi-market quantitative trading platform for crypto and US equity options, built in Go. Provides a full data pipeline (tick → Parquet → ClickHouse OHLCV), an event-driven backtesting engine, a feature store, and a REST API.
 
 ## Features
 
 - **Market data pipeline** — Convert zstd-compressed CSV tick data → Parquet → ClickHouse OHLCV bars with pre-computed materialized views (5m, 15m, 30m, 1h, 2h, 3h, 4h, 6h, 8h, 12h, 1d)
 - **Event-driven backtesting engine** — Pine Script-style strategy interface with multi-asset, multi-leg options support, vectorized indicator computation, and realistic broker simulation (slippage, commissions, TWAP)
-- **REST API** — Query historical bars, symbols, greeks, and run backtests with cursor-based pagination
+- **Unified infra API** — Query market data through shared `/api/v1/markets/{market}` routes while preserving legacy `/api/v1/crypto-options/*` compatibility
+- **Infra observability** — Inspect readiness, market catalog, dataset row counts, latest timestamps, freshness, and dataset summary aggregates
+- **Feature-store APIs** — Read volatility snapshots/history, `us-options` term-structure/skew, cross-market liquidity history, and merged daily feature panels from explicit infra endpoints, with precomputed-read preference where available
+- **Event-window APIs** — Read early-close and holiday-proximity flags as both latest snapshots and daily history from the US market-session calendar
 - **Options spread strategies** — Built-in bull put / bear call spread strategies with MA deviation signals
 - **Strategy reuse helpers** — Shared `pkg/strategies/optutil` mixins and helpers for options strategy development
 - **US market flatfile import** — Import Polygon US options and stocks minute CSV flatfiles into ClickHouse with precomputed K-line views
+- **Feature-store backfill CLI** — Precompute supported daily feature snapshots and merged daily panels with incremental refresh, replacement, and failure reporting
 - **HTML reports** — Self-contained backtest reports with equity curves, drawdown charts, and trade markers
 
-## Strategy Development
+## Architecture
 
-When adding a new options strategy, start from the shared helpers in `pkg/strategies/optutil` before writing local boilerplate.
-See `docs/strategy-reuse.md` for the current reuse patterns and reference strategies.
+### High-Level Overview
+
+```
+┌───────────────────────────────────────────────────────────┐
+│                     CLI Binaries (cmd/)                    │
+│  api-server ┃ backtest-portfolio ┃ importers ┃ backfill   │
+└──────┬──────────────┬──────────────────┬──────────────────┘
+       │              │                  │
+       ▼              ▼                  ▼
+┌─────────────┐ ┌───────────┐  ┌────────────────────┐
+│  api/       │ │ service/  │  │ cryptooptions/     │
+│  (Gin HTTP  │ │ (Business │  │ usmarket/          │
+│   router)   │ │  logic)   │  │ (Domain importers) │
+└──────┬──────┘ └─────┬─────┘  └─────────┬──────────┘
+       │              │                   │
+       ▼              ▼                   ▼
+┌─────────────┐ ┌───────────┐  ┌──────────────────┐
+│  dto/       │ │ datafeed/ │  │ schema/clickhouse │
+│  (Request / │ │ (DataFeed │  │ (DDL: tables,     │
+│   Response) │ │  adapters)│  │  mat. views)      │
+└─────────────┘ └─────┬─────┘  └────────┬─────────┘
+                      │                  │
+                      ▼                  ▼
+               ┌──────────────────────────────┐
+               │        ClickHouse            │
+               │  crypto_options_bar_1m       │
+               │  us_options_bar_1m           │
+               │  us_stocks_bar_1m            │
+               │  feature_*_snapshot_daily    │
+               │  + materialized K-line views │
+               └──────────────────────────────┘
+```
+
+### Core Packages
+
+| Package | Layer | Purpose |
+|---------|-------|---------|
+| `internal/backtest` | Engine | Event-driven backtester: Strategy interface, Engine orchestrator, Broker (fills/commissions/slippage), columnar DataSet, Indicator DAG, OptionsChain, SpreadGroup lifecycle |
+| `internal/api` | HTTP | Gin router and handlers for `/api/v1/*` (bars, symbols, greeks, backtest, infra, features) |
+| `internal/service` | Business | DTO-driven service layer backed by ClickHouse queries — zero direct DB access from handlers |
+| `internal/datafeed` | Adapter | DataFeed implementations that load ClickHouse data into columnar DataSets for the backtest engine |
+| `internal/cryptooptions` | Domain | Crypto options: CSV/Parquet parsing, tick→1m aggregation, symbol hashing, chain cache, ClickHouse queries |
+| `internal/usmarket` | Domain | US market: Polygon CSV import, session-aware K-line aggregation (DST + holidays), Black-Scholes greeks |
+| `internal/dto` | Schema | API request/response types with validation and time parsing |
+| `internal/optimization` | Engine | Grid search, parameter space definition, walk-forward optimization |
+| `internal/report` | Output | Self-contained HTML report generation (equity curves, drawdown charts, trade markers) |
+| `internal/cli` | Util | CLI bootstrap: env fallback, DSN resolution, ClickHouse connection helpers |
+| `internal/validation` | Util | Numeric sanity checks (NaN, Inf) |
+| `pkg/feeds` | Plugin | External data source interface (`Feed`) + registry; pluggable sources (DVOL, ThetaData) |
+| `pkg/strategies` | Plugin | Strategy catalog, config parsing, and individual strategy implementations |
+| `pkg/strategies/optutil` | Mixin | Shared options helpers: PricingMixin, GroupMixin, PendingRefCounter, contract resolution |
+
+### Backtest Engine Internals
+
+```
+Strategy.Init()          Register indicators, add securities
+        │
+        ▼
+ Indicator DAG           Topological sort → parallel vectorized compute (single pass)
+        │
+        ▼
+ Bar-by-Bar Replay       Engine feeds each bar to Strategy.OnBar()
+        │                  ├─ ctx.Ind("sma20")    → read pre-computed indicator
+        │                  ├─ ctx.Buy(ref, qty)   → submit order to Broker
+        │                  └─ ctx.OptionsChain()  → filter contracts at bar time
+        ▼
+ Broker Execution        Next-bar open fill (no lookahead), slippage, commission
+        │
+        ▼
+ Result                  Trades, equity curve, stats, spread groups → HTML/JSON
+```
+
+Key design decisions:
+- **Preflight indicator DAG** — all indicators computed once before replay, not per-bar
+- **Columnar DataSet** — `[]float64` per field for cache-friendly access
+- **Next-bar execution** — orders execute at next bar's open to prevent lookahead bias
+- **Multi-symbol alignment** — binary search maps timestamps across intervals/symbols
+- **SpreadGroup decay** — rolling positions reduce notional via DecayFactor per roll
+
+### Database Schema
+
+| Table / View | Market | Content |
+|--------------|--------|---------|
+| `crypto_options_bar_1m` | Crypto | 1m option bars (mark/last/bid/ask OHLC, IV, greeks, OI) — partitioned by month |
+| `crypto_spot_bar_1m` | Crypto | 1m underlying spot bars |
+| `us_options_bar_1m` | US | 1m option bars with session metadata (market_date, session_kind, session_seq) |
+| `us_stocks_bar_1m` | US | 1m stock bars with session metadata |
+| `us_equity_sessions` | US | Session calendar (regular/pre/post times, DST, holidays, early closes) |
+| `feature_volatility_snapshot_daily` | Both | Precomputed HV (10/20/30d), current IV, IV percentile/rank |
+| `feature_term_structure_snapshot_daily` | US | ATM IV by expiration |
+| `feature_skew_snapshot_daily` | US | OTM call/put IV skew |
+| `feature_liquidity_snapshot_daily` | Both | Bid/ask spreads, relative spread, OI, tradability/activity ratio |
+| `feature_daily_panel_daily` | Both | Merged daily feature panel (all above combined) |
+| Materialized K-line views | Both | 5m, 15m, 30m, 1h, 2h, 3h, 4h, 6h, 8h, 12h, 1d auto-aggregated from 1m |
+
+### API Route Map
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/ready` | GET | Health / readiness check |
+| `/api/v1/backtests/runs` | POST | Start an async strategy backtest run |
+| `/api/v1/backtests/runs/{run_id}` | GET | Query async strategy backtest status/result |
+| `/api/v1/backtests/runs/{run_id}/events` | GET | Subscribe to async strategy backtest progress via SSE |
+| `/api/v1/infra/markets` | GET | List available markets and capabilities |
+| `/api/v1/infra/datasets` | GET | Dataset row counts, freshness, summary aggregates |
+| `/api/v1/crypto-options/bars` | GET | OHLCV bars (interval routing: 1m→base, 5m+→precomputed views) |
+| `/api/v1/crypto-options/symbols` | GET | Contract metadata search |
+| `/api/v1/crypto-options/greeks` | GET | Time-series greeks |
+| `/api/v1/crypto-options/backtest` | POST | Run backtest from JSON |
+| `/api/v1/markets/{market}/bars` | GET | Unified bars (us-stocks, us-options, etc.) |
+| `/api/v1/markets/{market}/symbols` | GET | Unified symbol search |
+| `/api/v1/features/volatility-snapshot` | GET | Latest HV/IV/percentile for a symbol |
+| `/api/v1/features/volatility-history` | GET | Historical IV time-series |
+| `/api/v1/features/term-structure-snapshot` | GET | ATM IV by expiration |
+| `/api/v1/features/skew-snapshot` | GET | OTM call/put skew |
+| `/api/v1/features/liquidity-snapshot` | GET | Bid/ask spreads, OI by expiration |
+| `/api/v1/features/liquidity-history` | GET | Historical liquidity series |
+| `/api/v1/features/event-window-snapshot` | GET | Early-close / holiday flags |
+| `/api/v1/features/event-window-history` | GET | Historical market events |
+| `/api/v1/features/daily-feature-panel` | GET | Merged daily features |
+
+All list endpoints support cursor-based pagination (`cursor` / `next_cursor`). Supported intervals: `1m` through `1w`.
+
+### Strategy Architecture
+
+Strategies implement the `backtest.Strategy` interface (`Init` + `OnBar`) and are registered in `pkg/strategies/catalog`. Options strategies embed reusable mixins from `pkg/strategies/optutil`:
+
+- **PricingMixin** — entry/exit/valuation price modes for spread legs
+- **GroupMixin** — position group lifecycle tracking
+- **PendingRefCounter** — scheduled spread open resolution
+
+Built-in strategies: `golden-cross`, `delta-filter`, `bull-put-spread`, `bear-call-spread`, `forum-short-put`, `lvol-scalper`, `ema-atr-spot`, `turtle-trend-simp`, `buy-flash-low`, `covered-call`, `retracement-ratio-protective-spread`.
+
+## Infra Progress
+
+- Phase 1: unified market API and infra dataset/market inspection — **implemented**.
+- Phase 2: feature-store APIs — **in progress**; volatility, liquidity, event-window, daily panel, and `us-options` surface features available.
+- Phase 3: reference-data APIs — planned.
+- Phase 4: production scheduling/run-state APIs — planned (readiness and freshness inspection already in place).
 
 ## Prerequisites
 
@@ -36,6 +177,7 @@ make build-kline-backfill
 make build-kline-migrate-utc
 make build-backtest-portfolio
 make build-us-market-import
+make build-feature-store-backfill
 
 # Cross-compile
 make build-win-arm
@@ -106,9 +248,86 @@ Environment variable fallbacks:
 
 ### 3. Query the API
 
+**Check infra readiness:**
+```bash
+curl "http://localhost:8080/ready"
+```
+
+**List available low-level markets:**
+```bash
+curl "http://localhost:8080/api/v1/infra/markets"
+```
+
+Sample response:
+```json
+{
+  "markets": [
+    {
+      "name": "crypto-options",
+      "status": "available",
+      "capabilities": ["bars", "symbols", "greeks", "backtest", "chain-cache"]
+    },
+    {
+      "name": "feature-store",
+      "status": "available",
+      "capabilities": ["volatility-snapshots", "volatility-history", "term-structure-snapshots", "skew-snapshots", "liquidity-snapshots", "liquidity-history", "event-window-snapshots", "event-window-history", "daily-feature-panel", "backfill", "freshness-monitoring"]
+    }
+  ]
+}
+```
+
+**Inspect dataset freshness and summary:**
+```bash
+curl "http://localhost:8080/api/v1/infra/datasets?market=feature-store"
+```
+
+Sample response:
+```json
+{
+  "summary": {
+    "total": 5,
+    "ready": 5,
+    "stale": 0,
+    "missing": 0,
+    "empty": 0,
+    "markets": [
+      {
+        "market": "feature-store",
+        "total": 5,
+        "ready": 5,
+        "stale": 0,
+        "missing": 0,
+        "empty": 0
+      }
+    ]
+  },
+  "datasets": [
+    {
+      "name": "feature-volatility-snapshots",
+      "market": "feature-store",
+      "relation": "feature_volatility_snapshot_daily",
+      "status": "ready",
+      "freshness": "fresh"
+    },
+    {
+      "name": "feature-daily-panels",
+      "market": "feature-store",
+      "relation": "feature_daily_panel_daily",
+      "status": "ready",
+      "freshness": "fresh"
+    }
+  ]
+}
+```
+
 **List symbols:**
 ```bash
 curl "http://localhost:8080/api/v1/crypto-options/symbols?base_asset=BTC&limit=10"
+```
+
+**List US option symbols from the unified market namespace:**
+```bash
+curl "http://localhost:8080/api/v1/markets/us-options/symbols?underlying=SPY&limit=10"
 ```
 
 **Get OHLCV bars:**
@@ -116,9 +335,335 @@ curl "http://localhost:8080/api/v1/crypto-options/symbols?base_asset=BTC&limit=1
 curl "http://localhost:8080/api/v1/crypto-options/bars?symbol=BTC-28MAR25-100000-C&interval=1h&from=2025-01-01&to=2025-03-01&limit=500"
 ```
 
+**Get US stock bars from the unified market namespace:**
+```bash
+curl "http://localhost:8080/api/v1/markets/us-stocks/bars?symbol=AAPL&interval=1h&from=2025-01-01&to=2025-03-01&limit=500"
+```
+
 **Get greeks time series:**
 ```bash
 curl "http://localhost:8080/api/v1/crypto-options/greeks?symbol=BTC-28MAR25-100000-C&from=2025-01-01&to=2025-03-01"
+```
+
+**Get a volatility feature snapshot:**
+```bash
+curl "http://localhost:8080/api/v1/features/volatility-snapshot?market=us-options&underlying=SPY"
+```
+
+Sample response:
+```json
+{
+  "market": "us-options",
+  "underlying": "SPY",
+  "lookback_days": 252,
+  "price_as_of": "2026-04-02T00:00:00Z",
+  "iv_as_of": "2026-04-02T00:00:00Z",
+  "price_observations": 252,
+  "iv_observations": 252,
+  "hv10": 0.1842,
+  "hv20": 0.2015,
+  "hv30": 0.2168,
+  "current_iv": 0.2331,
+  "iv_percentile": 64.7,
+  "iv_rank": 58.4
+}
+```
+
+**Get volatility feature history:**
+```bash
+curl "http://localhost:8080/api/v1/features/volatility-history?market=crypto-options&underlying=BTC&from=2025-01-01&to=2025-03-01"
+```
+
+**Get a term-structure snapshot:**
+```bash
+curl "http://localhost:8080/api/v1/features/term-structure-snapshot?market=us-options&underlying=SPY&min_days_to_expiry=7&max_days_to_expiry=90"
+```
+
+Sample response:
+```json
+{
+  "market": "us-options",
+  "underlying": "SPY",
+  "as_of": "2026-04-02T00:00:00Z",
+  "data": [
+    {
+      "expiration": "2026-04-17T00:00:00Z",
+      "days_to_expiry": 15,
+      "atm_iv": 0.221,
+      "call_iv": 0.214,
+      "put_iv": 0.229,
+      "contract_count": 42
+    }
+  ]
+}
+```
+
+**Get a skew snapshot:**
+```bash
+curl "http://localhost:8080/api/v1/features/skew-snapshot?market=us-options&underlying=SPY&min_days_to_expiry=7&max_days_to_expiry=90"
+```
+
+Sample response:
+```json
+{
+  "market": "us-options",
+  "underlying": "SPY",
+  "as_of": "2026-04-02T00:00:00Z",
+  "data": [
+    {
+      "expiration": "2026-04-17T00:00:00Z",
+      "days_to_expiry": 15,
+      "otm_call_iv": 0.198,
+      "otm_put_iv": 0.274,
+      "put_call_skew": 0.076,
+      "contract_count": 42
+    }
+  ]
+}
+```
+
+**Get a crypto-options liquidity snapshot:**
+```bash
+curl "http://localhost:8080/api/v1/features/liquidity-snapshot?market=crypto-options&underlying=BTC&min_days_to_expiry=7&max_days_to_expiry=60"
+```
+
+Sample response:
+```json
+{
+  "market": "crypto-options",
+  "underlying": "BTC",
+  "as_of": "2026-04-02T00:00:00Z",
+  "data": [
+    {
+      "expiration": "2026-04-26T08:00:00Z",
+      "days_to_expiry": 24,
+      "avg_bid_close": 12.5,
+      "avg_ask_close": 13.0,
+      "avg_mark_close": 12.75,
+      "relative_spread": 0.0392,
+      "open_interest": 1520,
+      "tick_count": 77,
+      "contract_count": 12,
+      "tradable_contract_count": 9,
+      "tradability_ratio": 0.75
+    }
+  ]
+}
+```
+
+**Get a liquidity history window:**
+```bash
+curl "http://localhost:8080/api/v1/features/liquidity-history?market=us-options&underlying=AAPL&from=2026-03-01&to=2026-04-01&min_days_to_expiry=7&max_days_to_expiry=60"
+```
+
+Sample response:
+```json
+{
+  "market": "us-options",
+  "underlying": "AAPL",
+  "data": [
+    {
+      "as_of_date": "2026-03-31T00:00:00Z",
+      "expiration": "2026-04-17T00:00:00Z",
+      "days_to_expiry": 17,
+      "avg_mark_close": 4.21,
+      "volume": 12840,
+      "transactions": 922,
+      "contract_count": 36,
+      "active_contract_count": 23,
+      "activity_ratio": 0.6389
+    }
+  ]
+}
+```
+
+**Get an event-window snapshot:**
+```bash
+curl "http://localhost:8080/api/v1/features/event-window-snapshot?market=us-options&underlying=AAPL"
+```
+
+Sample response:
+```json
+{
+  "market": "us-options",
+  "underlying": "AAPL",
+  "as_of_date": "2026-04-02T00:00:00Z",
+  "is_early_close": false,
+  "previous_holiday_date": "2026-02-16T00:00:00Z",
+  "next_holiday_date": "2026-05-25T00:00:00Z",
+  "days_from_prev_holiday": 45,
+  "days_to_next_holiday": 53
+}
+```
+
+**Get event-window history:**
+```bash
+curl "http://localhost:8080/api/v1/features/event-window-history?market=us-options&underlying=AAPL&from=2026-03-01&to=2026-04-01"
+```
+
+Sample response:
+```json
+{
+  "market": "us-options",
+  "underlying": "AAPL",
+  "data": [
+    {
+      "date": "2026-03-31T00:00:00Z",
+      "market": "us-options",
+      "underlying": "AAPL",
+      "as_of_date": "2026-03-31T00:00:00Z",
+      "is_early_close": false,
+      "previous_holiday_date": "2026-02-16T00:00:00Z",
+      "next_holiday_date": "2026-05-25T00:00:00Z",
+      "days_from_prev_holiday": 43,
+      "days_to_next_holiday": 55
+    }
+  ]
+}
+```
+
+### 4. Run Strategy Backtests via API
+
+The strategy backtest API is asynchronous. Submit a run first, then poll the run status or subscribe to its SSE event stream.
+
+Supported request fields mirror the `backtest-portfolio` CLI where practical, including:
+- `market`: `crypto` or `us`
+- `instrument`: `auto`, `spot`, `contract`, or `mixed`
+- `asset`, `interval`, `from`, `to`, `capital`, `strategy`
+- spread pricing fields such as `spread_entry_price_mode`, `spread_exit_price_mode`, `spread_valuation_price_mode`
+- strategy tuning fields such as `direction`, `position_size`, `target_expiry_days`, `short_delta_min`, and `long_delta_max`
+- `signal_source`: per-request external signal source override for strategies that support it
+
+Completed runs return HTML report file paths only, not inline HTML content.
+
+**Start an async backtest run:**
+```bash
+curl -X POST http://localhost:8080/api/v1/backtests/runs \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "market": "crypto",
+    "instrument": "contract",
+    "asset": "BTC",
+    "from": "2023-01-01",
+    "to": "2025-12-31",
+    "strategy": "retracement-ratio-protective-spread",
+    "interval": "2h",
+    "capital": 100,
+    "signal_source": "12h",
+    "spread_entry_price_mode": "mark_close",
+    "spread_exit_price_mode": "mark_close",
+    "spread_valuation_price_mode": "mark_close",
+    "direction": "long_only"
+  }'
+```
+
+Sample response:
+```json
+{
+  "run_id": "c40505f1a16f02f33380b4ccbe4f74db",
+  "status": "queued",
+  "created_at": "2026-04-07T09:45:08.974090366Z",
+  "status_url": "/api/v1/backtests/runs/c40505f1a16f02f33380b4ccbe4f74db",
+  "events_url": "/api/v1/backtests/runs/c40505f1a16f02f33380b4ccbe4f74db/events"
+}
+```
+
+This request is equivalent to the CLI command:
+```bash
+RETRACEMENT_RATIO_PROTECTIVE_SPREAD_SIGNAL_SOURCE=12h go run ./cmd/backtest-portfolio/main.go \
+  --asset BTC \
+  --from 2023-01-01 \
+  --to 2025-12-31 \
+  --strategy retracement-ratio-protective-spread \
+  --interval 2h \
+  --capital 100 \
+  --spread-entry-price-mode mark_close \
+  --spread-exit-price-mode mark_close \
+  --spread-valuation-price-mode mark_close \
+  --direction long_only
+```
+
+**Poll run status:**
+```bash
+curl "http://localhost:8080/api/v1/backtests/runs/c40505f1a16f02f33380b4ccbe4f74db"
+```
+
+Sample terminal result excerpt:
+```json
+{
+  "run_id": "c40505f1a16f02f33380b4ccbe4f74db",
+  "status": "completed",
+  "progress": {
+    "phase": "replay",
+    "current": 216,
+    "total": 216,
+    "percent": 100,
+    "completed": true
+  },
+  "result": {
+    "summaries": [
+      {
+        "strategy_name": "RetracementRatioProtectiveSpread",
+        "html_path": "reports/backtests/api/c40505f1a16f02f33380b4ccbe4f74db/retracement-ratio-protective-spread_btc_2h_20230101_20251231.html"
+      }
+    ]
+  }
+}
+```
+
+**Subscribe to SSE progress updates:**
+```bash
+curl -N "http://localhost:8080/api/v1/backtests/runs/c40505f1a16f02f33380b4ccbe4f74db/events"
+```
+
+SSE emits at most 1 message per second and uses event names such as `status`, `progress`, `completed`, and `failed`.
+
+Example SSE payload:
+```text
+event: completed
+data: {"run_id":"c40505f1a16f02f33380b4ccbe4f74db","status":"completed",...}
+```
+
+Notes:
+- If a strategy supports request-level `signal_source`, the request value takes precedence.
+- If `signal_source` is omitted, compatible strategies may still fall back to their historical environment variables.
+- Multi-strategy runs return one `html_path` per strategy plus `overview_html_path` for the combined overview page.
+
+**Get a merged daily feature panel:**
+```bash
+curl "http://localhost:8080/api/v1/features/daily-feature-panel?market=us-options&underlying=AAPL&from=2026-03-01&to=2026-04-01&min_days_to_expiry=7&max_days_to_expiry=60"
+```
+
+Sample response:
+```json
+{
+  "market": "us-options",
+  "underlying": "AAPL",
+  "lookback_days": 252,
+  "data": [
+    {
+      "date": "2026-03-31T00:00:00Z",
+      "price_observations": 252,
+      "iv_observations": 252,
+      "hv20": 0.2143,
+      "current_iv": 0.2384,
+      "iv_percentile": 66.1,
+      "front_expiration": "2026-04-17T00:00:00Z",
+      "front_days_to_expiry": 17,
+      "front_atm_iv": 0.2291,
+      "front_put_call_skew": 0.0714,
+      "surface_contract_count": 36,
+      "liquidity_volume": 12840,
+      "liquidity_transactions": 922,
+      "liquidity_contract_count": 36,
+      "liquidity_active_contract_count": 23,
+      "liquidity_activity_ratio": 0.6389,
+      "is_early_close": false,
+      "days_from_prev_holiday": 43,
+      "days_to_next_holiday": 55
+    }
+  ]
+}
 ```
 
 **Run a backtest:**
@@ -233,16 +778,19 @@ bin/crypto-options-missing-days \
 Manually generate precomputed K-line windows from 1-minute base tables:
 
 ```bash
-bin/crypto-options-kline-backfill \
+bin/options-kline-backfill \
   --clickhouse-dsn "clickhouse://localhost:9000/default" \
-  --intervals "1m,5m,15m,30m,1h,2h,3h,4h,6h,8h,12h,1d" \
+  --market crypto \
+  --intervals "1d" \
   --base-asset BTC \
   --from 2025-01-01 \
   --to 2025-03-01
 ```
 
 Notes:
-- `1m` is the base table and will be skipped during backfill.
+- Command renamed to `options-kline-backfill`, supporting `--market crypto|us`.
+- Crypto chain cache is generated for the same precomputed windows as crypto option K-lines (`5m,15m,30m,1h,2h,3h,4h,6h,8h,12h,1d`). A `1m` chain request still falls back to raw bar snapshots.
+- To build matching crypto chain caches for backtests, include the target interval in `--intervals`, for example `--intervals "1h,2h,1d"`.
 - Without `--replace`, intervals with existing rows in the selected scope are skipped to avoid duplicate aggregation states.
 - Add `--replace` to rebuild selected intervals in-range.
 - After re-importing spot `1m` bars, use `--replace` if you need to overwrite existing higher spot windows from the new base data.
@@ -325,6 +873,40 @@ Notes:
 - If ThetaData returns `No data found` for a product/day, that task is logged as `SKIPPED` and the batch continues.
 - Backfilled rows use the confirmed daily ThetaData Greeks as authoritative values for all affected `1m` rows of the matched contract on that market date.
 
+### 8. Backfill Feature-Store Snapshots
+
+```bash
+make build-feature-store-backfill
+
+bin/feature-store-backfill \
+  --clickhouse-dsn "clickhouse://default:@localhost:9000/default" \
+  --markets "crypto-options,us-options" \
+  --min-days-to-expiry 0 \
+  --max-days-to-expiry 365 \
+  --incremental-days 7
+```
+
+To rebuild an explicit historical range:
+
+```bash
+bin/feature-store-backfill \
+  --clickhouse-dsn "clickhouse://default:@localhost:9000/default" \
+  --markets "us-options" \
+  --underlyings "SPY,QQQ" \
+  --from 2025-01-01 \
+  --to 2025-03-31 \
+  --replace
+```
+
+Notes:
+- This command writes all currently supported feature-store snapshot tables.
+- Volatility snapshots are written for `crypto-options` and `us-options`.
+- Term-structure and skew snapshots are written for `us-options`.
+- Liquidity snapshots are written for both `crypto-options` and `us-options`, with `us-options` currently exposing activity-style metrics from volume and transaction coverage.
+- Daily feature panels are written for both `crypto-options` and `us-options` using the requested `lookback_days` and DTE bounds as materialization keys.
+- Summary output includes counts for written, skipped, empty, replaced, and failed scopes.
+- When `ContinueOnError` is active, per-scope failure lines are printed to stderr before the final summary.
+
 ## Writing Custom Strategies
 
 Implement the `backtest.Strategy` interface:
@@ -369,33 +951,92 @@ Order types: `Buy`, `Sell`, `BuyTWAP`, `ClosePosition`, plus direct `Broker` acc
 
 ```
 cmd/
-  api-server/             REST API server
-  backtest-portfolio/     Crypto/US spot and option-contract portfolio backtester
-  backtest-example/       Simple strategy examples
-  crypto-options-convert/ CSV.zst → Parquet converter
-  crypto-options-import/  Parquet → ClickHouse importer
-  crypto-options-missing-days/  Data gap scanner
-  us-market-import/       Polygon US market flatfile importer
+  api-server/                  REST API server (Gin, ClickHouse)
+  backtest-portfolio/          Multi-strategy portfolio backtester (crypto + US, spot + options)
+  backtest-example/            Minimal strategy demo runner
+  crypto-options-convert/      CSV.zst tick files → Parquet converter
+  crypto-options-import/       Parquet → ClickHouse importer (auto-DDL + dedup)
+  crypto-options-missing-days/ Data gap scanner
+  crypto-options-kline-migrate-utc/ K-line timezone migration utility
+  crypto-spot-import-julia/    Julia-exported JSON+CSV spot → ClickHouse
+  crypto-spot-import-15m/      Binance 15m spot CSV → ClickHouse
+  deribit/dvol/                DVOL index tooling
+  feature-store-backfill/      Precompute volatility/liquidity/panel snapshots
+  options-kline-backfill/      Backfill higher K-line windows from 1m base
+  us-market-import/            Polygon OPRA/SIP flatfile importer (session-aware)
+  us-market-greeks-backfill/   ThetaData daily greeks backfill for US options
 internal/
-  api/                    Gin HTTP handlers & router
-  backtest/               Core engine, broker, indicators, options
-  cryptooptions/          ClickHouse models, queries, CSV/Parquet I/O
-  datafeed/               DataFeed implementations (ClickHouse-backed)
-  dto/                    API request/response types
-  optimization/           Parameter space & grid/random search
-  report/                 HTML report generation
-  service/                Business logic layer
-  strategies/             Strategy implementations & builder
-  usmarket/               US market CSV parsing and ClickHouse import
+  api/           Gin HTTP handlers & router
+  backtest/      Core engine: Strategy, Engine, Broker, Indicator DAG, DataSet, OptionsChain, SpreadGroup
+  cli/           CLI bootstrap (env fallback, DSN, schema init)
+  cryptooptions/ Crypto options domain: CSV/Parquet I/O, aggregation, chain cache, queries
+  csvutil/       Generic CSV parsing utilities
+  datafeed/      DataFeed adapters (ClickHouse → columnar DataSet)
+  dto/           API request/response types + validation
+  optimization/  Grid search, walk-forward optimization
+  report/        Self-contained HTML report generation
+  service/       Business logic layer (DTO-driven, no direct DB from handlers)
+  usmarket/      US market domain: Polygon import, session calendar, Black-Scholes greeks
+  validation/    Numeric sanity checks (NaN, Inf)
+pkg/
+  feeds/         External data source interface + registry (Feed, Registry)
+  strategies/    Strategy catalog + per-strategy implementations
+    catalog/     Registry, config parsing, direction/capital modes
+    optutil/     Shared options mixins (PricingMixin, GroupMixin, PendingRefCounter)
+    helpers/     Common cross-strategy utilities
 schema/
-  clickhouse/             DDL for ClickHouse tables
+  clickhouse/    DDL scripts (crypto_options.sql, us_market.sql, feature_store.sql)
+data/
+  crypto-15m/    Sample 15m spot CSVs (Binance pairs)
+docs/            Design docs, roadmap, strategy PRDs
+reports/
+  backtests/     Generated HTML backtest reports
 ```
 
-## Testing
+## Development Notes
+
+### Adding a New Strategy
+
+1. Create a directory under `pkg/strategies/` (e.g., `pkg/strategies/my_strat/`).
+2. Implement `backtest.Strategy` (`Name`, `Init`, `OnBar`).
+3. For options strategies, embed `optutil.PricingMixin` and `optutil.GroupMixin` to avoid boilerplate.
+4. Register the strategy in `pkg/strategies/catalog/` with a Config struct.
+5. See `docs/strategy-reuse.md` for current reuse patterns and reference.
+
+### Adding a New Market
+
+Each market needs:
+- A ClickHouse schema under `schema/clickhouse/` (1m base table + materialized K-line views).
+- A domain package under `internal/` (parser, aggregator, queries).
+- A `DataFeed` adapter in `internal/datafeed/`.
+- A service in `internal/service/` and routes in `internal/api/`.
+
+### Key Conventions
+
+- **DTO boundary** — all validation and time parsing happens in the DTO layer; services receive clean typed structs.
+- **Interval routing** — 1m queries hit the base table; 5m+ queries hit precomputed materialized views; ad-hoc intervals are computed at query time.
+- **Session-aware aggregation (US)** — every US bar carries `market_date`, `session_kind`, `session_seq` to prevent cross-session blending.
+- **Cursor pagination** — time-series endpoints use RFC 3339 timestamps as cursors.
+- **No lookahead** — the backtest engine enforces next-bar execution; indicators are preflight-computed.
+
+### Testing
 
 ```bash
 go test ./...
 ```
+
+Key test files:
+- `cmd/backtest-portfolio/main_test.go` — portfolio backtester integration tests
+- `cmd/crypto-spot-import-*/main_test.go` — spot import tests
+- `cmd/feature-store-backfill/main_test.go` — feature store tests
+- `internal/usmarket/session_test.go` — session calendar / DST / holiday tests
+
+### Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CLICKHOUSE_DSN` | `clickhouse://default:@localhost:9000/default` | ClickHouse connection string |
+| `LISTEN_ADDR` | `:8080` | API server listen address |
 
 ## License
 

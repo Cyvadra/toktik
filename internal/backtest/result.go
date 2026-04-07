@@ -122,6 +122,7 @@ type SpreadLegReport struct {
 	Type             OptionType `json:"type"`
 	StrikePrice      float64    `json:"strike_price"`
 	Expiration       time.Time  `json:"expiration"`
+	EntryDelta       *float64   `json:"entry_delta,omitempty"`
 	Delta            float64    `json:"delta"`
 	Qty              float64    `json:"qty"`
 	EntryPrice       float64    `json:"entry_price"`

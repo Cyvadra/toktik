@@ -57,7 +57,7 @@ func BackfillKlineWindows(ctx context.Context, conn driver.Conn, opts KlineBackf
 		if err := backfillOptionInterval(ctx, conn, iv, opts.From, opts.To, baseAsset, opts.Replace); err != nil {
 			return fmt.Errorf("backfill option interval %s: %w", interval, err)
 		}
-		if iv.Suffix == "1d" {
+		if _, ok := ChainPrecomputedIntervals[iv.Suffix]; ok {
 			if err := backfillChainInterval(ctx, conn, iv, opts.From, opts.To, baseAsset, opts.Replace); err != nil {
 				return fmt.Errorf("backfill chain interval %s: %w", interval, err)
 			}

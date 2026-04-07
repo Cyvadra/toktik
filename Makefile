@@ -3,9 +3,9 @@ BUILD_DIR := bin
 GOFLAGS := -trimpath
 LDFLAGS := -s -w
 
-.PHONY: build-convert build-import build-missing-days build-kline-backfill build-kline-migrate-utc build-api build-backtest-example build-backtest-portfolio build-backtest-btc-portfolio build-us-market-import build-all build-win-arm clean
+.PHONY: build-convert build-import build-missing-days build-kline-backfill build-kline-migrate-utc build-api build-backtest-example build-backtest-portfolio build-backtest-btc-portfolio build-us-market-import build-feature-store-backfill build-all build-win-arm clean
 
-build-all: build-convert build-import build-missing-days build-kline-backfill build-kline-migrate-utc build-api build-backtest-example build-backtest-portfolio build-us-market-import
+build-all: build-convert build-import build-missing-days build-kline-backfill build-kline-migrate-utc build-api build-backtest-example build-backtest-portfolio build-us-market-import build-feature-store-backfill
 
 build-convert:
 	@mkdir -p $(BUILD_DIR)
@@ -21,7 +21,7 @@ build-missing-days:
 
 build-kline-backfill:
 	@mkdir -p $(BUILD_DIR)
-	go build $(GOFLAGS) -ldflags '$(LDFLAGS)' -o $(BUILD_DIR)/crypto-options-kline-backfill ./cmd/crypto-options-kline-backfill
+	go build $(GOFLAGS) -ldflags '$(LDFLAGS)' -o $(BUILD_DIR)/options-kline-backfill ./cmd/options-kline-backfill
 
 build-kline-migrate-utc:
 	@mkdir -p $(BUILD_DIR)
@@ -45,12 +45,16 @@ build-us-market-import:
 	@mkdir -p $(BUILD_DIR)
 	go build $(GOFLAGS) -ldflags '$(LDFLAGS)' -o $(BUILD_DIR)/us-market-import ./cmd/us-market-import
 
+build-feature-store-backfill:
+	@mkdir -p $(BUILD_DIR)
+	go build $(GOFLAGS) -ldflags '$(LDFLAGS)' -o $(BUILD_DIR)/feature-store-backfill ./cmd/feature-store-backfill
+
 build-win-arm:
 	@mkdir -p $(BUILD_DIR)
 	GOOS=windows GOARCH=arm64 go build $(GOFLAGS) -ldflags '$(LDFLAGS)' -o $(BUILD_DIR)/crypto-options-convert.exe ./cmd/crypto-options-convert
 	GOOS=windows GOARCH=arm64 go build $(GOFLAGS) -ldflags '$(LDFLAGS)' -o $(BUILD_DIR)/crypto-options-import.exe ./cmd/crypto-options-import
 	GOOS=windows GOARCH=arm64 go build $(GOFLAGS) -ldflags '$(LDFLAGS)' -o $(BUILD_DIR)/crypto-options-missing-days.exe ./cmd/crypto-options-missing-days
-	GOOS=windows GOARCH=arm64 go build $(GOFLAGS) -ldflags '$(LDFLAGS)' -o $(BUILD_DIR)/crypto-options-kline-backfill.exe ./cmd/crypto-options-kline-backfill
+	GOOS=windows GOARCH=arm64 go build $(GOFLAGS) -ldflags '$(LDFLAGS)' -o $(BUILD_DIR)/options-kline-backfill.exe ./cmd/options-kline-backfill
 	GOOS=windows GOARCH=arm64 go build $(GOFLAGS) -ldflags '$(LDFLAGS)' -o $(BUILD_DIR)/crypto-options-kline-migrate-utc.exe ./cmd/crypto-options-kline-migrate-utc
 
 build-darwin-amd64:
@@ -58,7 +62,7 @@ build-darwin-amd64:
 	GOOS=darwin GOARCH=amd64 go build $(GOFLAGS) -ldflags '$(LDFLAGS)' -o $(BUILD_DIR)/crypto-options-convert ./cmd/crypto-options-convert
 	GOOS=darwin GOARCH=amd64 go build $(GOFLAGS) -ldflags '$(LDFLAGS)' -o $(BUILD_DIR)/crypto-options-import ./cmd/crypto-options-import
 	GOOS=darwin GOARCH=amd64 go build $(GOFLAGS) -ldflags '$(LDFLAGS)' -o $(BUILD_DIR)/crypto-options-missing-days ./cmd/crypto-options-missing-days
-	GOOS=darwin GOARCH=amd64 go build $(GOFLAGS) -ldflags '$(LDFLAGS)' -o $(BUILD_DIR)/crypto-options-kline-backfill ./cmd/crypto-options-kline-backfill
+	GOOS=darwin GOARCH=amd64 go build $(GOFLAGS) -ldflags '$(LDFLAGS)' -o $(BUILD_DIR)/options-kline-backfill ./cmd/options-kline-backfill
 	GOOS=darwin GOARCH=amd64 go build $(GOFLAGS) -ldflags '$(LDFLAGS)' -o $(BUILD_DIR)/crypto-options-kline-migrate-utc ./cmd/crypto-options-kline-migrate-utc
 
 clean:

@@ -2,6 +2,7 @@ package backtest
 
 import (
 	"math"
+	"strings"
 	"time"
 )
 
@@ -122,6 +123,10 @@ func (b *Broker) ProcessPending(barIndex int, barTime time.Time) []Trade {
 			fills = append(fills, *trade)
 
 			if o.Type == TWAPMarketOrder {
+				// When using Notional-based sizing, we must compute the total
+				// order quantity from the first fill. The fill quantity equals
+				// the per-slice amount (totalQty / slicesLeft), so we multiply
+				// back to recover totalQty before tracking remaining amounts.
 				if o.Qty <= 0 && o.Notional > 0 {
 					slicesLeft := o.TWAPBars
 					if slicesLeft <= 0 {
@@ -199,7 +204,7 @@ func (b *Broker) ExecuteOrderAtCloseNow(o Order, barIndex int, barTime time.Time
 		Timestamp:  barTime,
 	}
 	b.nextTID++
-	b.cash += trade.NetAmount()
+	b.cash += b.tradeCashDelta(*trade)
 	b.positions.Update(*trade)
 	b.trades = append(b.trades, *trade)
 	return trade, true
@@ -256,7 +261,7 @@ func (b *Broker) ExecuteStopOrderNow(o Order, barIndex int, barTime time.Time, e
 		Timestamp:  barTime,
 	}
 	b.nextTID++
-	b.cash += trade.NetAmount()
+	b.cash += b.tradeCashDelta(*trade)
 	b.positions.Update(*trade)
 	b.trades = append(b.trades, *trade)
 	return trade, true
@@ -369,7 +374,7 @@ func (b *Broker) executeOrderOnBar(o Order, barIndex int, barTime time.Time) (*T
 		Timestamp:  barTime,
 	}
 	b.nextTID++
-	b.cash += trade.NetAmount()
+	b.cash += b.tradeCashDelta(*trade)
 	b.positions.Update(*trade)
 	return trade, true, true
 }
@@ -410,6 +415,9 @@ func (b *Broker) PositionUnrealizedPnL(ref SecurityRef) float64 {
 	if !isValidPrice(mark) {
 		return 0
 	}
+	if b.usesBaseAssetPnLAccounting(ref) {
+		return b.baseAssetUnrealizedPnL(pos, mark)
+	}
 	return pos.UnrealizedPnL(mark)
 }
 
@@ -422,6 +430,10 @@ func (b *Broker) UnrealizedPnL() float64 {
 		}
 		mark := b.markPriceForPosition(pos.Qty, b.priceFunc(pos.Security))
 		if !isValidPrice(mark) {
+			continue
+		}
+		if b.usesBaseAssetPnLAccounting(pos.Security) {
+			total += b.baseAssetUnrealizedPnL(pos, mark)
 			continue
 		}
 		total += pos.UnrealizedPnL(mark)
@@ -450,11 +462,70 @@ func (b *Broker) positionMarketValue() float64 {
 		if b.priceFunc != nil {
 			mark := b.markPriceForPosition(pos.Qty, b.priceFunc(pos.Security))
 			if isValidPrice(mark) {
+				if b.usesBaseAssetPnLAccounting(pos.Security) {
+					total += b.baseAssetUnrealizedPnL(pos, mark)
+					continue
+				}
 				total += pos.Qty * mark
 			}
 		}
 	}
 	return total
+}
+
+func (b *Broker) tradeCashDelta(trade Trade) float64 {
+	if !b.usesBaseAssetPnLAccounting(trade.Security) {
+		return trade.NetAmount()
+	}
+	pos := b.positions.Get(trade.Security)
+	commission := b.baseAssetCommission(trade)
+	if pos == nil || pos.Qty == 0 {
+		return -commission
+	}
+	signedFillQty := trade.Qty
+	if trade.Side == Sell {
+		signedFillQty = -signedFillQty
+	}
+	if pos.Qty == 0 || signedFillQty == 0 || sameSign(pos.Qty, signedFillQty) {
+		return -commission
+	}
+	closeQty := math.Min(math.Abs(pos.Qty), math.Abs(signedFillQty))
+	if closeQty <= 0 || !isValidPrice(pos.AvgEntryPrice) || !isValidPrice(trade.FillPrice) {
+		return -commission
+	}
+	realizedQuotePnL := 0.0
+	if pos.Qty > 0 {
+		realizedQuotePnL = closeQty * (trade.FillPrice - pos.AvgEntryPrice)
+	} else {
+		realizedQuotePnL = closeQty * (pos.AvgEntryPrice - trade.FillPrice)
+	}
+	return realizedQuotePnL/trade.FillPrice - commission
+}
+
+func (b *Broker) baseAssetCommission(trade Trade) float64 {
+	if !isValidPrice(trade.FillPrice) {
+		return trade.Commission
+	}
+	return trade.Commission / trade.FillPrice
+}
+
+func (b *Broker) usesBaseAssetPnLAccounting(ref SecurityRef) bool {
+	unit := strings.TrimSpace(b.config.AccountUnit)
+	if unit == "" || strings.EqualFold(unit, "USD") {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(ref.Symbol), unit)
+}
+
+func (b *Broker) baseAssetUnrealizedPnL(pos *Position, mark float64) float64 {
+	if pos == nil || pos.Qty == 0 || !isValidPrice(mark) {
+		return 0
+	}
+	return pos.UnrealizedPnL(mark) / mark
+}
+
+func sameSign(left, right float64) bool {
+	return (left > 0 && right > 0) || (left < 0 && right < 0)
 }
 
 func (b *Broker) markPriceForPosition(qty float64, prices BarPrices) float64 {

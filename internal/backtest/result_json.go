@@ -109,6 +109,7 @@ type spreadLegReportJSONExport struct {
 	Type             OptionType `json:"type"`
 	StrikePrice      *float64   `json:"strike_price"`
 	Expiration       time.Time  `json:"expiration"`
+	EntryDelta       *float64   `json:"entry_delta,omitempty"`
 	Delta            *float64   `json:"delta"`
 	Qty              *float64   `json:"qty"`
 	EntryPrice       *float64   `json:"entry_price"`
@@ -235,6 +236,7 @@ func (r *Result) jsonExport() resultJSONExport {
 					Type:             leg.Type,
 					StrikePrice:      jsonFloat(leg.StrikePrice),
 					Expiration:       leg.Expiration,
+					EntryDelta:       leg.EntryDelta,
 					Delta:            jsonFloat(leg.Delta),
 					Qty:              jsonFloat(leg.Qty),
 					EntryPrice:       jsonFloat(leg.EntryPrice),

@@ -2,6 +2,7 @@ package report
 
 import (
 	"encoding/json"
+	"fmt"
 	"math"
 	"os"
 	"path/filepath"
@@ -162,21 +163,23 @@ func TestBuildHTMLViewIncludesSettledEquitySeries(t *testing.T) {
 	result := &backtest.Result{
 		StrategyName:   "settled-series",
 		StartTime:      time.Date(2024, time.January, 1, 0, 0, 0, 0, time.UTC),
-		EndTime:        time.Date(2024, time.January, 1, 2, 0, 0, 0, time.UTC),
-		BarsCount:      3,
+		EndTime:        time.Date(2024, time.January, 1, 4, 0, 0, 0, time.UTC),
+		BarsCount:      5,
 		InitialCapital: 100,
 		FinalEquity:    110,
-		EquityCurve:    []float64{100, 106, 110},
+		EquityCurve:    []float64{100, 106, 109, 105, 110},
 		Timestamps: []time.Time{
 			time.Date(2024, time.January, 1, 0, 0, 0, 0, time.UTC),
 			time.Date(2024, time.January, 1, 1, 0, 0, 0, time.UTC),
 			time.Date(2024, time.January, 1, 2, 0, 0, 0, time.UTC),
+			time.Date(2024, time.January, 1, 3, 0, 0, 0, time.UTC),
+			time.Date(2024, time.January, 1, 4, 0, 0, 0, time.UTC),
 		},
 		Series: map[string][]float64{
-			"open":  {60000, 60100, 60200},
-			"high":  {60200, 60300, 60400},
-			"low":   {59900, 60050, 60100},
-			"close": {60150, 60250, 60350},
+			"open":  {60000, 60100, 60200, 60300, 60400},
+			"high":  {60200, 60300, 60400, 60500, 60600},
+			"low":   {59900, 60050, 60100, 60200, 60300},
+			"close": {60150, 60250, 60350, 60450, 60550},
 		},
 		Trades: []backtest.Trade{
 			{
@@ -195,7 +198,7 @@ func TestBuildHTMLViewIncludesSettledEquitySeries(t *testing.T) {
 				Qty:        1,
 				FillPrice:  15,
 				Commission: 1,
-				Timestamp:  time.Date(2024, time.January, 1, 2, 0, 0, 0, time.UTC),
+				Timestamp:  time.Date(2024, time.January, 1, 4, 0, 0, 0, time.UTC),
 			},
 		},
 		SpreadPositions: []backtest.SpreadPositionReport{{
@@ -209,21 +212,57 @@ func TestBuildHTMLViewIncludesSettledEquitySeries(t *testing.T) {
 
 	view := buildHTMLView(result, HTMLMeta{})
 
-	var payload []chartLinePoint
-	if err := json.Unmarshal([]byte(view.SettledEquitySeriesData), &payload); err != nil {
+	var settledSeries []chartLinePoint
+	if err := json.Unmarshal([]byte(view.SettledEquitySeriesData), &settledSeries); err != nil {
 		t.Fatalf("json.Unmarshal(SettledEquitySeriesData) error = %v", err)
 	}
-	if len(payload) != 3 {
-		t.Fatalf("len(payload) = %d, want 3", len(payload))
+	if len(settledSeries) != 3 {
+		t.Fatalf("len(settledSeries) = %d, want 3", len(settledSeries))
 	}
-	if payload[0].Value == nil || *payload[0].Value != 100 {
-		t.Fatalf("payload[0] = %#v, want settled equity 100", payload[0])
+	if settledSeries[0].Value == nil || *settledSeries[0].Value != 100 {
+		t.Fatalf("settledSeries[0] = %#v, want initial capital point", settledSeries[0])
 	}
-	if payload[1].Value == nil || *payload[1].Value != 107 {
-		t.Fatalf("payload[1] = %#v, want settled equity 107", payload[1])
+	if settledSeries[1].Time != time.Date(2024, time.January, 1, 1, 0, 0, 0, time.UTC).Unix() || settledSeries[1].Value == nil || *settledSeries[1].Value != 107 {
+		t.Fatalf("settledSeries[1] = %#v, want spread-settled point", settledSeries[1])
 	}
-	if payload[2].Value == nil || *payload[2].Value != 110 {
-		t.Fatalf("payload[2] = %#v, want settled equity 110", payload[2])
+	if settledSeries[2].Time != time.Date(2024, time.January, 1, 4, 0, 0, 0, time.UTC).Unix() || settledSeries[2].Value == nil || *settledSeries[2].Value != 110 {
+		t.Fatalf("settledSeries[2] = %#v, want trade-settled point", settledSeries[2])
+	}
+
+	var floatingProfit []chartHistogramPoint
+	if err := json.Unmarshal([]byte(view.SettledFloatingProfitData), &floatingProfit); err != nil {
+		t.Fatalf("json.Unmarshal(SettledFloatingProfitData) error = %v", err)
+	}
+	if len(floatingProfit) != 1 {
+		t.Fatalf("len(floatingProfit) = %d, want 1", len(floatingProfit))
+	}
+	if floatingProfit[0].Time != time.Date(2024, time.January, 1, 4, 0, 0, 0, time.UTC).Unix() || floatingProfit[0].Value != 2 {
+		t.Fatalf("floatingProfit[0] = %#v, want floating gain context before final settlement", floatingProfit[0])
+	}
+
+	var floatingLoss []chartHistogramPoint
+	if err := json.Unmarshal([]byte(view.SettledFloatingLossData), &floatingLoss); err != nil {
+		t.Fatalf("json.Unmarshal(SettledFloatingLossData) error = %v", err)
+	}
+	if len(floatingLoss) != 1 {
+		t.Fatalf("len(floatingLoss) = %d, want 1", len(floatingLoss))
+	}
+	if floatingLoss[0].Time != time.Date(2024, time.January, 1, 4, 0, 0, 0, time.UTC).Unix() || floatingLoss[0].Value != -2 {
+		t.Fatalf("floatingLoss[0] = %#v, want floating loss context before final settlement", floatingLoss[0])
+	}
+
+	var exposure []chartLinePoint
+	if err := json.Unmarshal([]byte(view.SettledExposureData), &exposure); err != nil {
+		t.Fatalf("json.Unmarshal(SettledExposureData) error = %v", err)
+	}
+	if len(exposure) != 5 {
+		t.Fatalf("len(exposure) = %d, want 5", len(exposure))
+	}
+	wantExposure := []float64{2, 2, 1, 1, 0}
+	for index, want := range wantExposure {
+		if exposure[index].Value == nil || *exposure[index].Value != want {
+			t.Fatalf("exposure[%d] = %#v, want %.0f", index, exposure[index], want)
+		}
 	}
 }
 
@@ -428,6 +467,21 @@ func TestWriteBacktestHTMLIncludesSettledEquityToggle(t *testing.T) {
 	if !strings.Contains(html, "renderEquitySeriesMode") {
 		t.Fatalf("expected generated html to include settled equity rendering logic")
 	}
+	if !strings.Contains(html, "settled-context-chart") {
+		t.Fatalf("expected generated html to include settled-mode context chart")
+	}
+	if !strings.Contains(html, "settledFloatingProfitSeries") {
+		t.Fatalf("expected generated html to include settled floating profit payload")
+	}
+	if !strings.Contains(html, "fitChartsToVisibleData") {
+		t.Fatalf("expected generated html to refit charts after time-axis changes")
+	}
+	if !strings.Contains(html, "subscribeVisibleTimeRangeChange") {
+		t.Fatalf("expected generated html to synchronize charts by visible time range")
+	}
+	if strings.Contains(html, "subscribeVisibleLogicalRangeChange") {
+		t.Fatalf("did not expect generated html to synchronize charts by logical range")
+	}
 }
 
 func TestWriteBacktestHTMLIncludesHoverColumnSubplotControls(t *testing.T) {
@@ -618,6 +672,12 @@ func TestWriteBacktestHTMLPlacesSpreadOpenTimeBesideHeaderStatus(t *testing.T) {
 	if !strings.Contains(html, "平仓触发时间") {
 		t.Fatalf("expected generated html to relabel leg close time column to close trigger time when available")
 	}
+	if !strings.Contains(html, "定位到图表") {
+		t.Fatalf("expected generated html to include spread-to-chart location button")
+	}
+	if !strings.Contains(html, fmt.Sprintf("data-chart-jump-time=\"%d\"", openTime.Unix())) {
+		t.Fatalf("expected generated html to include chart jump timestamp for spread events")
+	}
 }
 
 func TestBuildHTMLViewGroupsRelatedSpreads(t *testing.T) {
@@ -646,6 +706,14 @@ func TestBuildHTMLViewGroupsRelatedSpreads(t *testing.T) {
 			DecayFactor: 0.8,
 			RollCount:   1,
 			TotalPnL:    6,
+			Status:      "closed",
+			OpenTime:    openTime,
+			CloseTime:   &closeTime,
+		}, {
+			ID:          8,
+			Tag:         "empty-group",
+			InitAmount:  1,
+			DecayFactor: 0.9,
 			Status:      "closed",
 			OpenTime:    openTime,
 			CloseTime:   &closeTime,
@@ -735,6 +803,81 @@ func TestBuildHTMLViewGroupsRelatedSpreads(t *testing.T) {
 	}
 	if len(view.UngroupedSpreads) != 1 {
 		t.Fatalf("len(view.UngroupedSpreads) = %d, want 1", len(view.UngroupedSpreads))
+	}
+}
+
+func TestBuildHTMLViewIncludesSpreadReportMetricSnapshots(t *testing.T) {
+	openTime := time.Date(2024, time.January, 2, 3, 0, 0, 0, time.UTC)
+	closeTime := time.Date(2024, time.January, 2, 5, 0, 0, 0, time.UTC)
+	result := &backtest.Result{
+		StrategyName:   "spread-metrics",
+		StartTime:      openTime,
+		EndTime:        closeTime,
+		BarsCount:      3,
+		InitialCapital: 100,
+		FinalEquity:    103,
+		EquityCurve:    []float64{100, 101, 103},
+		Timestamps: []time.Time{
+			time.Date(2024, time.January, 2, 3, 0, 0, 0, time.UTC),
+			time.Date(2024, time.January, 2, 4, 0, 0, 0, time.UTC),
+			time.Date(2024, time.January, 2, 5, 0, 0, 0, time.UTC),
+		},
+		Series: map[string][]float64{
+			"open":     {70000, 70100, 70200},
+			"high":     {70200, 70300, 70400},
+			"low":      {69900, 70050, 70150},
+			"close":    {70150, 70250, 70350},
+			"ema_fast": {10, 11, 12},
+			"score":    {0.5, 0.75, 1.25},
+		},
+		ReportColumns: []backtest.ReportColumn{
+			{Source: "ema_fast", Label: "EMA Fast", Decimals: 0, Overlay: true},
+			{Source: "score", Label: "Signal Score", Decimals: 2},
+		},
+		SpreadPositions: []backtest.SpreadPositionReport{{
+			ID:          1,
+			Tag:         "metric-spread",
+			Status:      "closed",
+			OpenTime:    openTime,
+			CloseTime:   &closeTime,
+			DaysHeld:    0.08,
+			RealizedPnL: 3,
+			Legs: []backtest.SpreadLegReport{{
+				Symbol:      "BTC-20240105-50000-C",
+				Side:        "buy",
+				Type:        backtest.Call,
+				StrikePrice: 50000,
+				Expiration:  time.Date(2024, time.January, 5, 0, 0, 0, 0, time.UTC),
+				Delta:       0.33,
+				Qty:         1,
+				EntryPrice:  10,
+				EntryTime:   openTime,
+				Closed:      true,
+				ClosePrice:  13,
+				CloseTime:   &closeTime,
+				RealizedPnL: 3,
+			}},
+		}},
+	}
+
+	view := buildHTMLView(result, HTMLMeta{})
+	if len(view.Spreads) != 2 {
+		t.Fatalf("len(view.Spreads) = %d, want 2", len(view.Spreads))
+	}
+	if len(view.Spreads[0].ReportMetrics) != 2 {
+		t.Fatalf("len(view.Spreads[0].ReportMetrics) = %d, want 2", len(view.Spreads[0].ReportMetrics))
+	}
+	if view.Spreads[0].ReportMetrics[0].Label != "EMA Fast" || view.Spreads[0].ReportMetrics[0].Value != "10" {
+		t.Fatalf("unexpected open snapshot metric: %#v", view.Spreads[0].ReportMetrics[0])
+	}
+	if view.Spreads[0].ReportMetrics[0].KindLabel != "叠加" {
+		t.Fatalf("view.Spreads[0].ReportMetrics[0].KindLabel = %q, want 叠加", view.Spreads[0].ReportMetrics[0].KindLabel)
+	}
+	if view.Spreads[1].ReportMetrics[1].Label != "Signal Score" || view.Spreads[1].ReportMetrics[1].Value != "1.25" {
+		t.Fatalf("unexpected close snapshot metric: %#v", view.Spreads[1].ReportMetrics[1])
+	}
+	if view.Spreads[1].ReportMetrics[1].KindLabel != "子图" {
+		t.Fatalf("view.Spreads[1].ReportMetrics[1].KindLabel = %q, want 子图", view.Spreads[1].ReportMetrics[1].KindLabel)
 	}
 }
 
@@ -835,6 +978,133 @@ func TestWriteBacktestHTMLIncludesSpreadGroupSections(t *testing.T) {
 	}
 	if !strings.Contains(html, "grouped-spread") || !strings.Contains(html, "standalone") {
 		t.Fatalf("expected generated html to include both grouped and ungrouped spread tags")
+	}
+}
+
+func TestWriteBacktestHTMLIncludesSpreadReportMetricSnapshots(t *testing.T) {
+	openTime := time.Date(2024, time.January, 2, 3, 0, 0, 0, time.UTC)
+	closeTime := time.Date(2024, time.January, 2, 5, 0, 0, 0, time.UTC)
+	result := &backtest.Result{
+		StrategyName:   "spread-metric-html",
+		StartTime:      openTime,
+		EndTime:        closeTime,
+		BarsCount:      3,
+		InitialCapital: 100,
+		FinalEquity:    102,
+		EquityCurve:    []float64{100, 101, 102},
+		Timestamps:     []time.Time{openTime, openTime.Add(time.Hour), closeTime},
+		Series: map[string][]float64{
+			"open":        {70000, 70100, 70200},
+			"high":        {70200, 70300, 70400},
+			"low":         {69900, 70050, 70150},
+			"close":       {70150, 70250, 70350},
+			"signal_edge": {1.11, 1.22, 1.33},
+		},
+		ReportColumns: []backtest.ReportColumn{{
+			Source:   "signal_edge",
+			Label:    "Signal Edge",
+			Decimals: 2,
+		}},
+		SpreadPositions: []backtest.SpreadPositionReport{{
+			ID:          1,
+			Tag:         "metric-spread",
+			Status:      "closed",
+			OpenTime:    openTime,
+			CloseTime:   &closeTime,
+			DaysHeld:    0.08,
+			RealizedPnL: 2,
+			Legs: []backtest.SpreadLegReport{{
+				Symbol:      "BTC-20240105-50000-C",
+				Side:        "buy",
+				Type:        backtest.Call,
+				StrikePrice: 50000,
+				Expiration:  time.Date(2024, time.January, 5, 0, 0, 0, 0, time.UTC),
+				Delta:       0.33,
+				Qty:         1,
+				EntryPrice:  10,
+				EntryTime:   openTime,
+				Closed:      true,
+				ClosePrice:  12,
+				CloseTime:   &closeTime,
+				RealizedPnL: 2,
+			}},
+		}},
+	}
+
+	outputPath := filepath.Join(t.TempDir(), "spread-metric-report.html")
+	if err := WriteBacktestHTML(outputPath, result, HTMLMeta{}); err != nil {
+		t.Fatalf("WriteBacktestHTML() error = %v", err)
+	}
+
+	htmlBytes, err := os.ReadFile(outputPath)
+	if err != nil {
+		t.Fatalf("os.ReadFile() error = %v", err)
+	}
+	html := string(htmlBytes)
+
+	if !strings.Contains(html, "策略列快照") {
+		t.Fatalf("expected generated html to include spread metric snapshot section")
+	}
+	if !strings.Contains(html, "Signal Edge") || !strings.Contains(html, "signal_edge") {
+		t.Fatalf("expected generated html to include spread metric label and source")
+	}
+	if !strings.Contains(html, ">1.11<") || !strings.Contains(html, ">1.33<") {
+		t.Fatalf("expected generated html to include open and close metric values")
+	}
+}
+
+func TestBuildHTMLViewUsesEntryDeltaForSpreadSelectionDisplay(t *testing.T) {
+	openTime := time.Date(2024, time.January, 2, 3, 4, 0, 0, time.UTC)
+	entryDelta := 0.19
+	currentDelta := 0.01
+	result := &backtest.Result{
+		StrategyName:   "spread-entry-delta",
+		StartTime:      openTime,
+		EndTime:        openTime.Add(time.Hour),
+		BarsCount:      2,
+		InitialCapital: 100,
+		FinalEquity:    100,
+		EquityCurve:    []float64{100, 100},
+		Timestamps:     []time.Time{openTime, openTime.Add(time.Hour)},
+		Series: map[string][]float64{
+			"open":  {70000, 70100},
+			"high":  {70200, 70300},
+			"low":   {69900, 70050},
+			"close": {70150, 70250},
+		},
+		SpreadPositions: []backtest.SpreadPositionReport{{
+			ID:          1,
+			Tag:         "开仓|A=0.0|B=4.0|d0.19/d0.03|n=150.38",
+			Status:      "open",
+			OpenTime:    openTime,
+			DaysHeld:    1,
+			RealizedPnL: 0,
+			Legs: []backtest.SpreadLegReport{{
+				Symbol:      "BTC-20240105-50000-C",
+				Side:        "buy",
+				Type:        backtest.Call,
+				StrikePrice: 50000,
+				Expiration:  openTime.Add(7 * 24 * time.Hour),
+				EntryDelta:  &entryDelta,
+				Delta:       currentDelta,
+				Qty:         1,
+				EntryPrice:  10,
+				EntryTime:   openTime,
+				Closed:      false,
+			}},
+		}},
+	}
+
+	view := buildHTMLView(result, HTMLMeta{})
+	if len(view.UngroupedSpreads) != 1 {
+		t.Fatalf("len(view.UngroupedSpreads) = %d, want 1", len(view.UngroupedSpreads))
+	}
+	if len(view.UngroupedSpreads[0].Legs) != 1 {
+		t.Fatalf("len(view.UngroupedSpreads[0].Legs) = %d, want 1", len(view.UngroupedSpreads[0].Legs))
+	}
+	got := view.UngroupedSpreads[0].Legs[0].OpenSelect
+	if got != "7.00 天 | Δ 0.19" {
+		t.Fatalf("OpenSelect = %q, want %q", got, "7.00 天 | Δ 0.19")
 	}
 }
 

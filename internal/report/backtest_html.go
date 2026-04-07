@@ -23,67 +23,70 @@ type HTMLMeta struct {
 }
 
 type htmlReportView struct {
-	Title                   string
-	StrategyName            string
-	Asset                   string
-	Interval                string
-	Period                  string
-	GeneratedAt             string
-	CapitalMode             string
-	CapitalProfile          string
-	CapitalNote             string
-	InitialCapital          string
-	FinalEquity             string
-	NetPnL                  string
-	TotalReturn             string
-	AnnualizedReturn        string
-	SharpeRatio             string
-	MaxDrawdown             string
-	TotalFees               string
-	BarsCount               int
-	TradesCount             int
-	SpreadsCount            int
-	TradeMarkerCount        int
-	SpreadEventCount        int
-	EquityMin               string
-	EquityMax               string
-	DrawdownMax             string
-	HasUnderlyingChart      bool
-	HasUnderlyingVolume     bool
-	UnderlyingPriceMin      string
-	UnderlyingPriceMax      string
-	UnderlyingChartNote     string
-	UnderlyingVolumeLabel   string
-	UnderlyingCandleData    template.JS
-	UnderlyingVolumeData    template.JS
-	UnderlyingMarkerData    template.JS
-	HoverColumnsData        template.JS
-	HasHoverColumns         bool
-	HasFeatureColumns       bool
-	EquitySeriesData        template.JS
-	SettledEquitySeriesData template.JS
-	BuyHoldSeriesData       template.JS
-	HasBuyHoldBenchmark     bool
-	BuyHoldMin              string
-	BuyHoldMax              string
-	BuyHoldNote             string
-	DrawdownSeriesData      template.JS
-	PnLUSDSeriesData        template.JS
-	ActiveTimeData          template.JS
-	HasPnLUSD               bool
-	PnLUSDMin               string
-	PnLUSDMax               string
-	PnLUSDNote              string
-	EquityAnalysis          equityAnalysisView
-	TradeOverview           tradeOverviewView
-	SpreadSummary           *spreadSummaryView
-	SpreadGroups            []spreadGroupView
-	UngroupedSpreads        []spreadRowView
-	Trades                  []tradeRowView
-	Spreads                 []spreadRowView
-	NoTradeRows             bool
-	NoSpreadRows            bool
-	Notes                   []string
+	Title                     string
+	StrategyName              string
+	Asset                     string
+	Interval                  string
+	Period                    string
+	GeneratedAt               string
+	CapitalMode               string
+	CapitalProfile            string
+	CapitalNote               string
+	InitialCapital            string
+	FinalEquity               string
+	NetPnL                    string
+	TotalReturn               string
+	AnnualizedReturn          string
+	SharpeRatio               string
+	MaxDrawdown               string
+	TotalFees                 string
+	BarsCount                 int
+	TradesCount               int
+	SpreadsCount              int
+	TradeMarkerCount          int
+	SpreadEventCount          int
+	EquityMin                 string
+	EquityMax                 string
+	DrawdownMax               string
+	HasUnderlyingChart        bool
+	HasUnderlyingVolume       bool
+	UnderlyingPriceMin        string
+	UnderlyingPriceMax        string
+	UnderlyingChartNote       string
+	UnderlyingVolumeLabel     string
+	UnderlyingCandleData      template.JS
+	UnderlyingVolumeData      template.JS
+	UnderlyingMarkerData      template.JS
+	HoverColumnsData          template.JS
+	HasHoverColumns           bool
+	HasFeatureColumns         bool
+	EquitySeriesData          template.JS
+	SettledEquitySeriesData   template.JS
+	SettledFloatingProfitData template.JS
+	SettledFloatingLossData   template.JS
+	SettledExposureData       template.JS
+	BuyHoldSeriesData         template.JS
+	HasBuyHoldBenchmark       bool
+	BuyHoldMin                string
+	BuyHoldMax                string
+	BuyHoldNote               string
+	DrawdownSeriesData        template.JS
+	PnLUSDSeriesData          template.JS
+	ActiveTimeData            template.JS
+	HasPnLUSD                 bool
+	PnLUSDMin                 string
+	PnLUSDMax                 string
+	PnLUSDNote                string
+	EquityAnalysis            equityAnalysisView
+	TradeOverview             tradeOverviewView
+	SpreadSummary             *spreadSummaryView
+	SpreadGroups              []spreadGroupView
+	UngroupedSpreads          []spreadRowView
+	Trades                    []tradeRowView
+	Spreads                   []spreadRowView
+	NoTradeRows               bool
+	NoSpreadRows              bool
+	Notes                     []string
 }
 
 type combinedHTMLReportView struct {
@@ -161,8 +164,12 @@ type spreadRowView struct {
 	EventTime       string
 	HeaderTimeLabel string
 	HeaderTime      string
+	UnderlyingPrice string
 	RelatedLink     string
 	RelatedText     string
+	EventUnix       int64
+	WindowStartUnix int64
+	WindowEndUnix   int64
 	eventUnix       int64
 	Status          string
 	OpenTime        string
@@ -170,6 +177,7 @@ type spreadRowView struct {
 	DaysHeld        string
 	RealizedPnL     string
 	StatusClass     string
+	ReportMetrics   []spreadReportMetricView
 	Legs            []spreadLegRowView
 }
 
@@ -208,6 +216,14 @@ type spreadLegRowView struct {
 	CloseReason    string
 	RealizedPnL    string
 	SideClass      string
+}
+
+type spreadReportMetricView struct {
+	Label     string
+	Source    string
+	Value     string
+	KindLabel string
+	KindClass string
 }
 
 type chartCandlePoint struct {
@@ -250,6 +266,31 @@ type markerKey struct {
 	Position string
 	Color    string
 	Shape    string
+}
+
+type settledEquityData struct {
+	Series         []chartLinePoint
+	FloatingProfit []chartHistogramPoint
+	FloatingLoss   []chartHistogramPoint
+	Exposure       []chartLinePoint
+}
+
+type regularPositionState struct {
+	qty            float64
+	avgEntryPrice  float64
+	costBasis      float64
+	openCommission float64
+}
+
+type spreadMetricResolver struct {
+	timestamps []time.Time
+	columns    []backtest.ReportColumn
+	series     map[string][]float64
+}
+
+type underlyingPriceResolver struct {
+	timestamps []time.Time
+	series     map[string][]float64
 }
 
 var (
@@ -502,39 +543,48 @@ func buildHTMLView(result *backtest.Result, meta HTMLMeta) htmlReportView {
 
 	drawdown := drawdownSeries(result.EquityCurve)
 	view := htmlReportView{
-		Title:                   fmt.Sprintf("%s 回测报告", result.StrategyName),
-		StrategyName:            result.StrategyName,
-		Asset:                   meta.Asset,
-		Interval:                meta.Interval,
-		Period:                  fmt.Sprintf("%s 至 %s", formatDate(result.StartTime), formatDate(result.EndTime)),
-		GeneratedAt:             meta.GeneratedAt.UTC().Format("2006-01-02 15:04:05 UTC"),
-		CapitalMode:             fallbackText(strings.TrimSpace(result.CapitalMode), strings.TrimSpace(result.AccountUnit)),
-		CapitalProfile:          fallbackText(strings.TrimSpace(result.CapitalProfile), "未标注"),
-		CapitalNote:             fallbackText(strings.TrimSpace(result.CapitalNote), "-capital 按账户单位解释。"),
-		InitialCapital:          amount(result.InitialCapital, result.AccountUnit),
-		FinalEquity:             amount(result.FinalEquity, result.AccountUnit),
-		NetPnL:                  signedAmount(result.FinalEquity-result.InitialCapital, result.AccountUnit),
-		TotalReturn:             pct(result.TotalReturn),
-		AnnualizedReturn:        pct(result.AnnualizedReturn),
-		SharpeRatio:             decimal(result.SharpeRatio),
-		MaxDrawdown:             pct(result.MaxDrawdown),
-		TotalFees:               amount(result.TotalFees, result.AccountUnit),
-		BarsCount:               result.BarsCount,
-		TradesCount:             len(result.Trades),
-		SpreadsCount:            len(result.SpreadPositions),
-		NoTradeRows:             len(result.Trades) == 0,
-		NoSpreadRows:            len(result.SpreadPositions) == 0,
-		UnderlyingCandleData:    template.JS("[]"),
-		UnderlyingVolumeData:    template.JS("[]"),
-		UnderlyingMarkerData:    template.JS("[]"),
-		HoverColumnsData:        template.JS("[]"),
-		PnLUSDSeriesData:        template.JS("[]"),
-		ActiveTimeData:          template.JS("[]"),
-		EquitySeriesData:        marshalJS(buildLineSeries(result.Timestamps, result.EquityCurve)),
-		SettledEquitySeriesData: marshalJS(buildSettledEquitySeries(result)),
-		BuyHoldSeriesData:       template.JS("[]"),
-		DrawdownSeriesData:      marshalJS(buildLineSeries(result.Timestamps, drawdown)),
+		Title:                     fmt.Sprintf("%s 回测报告", result.StrategyName),
+		StrategyName:              result.StrategyName,
+		Asset:                     meta.Asset,
+		Interval:                  meta.Interval,
+		Period:                    fmt.Sprintf("%s 至 %s", formatDate(result.StartTime), formatDate(result.EndTime)),
+		GeneratedAt:               meta.GeneratedAt.UTC().Format("2006-01-02 15:04:05 UTC"),
+		CapitalMode:               fallbackText(strings.TrimSpace(result.CapitalMode), strings.TrimSpace(result.AccountUnit)),
+		CapitalProfile:            fallbackText(strings.TrimSpace(result.CapitalProfile), "未标注"),
+		CapitalNote:               fallbackText(strings.TrimSpace(result.CapitalNote), "-capital 按账户单位解释。"),
+		InitialCapital:            amount(result.InitialCapital, result.AccountUnit),
+		FinalEquity:               amount(result.FinalEquity, result.AccountUnit),
+		NetPnL:                    signedAmount(result.FinalEquity-result.InitialCapital, result.AccountUnit),
+		TotalReturn:               pct(result.TotalReturn),
+		AnnualizedReturn:          pct(result.AnnualizedReturn),
+		SharpeRatio:               decimal(result.SharpeRatio),
+		MaxDrawdown:               pct(result.MaxDrawdown),
+		TotalFees:                 amount(result.TotalFees, result.AccountUnit),
+		BarsCount:                 result.BarsCount,
+		TradesCount:               len(result.Trades),
+		SpreadsCount:              len(result.SpreadPositions),
+		NoTradeRows:               len(result.Trades) == 0,
+		NoSpreadRows:              len(result.SpreadPositions) == 0,
+		UnderlyingCandleData:      template.JS("[]"),
+		UnderlyingVolumeData:      template.JS("[]"),
+		UnderlyingMarkerData:      template.JS("[]"),
+		HoverColumnsData:          template.JS("[]"),
+		PnLUSDSeriesData:          template.JS("[]"),
+		ActiveTimeData:            template.JS("[]"),
+		EquitySeriesData:          marshalJS(buildLineSeries(result.Timestamps, result.EquityCurve)),
+		SettledEquitySeriesData:   template.JS("[]"),
+		SettledFloatingProfitData: template.JS("[]"),
+		SettledFloatingLossData:   template.JS("[]"),
+		SettledExposureData:       template.JS("[]"),
+		BuyHoldSeriesData:         template.JS("[]"),
+		DrawdownSeriesData:        marshalJS(buildLineSeries(result.Timestamps, drawdown)),
 	}
+
+	settledData := buildSettledEquityData(result)
+	view.SettledEquitySeriesData = marshalJS(settledData.Series)
+	view.SettledFloatingProfitData = marshalJS(settledData.FloatingProfit)
+	view.SettledFloatingLossData = marshalJS(settledData.FloatingLoss)
+	view.SettledExposureData = marshalJS(settledData.Exposure)
 
 	minEq, maxEq := minMax(result.EquityCurve)
 	view.EquityMin = amount(minEq, result.AccountUnit)
@@ -585,8 +635,10 @@ func buildHTMLView(result *backtest.Result, meta HTMLMeta) htmlReportView {
 	view.TradeOverview = buildTradeOverviewView(result.TradeOverview, result.AccountUnit)
 	view.EquityAnalysis = buildEquityAnalysisView(result.EquityAnalysis, result.AccountUnit)
 	view.Trades = buildTradeRows(result.Trades, result.AccountUnit)
-	view.Spreads = buildSpreadRows(result.SpreadPositions, result.AccountUnit)
-	view.SpreadGroups, view.UngroupedSpreads = buildSpreadGroupViews(result.SpreadGroups, result.SpreadPositions, result.AccountUnit)
+	metricResolver := newSpreadMetricResolver(result)
+	priceResolver := newUnderlyingPriceResolver(result)
+	view.Spreads = buildSpreadRows(result.SpreadPositions, result.AccountUnit, metricResolver, priceResolver)
+	view.SpreadGroups, view.UngroupedSpreads = buildSpreadGroupViews(result.SpreadGroups, result.SpreadPositions, result.AccountUnit, metricResolver, priceResolver)
 
 	if result.SpreadSummary != nil {
 		s := result.SpreadSummary
@@ -730,14 +782,20 @@ func buildTradeRows(trades []backtest.Trade, unit string) []tradeRowView {
 	return rows
 }
 
-func buildSpreadRows(spreads []backtest.SpreadPositionReport, unit string) []spreadRowView {
+func buildSpreadRows(spreads []backtest.SpreadPositionReport, unit string, metricResolver spreadMetricResolver, priceResolver underlyingPriceResolver) []spreadRowView {
 	rows := make([]spreadRowView, 0, len(spreads)*2)
 	for _, spread := range spreads {
 		displayTag := stripExecDeltaTagSuffix(spread.Tag)
 		displayCloseNote := stripExecDeltaTagSuffix(spread.CloseNote)
+		openMetrics := metricResolver.valuesAt(spread.OpenTime)
+		openUnderlyingPrice := priceResolver.valueAt(spread.OpenTime)
 		legs := make([]spreadLegRowView, 0, len(spread.Legs))
 		for _, leg := range spread.Legs {
 			expiryOpenDays := leg.Expiration.Sub(leg.EntryTime).Hours() / 24
+			entryDelta := leg.Delta
+			if leg.EntryDelta != nil {
+				entryDelta = *leg.EntryDelta
+			}
 			closeTimeLabel := "平仓时间"
 			legView := spreadLegRowView{
 				Symbol:         leg.Symbol,
@@ -745,7 +803,7 @@ func buildSpreadRows(spreads []backtest.SpreadPositionReport, unit string) []spr
 				Type:           translateOptionType(string(leg.Type)),
 				StrikePrice:    currency(leg.StrikePrice),
 				Expiration:     formatDate(leg.Expiration),
-				OpenSelect:     expiryOpenDelta(expiryOpenDays, leg.Delta),
+				OpenSelect:     expiryOpenDelta(expiryOpenDays, entryDelta),
 				Qty:            decimal(leg.Qty),
 				EntryPrice:     amount4(leg.EntryPrice, unit),
 				EntryAmount:    amount4(leg.Qty*leg.EntryPrice, unit),
@@ -779,6 +837,10 @@ func buildSpreadRows(spreads []backtest.SpreadPositionReport, unit string) []spr
 			EventTime:       formatDateTime(spread.OpenTime),
 			HeaderTimeLabel: "下单",
 			HeaderTime:      formatDateTime(spread.OpenTime),
+			UnderlyingPrice: openUnderlyingPrice,
+			EventUnix:       spread.OpenTime.Unix(),
+			WindowStartUnix: spread.OpenTime.Unix(),
+			WindowEndUnix:   spread.OpenTime.Unix(),
 			Status:          "已开仓",
 			eventUnix:       spread.OpenTime.Unix(),
 			OpenTime:        formatDateTime(spread.OpenTime),
@@ -786,9 +848,11 @@ func buildSpreadRows(spreads []backtest.SpreadPositionReport, unit string) []spr
 			DaysHeld:        "-",
 			RealizedPnL:     "-",
 			StatusClass:     statusClass("open"),
+			ReportMetrics:   openMetrics,
 			Legs:            legs,
 		}
 		if spread.CloseTime != nil {
+			openRow.WindowEndUnix = spread.CloseTime.Unix()
 			openRow.RelatedLink = closeAnchor
 			openRow.RelatedText = "跳转到平仓"
 		}
@@ -807,6 +871,8 @@ func buildSpreadRows(spreads []backtest.SpreadPositionReport, unit string) []spr
 			if strings.TrimSpace(displayCloseNote) != "" {
 				closeTag = displayCloseNote
 			}
+			closeMetrics := metricResolver.valuesAt(*closeEventTime)
+			closeUnderlyingPrice := priceResolver.valueAt(*closeEventTime)
 			rows = append(rows, spreadRowView{
 				ID:              spread.ID,
 				Tag:             closeTag,
@@ -817,8 +883,12 @@ func buildSpreadRows(spreads []backtest.SpreadPositionReport, unit string) []spr
 				EventTime:       formatDateTime(*closeEventTime),
 				HeaderTimeLabel: closeHeaderLabel,
 				HeaderTime:      closeHeaderTime,
+				UnderlyingPrice: closeUnderlyingPrice,
 				RelatedLink:     openAnchor,
 				RelatedText:     "跳转到开仓",
+				EventUnix:       closeEventTime.Unix(),
+				WindowStartUnix: spread.OpenTime.Unix(),
+				WindowEndUnix:   closeEventTime.Unix(),
 				Status:          translateSpreadStatus(spread.Status),
 				eventUnix:       closeEventTime.Unix(),
 				OpenTime:        formatDateTime(spread.OpenTime),
@@ -826,6 +896,7 @@ func buildSpreadRows(spreads []backtest.SpreadPositionReport, unit string) []spr
 				DaysHeld:        fmt.Sprintf("%.2f 天", spread.DaysHeld),
 				RealizedPnL:     signedAmount(spread.RealizedPnL, unit),
 				StatusClass:     statusClass(spread.Status),
+				ReportMetrics:   closeMetrics,
 				Legs:            legs,
 			})
 		}
@@ -847,7 +918,7 @@ func buildSpreadRows(spreads []backtest.SpreadPositionReport, unit string) []spr
 	return rows
 }
 
-func buildSpreadGroupViews(groups []backtest.SpreadGroupReport, spreads []backtest.SpreadPositionReport, unit string) ([]spreadGroupView, []spreadRowView) {
+func buildSpreadGroupViews(groups []backtest.SpreadGroupReport, spreads []backtest.SpreadPositionReport, unit string, metricResolver spreadMetricResolver, priceResolver underlyingPriceResolver) ([]spreadGroupView, []spreadRowView) {
 	if len(spreads) == 0 {
 		return nil, nil
 	}
@@ -880,7 +951,10 @@ func buildSpreadGroupViews(groups []backtest.SpreadGroupReport, spreads []backte
 
 		report, hasReport := groupReports[groupID]
 		orderedSpreads := orderedGroupedSpreads(report, groupedSpreads, spreadMap)
-		rows := buildSpreadRows(orderedSpreads, unit)
+		if len(orderedSpreads) == 0 {
+			continue
+		}
+		rows := buildSpreadRows(orderedSpreads, unit, metricResolver, priceResolver)
 
 		openTime := earliestSpreadOpenTime(orderedSpreads)
 		if hasReport && !report.OpenTime.IsZero() {
@@ -921,7 +995,7 @@ func buildSpreadGroupViews(groups []backtest.SpreadGroupReport, spreads []backte
 		return views[i].ID < views[j].ID
 	})
 
-	return views, buildSpreadRows(ungrouped, unit)
+	return views, buildSpreadRows(ungrouped, unit, metricResolver, priceResolver)
 }
 
 func orderedGroupedSpreads(report backtest.SpreadGroupReport, spreads []backtest.SpreadPositionReport, spreadMap map[int]backtest.SpreadPositionReport) []backtest.SpreadPositionReport {
@@ -1271,6 +1345,105 @@ func buildHoverColumns(result *backtest.Result) []hoverColumnPayload {
 	return payload
 }
 
+func newSpreadMetricResolver(result *backtest.Result) spreadMetricResolver {
+	if result == nil || len(result.ReportColumns) == 0 || len(result.Timestamps) == 0 || len(result.Series) == 0 {
+		return spreadMetricResolver{}
+	}
+	return spreadMetricResolver{
+		timestamps: result.Timestamps,
+		columns:    result.ReportColumns,
+		series:     result.Series,
+	}
+}
+
+func newUnderlyingPriceResolver(result *backtest.Result) underlyingPriceResolver {
+	if result == nil || len(result.Timestamps) == 0 || len(result.Series) == 0 {
+		return underlyingPriceResolver{}
+	}
+	return underlyingPriceResolver{
+		timestamps: result.Timestamps,
+		series:     result.Series,
+	}
+}
+
+func (resolver underlyingPriceResolver) valueAt(eventTime time.Time) string {
+	if eventTime.IsZero() || len(resolver.timestamps) == 0 || len(resolver.series) == 0 {
+		return ""
+	}
+	index := reportColumnIndexAtOrBefore(resolver.timestamps, eventTime)
+	if index < 0 {
+		return ""
+	}
+	for _, key := range []string{"close", "open", "high", "low"} {
+		values := resolver.series[key]
+		if index >= len(values) {
+			continue
+		}
+		value := values[index]
+		if chartValueValid(value) {
+			return currency(value)
+		}
+	}
+	return ""
+}
+
+func (resolver spreadMetricResolver) valuesAt(eventTime time.Time) []spreadReportMetricView {
+	if eventTime.IsZero() || len(resolver.timestamps) == 0 || len(resolver.columns) == 0 || len(resolver.series) == 0 {
+		return nil
+	}
+	index := reportColumnIndexAtOrBefore(resolver.timestamps, eventTime)
+	if index < 0 {
+		return nil
+	}
+	metrics := make([]spreadReportMetricView, 0, len(resolver.columns))
+	for _, column := range resolver.columns {
+		values := resolver.series[column.Source]
+		if index >= len(values) {
+			continue
+		}
+		value := values[index]
+		if !chartValueValid(value) {
+			continue
+		}
+		kindLabel := "子图"
+		kindClass := "bg-teal-500/10 text-teal-200 ring-1 ring-teal-400/20"
+		if column.Overlay {
+			kindLabel = "叠加"
+			kindClass = "bg-sky-500/10 text-sky-200 ring-1 ring-sky-400/20"
+		}
+		metrics = append(metrics, spreadReportMetricView{
+			Label:     fallbackText(strings.TrimSpace(column.Label), column.Source),
+			Source:    column.Source,
+			Value:     formatReportMetricValue(value, column.Decimals),
+			KindLabel: kindLabel,
+			KindClass: kindClass,
+		})
+	}
+	if len(metrics) == 0 {
+		return nil
+	}
+	return metrics
+}
+
+func reportColumnIndexAtOrBefore(timestamps []time.Time, eventTime time.Time) int {
+	if len(timestamps) == 0 || eventTime.IsZero() {
+		return -1
+	}
+	idx := sort.Search(len(timestamps), func(i int) bool {
+		return timestamps[i].After(eventTime)
+	})
+	if idx == 0 {
+		if timestamps[0].After(eventTime) {
+			return -1
+		}
+		return 0
+	}
+	if idx >= len(timestamps) {
+		return len(timestamps) - 1
+	}
+	return idx - 1
+}
+
 func buildLineSeries(times []time.Time, values []float64) []chartLinePoint {
 	n := minInt(len(times), len(values))
 	if n == 0 {
@@ -1355,170 +1528,6 @@ func buildTimeAlignedLineSeries(times []time.Time, values []float64) []chartLine
 		points = append(points, point)
 	}
 	return points
-}
-
-type settledEquityEvent struct {
-	Time     time.Time
-	PnL      float64
-	Sequence int
-}
-
-func buildSettledEquitySeries(result *backtest.Result) []chartLinePoint {
-	if result == nil || len(result.Timestamps) == 0 {
-		return []chartLinePoint{}
-	}
-
-	events := collectSettledEquityEvents(result)
-	series := make([]chartLinePoint, 0, len(result.Timestamps))
-	accumulated := 0.0
-	eventIndex := 0
-	for _, ts := range result.Timestamps {
-		for eventIndex < len(events) && !events[eventIndex].Time.After(ts) {
-			accumulated += events[eventIndex].PnL
-			eventIndex++
-		}
-		value := result.InitialCapital + accumulated
-		valueCopy := value
-		series = append(series, chartLinePoint{Time: ts.Unix(), Value: &valueCopy})
-	}
-	return series
-}
-
-func collectSettledEquityEvents(result *backtest.Result) []settledEquityEvent {
-	events := make([]settledEquityEvent, 0, len(result.SpreadPositions)+len(result.Trades))
-	events = append(events, buildSpreadSettlementEvents(result.SpreadPositions)...)
-	events = append(events, buildTradeSettlementEvents(result.Trades)...)
-	sort.SliceStable(events, func(i, j int) bool {
-		if events[i].Time.Equal(events[j].Time) {
-			return events[i].Sequence < events[j].Sequence
-		}
-		return events[i].Time.Before(events[j].Time)
-	})
-	return events
-}
-
-func buildSpreadSettlementEvents(spreads []backtest.SpreadPositionReport) []settledEquityEvent {
-	events := make([]settledEquityEvent, 0, len(spreads))
-	sequence := 0
-	for _, spread := range spreads {
-		settledAt := spreadSettlementTime(spread)
-		if settledAt == nil || settledAt.IsZero() {
-			continue
-		}
-		events = append(events, settledEquityEvent{
-			Time:     *settledAt,
-			PnL:      spread.RealizedPnL,
-			Sequence: sequence,
-		})
-		sequence++
-	}
-	return events
-}
-
-func spreadSettlementTime(spread backtest.SpreadPositionReport) *time.Time {
-	if spread.CloseTime != nil && !spread.CloseTime.IsZero() {
-		return spread.CloseTime
-	}
-	return nil
-}
-
-func buildTradeSettlementEvents(trades []backtest.Trade) []settledEquityEvent {
-	type openEntry struct {
-		Side       backtest.Side
-		Qty        float64
-		Price      float64
-		Commission float64
-	}
-
-	if len(trades) == 0 {
-		return nil
-	}
-
-	ordered := append([]backtest.Trade(nil), trades...)
-	sort.SliceStable(ordered, func(i, j int) bool {
-		if ordered[i].Timestamp.Equal(ordered[j].Timestamp) {
-			return ordered[i].ID < ordered[j].ID
-		}
-		return ordered[i].Timestamp.Before(ordered[j].Timestamp)
-	})
-
-	pending := make(map[backtest.SecurityRef]*openEntry)
-	events := make([]settledEquityEvent, 0, len(ordered))
-	sequence := 0
-	for _, trade := range ordered {
-		if trade.Qty <= 0 {
-			continue
-		}
-		entry, hasPending := pending[trade.Security]
-		if !hasPending {
-			pending[trade.Security] = &openEntry{
-				Side:       trade.Side,
-				Qty:        trade.Qty,
-				Price:      trade.FillPrice,
-				Commission: trade.Commission,
-			}
-			continue
-		}
-
-		if entry.Side != trade.Side {
-			closeQty := trade.Qty
-			if closeQty > entry.Qty {
-				closeQty = entry.Qty
-			}
-
-			pnl := 0.0
-			if entry.Side == backtest.Buy {
-				pnl = closeQty * (trade.FillPrice - entry.Price)
-			} else {
-				pnl = closeQty * (entry.Price - trade.FillPrice)
-			}
-
-			entryCommission := 0.0
-			if entry.Qty > 0 {
-				entryCommission = entry.Commission * (closeQty / entry.Qty)
-			}
-			closeCommission := trade.Commission
-			if trade.Qty > 0 && closeQty < trade.Qty {
-				closeCommission = trade.Commission * (closeQty / trade.Qty)
-			}
-			pnl -= closeCommission + entryCommission
-
-			events = append(events, settledEquityEvent{
-				Time:     trade.Timestamp,
-				PnL:      pnl,
-				Sequence: sequence,
-			})
-			sequence++
-
-			remaining := entry.Qty - closeQty
-			if remaining > 0 {
-				entry.Qty = remaining
-				entry.Commission -= entryCommission
-			} else {
-				excess := trade.Qty - closeQty
-				if excess > 0 {
-					pending[trade.Security] = &openEntry{
-						Side:       trade.Side,
-						Qty:        excess,
-						Price:      trade.FillPrice,
-						Commission: trade.Commission - closeCommission,
-					}
-				} else {
-					delete(pending, trade.Security)
-				}
-			}
-			continue
-		}
-
-		totalQty := entry.Qty + trade.Qty
-		if totalQty > 0 {
-			entry.Price = (entry.Price*entry.Qty + trade.FillPrice*trade.Qty) / totalQty
-		}
-		entry.Commission += trade.Commission
-		entry.Qty = totalQty
-	}
-
-	return events
 }
 
 func buildUnderlyingMarkers(result *backtest.Result) ([]chartMarker, int, int) {
@@ -1657,6 +1666,267 @@ func buildActiveTimes(result *backtest.Result) []int64 {
 		}
 	}
 	return activeTimes
+}
+
+func buildSettledEquityData(result *backtest.Result) settledEquityData {
+	if result == nil || len(result.Timestamps) == 0 || len(result.EquityCurve) == 0 {
+		return settledEquityData{}
+	}
+
+	eventDeltas := buildSettlementEventDeltas(result)
+	series := []chartLinePoint{{Time: result.Timestamps[0].Unix(), Value: floatPtr(result.InitialCapital)}}
+	profitBars := make([]chartHistogramPoint, 0, len(eventDeltas))
+	lossBars := make([]chartHistogramPoint, 0, len(eventDeltas))
+	exposure := buildExposureSeries(result)
+
+	currentSettled := result.InitialCapital
+	segmentMaxFloat := 0.0
+	segmentMinFloat := 0.0
+
+	for index, ts := range result.Timestamps {
+		unix := ts.Unix()
+		if delta, ok := eventDeltas[unix]; ok && math.Abs(delta) > 1e-9 {
+			if segmentMaxFloat > 1e-9 {
+				profitBars = append(profitBars, chartHistogramPoint{Time: unix, Value: segmentMaxFloat, Color: "rgba(45, 212, 191, 0.35)"})
+			}
+			if segmentMinFloat < -1e-9 {
+				lossBars = append(lossBars, chartHistogramPoint{Time: unix, Value: segmentMinFloat, Color: "rgba(248, 113, 113, 0.28)"})
+			}
+			currentSettled += delta
+			appendOrReplaceLinePoint(&series, chartLinePoint{Time: unix, Value: floatPtr(currentSettled)})
+			segmentMaxFloat = 0
+			segmentMinFloat = 0
+		}
+
+		if index >= len(result.EquityCurve) {
+			continue
+		}
+		floating := result.EquityCurve[index] - currentSettled
+		if floating > segmentMaxFloat {
+			segmentMaxFloat = floating
+		}
+		if floating < segmentMinFloat {
+			segmentMinFloat = floating
+		}
+	}
+
+	return settledEquityData{
+		Series:         series,
+		FloatingProfit: profitBars,
+		FloatingLoss:   lossBars,
+		Exposure:       exposure,
+	}
+}
+
+func buildSettlementEventDeltas(result *backtest.Result) map[int64]float64 {
+	deltas := buildRegularTradeSettlementDeltas(result.Trades)
+	for eventTime, delta := range buildSpreadSettlementDeltas(result.SpreadPositions) {
+		deltas[eventTime] += delta
+	}
+	return deltas
+}
+
+func buildRegularTradeSettlementDeltas(trades []backtest.Trade) map[int64]float64 {
+	if len(trades) == 0 {
+		return map[int64]float64{}
+	}
+
+	ordered := append([]backtest.Trade(nil), trades...)
+	sort.Slice(ordered, func(i, j int) bool {
+		if ordered[i].Timestamp.Equal(ordered[j].Timestamp) {
+			if ordered[i].Security.Symbol != ordered[j].Security.Symbol {
+				return ordered[i].Security.Symbol < ordered[j].Security.Symbol
+			}
+			return ordered[i].ID < ordered[j].ID
+		}
+		return ordered[i].Timestamp.Before(ordered[j].Timestamp)
+	})
+
+	states := make(map[backtest.SecurityRef]*regularPositionState)
+	deltas := make(map[int64]float64)
+	for _, trade := range ordered {
+		state, ok := states[trade.Security]
+		if !ok {
+			state = &regularPositionState{}
+			states[trade.Security] = state
+		}
+		realized := applyRegularTradeSettlement(state, trade)
+		if math.Abs(realized) > 1e-9 {
+			deltas[trade.Timestamp.Unix()] += realized
+		}
+	}
+	return deltas
+}
+
+func applyRegularTradeSettlement(state *regularPositionState, trade backtest.Trade) float64 {
+	fillQty := trade.Qty
+	if trade.Side == backtest.Sell {
+		fillQty = -fillQty
+	}
+	fillAbs := math.Abs(fillQty)
+	positionAbs := math.Abs(state.qty)
+
+	if state.qty == 0 {
+		state.qty = fillQty
+		state.avgEntryPrice = trade.FillPrice
+		state.costBasis = trade.FillPrice * fillAbs
+		state.openCommission = trade.Commission
+		return 0
+	}
+
+	if (state.qty > 0 && fillQty > 0) || (state.qty < 0 && fillQty < 0) {
+		state.costBasis += trade.FillPrice * fillAbs
+		state.qty += fillQty
+		state.avgEntryPrice = state.costBasis / math.Abs(state.qty)
+		state.openCommission += trade.Commission
+		return 0
+	}
+
+	closeQty := fillAbs
+	if closeQty > positionAbs {
+		closeQty = positionAbs
+	}
+
+	realized := 0.0
+	if state.qty > 0 {
+		realized = closeQty * (trade.FillPrice - state.avgEntryPrice)
+	} else {
+		realized = closeQty * (state.avgEntryPrice - trade.FillPrice)
+	}
+
+	openCommissionAllocated := 0.0
+	if positionAbs > 1e-9 && state.openCommission != 0 {
+		openCommissionAllocated = state.openCommission * (closeQty / positionAbs)
+	}
+	exitCommissionAllocated := 0.0
+	if fillAbs > 1e-9 && trade.Commission != 0 {
+		exitCommissionAllocated = trade.Commission * (closeQty / fillAbs)
+	}
+	realized -= openCommissionAllocated + exitCommissionAllocated
+
+	remainingOld := positionAbs - closeQty
+	newQty := fillAbs - closeQty
+	if remainingOld > 1e-9 {
+		if state.qty > 0 {
+			state.qty = remainingOld
+		} else {
+			state.qty = -remainingOld
+		}
+		state.costBasis = state.avgEntryPrice * remainingOld
+		state.openCommission -= openCommissionAllocated
+		return realized
+	}
+
+	if newQty > 1e-9 {
+		if fillQty > 0 {
+			state.qty = newQty
+		} else {
+			state.qty = -newQty
+		}
+		state.avgEntryPrice = trade.FillPrice
+		state.costBasis = trade.FillPrice * newQty
+		state.openCommission = trade.Commission - exitCommissionAllocated
+		return realized
+	}
+
+	state.qty = 0
+	state.avgEntryPrice = 0
+	state.costBasis = 0
+	state.openCommission = 0
+	return realized
+}
+
+func buildSpreadSettlementDeltas(spreads []backtest.SpreadPositionReport) map[int64]float64 {
+	deltas := make(map[int64]float64)
+	for _, spread := range spreads {
+		settledAt := spread.CloseTime
+		if settledAt == nil {
+			settledAt = spread.CloseTriggerTime
+		}
+		if settledAt == nil {
+			continue
+		}
+		deltas[settledAt.Unix()] += spread.RealizedPnL
+	}
+	return deltas
+}
+
+func buildExposureSeries(result *backtest.Result) []chartLinePoint {
+	if result == nil || len(result.Timestamps) == 0 {
+		return nil
+	}
+
+	counts := make([]float64, len(result.Timestamps))
+	for _, spread := range result.SpreadPositions {
+		for index, ts := range result.Timestamps {
+			if ts.Before(spread.OpenTime) {
+				continue
+			}
+			if spread.CloseTime != nil && ts.After(*spread.CloseTime) {
+				continue
+			}
+			counts[index]++
+		}
+	}
+
+	trades := append([]backtest.Trade(nil), result.Trades...)
+	sort.Slice(trades, func(i, j int) bool {
+		if trades[i].Timestamp.Equal(trades[j].Timestamp) {
+			if trades[i].Security.Symbol != trades[j].Security.Symbol {
+				return trades[i].Security.Symbol < trades[j].Security.Symbol
+			}
+			return trades[i].ID < trades[j].ID
+		}
+		return trades[i].Timestamp.Before(trades[j].Timestamp)
+	})
+
+	positionBySecurity := make(map[string]float64)
+	activeSecurities := 0
+	tradeIndex := 0
+	for index, ts := range result.Timestamps {
+		for tradeIndex < len(trades) && !trades[tradeIndex].Timestamp.After(ts) {
+			trade := trades[tradeIndex]
+			key := trade.Security.Market + "|" + trade.Security.Symbol + "|" + trade.Security.Interval
+			prevQty := positionBySecurity[key]
+			nextQty := prevQty
+			if trade.Side == backtest.Buy {
+				nextQty += trade.Qty
+			} else {
+				nextQty -= trade.Qty
+			}
+			if math.Abs(prevQty) <= 1e-9 && math.Abs(nextQty) > 1e-9 {
+				activeSecurities++
+			} else if math.Abs(prevQty) > 1e-9 && math.Abs(nextQty) <= 1e-9 {
+				activeSecurities--
+			}
+			if math.Abs(nextQty) <= 1e-9 {
+				delete(positionBySecurity, key)
+			} else {
+				positionBySecurity[key] = nextQty
+			}
+			tradeIndex++
+		}
+		counts[index] += float64(activeSecurities)
+	}
+
+	return buildTimeAlignedLineSeries(result.Timestamps, counts)
+}
+
+func appendOrReplaceLinePoint(points *[]chartLinePoint, point chartLinePoint) {
+	if len(*points) == 0 {
+		*points = append(*points, point)
+		return
+	}
+	last := &(*points)[len(*points)-1]
+	if last.Time == point.Time {
+		last.Value = point.Value
+		return
+	}
+	*points = append(*points, point)
+}
+
+func floatPtr(value float64) *float64 {
+	return &value
 }
 
 func appendMarker(markers map[markerKey]*chartMarker, marker chartMarker) {
@@ -1864,6 +2134,16 @@ func nullableAmount4(value float64, ok bool, unit string) string {
 	return amount4(value, unit)
 }
 
+func formatReportMetricValue(value float64, decimals int) string {
+	if !chartValueValid(value) {
+		return "-"
+	}
+	if decimals < 0 {
+		decimals = 0
+	}
+	return fmt.Sprintf("%.*f", decimals, value)
+}
+
 func fallbackText(value, fallback string) string {
 	if strings.TrimSpace(value) == "" {
 		return fallback
@@ -1960,13 +2240,37 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
 			{{ if gt .GroupID 0 }}<span class="mono text-xs px-2 py-0.5 rounded bg-violet-500/15 text-violet-300 ring-1 ring-violet-400/30">组 #{{ .GroupID }}</span>{{ end }}
 			<span class="mono text-xs px-2 py-0.5 rounded {{ .StatusClass }}">{{ .Status }}</span>
 			<span class="mono text-xs text-slate-400">{{ .HeaderTimeLabel }} {{ .HeaderTime }}</span>
+			{{ if .UnderlyingPrice }}<span class="mono text-xs text-slate-400">标的 {{ .UnderlyingPrice }}</span>{{ end }}
 		</div>
 		<div class="flex gap-5 text-xs text-slate-400">
+			{{ if gt .EventUnix 0 }}<button type="button" class="rounded-md border border-white/10 px-2.5 py-1 text-[11px] text-slate-300 transition hover:border-sky-400/40 hover:text-sky-200" data-chart-jump-time="{{ .EventUnix }}" data-chart-window-start="{{ .WindowStartUnix }}" data-chart-window-end="{{ .WindowEndUnix }}">定位到图表</button>{{ end }}
 			{{ if ne .EventTime .HeaderTime }}<span>{{ if eq .EventType "OPEN" }}开仓{{ else }}平仓{{ end }} {{ .EventTime }}</span>{{ end }}
 			<span>盈亏 <span class="mono text-slate-300">{{ .RealizedPnL }}</span></span>
 			{{ if .RelatedLink }}<a class="text-sky-300 hover:text-sky-200 underline underline-offset-2" href="#{{ .RelatedLink }}">{{ .RelatedText }}</a>{{ end }}
 		</div>
 	</div>
+	{{ if .ReportMetrics }}
+	<div class="px-4 py-3 border-b border-white/5 bg-white/[0.02]">
+		<div class="flex flex-wrap items-center gap-3 mb-3">
+			<span class="mono text-[11px] uppercase tracking-[0.22em] text-slate-500">策略列快照</span>
+			<span class="text-xs text-slate-500">取事件时点最近可用 bar 的 report columns 值</span>
+		</div>
+		<div class="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+			{{ range .ReportMetrics }}
+			<div class="spread-metric-card">
+				<div class="flex items-start justify-between gap-3">
+					<div>
+						<div class="text-[11px] mono uppercase tracking-[0.16em] text-slate-500">{{ .Label }}</div>
+						<div class="mt-1 mono text-sm text-slate-100">{{ .Value }}</div>
+					</div>
+					<span class="mono text-[10px] px-2 py-0.5 rounded-full {{ .KindClass }}">{{ .KindLabel }}</span>
+				</div>
+				<div class="mt-3 mono text-[11px] text-slate-500">{{ .Source }}</div>
+			</div>
+			{{ end }}
+		</div>
+	</div>
+	{{ end }}
 	<div class="overflow-x-auto">
 		<table class="w-full text-sm">
 			<thead>
@@ -2049,6 +2353,7 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
 		.feature-empty-state { border: 1px dashed rgba(255,255,255,0.1); border-radius: 10px; padding: 18px; text-align: center; color: #94a3b8; font-size: 12px; }
 		.feature-legend-swatch { display: inline-block; width: 10px; height: 10px; border-radius: 999px; }
 		.feature-legend-value { color: #f8fafc; }
+		.spread-metric-card { background: linear-gradient(180deg, rgba(255,255,255,0.045), rgba(255,255,255,0.02)); border: 1px solid rgba(255,255,255,0.07); border-radius: 12px; padding: 12px 14px; min-height: 84px; }
 		.spread-group-summary { list-style: none; }
 		.spread-group-summary::-webkit-details-marker { display: none; }
 		.spread-group-chevron { transition: transform 140ms ease; }
@@ -2091,19 +2396,14 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
 		  <p class="text-xs text-slate-400">忽略空闲时段以压缩无变化的平坦区间（应用于下方所有图表）。</p>
 		</div>
 		<div class="flex flex-wrap items-center gap-3">
-			<label class="inline-flex items-center gap-2 rounded-md border border-white/10 px-3 py-2 text-sm text-slate-200 cursor-pointer select-none">
-			  <input id="toggle-ignore-idle" type="checkbox" class="accent-teal-400" />
-			  <span>忽略空闲时段</span>
-			</label>
-			<label class="inline-flex items-center gap-2 rounded-md border border-white/10 px-3 py-2 text-sm text-slate-200 select-none">
-				<span>时区</span>
-				<select id="timezone-select" class="rounded bg-[#0f1923] px-2 py-1 text-sm text-slate-100 outline-none">
-					<option value="browser">浏览器默认</option>
-					<option value="utc">UTC</option>
-					<option value="utc8">UTC+8</option>
-				</select>
-			</label>
-			<div id="timezone-label" class="mono text-xs text-slate-400"></div>
+		  <label class="inline-flex items-center gap-2 rounded-md border border-white/10 px-3 py-2 text-sm text-slate-200 cursor-pointer select-none">
+			<input id="toggle-ignore-idle" type="checkbox" class="accent-teal-400" />
+			<span>忽略空闲时段</span>
+		  </label>
+		  <select id="timezone-select" class="rounded-md border border-white/10 bg-transparent px-3 py-2 text-sm text-slate-200 cursor-pointer">
+			<option value="utc">UTC</option>
+			<option value="local">本地时间</option>
+		  </select>
 		</div>
 	  </div>
 	</div>
@@ -2228,20 +2528,32 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
     {{ end }}
 
     <div class="section">
-		<div class="flex flex-wrap items-center justify-between gap-3 mb-3">
-			<div>
-	<h2>权益曲线</h2>
-	<p id="equity-display-note" class="text-xs text-slate-400">按市值显示，包含未平仓头寸的浮动盈亏。范围 {{ .EquityMin }} 至 {{ .EquityMax }} · 手续费 {{ .TotalFees }}</p>
-			</div>
-			<div class="inline-flex rounded-lg border border-white/10 bg-white/[0.03] p-1 text-xs text-slate-300">
-				<button id="equity-mode-mark" type="button" class="rounded-md bg-teal-400/15 px-3 py-2 text-teal-200 transition" data-equity-mode="mark_to_market">按市值</button>
-				<button id="equity-mode-settled" type="button" class="rounded-md px-3 py-2 text-slate-300 transition hover:text-white" data-equity-mode="settled">仅结算</button>
-			</div>
+	<div class="flex flex-wrap items-center justify-between gap-3 mb-3">
+		<div>
+			<h2 class="!mb-1">权益曲线</h2>
+			<p class="text-xs text-slate-400">范围 {{ .EquityMin }} 至 {{ .EquityMax }} · 手续费 {{ .TotalFees }}</p>
+			{{ if .HasBuyHoldBenchmark }}<p class="text-xs text-slate-400">Buy&amp;Hold（USD）范围 {{ .BuyHoldMin }} 至 {{ .BuyHoldMax }} · {{ .BuyHoldNote }}</p>{{ end }}
+			<p id="equity-mode-note" class="text-xs text-slate-500">默认展示逐 bar 净值；切换后仅保留已结算收益点，并在下方显示区间浮盈浮亏与持仓暴露。</p>
 		</div>
-		{{ if .HasBuyHoldBenchmark }}<p class="text-xs text-slate-400 mb-3">Buy&amp;Hold（USD）范围 {{ .BuyHoldMin }} 至 {{ .BuyHoldMax }} · {{ .BuyHoldNote }}</p>{{ end }}
+		<label class="inline-flex items-center gap-2 rounded-md border border-white/10 px-3 py-2 text-sm text-slate-200 cursor-pointer select-none" data-equity-mode="settled">
+			<input id="toggle-settled-equity" type="checkbox" class="accent-teal-400" />
+			<span>仅显示已结算权益</span>
+		</label>
+	</div>
       <div class="chart-box p-1">
         <div id="equity-chart" style="width:100%;height:300px;"></div>
       </div>
+	  <div id="settled-context-panel" class="mt-3 hidden">
+		<div class="mb-2 flex flex-wrap items-center justify-between gap-3">
+			<div>
+				<div class="text-[11px] mono uppercase tracking-[0.22em] text-teal-400">已结算模式上下文</div>
+				<p class="mt-1 text-xs text-slate-400">绿色 / 红色柱表示两次结算之间的最大浮盈 / 浮亏，白线表示持仓暴露强度。</p>
+			</div>
+		</div>
+		<div class="chart-box p-1">
+			<div id="settled-context-chart" style="width:100%;height:180px;"></div>
+		</div>
+	  </div>
     </div>
 
     {{ if .HasPnLUSD }}
@@ -2388,10 +2700,57 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
 	const hoverColumns = {{ .HoverColumnsData }};
     const equitySeries = {{ .EquitySeriesData }};
 	const settledEquitySeries = {{ .SettledEquitySeriesData }};
+	const settledFloatingProfitSeries = {{ .SettledFloatingProfitData }};
+	const settledFloatingLossSeries = {{ .SettledFloatingLossData }};
+	const settledExposureSeries = {{ .SettledExposureData }};
 	const buyHoldSeries = {{ .BuyHoldSeriesData }};
     const drawdownSeries = {{ .DrawdownSeriesData }};
     const pnlUSDSeries = {{ .PnLUSDSeriesData }};
 	const activeTimes = {{ .ActiveTimeData }};
+
+	// Timezone mode utilities
+	function detectDefaultTimeZoneMode() {
+		try {
+			var tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+			return (tz && tz !== 'UTC') ? 'local' : 'utc';
+		} catch (e) {
+			return 'utc';
+		}
+	}
+
+	function formatDateTimeForMode(timeValue, mode) {
+		var unixSeconds = normalizeUnixSeconds(timeValue);
+		if (unixSeconds === null) return '';
+		var date = new Date(unixSeconds * 1000);
+		if (mode === 'local') {
+			return date.getFullYear() + '-' +
+				String(date.getMonth() + 1).padStart(2, '0') + '-' +
+				String(date.getDate()).padStart(2, '0') + ' ' +
+				String(date.getHours()).padStart(2, '0') + ':' +
+				String(date.getMinutes()).padStart(2, '0');
+		}
+		return date.getUTCFullYear() + '-' +
+			String(date.getUTCMonth() + 1).padStart(2, '0') + '-' +
+			String(date.getUTCDate()).padStart(2, '0') + ' ' +
+			String(date.getUTCHours()).padStart(2, '0') + ':' +
+			String(date.getUTCMinutes()).padStart(2, '0') + ' UTC';
+	}
+
+	function rewriteVisibleDateText(mode) {
+		var dateElements = document.querySelectorAll('[data-utc-time]');
+		dateElements.forEach(function(el) {
+			var utcTime = parseInt(el.getAttribute('data-utc-time'), 10);
+			if (!isNaN(utcTime)) {
+				el.textContent = formatDateTimeForMode(utcTime, mode);
+			}
+		});
+	}
+
+	function applyTimeZoneMode(mode) {
+		var select = document.getElementById('timezone-select');
+		if (select) select.value = mode;
+		rewriteVisibleDateText(mode);
+	}
 
     const chartTheme = {
       layout: {
@@ -2419,9 +2778,6 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
     };
 
 		const utcMonthNames = ['1月', '2月', '3月', '4月', '5月', '6月', '7月', '8月', '9月', '10月', '11月', '12月'];
-		const timeZoneTextCache = new WeakMap();
-		const utcDateTokenPattern = /\b(\d{4})-(\d{2})-(\d{2})(?: (\d{2}):(\d{2})(?::(\d{2}))? UTC)?\b/g;
-		var currentTimeZoneMode = 'browser';
 
 		function padUTC(value) {
 			return String(value).padStart(2, '0');
@@ -2445,168 +2801,34 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
 			return null;
 		}
 
-		function formatOffsetLabel(offsetMinutes) {
-			var sign = offsetMinutes >= 0 ? '+' : '-';
-			var absoluteMinutes = Math.abs(offsetMinutes);
-			var hours = Math.floor(absoluteMinutes / 60);
-			var minutes = absoluteMinutes % 60;
-			if (minutes === 0) {
-				return 'UTC' + sign + padUTC(hours);
+		function formatUTCDateTime(timeValue, includeSeconds) {
+			var unixSeconds = normalizeUnixSeconds(timeValue);
+			if (unixSeconds === null) {
+				return '';
 			}
-			return 'UTC' + sign + padUTC(hours) + ':' + padUTC(minutes);
-		}
-
-		function timeZoneModeLabel(mode, unixSeconds) {
-			if (mode === 'utc') {
-				return 'UTC';
-			}
-			if (mode === 'utc8') {
-				return 'UTC+08';
-			}
-			return formatOffsetLabel(-new Date(unixSeconds * 1000).getTimezoneOffset());
-		}
-
-		function timeZoneParts(unixSeconds, mode) {
 			var date = new Date(unixSeconds * 1000);
-			if (mode === 'utc') {
-				return {
-					year: date.getUTCFullYear(),
-					month: date.getUTCMonth() + 1,
-					day: date.getUTCDate(),
-					hour: date.getUTCHours(),
-					minute: date.getUTCMinutes(),
-					second: date.getUTCSeconds(),
-					label: 'UTC'
-				};
-			}
-			if (mode === 'utc8') {
-				var shifted = new Date((unixSeconds + 8 * 60 * 60) * 1000);
-				return {
-					year: shifted.getUTCFullYear(),
-					month: shifted.getUTCMonth() + 1,
-					day: shifted.getUTCDate(),
-					hour: shifted.getUTCHours(),
-					minute: shifted.getUTCMinutes(),
-					second: shifted.getUTCSeconds(),
-					label: 'UTC+08'
-				};
-			}
-			return {
-				year: date.getFullYear(),
-				month: date.getMonth() + 1,
-				day: date.getDate(),
-				hour: date.getHours(),
-				minute: date.getMinutes(),
-				second: date.getSeconds(),
-				label: timeZoneModeLabel(mode, unixSeconds)
-			};
-		}
-
-		function formatDateForMode(unixSeconds, mode) {
-			var parts = timeZoneParts(unixSeconds, mode);
-			return parts.year + '-' + padUTC(parts.month) + '-' + padUTC(parts.day);
-		}
-
-		function formatDateTimeForMode(unixSeconds, mode, includeSeconds) {
-			var parts = timeZoneParts(unixSeconds, mode);
 			var formatted =
-				parts.year + '-' +
-				padUTC(parts.month) + '-' +
-				padUTC(parts.day) + ' ' +
-				padUTC(parts.hour) + ':' +
-				padUTC(parts.minute);
+				date.getUTCFullYear() + '-' +
+				padUTC(date.getUTCMonth() + 1) + '-' +
+				padUTC(date.getUTCDate()) + ' ' +
+				padUTC(date.getUTCHours()) + ':' +
+				padUTC(date.getUTCMinutes());
 			if (includeSeconds) {
-				formatted += ':' + padUTC(parts.second);
+				formatted += ':' + padUTC(date.getUTCSeconds());
 			}
-			return formatted + ' ' + parts.label;
+			return formatted + ' UTC';
 		}
 
-		function transformDateText(text, mode) {
-			utcDateTokenPattern.lastIndex = 0;
-			return text.replace(utcDateTokenPattern, function(match, year, month, day, hour, minute, second) {
-				var unixSeconds = Math.floor(Date.UTC(
-					Number(year),
-					Number(month) - 1,
-					Number(day),
-					hour === undefined ? 0 : Number(hour),
-					minute === undefined ? 0 : Number(minute),
-					second === undefined ? 0 : Number(second)
-				) / 1000);
-				if (hour === undefined) {
-					return formatDateForMode(unixSeconds, mode);
-				}
-				return formatDateTimeForMode(unixSeconds, mode, second !== undefined);
-			});
-		}
-
-		function rewriteVisibleDateText(mode) {
-			if (!document.body) {
-				return;
-			}
-			var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
-				acceptNode: function(node) {
-					if (!node || !node.parentElement) {
-						return NodeFilter.FILTER_REJECT;
-					}
-					var tagName = node.parentElement.tagName;
-					if (tagName === 'SCRIPT' || tagName === 'STYLE' || tagName === 'NOSCRIPT') {
-						return NodeFilter.FILTER_REJECT;
-					}
-					var original = timeZoneTextCache.get(node);
-					if (original === undefined) {
-						original = node.nodeValue;
-						timeZoneTextCache.set(node, original);
-					}
-					utcDateTokenPattern.lastIndex = 0;
-					return utcDateTokenPattern.test(original) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
-				}
-			});
-
-			var textNode = walker.nextNode();
-			while (textNode) {
-				var source = timeZoneTextCache.get(textNode);
-				textNode.nodeValue = transformDateText(source, mode);
-				textNode = walker.nextNode();
-			}
-		}
-
-		function detectDefaultTimeZoneMode() {
-			var offsetMinutes = -new Date().getTimezoneOffset();
-			if (offsetMinutes === 0) {
-				return 'utc';
-			}
-			if (offsetMinutes === 8 * 60) {
-				return 'utc8';
-			}
-			return 'browser';
-		}
-
-		function formatDisplayDateTime(timeValue, includeSeconds) {
+		function formatUTCTickLabel(timeValue) {
 			var unixSeconds = normalizeUnixSeconds(timeValue);
 			if (unixSeconds === null) {
 				return '';
 			}
-			return formatDateTimeForMode(unixSeconds, currentTimeZoneMode, includeSeconds);
-		}
-
-		function formatDisplayTickLabel(timeValue) {
-			var unixSeconds = normalizeUnixSeconds(timeValue);
-			if (unixSeconds === null) {
-				return '';
+			var date = new Date(unixSeconds * 1000);
+			if (date.getUTCHours() === 0 && date.getUTCMinutes() === 0 && date.getUTCSeconds() === 0) {
+				return utcMonthNames[date.getUTCMonth()] + padUTC(date.getUTCDate()) + '日';
 			}
-			var parts = timeZoneParts(unixSeconds, currentTimeZoneMode);
-			if (parts.hour === 0 && parts.minute === 0 && parts.second === 0) {
-				return utcMonthNames[parts.month - 1] + padUTC(parts.day) + '日';
-			}
-			return padUTC(parts.hour) + ':' + padUTC(parts.minute);
-		}
-
-		function buildChartLocalization() {
-			return {
-				locale: 'zh-CN',
-				timeFormatter: function(timeValue) { return formatDisplayDateTime(timeValue, true); },
-				tickMarkFormatter: function(timeValue) { return formatDisplayTickLabel(timeValue); }
-			};
+			return padUTC(date.getUTCHours()) + ':' + padUTC(date.getUTCMinutes());
 		}
 
     function createChart(id, height) {
@@ -2615,7 +2837,11 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
       var chart = LightweightCharts.createChart(el, Object.assign({
         width: el.clientWidth, height: height,
 				handleScroll: true, handleScale: true,
-				localization: buildChartLocalization()
+				localization: {
+					locale: 'zh-CN',
+					timeFormatter: function(timeValue) { return formatUTCDateTime(timeValue, true); },
+					tickMarkFormatter: function(timeValue) { return formatUTCTickLabel(timeValue); }
+				}
       }, chartTheme));
       if (typeof ResizeObserver !== 'undefined') {
         new ResizeObserver(function() { chart.applyOptions({ width: el.clientWidth }); }).observe(el);
@@ -2628,11 +2854,11 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
 		function registerSyncedChart(chart) {
 			if (!chart || chartSyncState.synced.has(chart)) return;
 			chartSyncState.synced.add(chart);
-			chart.timeScale().subscribeVisibleLogicalRangeChange(function(range) {
+			chart.timeScale().subscribeVisibleTimeRangeChange(function(range) {
 				if (!range || chartSyncState.syncing) return;
 				chartSyncState.syncing = true;
 				charts.forEach(function(otherChart) {
-					if (otherChart !== chart) otherChart.timeScale().setVisibleLogicalRange(range);
+					if (otherChart !== chart) otherChart.timeScale().setVisibleRange(range);
 				});
 				chartSyncState.syncing = false;
 			});
@@ -2674,12 +2900,93 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
 			});
 		}
 
+		function buildBaseTimeline() {
+			var seen = new Set();
+			var times = [];
+			function appendTimes(series) {
+				(series || []).forEach(function(point) {
+					if (!point || typeof point.time !== 'number' || seen.has(point.time)) return;
+					seen.add(point.time);
+					times.push(point.time);
+				});
+			}
+			appendTimes(underlyingCandles);
+			appendTimes(equitySeries);
+			appendTimes(drawdownSeries);
+			appendTimes(pnlUSDSeries);
+			times.sort(function(a, b) { return a - b; });
+			return times;
+		}
+
+		function currentTimeline() {
+			if (!currentIdleFilterEnabled || activeSet.size === 0) return baseTimeline.slice();
+			return baseTimeline.filter(function(time) {
+				return activeSet.has(time);
+			});
+		}
+
+		function applyVisibleTimeRange(range) {
+			if (!range || range.from === undefined || range.to === undefined) return;
+			charts.forEach(function(chart) {
+				if (chart) chart.timeScale().setVisibleRange(range);
+			});
+		}
+
+		function fitChartsToVisibleData() {
+			var timeline = currentTimeline();
+			if (!timeline.length) return;
+			applyVisibleTimeRange({ from: timeline[0], to: timeline[timeline.length - 1] });
+		}
+
+		function nearestTimeIndex(timeline, targetTime) {
+			if (!timeline.length) return -1;
+			var left = 0;
+			var right = timeline.length - 1;
+			while (left <= right) {
+				var middle = Math.floor((left + right) / 2);
+				var candidate = timeline[middle];
+				if (candidate === targetTime) return middle;
+				if (candidate < targetTime) left = middle + 1;
+				else right = middle - 1;
+			}
+			if (left >= timeline.length) return timeline.length - 1;
+			if (right < 0) return 0;
+			return Math.abs(timeline[left] - targetTime) < Math.abs(timeline[right] - targetTime) ? left : right;
+		}
+
+		function focusChartsAtEvent(targetTime, windowStart, windowEnd) {
+			var timeline = currentTimeline();
+			if (!timeline.length || typeof targetTime !== 'number' || !isFinite(targetTime)) return;
+			var startIndex = nearestTimeIndex(timeline, targetTime);
+			var endIndex = startIndex;
+			if (typeof windowStart === 'number' && isFinite(windowStart) && typeof windowEnd === 'number' && isFinite(windowEnd)) {
+				startIndex = nearestTimeIndex(timeline, Math.min(windowStart, windowEnd));
+				endIndex = nearestTimeIndex(timeline, Math.max(windowStart, windowEnd));
+			}
+			if (startIndex < 0 || endIndex < 0) return;
+			if (endIndex < startIndex) {
+				var swap = startIndex;
+				startIndex = endIndex;
+				endIndex = swap;
+			}
+			var span = endIndex - startIndex;
+			var padding = span > 0 ? Math.max(4, Math.round(span * 0.35)) : 12;
+			startIndex = Math.max(0, startIndex - padding);
+			endIndex = Math.min(timeline.length - 1, endIndex + padding);
+			applyVisibleTimeRange({ from: timeline[startIndex], to: timeline[endIndex] });
+			var chartHost = document.getElementById('underlying-chart') || document.getElementById('equity-chart');
+			if (chartHost && typeof chartHost.scrollIntoView === 'function') {
+				chartHost.scrollIntoView({ behavior: 'smooth', block: 'center' });
+			}
+		}
+
     function syncCharts(charts) {
 			charts.forEach(registerSyncedChart);
     }
 
     var charts = [];
 		var activeSet = buildActiveTimeSet();
+		var baseTimeline = buildBaseTimeline();
 		var hasActiveFilter = activeSet.size > 1;
 
 		var underlyingChart = null;
@@ -2697,6 +3004,14 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
 		var featureClear = document.getElementById('underlying-feature-clear');
 		var equityChart = null;
 		var equityPlot = null;
+		var settledEquityPlot = null;
+		var settledContextPanel = document.getElementById('settled-context-panel');
+		var settledContextChart = null;
+		var settledFloatingProfitPlot = null;
+		var settledFloatingLossPlot = null;
+		var settledExposurePlot = null;
+		var settledModeEnabled = false;
+		var equityModeNote = document.getElementById('equity-mode-note');
 		var pnlChart = null;
 		var pnlPlot = null;
 		var drawdownChart = null;
@@ -2710,8 +3025,6 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
 		var selectedHoverColumnSources = new Set();
 		var currentDataWindowTime = null;
 		var currentIdleFilterEnabled = false;
-		var equityDisplayMode = 'mark_to_market';
-		var equityModeNote = document.getElementById('equity-display-note');
 
 		underlyingCandles.forEach(function(point) {
 			candleByTime.set(point.time, point);
@@ -2750,7 +3063,7 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
 			if (typeof unixSeconds !== 'number') {
 				return '未悬停图表';
 			}
-			return formatDisplayDateTime(unixSeconds, true);
+			return formatUTCDateTime(unixSeconds, true);
 		}
 
 		function formatNumber(value, decimals) {
@@ -2801,118 +3114,79 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
 			});
 		}
 
-		function sortedActiveTimes() {
-			return Array.from(activeSet).sort(function(a, b) { return a - b; });
-		}
-
-		function visibleTimeRangeForIdleFilter(useFilter) {
-			if (useFilter) {
-				var filteredTimes = sortedActiveTimes();
-				if (filteredTimes.length > 1) {
-					return { from: filteredTimes[0], to: filteredTimes[filteredTimes.length - 1] };
+		function ensureSettledContextChart() {
+			if (!settledContextPanel || settledContextChart) return;
+			settledContextChart = createChart('settled-context-chart', 180);
+			if (!settledContextChart) return;
+			settledContextChart.applyOptions({
+				leftPriceScale: {
+					visible: true,
+					borderColor: 'rgba(255,255,255,0.06)'
+				},
+				rightPriceScale: {
+					visible: true,
+					borderColor: 'rgba(255,255,255,0.06)'
 				}
-			}
-
-			if (underlyingCandles.length > 1) {
-				return {
-					from: underlyingCandles[0].time,
-					to: underlyingCandles[underlyingCandles.length - 1].time,
-				};
-			}
-			if (equitySeries.length > 1) {
-				return {
-					from: equitySeries[0].time,
-					to: equitySeries[equitySeries.length - 1].time,
-				};
-			}
-			return null;
-		}
-
-		function applySharedVisibleRange(range) {
-			chartSyncState.syncing = true;
-			charts.forEach(function(chart) {
-				if (!chart) return;
-				if (range && range.from !== range.to) {
-					chart.timeScale().setVisibleRange(range);
-					return;
-				}
-				chart.timeScale().fitContent();
 			});
-			chartSyncState.syncing = false;
+			settledFloatingProfitPlot = settledContextChart.addHistogramSeries({
+				priceScaleId: 'right',
+				priceLineVisible: false,
+				lastValueVisible: false,
+				base: 0,
+			});
+			settledFloatingLossPlot = settledContextChart.addHistogramSeries({
+				priceScaleId: 'right',
+				priceLineVisible: false,
+				lastValueVisible: false,
+				base: 0,
+			});
+			settledExposurePlot = settledContextChart.addLineSeries({
+				priceScaleId: 'left',
+				color: 'rgba(226,232,240,0.9)',
+				lineWidth: 2,
+				priceLineVisible: false,
+				lastValueVisible: true,
+				crosshairMarkerRadius: 3,
+				crosshairMarkerBorderColor: '#e2e8f0',
+				crosshairMarkerBackgroundColor: '#e2e8f0',
+			});
+			charts.push(settledContextChart);
+			registerSyncedChart(settledContextChart);
 		}
 
-		function syncDataWindowToVisibleRange(useFilter) {
-			if (!useFilter || activeSet.size === 0) {
-				renderDataWindow(currentDataWindowTime);
+		function renderSettledContext(showSettled) {
+			if (!settledContextPanel) return;
+			if (!showSettled) {
+				settledContextPanel.classList.add('hidden');
+				if (settledFloatingProfitPlot) settledFloatingProfitPlot.setData([]);
+				if (settledFloatingLossPlot) settledFloatingLossPlot.setData([]);
+				if (settledExposurePlot) settledExposurePlot.setData([]);
 				return;
 			}
-
-			if (typeof currentDataWindowTime === 'number' && activeSet.has(currentDataWindowTime)) {
-				renderDataWindow(currentDataWindowTime);
-				return;
-			}
-
-			var filteredTimes = sortedActiveTimes();
-			renderDataWindow(filteredTimes.length > 0 ? filteredTimes[filteredTimes.length - 1] : null);
+			settledContextPanel.classList.remove('hidden');
+			ensureSettledContextChart();
+			if (!settledContextChart) return;
+			settledFloatingProfitPlot.setData(filterHistogramSeriesByTimes(settledFloatingProfitSeries, activeSet, currentIdleFilterEnabled));
+			settledFloatingLossPlot.setData(filterHistogramSeriesByTimes(settledFloatingLossSeries, activeSet, currentIdleFilterEnabled));
+			settledExposurePlot.setData(filterLineSeriesByTimes(settledExposureSeries, activeSet, currentIdleFilterEnabled));
 		}
 
-		function refreshChartLocalization() {
-			charts.forEach(function(chart) {
-				preserveVisibleRange(chart, function() {
-					chart.applyOptions({ localization: buildChartLocalization() });
-				});
-			});
-		}
-
-		function selectedEquitySeries() {
-			return equityDisplayMode === 'settled' ? settledEquitySeries : equitySeries;
-		}
-
-		function updateEquityModeButtons() {
-			var markButton = document.getElementById('equity-mode-mark');
-			var settledButton = document.getElementById('equity-mode-settled');
-			if (markButton) {
-				markButton.classList.toggle('bg-teal-400/15', equityDisplayMode === 'mark_to_market');
-				markButton.classList.toggle('text-teal-200', equityDisplayMode === 'mark_to_market');
-				markButton.classList.toggle('text-slate-300', equityDisplayMode !== 'mark_to_market');
-			}
-			if (settledButton) {
-				settledButton.classList.toggle('bg-teal-400/15', equityDisplayMode === 'settled');
-				settledButton.classList.toggle('text-teal-200', equityDisplayMode === 'settled');
-				settledButton.classList.toggle('text-slate-300', equityDisplayMode !== 'settled');
+		function renderEquitySeriesMode(showSettled, options) {
+			if (!equityPlot || !settledEquityPlot) return;
+			settledModeEnabled = showSettled === true;
+			var shouldRefit = !options || options.refit !== false;
+			equityPlot.setData(settledModeEnabled ? [] : filterLineSeriesByTimes(equitySeries, activeSet, currentIdleFilterEnabled));
+			settledEquityPlot.setData(settledModeEnabled ? filterLineSeriesByTimes(settledEquitySeries, activeSet, currentIdleFilterEnabled) : []);
+			if (buyHoldPlot) {
+				buyHoldPlot.setData(settledModeEnabled ? [] : filterLineSeriesByTimes(buyHoldSeries, activeSet, currentIdleFilterEnabled));
 			}
 			if (equityModeNote) {
-				equityModeNote.textContent = equityDisplayMode === 'settled'
-					? '仅结算显示，隐藏持仓期间的浮动盈亏，只在成交平仓或价差实际平仓后更新权益。'
-					: '按市值显示，包含未平仓头寸的浮动盈亏。范围 {{ .EquityMin }} 至 {{ .EquityMax }} · 手续费 {{ .TotalFees }}';
+				equityModeNote.textContent = settledModeEnabled
+					? '当前仅展示已结算权益点；下方面板会给出每次结算之间的最大浮盈 / 浮亏与持仓暴露。'
+					: '默认展示逐 bar 净值；切换后仅保留已结算收益点，并在下方显示区间浮盈浮亏与持仓暴露。';
 			}
-		}
-
-		function renderEquitySeriesMode() {
-			if (!equityPlot) {
-				updateEquityModeButtons();
-				return;
-			}
-			preserveVisibleRange(equityChart, function() {
-				equityPlot.setData(filterLineSeriesByTimes(selectedEquitySeries(), activeSet, currentIdleFilterEnabled));
-			});
-			updateEquityModeButtons();
-		}
-
-		function applyTimeZoneMode(mode) {
-			currentTimeZoneMode = mode;
-			rewriteVisibleDateText(mode);
-			refreshChartLocalization();
-			renderDataWindow(currentDataWindowTime);
-			var timezoneLabel = document.getElementById('timezone-label');
-			if (timezoneLabel) {
-				var referenceUnix = underlyingCandles.length > 0 ? underlyingCandles[0].time : Math.floor(Date.now() / 1000);
-				timezoneLabel.textContent = '当前显示: ' + (mode === 'browser' ? '浏览器默认 (' + timeZoneModeLabel(mode, referenceUnix) + ')' : timeZoneModeLabel(mode, referenceUnix));
-			}
-			var timezoneSelect = document.getElementById('timezone-select');
-			if (timezoneSelect && timezoneSelect.value !== mode) {
-				timezoneSelect.value = mode;
-			}
+			renderSettledContext(settledModeEnabled);
+			if (shouldRefit) fitChartsToVisibleData();
 		}
 
 		function appendDataWindowItem(items, label, value) {
@@ -3244,8 +3518,17 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
 				});
 				buyHoldPlot.setData(buyHoldSeries);
 			}
-			el.setData(selectedEquitySeries());
-      ec.timeScale().fitContent();
+			settledEquityPlot = ec.addLineSeries({
+				color: '#f8fafc',
+				lineWidth: 2,
+				priceLineVisible: true,
+				lastValueVisible: true,
+				crosshairMarkerRadius: 5,
+				crosshairMarkerBorderColor: '#f8fafc',
+				crosshairMarkerBackgroundColor: '#0f1923'
+			});
+      settledEquityPlot.setData([]);
+      el.setData(equitySeries);
 			equityChart = ec;
 			equityPlot = el;
       charts.push(ec);
@@ -3285,38 +3568,30 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
 		function applyIdleFilter(enabled) {
 			var useFilter = enabled && hasActiveFilter;
 			currentIdleFilterEnabled = useFilter;
-			var sharedRange = visibleTimeRangeForIdleFilter(useFilter);
 
-			preserveVisibleRanges(charts.slice(), function() {
-				if (underlyingSeries) {
-					underlyingSeries.setData(filterCandleSeriesByTimes(underlyingCandles, activeSet, useFilter));
-					underlyingSeries.setMarkers(filterMarkerSeriesByTimes(underlyingMarkers, activeSet, useFilter));
-				}
-				if (underlyingVolumePlot) {
-					underlyingVolumePlot.setData(filterHistogramSeriesByTimes(underlyingVolumeSeries, activeSet, useFilter));
-				}
-				renderOverlayPlots();
-				if (equityPlot) {
-					equityPlot.setData(filterLineSeriesByTimes(selectedEquitySeries(), activeSet, useFilter));
-				}
-				if (buyHoldPlot) {
-					buyHoldPlot.setData(filterLineSeriesByTimes(buyHoldSeries, activeSet, useFilter));
-				}
-				if (pnlPlot) {
-					pnlPlot.setData(filterLineSeriesByTimes(pnlUSDSeries, activeSet, useFilter));
-				}
-				if (drawdownPlot) {
-					drawdownPlot.setData(filterLineSeriesByTimes(drawdownSeries, activeSet, useFilter));
-				}
-				renderFeatureChart();
-				updateEquityModeButtons();
-			});
-
-			applySharedVisibleRange(sharedRange);
-			syncDataWindowToVisibleRange(useFilter);
+			if (underlyingSeries) {
+				underlyingSeries.setData(filterCandleSeriesByTimes(underlyingCandles, activeSet, useFilter));
+				underlyingSeries.setMarkers(filterMarkerSeriesByTimes(underlyingMarkers, activeSet, useFilter));
+			}
+			if (underlyingVolumePlot) {
+				underlyingVolumePlot.setData(filterHistogramSeriesByTimes(underlyingVolumeSeries, activeSet, useFilter));
+			}
+			renderOverlayPlots();
+			renderEquitySeriesMode(settledModeEnabled, { refit: false });
+			if (pnlPlot) {
+				pnlPlot.setData(filterLineSeriesByTimes(pnlUSDSeries, activeSet, useFilter));
+			}
+			if (drawdownPlot) {
+				drawdownPlot.setData(filterLineSeriesByTimes(drawdownSeries, activeSet, useFilter));
+			}
+			renderFeatureChart();
+			renderDataWindow(currentDataWindowTime);
+			fitChartsToVisibleData();
 		}
 
     if (charts.length > 1) syncCharts(charts);
+		renderEquitySeriesMode(false, { refit: false });
+		fitChartsToVisibleData();
 
 		if (dataWindowGrid) {
 			dataWindowGrid.addEventListener('click', function(event) {
@@ -3340,13 +3615,6 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
 			});
 		}
 
-		document.querySelectorAll('[data-equity-mode]').forEach(function(button) {
-			button.addEventListener('click', function() {
-				equityDisplayMode = button.getAttribute('data-equity-mode');
-				renderEquitySeriesMode();
-			});
-		});
-
 		var toggle = document.getElementById('toggle-ignore-idle');
 		if (toggle) {
 			toggle.disabled = !hasActiveFilter;
@@ -3359,16 +3627,6 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
 			});
 		}
 
-		var timezoneSelect = document.getElementById('timezone-select');
-		if (timezoneSelect) {
-			timezoneSelect.addEventListener('change', function(event) {
-				applyTimeZoneMode(event.target.value);
-			});
-		}
-
-		renderEquitySeriesMode();
-		applyTimeZoneMode(detectDefaultTimeZoneMode());
-
 		var spreadGroupButtons = document.querySelectorAll('[data-spread-groups-toggle]');
 		if (spreadGroupButtons.length > 0) {
 			spreadGroupButtons.forEach(function(button) {
@@ -3378,6 +3636,38 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
 						group.open = action === 'expand';
 					});
 				});
+			});
+		}
+
+		document.addEventListener('click', function(event) {
+			var target = event.target;
+			if (!target || typeof target.closest !== 'function') return;
+			var locateButton = target.closest('[data-chart-jump-time]');
+			if (!locateButton) return;
+			var jumpTime = parseInt(locateButton.getAttribute('data-chart-jump-time'), 10);
+			var windowStart = parseInt(locateButton.getAttribute('data-chart-window-start'), 10);
+			var windowEnd = parseInt(locateButton.getAttribute('data-chart-window-end'), 10);
+			focusChartsAtEvent(
+				isNaN(jumpTime) ? NaN : jumpTime,
+				isNaN(windowStart) ? NaN : windowStart,
+				isNaN(windowEnd) ? NaN : windowEnd
+			);
+		});
+
+		// Initialize timezone selector
+		var timezoneSelect = document.getElementById('timezone-select');
+		if (timezoneSelect) {
+			timezoneSelect.addEventListener('change', function(e) {
+				applyTimeZoneMode(e.target.value);
+			});
+		}
+		applyTimeZoneMode(detectDefaultTimeZoneMode());
+
+		// Initialize settled equity toggle
+		var settledToggle = document.getElementById('toggle-settled-equity');
+		if (settledToggle) {
+			settledToggle.addEventListener('change', function(e) {
+				renderEquitySeriesMode(e.target.checked);
 			});
 		}
   </script>
@@ -3394,7 +3684,7 @@ const combinedHTMLTemplate = `{{ define "combinedSpreadEventCard" }}
 				<span class="rounded-full px-2.5 py-1 text-[11px] font-mono ring-1 {{ .StatusClass }}">{{ .Status }}</span>
 				{{ if .RelatedLink }}<a href="#{{ .RelatedLink }}" class="font-mono text-xs text-steel underline underline-offset-2 hover:text-white">{{ .RelatedText }}</a>{{ end }}
 			</div>
-			<p class="mt-2 text-sm text-slate-300">事件时间 {{ .EventTime }} · 开仓 {{ .OpenTime }} · 平仓 {{ .CloseTime }} · 持有 {{ .DaysHeld }}</p>
+			<p class="mt-2 text-sm text-slate-300">事件时间 {{ .EventTime }}{{ if .UnderlyingPrice }} · 标的 {{ .UnderlyingPrice }}{{ end }} · 开仓 {{ .OpenTime }} · 平仓 {{ .CloseTime }} · 持有 {{ .DaysHeld }}</p>
 		</div>
 		<div class="grid grid-cols-1 gap-4 text-sm lg:text-right">
 			<div><div class="text-slate-400">已实现盈亏</div><div class="font-mono text-white">{{ .RealizedPnL }}</div></div>

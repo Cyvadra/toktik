@@ -71,8 +71,9 @@ func RollingStdDev(src []float64, period int) []float64 {
 			valid++
 		}
 		if valid == period {
-			mean := sum / float64(period)
-			variance := sumSq/float64(period) - mean*mean
+			// Sample standard deviation with Bessel's correction (÷ N-1),
+			// matching TradingView's ta.stdev behaviour.
+			variance := (sumSq - sum*sum/float64(period)) / float64(period-1)
 			if variance < 0 {
 				variance = 0
 			}

@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -226,15 +227,28 @@ func main() {
 			log.Printf("Warning: failed to close factor store: %v", closeErr)
 		}
 	}()
+	interactiveProgress := supportsTerminalProgress(os.Stderr)
 
 	var chainProvider backtest.OptionsChainProvider
 	if shouldLoadOptionChain(tradeScope, resolved) {
-		log.Printf("Loading options chain for %s [%s/%s, %s → %s]...",
+		chainLabel := fmt.Sprintf("Loading options chain for %s [%s/%s, %s -> %s]",
 			underlyingSymbol, primaryMarket.name, *interval, from.Format("2006-01-02"), to.Format("2006-01-02"))
-		if primaryMarket.name == marketUS {
-			chainProvider, err = datafeed.NewUSOptionsChainProvider(ctx, conn, underlyingSymbol, *interval, from, to)
+		if interactiveProgress {
+			err = runWithTerminalSpinner(os.Stderr, chainLabel, func() error {
+				if primaryMarket.name == marketUS {
+					chainProvider, err = datafeed.NewUSOptionsChainProvider(ctx, conn, underlyingSymbol, *interval, from, to)
+				} else {
+					chainProvider, err = datafeed.NewCryptoOptionsChainProvider(ctx, conn, underlyingSymbol, *interval, from, to)
+				}
+				return err
+			})
 		} else {
-			chainProvider, err = datafeed.NewCryptoOptionsChainProvider(ctx, conn, underlyingSymbol, *interval, from, to)
+			log.Printf("%s...", chainLabel)
+			if primaryMarket.name == marketUS {
+				chainProvider, err = datafeed.NewUSOptionsChainProvider(ctx, conn, underlyingSymbol, *interval, from, to)
+			} else {
+				chainProvider, err = datafeed.NewCryptoOptionsChainProvider(ctx, conn, underlyingSymbol, *interval, from, to)
+			}
 		}
 		if err != nil {
 			log.Fatalf("Failed to load options chain: %v", err)
@@ -263,6 +277,13 @@ func main() {
 		}
 
 		engine := newEngine(cfg, conn, factorStore, chainProvider, item.Profile.UsesOptions)
+		if interactiveProgress {
+			title := item.Strategy.Name()
+			if strings.TrimSpace(item.Runtime.ProfileLabel) != "" {
+				title += " [" + item.Runtime.ProfileLabel + "]"
+			}
+			engine.SetProgressFunc(newTerminalProgressRenderer(os.Stderr, title).Report)
+		}
 
 		log.Printf("--- Running strategy: %s [%s, %s] ---", item.Strategy.Name(), item.Runtime.ProfileLabel, strings.ToUpper(capitalProfile.unit))
 		result, runErr := engine.Run(ctx, primaryMarket.underlyingFeed, underlyingSymbol, *interval, from, to, item.Strategy, nil)
@@ -597,4 +618,140 @@ func sanitizeDSN(dsn string) string {
 		}
 	}
 	return dsn
+}
+
+type terminalProgressRenderer struct {
+	out     *os.File
+	title   string
+	enabled bool
+	lastLen int
+}
+
+func newTerminalProgressRenderer(out *os.File, title string) *terminalProgressRenderer {
+	return &terminalProgressRenderer{
+		out:     out,
+		title:   strings.TrimSpace(title),
+		enabled: supportsTerminalProgress(out),
+	}
+}
+
+func (r *terminalProgressRenderer) Report(update backtest.ProgressUpdate) {
+	if !r.enabled || update.Total <= 0 {
+		return
+	}
+	current := update.Current
+	if current < 0 {
+		current = 0
+	}
+	if current > update.Total {
+		current = update.Total
+	}
+	phase := string(update.Phase)
+	if phase == "" {
+		phase = "progress"
+	}
+	percent := 100.0
+	if update.Total > 0 {
+		percent = float64(current) / float64(update.Total) * 100
+	}
+	barWidth := 28
+	filled := barWidth
+	if update.Total > 0 {
+		filled = int(math.Round(float64(barWidth) * float64(current) / float64(update.Total)))
+		if filled < 0 {
+			filled = 0
+		}
+		if filled > barWidth {
+			filled = barWidth
+		}
+	}
+	bar := strings.Repeat("=", filled)
+	if filled < barWidth {
+		bar += strings.Repeat(" ", barWidth-filled)
+	}
+	elapsed := time.Duration(0)
+	if !update.StartedAt.IsZero() {
+		elapsed = time.Since(update.StartedAt).Round(time.Second)
+	}
+	line := fmt.Sprintf("%s %s [%s] %6.2f%% (%d/%d) %s", phaseLabel(phase), r.title, bar, percent, current, update.Total, elapsed)
+	if detail := strings.TrimSpace(update.Message); detail != "" && update.Phase == backtest.ProgressPhasePrepare {
+		line += " | " + detail
+	}
+	padding := ""
+	if extra := r.lastLen - len(line); extra > 0 {
+		padding = strings.Repeat(" ", extra)
+	}
+	fmt.Fprintf(r.out, "\r%s%s", line, padding)
+	r.lastLen = len(line)
+	if update.Completed {
+		fmt.Fprintln(r.out)
+		r.lastLen = 0
+	}
+}
+
+func phaseLabel(phase string) string {
+	switch phase {
+	case string(backtest.ProgressPhasePrepare):
+		return "PREP"
+	case string(backtest.ProgressPhaseReplay):
+		return "RUN "
+	default:
+		return strings.ToUpper(phase)
+	}
+}
+
+func supportsTerminalProgress(out *os.File) bool {
+	if out == nil {
+		return false
+	}
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("TERM")), "dumb") {
+		return false
+	}
+	info, err := out.Stat()
+	if err != nil {
+		return false
+	}
+	return info.Mode()&os.ModeCharDevice != 0
+}
+
+func runWithTerminalSpinner(out *os.File, label string, fn func() error) error {
+	startedAt := time.Now()
+	frames := []string{"|", "/", "-", "\\"}
+	done := make(chan struct{})
+	stopped := make(chan struct{})
+
+	go func() {
+		defer close(stopped)
+		ticker := time.NewTicker(120 * time.Millisecond)
+		defer ticker.Stop()
+		frameIndex := 0
+		lastLen := 0
+		for {
+			line := fmt.Sprintf("CHAIN %s %s %s", frames[frameIndex], label, time.Since(startedAt).Round(time.Second))
+			padding := ""
+			if extra := lastLen - len(line); extra > 0 {
+				padding = strings.Repeat(" ", extra)
+			}
+			fmt.Fprintf(out, "\r%s%s", line, padding)
+			lastLen = len(line)
+			frameIndex = (frameIndex + 1) % len(frames)
+
+			select {
+			case <-done:
+				finished := fmt.Sprintf("CHAIN done %s %s", label, time.Since(startedAt).Round(time.Second))
+				padding := ""
+				if extra := lastLen - len(finished); extra > 0 {
+					padding = strings.Repeat(" ", extra)
+				}
+				fmt.Fprintf(out, "\r%s%s\n", finished, padding)
+				return
+			case <-ticker.C:
+			}
+		}
+	}()
+
+	err := fn()
+	close(done)
+	<-stopped
+	return err
 }

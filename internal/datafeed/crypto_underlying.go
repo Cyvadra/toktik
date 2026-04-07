@@ -29,7 +29,7 @@ func (f *CryptoUnderlyingDataFeed) Fields() []string {
 }
 
 func projectUnderlyingSpotQuery(baseQuery string) string {
-	return fmt.Sprintf(`SELECT timestamp, open, close, high, low, tick_count, volume_base FROM (%s) ORDER BY timestamp`, baseQuery)
+	return fmt.Sprintf(`SELECT timestamp, open, close, high, low, toUInt64(tick_count) AS tick_count, volume_base FROM (%s) ORDER BY timestamp`, baseQuery)
 }
 
 func buildUnderlyingDataSet(

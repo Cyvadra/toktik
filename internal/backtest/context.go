@@ -698,6 +698,7 @@ func (bc *BarContext) OpenSpreadWithRef(legs []SpreadLeg, tag, ref string) int {
 	// Fill entry time on the copy
 	for i := range legsCopy {
 		legsCopy[i].EntryTime = bc.barTime
+		legsCopy[i].EntryCustomData = withEntryDelta(legsCopy[i].EntryCustomData, legsCopy[i].Contract)
 	}
 	// Record cash impact: selling = cash inflow, buying = cash outflow
 	for i := range legsCopy {
@@ -802,6 +803,13 @@ func (bc *BarContext) withCurrentCloseDelta(leg *SpreadLeg, items []TradeCustomD
 	return items
 }
 
+func withEntryDelta(items []TradeCustomData, contract OptionContract) []TradeCustomData {
+	if math.IsNaN(contract.Delta) || math.IsInf(contract.Delta, 0) {
+		return items
+	}
+	return upsertTradeCustomData(items, TradeCustomDataKeyEntryDelta, strconv.FormatFloat(contract.Delta, 'f', 4, 64))
+}
+
 // CloseSpread closes all open legs of a spread using the provided price function.
 func (bc *BarContext) CloseSpread(spreadID int, priceFn func(OptionContract) float64) {
 	if bc.spreadTracker == nil {
@@ -844,6 +852,7 @@ func (bc *BarContext) OpenSpreadInGroupWithRef(legs []SpreadLeg, tag, ref string
 	copy(legsCopy, legs)
 	for i := range legsCopy {
 		legsCopy[i].EntryTime = bc.barTime
+		legsCopy[i].EntryCustomData = withEntryDelta(legsCopy[i].EntryCustomData, legsCopy[i].Contract)
 	}
 	for i := range legsCopy {
 		amount := legsCopy[i].Qty * legsCopy[i].EntryPrice

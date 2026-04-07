@@ -48,6 +48,7 @@ func buildSpreadPositionReports(tracker *SpreadTracker, endTime time.Time) []Spr
 				Type:        leg.Contract.Type,
 				StrikePrice: leg.Contract.StrikePrice,
 				Expiration:  leg.Contract.Expiration,
+				EntryDelta:  tradeCustomDataFloat(leg.EntryCustomData, TradeCustomDataKeyEntryDelta),
 				Delta:       leg.Contract.Delta,
 				Qty:         leg.Qty,
 				EntryPrice:  leg.EntryPrice,
@@ -213,6 +214,10 @@ func buildSpreadGroupReports(groupTracker *SpreadGroupTracker, spreadTracker *Sp
 	}
 	reports := make([]SpreadGroupReport, 0, len(groupTracker.All()))
 	for _, group := range groupTracker.All() {
+		if len(group.SpreadIDs) == 0 {
+			continue
+		}
+
 		report := SpreadGroupReport{
 			ID:          group.ID,
 			Tag:         group.Tag,

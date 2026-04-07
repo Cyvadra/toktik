@@ -7,21 +7,74 @@ import (
 )
 
 // NewRouter builds the Gin engine with all API routes registered.
-func NewRouter(cos CryptoOptionsQuerier) *gin.Engine {
+func NewRouter(cos CryptoOptionsQuerier, usStocks USStocksQuerier, usOptions USOptionsQuerier, infra InfraProvider, features FeatureProvider, strategyBacktests StrategyBacktestProvider, cryptoSpot CryptoSpotQuerier, screener ScreenerProvider, strategyCatalog StrategyCatalogProvider) *gin.Engine {
 	r := gin.Default()
-	h := NewHandler(cos)
+	h := NewHandler(cos, usStocks, usOptions, infra, features, strategyBacktests, cryptoSpot, screener, strategyCatalog)
+
+	// Apply middleware
+	r.Use(CORSMiddleware())
 
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
+	r.GET("/ready", h.GetReadiness)
 
 	v1 := r.Group("/api/v1")
 	{
+		backtestsGroup := v1.Group("/backtests")
+		backtestsGroup.POST("/runs", h.StartStrategyBacktest)
+		backtestsGroup.GET("/runs/:runID", h.GetStrategyBacktestRun)
+		backtestsGroup.GET("/runs/:runID/events", h.StreamStrategyBacktestEvents)
+
+		infraGroup := v1.Group("/infra")
+		infraGroup.GET("/markets", h.GetMarkets)
+		infraGroup.GET("/datasets", h.GetDatasets)
+
+		featuresGroup := v1.Group("/features")
+		featuresGroup.GET("/volatility-snapshot", h.GetVolatilitySnapshot)
+		featuresGroup.GET("/volatility-history", h.GetVolatilityHistory)
+		featuresGroup.GET("/term-structure-snapshot", h.GetTermStructureSnapshot)
+		featuresGroup.GET("/term-structure-history", h.GetTermStructureHistory)
+		featuresGroup.GET("/skew-snapshot", h.GetSkewSnapshot)
+		featuresGroup.GET("/skew-history", h.GetSkewHistory)
+		featuresGroup.GET("/liquidity-snapshot", h.GetLiquiditySnapshot)
+		featuresGroup.GET("/liquidity-history", h.GetLiquidityHistory)
+		featuresGroup.GET("/event-window-snapshot", h.GetEventWindowSnapshot)
+		featuresGroup.GET("/event-window-history", h.GetEventWindowHistory)
+		featuresGroup.GET("/daily-feature-panel", h.GetDailyFeaturePanel)
+
 		co := v1.Group("/crypto-options")
 		co.GET("/bars", h.GetBars)
 		co.GET("/symbols", h.GetSymbols)
 		co.GET("/greeks", h.GetGreeks)
 		co.POST("/backtest", h.RunBacktest)
+
+		markets := v1.Group("/markets")
+		marketCryptoOptions := markets.Group("/crypto-options")
+		marketCryptoOptions.GET("/bars", h.GetBars)
+		marketCryptoOptions.GET("/symbols", h.GetSymbols)
+		marketCryptoOptions.GET("/greeks", h.GetGreeks)
+		marketCryptoOptions.POST("/backtest", h.RunBacktest)
+
+		marketCryptoSpot := markets.Group("/crypto-spot")
+		marketCryptoSpot.GET("/bars", h.GetCryptoSpotBars)
+		marketCryptoSpot.GET("/symbols", h.GetCryptoSpotSymbols)
+
+		marketUSStocks := markets.Group("/us-stocks")
+		marketUSStocks.GET("/bars", h.GetUSStockBars)
+		marketUSStocks.GET("/symbols", h.GetUSStockSymbols)
+
+		marketUSOptions := markets.Group("/us-options")
+		marketUSOptions.GET("/bars", h.GetUSOptionBars)
+		marketUSOptions.GET("/symbols", h.GetUSOptionSymbols)
+		marketUSOptions.GET("/greeks", h.GetUSOptionGreeks)
+		marketUSOptions.GET("/chain", h.GetUSOptionChain)
+
+		screenerGroup := v1.Group("/screener")
+		screenerGroup.GET("/underlyings", h.ScreenUnderlyings)
+		screenerGroup.GET("/options", h.ScreenOptions)
+
+		v1.GET("/strategies", h.ListStrategies)
 	}
 
 	return r

@@ -48,6 +48,7 @@ type Config struct {
 	ShortDeltaMax float64
 	LongDeltaMin  float64
 	LongDeltaMax  float64
+	SignalSource  string
 
 	Direction TradeDirection // "both" | "long_only" | "short_only"
 }
@@ -70,6 +71,7 @@ type jsonConfig struct {
 	ShortDeltaMax      *float64 `json:"short_delta_max,omitempty"`
 	LongDeltaMin       *float64 `json:"long_delta_min,omitempty"`
 	LongDeltaMax       *float64 `json:"long_delta_max,omitempty"`
+	SignalSource       *string  `json:"signal_source,omitempty"`
 	Direction          *string  `json:"direction,omitempty"`
 }
 
@@ -160,6 +162,9 @@ func ConfigFromJSON(raw json.RawMessage) (Config, error) {
 	}
 	if jc.LongDeltaMax != nil {
 		cfg.LongDeltaMax = *jc.LongDeltaMax
+	}
+	if jc.SignalSource != nil {
+		cfg.SignalSource = strings.TrimSpace(*jc.SignalSource)
 	}
 	if jc.Direction != nil {
 		d := TradeDirection(strings.ToLower(strings.TrimSpace(*jc.Direction)))

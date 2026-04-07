@@ -46,6 +46,7 @@ func factorSeriesKey(ref FactorRef, name string) string {
 type Replayer struct {
 	config        Config
 	chainProvider OptionsChainProvider
+	progress      ProgressFunc
 }
 
 // Replay runs a strategy against pre-loaded data with the given parameters.
@@ -134,6 +135,15 @@ func (r *Replayer) Replay(prepared *PreparedData, strategy Strategy, params map[
 
 	nBars := prepared.PrimaryDS.Len
 	equityCurve := make([]float64, nBars)
+	replayStartedAt := time.Now()
+	emitProgress(r.progress, ProgressUpdate{
+		Phase:     ProgressPhaseReplay,
+		Current:   0,
+		Total:     nBars,
+		Message:   "replaying bars",
+		StartedAt: replayStartedAt,
+		Completed: false,
+	})
 
 	spreadTracker := NewSpreadTracker()
 	spreadGroupTracker := NewSpreadGroupTracker()
@@ -180,6 +190,11 @@ func (r *Replayer) Replay(prepared *PreparedData, strategy Strategy, params map[
 	if r.chainProvider != nil {
 		contractMap = make(map[string]OptionContract, 256)
 	}
+	progressStep := nBars / 200
+	if progressStep < 1 {
+		progressStep = 1
+	}
+	lastProgressAt := time.Now()
 
 	for i := 0; i < nBars; i++ {
 		barCtx.barIndex = i
@@ -203,9 +218,16 @@ func (r *Replayer) Replay(prepared *PreparedData, strategy Strategy, params map[
 		}
 
 		if len(scheduledActions) > 0 {
-			barOpen := secColumns[0]["open"][i]
-			barHigh := secColumns[0]["high"][i]
-			barLow := secColumns[0]["low"][i]
+			// Safely get primary bar prices for trigger checks
+			getBarVal := func(name string) float64 {
+				if col, ok := secColumns[0][name]; ok && i < len(col) {
+					return col[i]
+				}
+				return math.NaN()
+			}
+			barOpen := getBarVal("open")
+			barHigh := getBarVal("high")
+			barLow := getBarVal("low")
 
 			var remaining []ScheduledAction
 			for _, sa := range scheduledActions {
@@ -313,6 +335,22 @@ func (r *Replayer) Replay(prepared *PreparedData, strategy Strategy, params map[
 			}
 		}
 		equityCurve[i] = broker.Equity() + spreadMarketValue
+
+		current := i + 1
+		if r.progress != nil && (current == nBars || current%progressStep == 0) {
+			now := time.Now()
+			if current == nBars || now.Sub(lastProgressAt) >= 150*time.Millisecond {
+				emitProgress(r.progress, ProgressUpdate{
+					Phase:     ProgressPhaseReplay,
+					Current:   current,
+					Total:     nBars,
+					Message:   prepared.PrimaryDS.Timestamps[i].UTC().Format(time.RFC3339),
+					StartedAt: replayStartedAt,
+					Completed: current == nBars,
+				})
+				lastProgressAt = now
+			}
+		}
 	}
 
 	result := computeResult(

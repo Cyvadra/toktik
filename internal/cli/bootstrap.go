@@ -107,6 +107,15 @@ func UsMarketSchemaFile() (string, error) {
 	})
 }
 
+// FeatureStoreSchemaFile returns the path to the feature_store DDL file.
+func FeatureStoreSchemaFile() (string, error) {
+	return FindSchemaFile([]string{
+		"schema/clickhouse/feature_store.sql",
+		"../schema/clickhouse/feature_store.sql",
+		"../../schema/clickhouse/feature_store.sql",
+	})
+}
+
 // EnvOrDefault returns the value of an environment variable, or the fallback
 // if the variable is empty or unset.
 func EnvOrDefault(key, fallback string) string {
