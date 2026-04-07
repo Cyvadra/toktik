@@ -43,7 +43,8 @@ func main() {
 	}
 
 	svc := service.NewCryptoOptionsService(conn)
-	router := api.NewRouter(svc)
+	usSvc := service.NewUSMarketService(conn)
+	router := api.NewRouterWithUSMarket(svc, usSvc)
 
 	srv := &http.Server{
 		Addr:              *addr,

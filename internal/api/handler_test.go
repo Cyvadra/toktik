@@ -38,11 +38,35 @@ func (m *mockQuerier) RunBacktest(_ context.Context, _ dto.BacktestRequest) (*ba
 	return m.btResp, m.err
 }
 
+// --- US market mock ---
+
+type mockUSQuerier struct {
+	stockBarsResp *dto.USStockBarResponse
+	optionBarsResp *dto.USOptionBarResponse
+	chainResp      *dto.USOptionChainResponse
+	err            error
+}
+
+func (m *mockUSQuerier) QueryUSStockBars(_ context.Context, _ dto.USStockBarRequest) (*dto.USStockBarResponse, error) {
+	return m.stockBarsResp, m.err
+}
+func (m *mockUSQuerier) QueryUSOptionBars(_ context.Context, _ dto.USOptionBarRequest) (*dto.USOptionBarResponse, error) {
+	return m.optionBarsResp, m.err
+}
+func (m *mockUSQuerier) QueryUSOptionChain(_ context.Context, _ dto.USOptionChainRequest) (*dto.USOptionChainResponse, error) {
+	return m.chainResp, m.err
+}
+
 // --- helpers ---
 
 func setupRouter(q CryptoOptionsQuerier) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	return NewRouter(q)
+}
+
+func setupRouterWithUS(q CryptoOptionsQuerier, usq USMarketQuerier) *gin.Engine {
+	gin.SetMode(gin.TestMode)
+	return NewRouterWithUSMarket(q, usq)
 }
 
 // --- GetBars ---
@@ -273,5 +297,186 @@ func TestHealthEndpoint(t *testing.T) {
 	}
 	if body["status"] != "ok" {
 		t.Fatalf(`expected status "ok", got %q`, body["status"])
+	}
+}
+
+// --- GetUSStockBars ---
+
+func TestGetUSStockBars_Success(t *testing.T) {
+	ts := time.Date(2024, 1, 3, 14, 30, 0, 0, time.UTC)
+	mock := &mockUSQuerier{
+		stockBarsResp: &dto.USStockBarResponse{
+			Data: []dto.USStockBarRow{{Timestamp: ts, Symbol: "AAPL", Close: 185.0}},
+		},
+	}
+	r := setupRouterWithUS(&mockQuerier{}, mock)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/api/v1/us-stocks/bars?symbol=AAPL&interval=1h&from=2024-01-03&to=2024-01-04", nil)
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp dto.USStockBarResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(resp.Data) != 1 {
+		t.Fatalf("expected 1 bar, got %d", len(resp.Data))
+	}
+}
+
+func TestGetUSStockBars_MissingParam(t *testing.T) {
+	r := setupRouterWithUS(&mockQuerier{}, &mockUSQuerier{})
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/api/v1/us-stocks/bars?symbol=AAPL", nil)
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", w.Code)
+	}
+}
+
+func TestGetUSStockBars_ServiceError(t *testing.T) {
+	mock := &mockUSQuerier{err: errors.New("db down")}
+	r := setupRouterWithUS(&mockQuerier{}, mock)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/api/v1/us-stocks/bars?symbol=AAPL&interval=1h&from=2024-01-03&to=2024-01-04", nil)
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d", w.Code)
+	}
+}
+
+func TestGetUSStockBars_NotConfigured(t *testing.T) {
+	// Router without US market service (nil usm)
+	r := setupRouter(&mockQuerier{})
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/api/v1/us-stocks/bars?symbol=AAPL&interval=1h&from=2024-01-03&to=2024-01-04", nil)
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", w.Code)
+	}
+}
+
+// --- GetUSOptionBars ---
+
+func TestGetUSOptionBars_Success(t *testing.T) {
+	ts := time.Date(2024, 1, 3, 14, 30, 0, 0, time.UTC)
+	exp := time.Date(2024, 2, 16, 0, 0, 0, 0, time.UTC)
+	mock := &mockUSQuerier{
+		optionBarsResp: &dto.USOptionBarResponse{
+			Data: []dto.USOptionBarRow{
+				{Timestamp: ts, Symbol: "O:AAPL240216C00185000", Underlying: "AAPL",
+					OptionType: "C", Expiration: exp, Strike: 185.0, Close: 3.5, Delta: 0.5},
+			},
+		},
+	}
+	r := setupRouterWithUS(&mockQuerier{}, mock)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/api/v1/us-options/bars?symbol=O:AAPL240216C00185000&interval=1h&from=2024-01-03&to=2024-01-04", nil)
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp dto.USOptionBarResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(resp.Data) != 1 {
+		t.Fatalf("expected 1 bar, got %d", len(resp.Data))
+	}
+}
+
+func TestGetUSOptionBars_MissingParam(t *testing.T) {
+	r := setupRouterWithUS(&mockQuerier{}, &mockUSQuerier{})
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/api/v1/us-options/bars?symbol=O:AAPL240216C00185000", nil)
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", w.Code)
+	}
+}
+
+func TestGetUSOptionBars_ValidationError(t *testing.T) {
+	mock := &mockUSQuerier{err: dto.NewValidationError("bad interval")}
+	r := setupRouterWithUS(&mockQuerier{}, mock)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/api/v1/us-options/bars?symbol=O:AAPL240216C00185000&interval=bad&from=2024-01-03&to=2024-01-04", nil)
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", w.Code)
+	}
+}
+
+// --- GetUSOptionChain ---
+
+func TestGetUSOptionChain_Success(t *testing.T) {
+	ts := time.Date(2024, 1, 3, 14, 30, 0, 0, time.UTC)
+	mock := &mockUSQuerier{
+		chainResp: &dto.USOptionChainResponse{
+			Data: []dto.USOptionChainRow{
+				{Timestamp: ts, Underlying: "AAPL",
+					Symbols:     []string{"O:AAPL240216C00185000"},
+					OptionTypes: []string{"C"},
+					Strikes:     []float64{185.0},
+					ClosePrices: []float32{3.5},
+					Deltas:      []float32{0.5},
+				},
+			},
+		},
+	}
+	r := setupRouterWithUS(&mockQuerier{}, mock)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/api/v1/us-options/chain?underlying=AAPL&interval=1h&from=2024-01-03&to=2024-01-04", nil)
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp dto.USOptionChainResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(resp.Data) != 1 {
+		t.Fatalf("expected 1 chain row, got %d", len(resp.Data))
+	}
+}
+
+func TestGetUSOptionChain_MissingParam(t *testing.T) {
+	r := setupRouterWithUS(&mockQuerier{}, &mockUSQuerier{})
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/api/v1/us-options/chain?underlying=AAPL", nil)
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", w.Code)
+	}
+}
+
+func TestGetUSOptionChain_ServiceError(t *testing.T) {
+	mock := &mockUSQuerier{err: errors.New("db down")}
+	r := setupRouterWithUS(&mockQuerier{}, mock)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/api/v1/us-options/chain?underlying=AAPL&interval=1h&from=2024-01-03&to=2024-01-04", nil)
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d", w.Code)
 	}
 }

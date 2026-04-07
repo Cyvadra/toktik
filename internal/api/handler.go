@@ -13,10 +13,17 @@ import (
 // Handler holds references to service layer dependencies.
 type Handler struct {
 	cryptoOptions CryptoOptionsQuerier
+	usMarket      USMarketQuerier
 }
 
 func NewHandler(cos CryptoOptionsQuerier) *Handler {
 	return &Handler{cryptoOptions: cos}
+}
+
+// NewHandlerWithUSMarket creates a Handler wired with both crypto-options and
+// US market service implementations.
+func NewHandlerWithUSMarket(cos CryptoOptionsQuerier, usm USMarketQuerier) *Handler {
+	return &Handler{cryptoOptions: cos, usMarket: usm}
 }
 
 // handleServiceError maps service-level errors to appropriate HTTP responses.
@@ -94,6 +101,72 @@ func (h *Handler) RunBacktest(c *gin.Context) {
 	}
 
 	resp, err := h.cryptoOptions.RunBacktest(c.Request.Context(), req)
+	if err != nil {
+		handleServiceError(c, err)
+		return
+	}
+
+	c.JSON(http.StatusOK, resp)
+}
+
+// GetUSStockBars handles GET /api/v1/us-stocks/bars
+func (h *Handler) GetUSStockBars(c *gin.Context) {
+	if h.usMarket == nil {
+		c.JSON(http.StatusNotFound, dto.ErrorResponse{Error: "US market service not configured"})
+		return
+	}
+
+	var req dto.USStockBarRequest
+	if err := c.ShouldBindQuery(&req); err != nil {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: err.Error()})
+		return
+	}
+
+	resp, err := h.usMarket.QueryUSStockBars(c.Request.Context(), req)
+	if err != nil {
+		handleServiceError(c, err)
+		return
+	}
+
+	c.JSON(http.StatusOK, resp)
+}
+
+// GetUSOptionBars handles GET /api/v1/us-options/bars
+func (h *Handler) GetUSOptionBars(c *gin.Context) {
+	if h.usMarket == nil {
+		c.JSON(http.StatusNotFound, dto.ErrorResponse{Error: "US market service not configured"})
+		return
+	}
+
+	var req dto.USOptionBarRequest
+	if err := c.ShouldBindQuery(&req); err != nil {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: err.Error()})
+		return
+	}
+
+	resp, err := h.usMarket.QueryUSOptionBars(c.Request.Context(), req)
+	if err != nil {
+		handleServiceError(c, err)
+		return
+	}
+
+	c.JSON(http.StatusOK, resp)
+}
+
+// GetUSOptionChain handles GET /api/v1/us-options/chain
+func (h *Handler) GetUSOptionChain(c *gin.Context) {
+	if h.usMarket == nil {
+		c.JSON(http.StatusNotFound, dto.ErrorResponse{Error: "US market service not configured"})
+		return
+	}
+
+	var req dto.USOptionChainRequest
+	if err := c.ShouldBindQuery(&req); err != nil {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: err.Error()})
+		return
+	}
+
+	resp, err := h.usMarket.QueryUSOptionChain(c.Request.Context(), req)
 	if err != nil {
 		handleServiceError(c, err)
 		return
