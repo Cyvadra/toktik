@@ -44,3 +44,5 @@ reports/
 
 signal-list/
 
+tmp/
+tiger-env.sh

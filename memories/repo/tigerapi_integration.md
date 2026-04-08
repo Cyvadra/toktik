@@ -1,0 +1,9 @@
+- pkg/tigerapi wraps github.com/tigerfintech/openapi-go-sdk for US stock and US option market data.
+- Required env vars for tigerapi init: TIGEROPEN_TIGER_ID, TIGEROPEN_PRIVATE_KEY, TIGEROPEN_ACCOUNT, TIGEROPEN_LICENSE, TIGEROPEN_ENV.
+- Optional env vars: TIGEROPEN_LANGUAGE, TIGEROPEN_TIMEZONE, TIGEROPEN_TIMEOUT_SECONDS, TIGEROPEN_ENABLE_DYNAMIC_DOMAIN, TIGEROPEN_TOKEN, TIGEROPEN_SERVER_URL.
+- pkg/tigerapi also supports TIGEROPEN_TOKEN_FILE and will fall back to SDK-default tiger_openapi_token.properties when TIGEROPEN_TOKEN is unset.
+- env.sh replaced tiger_openapi_config.properties; source env.sh before integration tests or local usage.
+- Verified commands: go test ./pkg/tigerapi -count=1 and source ./env.sh && go test ./pkg/tigerapi -run TestNewFromEnvCurrentEnvironment -count=1.
+- Live Tiger response shape notes: option_expiration returns data as objects with dates[]; kline returns data as objects with items[]. pkg/tigerapi decodes both nested live shapes and flat test shapes.
+- Live validation on 2026-04-08: market-state, stock-kline, option-expirations work with env.sh. stock-quote failed with account/device permission denied for US real-time quotes.
+- Live option_chain on current env returned permission denied(field 'device_id' cannot be empty); SDK source shows token support via Authorization header and token manager files, but no explicit device_id option, so option-chain/option-quote/option-kline may require additional Tiger account/device provisioning outside this wrapper.

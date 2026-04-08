@@ -17,6 +17,7 @@ import (
 	appCli "github.com/Cyvadra/toktik/internal/cli"
 	"github.com/Cyvadra/toktik/internal/datafeed"
 	"github.com/Cyvadra/toktik/internal/report"
+	_ "github.com/Cyvadra/toktik/pkg/dsl/catalog"
 	"github.com/Cyvadra/toktik/pkg/feeds"
 	_ "github.com/Cyvadra/toktik/pkg/feeds/dvol"
 	"github.com/Cyvadra/toktik/pkg/strategies"
