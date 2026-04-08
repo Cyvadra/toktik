@@ -6,13 +6,18 @@ require (
 	github.com/ClickHouse/clickhouse-go/v2 v2.43.0
 	github.com/gin-gonic/gin v1.12.0
 	github.com/klauspost/compress v1.18.4
+	github.com/massive-com/client-go/v3 v3.2.0
 	github.com/parquet-go/parquet-go v0.29.0
+	github.com/tigerfintech/openapi-go-sdk v0.0.0
 )
+
+replace github.com/tigerfintech/openapi-go-sdk => /home/jason89757/workspace/openapi-go-sdk
 
 require (
 	github.com/ClickHouse/ch-go v0.71.0 // indirect
 	github.com/KyleBanks/depth v1.2.1 // indirect
 	github.com/andybalholm/brotli v1.2.0 // indirect
+	github.com/apapsch/go-jsonmerge/v2 v2.0.0 // indirect
 	github.com/bytedance/gopkg v0.1.3 // indirect
 	github.com/bytedance/sonic v1.15.0 // indirect
 	github.com/bytedance/sonic/loader v0.5.0 // indirect
@@ -41,6 +46,7 @@ require (
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.2 // indirect
+	github.com/oapi-codegen/runtime v1.2.0 // indirect
 	github.com/parquet-go/bitpack v1.0.0 // indirect
 	github.com/parquet-go/jsonlite v1.0.0 // indirect
 	github.com/paulmach/orb v0.12.0 // indirect
