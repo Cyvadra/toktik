@@ -712,6 +712,40 @@ func (bc *BarContext) OpenSpreadWithRef(legs []SpreadLeg, tag, ref string) int {
 	return bc.spreadTracker.OpenWithRef(legsCopy, bc.barTime, bc.barIndex, tag, ref)
 }
 
+// AppendSpreadLegs appends new open legs to an existing spread position.
+// This is useful when a strategy needs to replace or rebuild part of a spread
+// while keeping the original spread ID and any already-closed leg history.
+func (bc *BarContext) AppendSpreadLegs(spreadID int, legs []SpreadLeg) bool {
+	if bc.spreadTracker == nil || len(legs) == 0 {
+		return false
+	}
+	sp := bc.spreadTracker.Get(spreadID)
+	if sp == nil || sp.IsFullyClosed() {
+		return false
+	}
+	legsCopy := make([]SpreadLeg, len(legs))
+	copy(legsCopy, legs)
+	for i := range legsCopy {
+		legsCopy[i].EntryTime = bc.barTime
+		legsCopy[i].EntryCustomData = withEntryDelta(legsCopy[i].EntryCustomData, legsCopy[i].Contract)
+		legsCopy[i].Closed = false
+		legsCopy[i].ClosePrice = 0
+		legsCopy[i].CloseTime = time.Time{}
+		legsCopy[i].CloseReason = ""
+		legsCopy[i].CloseCustomData = nil
+	}
+	for i := range legsCopy {
+		amount := legsCopy[i].Qty * legsCopy[i].EntryPrice
+		if legsCopy[i].Side == Sell {
+			bc.broker.AdjustCash(amount)
+		} else {
+			bc.broker.AdjustCash(-amount)
+		}
+	}
+	sp.Legs = append(sp.Legs, legsCopy...)
+	return true
+}
+
 // CloseSpreadLeg closes a specific leg of a spread at the given price.
 func (bc *BarContext) CloseSpreadLeg(spreadID, legIndex int, closePrice float64) bool {
 	return bc.CloseSpreadLegWithReason(spreadID, legIndex, closePrice, "")
@@ -862,7 +896,11 @@ func (bc *BarContext) OpenSpreadInGroupWithRef(legs []SpreadLeg, tag, ref string
 			bc.broker.AdjustCash(-amount)
 		}
 	}
-	return bc.spreadTracker.OpenFull(legsCopy, bc.barTime, bc.barIndex, tag, ref, groupID)
+	spreadID := bc.spreadTracker.OpenFull(legsCopy, bc.barTime, bc.barIndex, tag, ref, groupID)
+	if spreadID > 0 && groupID > 0 && bc.spreadGroupTracker != nil {
+		bc.spreadGroupTracker.AddSpread(groupID, spreadID)
+	}
+	return spreadID
 }
 
 // --- Scheduled actions ---

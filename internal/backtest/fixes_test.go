@@ -295,6 +295,52 @@ func TestOpenSpreadWithRefDoesNotMutateCallerSlice(t *testing.T) {
 	}
 }
 
+func TestAppendSpreadLegsDoesNotMutateCallerSlice(t *testing.T) {
+	broker := NewBroker(Config{InitialCapital: 10000})
+	broker.SetPriceFunc(func(_ SecurityRef) BarPrices { return BarPrices{Close: 100} })
+
+	tracker := NewSpreadTracker()
+	now := time.Date(2024, 1, 2, 12, 0, 0, 0, time.UTC)
+
+	bc := &BarContext{
+		barTime:       now,
+		broker:        broker,
+		spreadTracker: tracker,
+	}
+
+	shortContract := OptionContract{Symbol: "OPT-P-100", MarkPrice: 5, BidPrice: 4.9, AskPrice: 5.1}
+	spreadID := bc.OpenSpread([]SpreadLeg{{Contract: shortContract, Side: Sell, Qty: 1, EntryPrice: 5}}, "test")
+	if spreadID <= 0 {
+		t.Fatal("OpenSpread() failed")
+	}
+
+	longContract := OptionContract{Symbol: "OPT-P-90", MarkPrice: 2, BidPrice: 1.9, AskPrice: 2.1}
+	legs := []SpreadLeg{{Contract: longContract, Side: Buy, Qty: 2, EntryPrice: 2}}
+	zeroTime := legs[0].EntryTime
+
+	if !bc.AppendSpreadLegs(spreadID, legs) {
+		t.Fatal("AppendSpreadLegs() = false, want true")
+	}
+
+	if !legs[0].EntryTime.Equal(zeroTime) {
+		t.Fatalf("AppendSpreadLegs mutated caller's legs[0].EntryTime: got %v, want zero", legs[0].EntryTime)
+	}
+
+	sp := tracker.Get(spreadID)
+	if sp == nil {
+		t.Fatal("spread not found")
+	}
+	if len(sp.Legs) != 2 {
+		t.Fatalf("len(sp.Legs) = %d, want 2", len(sp.Legs))
+	}
+	if !sp.Legs[1].EntryTime.Equal(now) {
+		t.Fatalf("appended leg EntryTime = %v, want %v", sp.Legs[1].EntryTime, now)
+	}
+	if got := broker.Cash(); got != 10001 {
+		t.Fatalf("broker.Cash() = %v, want %v", got, 10001.0)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Fix 8: isValidPrice rejects zero
 // ---------------------------------------------------------------------------
@@ -410,4 +456,3 @@ func TestComputeTradePnLSkipsZeroQty(t *testing.T) {
 		t.Fatalf("expected pnl 10, got %v", pnls[0])
 	}
 }
-

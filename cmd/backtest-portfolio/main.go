@@ -70,6 +70,7 @@ func main() {
 	outputJSON := flag.String("output", "", "Optional JSON output file path")
 	tradeCSVOutput := flag.String("trade-csv-output", "", "Optional compact CSV trade ledger path (single strategy: exact file; multi-strategy: adjacent numbered files)")
 	outputHTML := flag.String("html-output", "", "Optional HTML report output path (single strategy: detail report; multi-strategy: overview page with adjacent detail pages)")
+	clearPreviousData := flag.Bool("clear-previous-data", false, "Clear existing CSV and JSON files under reports/backtests before writing new outputs")
 	positionSize := flag.Float64("position-size", 0, "Contracts per leg when opening a spread; when unset, the strategy decides")
 	maxHoldHours := flag.Float64("max-hold-hours", 0, "Maximum holding time in hours; when unset, the strategy decides")
 	targetExpiryDays := flag.Int("target-expiry-days", 0, "Target days to expiry when selecting contracts; when unset, the strategy decides")
@@ -206,9 +207,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	htmlTargetDir := resolveHTMLTargetDir(*outputHTML)
-	if err := clearHTMLFiles(htmlTargetDir); err != nil {
-		log.Fatalf("Failed to clear HTML reports in %s: %v", htmlTargetDir, err)
+	if *clearPreviousData {
+		if err := clearBacktestDataFiles(defaultBacktestHTMLDir); err != nil {
+			log.Fatalf("Failed to clear prior backtest data in %s: %v", defaultBacktestHTMLDir, err)
+		}
 	}
 
 	ctx := context.Background()
@@ -520,18 +522,7 @@ func ensureParentDir(path string) error {
 	return os.MkdirAll(dir, 0o755)
 }
 
-func resolveHTMLTargetDir(base string) string {
-	if strings.TrimSpace(base) == "" {
-		return defaultBacktestHTMLDir
-	}
-	dir := filepath.Dir(base)
-	if strings.TrimSpace(dir) == "" {
-		return "."
-	}
-	return dir
-}
-
-func clearHTMLFiles(dir string) error {
+func clearBacktestDataFiles(dir string) error {
 	if strings.TrimSpace(dir) == "" {
 		return nil
 	}
@@ -543,7 +534,11 @@ func clearHTMLFiles(dir string) error {
 		return err
 	}
 	for _, entry := range entries {
-		if entry.IsDir() || !strings.EqualFold(filepath.Ext(entry.Name()), ".html") {
+		if entry.IsDir() {
+			continue
+		}
+		ext := strings.ToLower(filepath.Ext(entry.Name()))
+		if ext != ".csv" && ext != ".json" {
 			continue
 		}
 		if err := os.Remove(filepath.Join(dir, entry.Name())); err != nil {
@@ -551,6 +546,17 @@ func clearHTMLFiles(dir string) error {
 		}
 	}
 	return nil
+}
+
+func resolveHTMLTargetDir(path string) string {
+	if strings.TrimSpace(path) == "" {
+		return defaultBacktestHTMLDir
+	}
+	return filepath.Dir(path)
+}
+
+func clearHTMLFiles(dir string) error {
+	return clearBacktestDataFiles(dir)
 }
 
 func resolveHTMLOutputPath(base, strategyName, asset, interval string, from, to time.Time, index, total int) string {

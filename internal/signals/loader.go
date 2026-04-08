@@ -22,6 +22,17 @@ type Config struct {
 	EntryMatchers     []string
 	SkipMissing       bool
 	TextOptionalIndex bool
+
+	// Rich event column mappings (used by LoadEvents).
+	NameColumn      string
+	DirectionColumn string
+	ActionColumn    string
+	RemarksColumn   string
+	QtyColumn       string
+	RefColumn       string
+	GroupRefColumn  string
+	MetaColumns     []string // Additional columns captured into Meta map.
+	SourceLabel     string   // Populates SignalEvent.Source if set.
 }
 
 func LoadTimes(cfg Config) (map[int64]struct{}, error) {
