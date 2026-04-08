@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Cyvadra/toktik/pkg/polygon"
 )
@@ -12,6 +13,21 @@ import (
 type stubPolygonService struct {
 	stockAggregateReq polygon.AggregateRequest
 	optionChainReq    polygon.OptionChainRequest
+	stockMinuteDate   time.Time
+	optionMinuteDate  time.Time
+	forceDownload     bool
+}
+
+func (s *stubPolygonService) DownloadStockMinuteAggregates(date time.Time, force bool) (string, error) {
+	s.stockMinuteDate = date
+	s.forceDownload = force
+	return "/tmp/polygon/stocks/2026-04-07.csv.gz", nil
+}
+
+func (s *stubPolygonService) DownloadOptionMinuteAggregates(date time.Time, force bool) (string, error) {
+	s.optionMinuteDate = date
+	s.forceDownload = force
+	return "/tmp/polygon/options/2026-04-07.csv.gz", nil
 }
 
 func (s *stubPolygonService) StockSnapshot(symbol string) (*polygon.StockSnapshot, error) {
@@ -96,6 +112,30 @@ func TestRunStockAggregatesParsesFlags(t *testing.T) {
 	}
 }
 
+func TestRunStockMinuteFlatFileParsesFlags(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	service := &stubPolygonService{}
+	cli := app{
+		stdout: &stdout,
+		stderr: &stderr,
+		newClient: func() (polygonService, error) {
+			return service, nil
+		},
+	}
+
+	exitCode := cli.run([]string{"stock-minute-flatfile", "--date", "2026-04-07", "--force"})
+	if exitCode != 0 {
+		t.Fatalf("run exit code = %d, stderr=%s", exitCode, stderr.String())
+	}
+	if service.stockMinuteDate.Format("2006-01-02") != "2026-04-07" || !service.forceDownload {
+		t.Fatalf("unexpected stock flatfile request: date=%s force=%v", service.stockMinuteDate.Format("2006-01-02"), service.forceDownload)
+	}
+	if !strings.Contains(stdout.String(), "/tmp/polygon/stocks/2026-04-07.csv.gz") {
+		t.Fatalf("expected stock flatfile output, got %s", stdout.String())
+	}
+}
+
 func TestRunOptionChainParsesFilters(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
@@ -117,6 +157,30 @@ func TestRunOptionChainParsesFilters(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "O:SPY251219C00650000") {
 		t.Fatalf("expected option chain output, got %s", stdout.String())
+	}
+}
+
+func TestRunOptionMinuteFlatFileParsesFlags(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	service := &stubPolygonService{}
+	cli := app{
+		stdout: &stdout,
+		stderr: &stderr,
+		newClient: func() (polygonService, error) {
+			return service, nil
+		},
+	}
+
+	exitCode := cli.run([]string{"option-minute-flatfile", "--date", "2026-04-07"})
+	if exitCode != 0 {
+		t.Fatalf("run exit code = %d, stderr=%s", exitCode, stderr.String())
+	}
+	if service.optionMinuteDate.Format("2006-01-02") != "2026-04-07" {
+		t.Fatalf("unexpected option flatfile request: date=%s", service.optionMinuteDate.Format("2006-01-02"))
+	}
+	if !strings.Contains(stdout.String(), "/tmp/polygon/options/2026-04-07.csv.gz") {
+		t.Fatalf("expected option flatfile output, got %s", stdout.String())
 	}
 }
 

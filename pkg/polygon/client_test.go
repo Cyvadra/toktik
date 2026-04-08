@@ -5,8 +5,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/massive-com/client-go/v3/rest"
 )
@@ -24,6 +27,8 @@ func TestLoadConfigFromEnvSupportsPolygonAliases(t *testing.T) {
 	t.Setenv(EnvMassiveAPIKey, "")
 	t.Setenv(EnvPolygonAPIKey, "poly_key")
 	t.Setenv(EnvPolygonBaseURL, "http://localhost:9999")
+	t.Setenv(EnvPolygonFlatFilesBaseURL, "http://localhost:7777/files")
+	t.Setenv(EnvPolygonFlatFilesCacheDir, "/tmp/polygon-cache")
 	t.Setenv(EnvPolygonTimeoutSeconds, "15")
 	t.Setenv(EnvPolygonTrace, "true")
 	t.Setenv(EnvPolygonPagination, "false")
@@ -32,8 +37,91 @@ func TestLoadConfigFromEnvSupportsPolygonAliases(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadConfigFromEnv failed: %v", err)
 	}
-	if cfg.APIKey != "poly_key" || cfg.BaseURL != "http://localhost:9999" || cfg.Timeout.Seconds() != 15 || !cfg.Trace || cfg.Pagination {
+	if cfg.APIKey != "poly_key" || cfg.BaseURL != "http://localhost:9999" || cfg.FlatFilesBaseURL != "http://localhost:7777/files" || cfg.FlatFilesCacheDir != "/tmp/polygon-cache" || cfg.Timeout.Seconds() != 15 || !cfg.Trace || cfg.Pagination {
 		t.Fatalf("unexpected config: %#v", cfg)
+	}
+}
+
+func TestDownloadMinuteAggregatesFlatFiles(t *testing.T) {
+	cacheDir := t.TempDir()
+	var requests []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests = append(requests, r.Method+" "+r.URL.RequestURI())
+		if got := r.Header.Get("Authorization"); got != "Bearer test_massive_key" {
+			t.Fatalf("unexpected Authorization header: %q", got)
+		}
+		switch r.URL.Path {
+		case "/flatfiles/us_stocks_sip/minute_aggs_v1/2026/2026-04-07.csv.gz":
+			_, _ = w.Write([]byte("stock-file"))
+		case "/flatfiles/us_options_opra/minute_aggs_v1/2026/2026-04-07.csv.gz":
+			_, _ = w.Write([]byte("option-file"))
+		default:
+			t.Fatalf("unexpected request path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	client, err := New(Config{
+		APIKey:            "test_massive_key",
+		BaseURL:           server.URL,
+		FlatFilesBaseURL:  server.URL + "/flatfiles",
+		FlatFilesCacheDir: cacheDir,
+	})
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+
+	stockPath, err := client.DownloadStockMinuteAggregates(time.Date(2026, 4, 7, 12, 34, 0, 0, time.UTC), false)
+	if err != nil {
+		t.Fatalf("DownloadStockMinuteAggregates failed: %v", err)
+	}
+	optionPath, err := client.DownloadOptionMinuteAggregates(time.Date(2026, 4, 7, 9, 30, 0, 0, time.FixedZone("EST", -5*3600)), false)
+	if err != nil {
+		t.Fatalf("DownloadOptionMinuteAggregates failed: %v", err)
+	}
+
+	stockBytes, err := os.ReadFile(stockPath)
+	if err != nil {
+		t.Fatalf("read stock cache file: %v", err)
+	}
+	optionBytes, err := os.ReadFile(optionPath)
+	if err != nil {
+		t.Fatalf("read option cache file: %v", err)
+	}
+	if string(stockBytes) != "stock-file" || string(optionBytes) != "option-file" {
+		t.Fatalf("unexpected cached content: stock=%q option=%q", string(stockBytes), string(optionBytes))
+	}
+	if !strings.HasSuffix(stockPath, filepath.Join("us_stocks_sip", "minute_aggs_v1", "2026", "2026-04-07.csv.gz")) {
+		t.Fatalf("unexpected stock cache path: %s", stockPath)
+	}
+	if !strings.HasSuffix(optionPath, filepath.Join("us_options_opra", "minute_aggs_v1", "2026", "2026-04-07.csv.gz")) {
+		t.Fatalf("unexpected option cache path: %s", optionPath)
+	}
+	if len(requests) != 2 {
+		t.Fatalf("expected 2 download requests, got %d", len(requests))
+	}
+
+	stockPathAgain, err := client.DownloadStockMinuteAggregates(time.Date(2026, 4, 7, 0, 0, 0, 0, time.UTC), false)
+	if err != nil {
+		t.Fatalf("DownloadStockMinuteAggregates cache hit failed: %v", err)
+	}
+	if stockPathAgain != stockPath {
+		t.Fatalf("unexpected cached stock path: %s", stockPathAgain)
+	}
+	if len(requests) != 2 {
+		t.Fatalf("expected no extra request on cache hit, got %d", len(requests))
+	}
+
+	if _, err := client.DownloadStockMinuteAggregates(time.Time{}, false); err == nil {
+		t.Fatal("expected zero date error")
+	}
+
+	missingCacheClient, err := New(Config{APIKey: "test_massive_key", BaseURL: server.URL, FlatFilesBaseURL: server.URL + "/flatfiles"})
+	if err != nil {
+		t.Fatalf("New missing cache client failed: %v", err)
+	}
+	if _, err := missingCacheClient.DownloadStockMinuteAggregates(time.Date(2026, 4, 7, 0, 0, 0, 0, time.UTC), false); err == nil {
+		t.Fatal("expected missing cache directory error")
 	}
 }
 

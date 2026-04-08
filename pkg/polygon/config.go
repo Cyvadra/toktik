@@ -9,33 +9,42 @@ import (
 )
 
 const (
-	EnvMassiveAPIKey         = "MASSIVE_API_KEY"
-	EnvPolygonAPIKey         = "POLYGON_API_KEY"
-	EnvMassiveBaseURL        = "MASSIVE_BASE_URL"
-	EnvPolygonBaseURL        = "POLYGON_BASE_URL"
-	EnvMassiveTimeoutSeconds = "MASSIVE_TIMEOUT_SECONDS"
-	EnvPolygonTimeoutSeconds = "POLYGON_TIMEOUT_SECONDS"
-	EnvMassiveTrace          = "MASSIVE_TRACE"
-	EnvPolygonTrace          = "POLYGON_TRACE"
-	EnvMassivePagination     = "MASSIVE_PAGINATION"
-	EnvPolygonPagination     = "POLYGON_PAGINATION"
-	defaultBaseURL           = "https://api.massive.com"
-	defaultTimeout           = 60 * time.Second
+	EnvMassiveAPIKey            = "MASSIVE_API_KEY"
+	EnvPolygonAPIKey            = "POLYGON_API_KEY"
+	EnvMassiveBaseURL           = "MASSIVE_BASE_URL"
+	EnvPolygonBaseURL           = "POLYGON_BASE_URL"
+	EnvMassiveFlatFilesBaseURL  = "MASSIVE_FLATFILES_BASE_URL"
+	EnvPolygonFlatFilesBaseURL  = "POLYGON_FLATFILES_BASE_URL"
+	EnvMassiveFlatFilesCacheDir = "MASSIVE_FLATFILES_CACHE_DIR"
+	EnvPolygonFlatFilesCacheDir = "POLYGON_FLATFILES_CACHE_DIR"
+	EnvMassiveTimeoutSeconds    = "MASSIVE_TIMEOUT_SECONDS"
+	EnvPolygonTimeoutSeconds    = "POLYGON_TIMEOUT_SECONDS"
+	EnvMassiveTrace             = "MASSIVE_TRACE"
+	EnvPolygonTrace             = "POLYGON_TRACE"
+	EnvMassivePagination        = "MASSIVE_PAGINATION"
+	EnvPolygonPagination        = "POLYGON_PAGINATION"
+	defaultBaseURL              = "https://api.massive.com"
+	defaultFlatFilesBaseURL     = "https://files.massive.com/flatfiles"
+	defaultTimeout              = 60 * time.Second
 )
 
 type Config struct {
-	APIKey     string
-	BaseURL    string
-	Timeout    time.Duration
-	Trace      bool
-	Pagination bool
+	APIKey            string
+	BaseURL           string
+	FlatFilesBaseURL  string
+	FlatFilesCacheDir string
+	Timeout           time.Duration
+	Trace             bool
+	Pagination        bool
 }
 
 func LoadConfigFromEnv() (Config, error) {
 	cfg := Config{
-		APIKey:     firstEnv(EnvMassiveAPIKey, EnvPolygonAPIKey),
-		BaseURL:    firstEnv(EnvMassiveBaseURL, EnvPolygonBaseURL),
-		Pagination: true,
+		APIKey:            firstEnv(EnvMassiveAPIKey, EnvPolygonAPIKey),
+		BaseURL:           firstEnv(EnvMassiveBaseURL, EnvPolygonBaseURL),
+		FlatFilesBaseURL:  firstEnv(EnvMassiveFlatFilesBaseURL, EnvPolygonFlatFilesBaseURL),
+		FlatFilesCacheDir: firstEnv(EnvMassiveFlatFilesCacheDir, EnvPolygonFlatFilesCacheDir),
+		Pagination:        true,
 	}
 
 	if timeoutValue := firstEnv(EnvMassiveTimeoutSeconds, EnvPolygonTimeoutSeconds); timeoutValue != "" {
@@ -80,6 +89,24 @@ func (c Config) normalizedBaseURL() string {
 		return defaultBaseURL
 	}
 	return strings.TrimRight(strings.TrimSpace(c.BaseURL), "/")
+}
+
+func (c Config) normalizedFlatFilesBaseURL() string {
+	if strings.TrimSpace(c.FlatFilesBaseURL) == "" {
+		return defaultFlatFilesBaseURL
+	}
+	return strings.TrimRight(strings.TrimSpace(c.FlatFilesBaseURL), "/")
+}
+
+func (c Config) normalizedFlatFilesCacheDir() string {
+	return strings.TrimSpace(c.FlatFilesCacheDir)
+}
+
+func (c Config) validateFlatFilesConfig() error {
+	if strings.TrimSpace(c.FlatFilesCacheDir) == "" {
+		return fmt.Errorf("missing required polygon environment variable: %s or %s", EnvMassiveFlatFilesCacheDir, EnvPolygonFlatFilesCacheDir)
+	}
+	return nil
 }
 
 func (c Config) normalizedTimeout() time.Duration {

@@ -9,11 +9,14 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Cyvadra/toktik/pkg/polygon"
 )
 
 type polygonService interface {
+	DownloadStockMinuteAggregates(date time.Time, force bool) (string, error)
+	DownloadOptionMinuteAggregates(date time.Time, force bool) (string, error)
 	StockSnapshot(symbol string) (*polygon.StockSnapshot, error)
 	StockAggregates(req polygon.AggregateRequest) ([]polygon.AggregateBar, error)
 	StockQuotes(symbol string, req polygon.QuoteRequest) ([]polygon.Quote, error)
@@ -63,6 +66,8 @@ func (a app) run(args []string) int {
 	}
 
 	switch command {
+	case "stock-minute-flatfile":
+		return a.runStockMinuteFlatFile(client, args[1:])
 	case "stock-snapshot":
 		return a.runStockSnapshot(client, args[1:])
 	case "stock-aggregates":
@@ -71,6 +76,8 @@ func (a app) run(args []string) int {
 		return a.runStockQuotes(client, args[1:])
 	case "stock-trades":
 		return a.runStockTrades(client, args[1:])
+	case "option-minute-flatfile":
+		return a.runOptionMinuteFlatFile(client, args[1:])
 	case "option-contract":
 		return a.runOptionContract(client, args[1:])
 	case "option-chain":
@@ -85,6 +92,20 @@ func (a app) run(args []string) int {
 		a.printUsage()
 		return a.failf("unknown command %q", command)
 	}
+}
+
+func (a app) runStockMinuteFlatFile(client polygonService, args []string) int {
+	fs := flag.NewFlagSet("stock-minute-flatfile", flag.ContinueOnError)
+	fs.SetOutput(a.stderr)
+	date, force, err := parseFlatFileFlags(fs, args)
+	if err != nil {
+		return err.code(a)
+	}
+	path, runErr := client.DownloadStockMinuteAggregates(date, force)
+	if runErr != nil {
+		return a.failf("stock-minute-flatfile failed: %v", runErr)
+	}
+	return a.writeJSON(map[string]any{"path": path})
 }
 
 func (a app) runStockSnapshot(client polygonService, args []string) int {
@@ -152,6 +173,20 @@ func (a app) runStockTrades(client polygonService, args []string) int {
 		return a.failf("stock-trades failed: %v", runErr)
 	}
 	return a.writeJSON(data)
+}
+
+func (a app) runOptionMinuteFlatFile(client polygonService, args []string) int {
+	fs := flag.NewFlagSet("option-minute-flatfile", flag.ContinueOnError)
+	fs.SetOutput(a.stderr)
+	date, force, err := parseFlatFileFlags(fs, args)
+	if err != nil {
+		return err.code(a)
+	}
+	path, runErr := client.DownloadOptionMinuteAggregates(date, force)
+	if runErr != nil {
+		return a.failf("option-minute-flatfile failed: %v", runErr)
+	}
+	return a.writeJSON(map[string]any{"path": path})
 }
 
 func (a app) runOptionContract(client polygonService, args []string) int {
@@ -318,6 +353,22 @@ func parseAggregateFlags(fs *flag.FlagSet, args []string) (polygon.AggregateRequ
 	}, nil
 }
 
+func parseFlatFileFlags(fs *flag.FlagSet, args []string) (time.Time, bool, *cliParseError) {
+	dateValue := fs.String("date", "", "Market date in YYYY-MM-DD")
+	force := fs.Bool("force", false, "Force re-download even if the cache file already exists")
+	if err := fs.Parse(args); err != nil {
+		return time.Time{}, false, &cliParseError{message: err.Error(), exitCode: 2}
+	}
+	if strings.TrimSpace(*dateValue) == "" {
+		return time.Time{}, false, &cliParseError{message: fs.Name() + ": --date is required"}
+	}
+	date, err := time.Parse("2006-01-02", strings.TrimSpace(*dateValue))
+	if err != nil {
+		return time.Time{}, false, &cliParseError{message: fmt.Sprintf("%s: invalid --date: %v", fs.Name(), err)}
+	}
+	return date, *force, nil
+}
+
 func parseQuoteFlags(fs *flag.FlagSet, args []string) (polygon.QuoteRequest, *cliParseError) {
 	timestamp := fs.String("timestamp", "", "Exact timestamp")
 	timestampGte := fs.String("timestamp-gte", "", "Timestamp greater than or equal")
@@ -424,11 +475,13 @@ func (a app) failf(format string, args ...any) int {
 
 func (a app) printUsage() {
 	commands := []string{
+		"option-minute-flatfile",
 		"option-aggregates",
 		"option-chain",
 		"option-contract",
 		"option-quotes",
 		"option-trades",
+		"stock-minute-flatfile",
 		"stock-aggregates",
 		"stock-quotes",
 		"stock-snapshot",
@@ -444,7 +497,9 @@ func (a app) printUsage() {
 	_, _ = fmt.Fprintln(a.stderr, "")
 	_, _ = fmt.Fprintln(a.stderr, "Examples:")
 	_, _ = fmt.Fprintln(a.stderr, "  go run ./cmd/tools/polygon -- stock-snapshot --symbol AAPL")
+	_, _ = fmt.Fprintln(a.stderr, "  go run ./cmd/tools/polygon -- stock-minute-flatfile --date 2026-04-07")
 	_, _ = fmt.Fprintln(a.stderr, "  go run ./cmd/tools/polygon -- stock-aggregates --ticker AAPL --multiplier 1 --timespan minute --from 2025-11-03 --to 2025-11-28")
 	_, _ = fmt.Fprintln(a.stderr, "  go run ./cmd/tools/polygon -- option-chain --underlying SPY --expiration-date 2025-12-19 --contract-type call")
+	_, _ = fmt.Fprintln(a.stderr, "  go run ./cmd/tools/polygon -- option-minute-flatfile --date 2026-04-07")
 	_, _ = fmt.Fprintln(a.stderr, "  go run ./cmd/tools/polygon -- option-trades --ticker O:SPY251219C00650000 --limit 10")
 }
