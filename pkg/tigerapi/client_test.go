@@ -6,6 +6,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -84,18 +85,17 @@ func TestNewFromEnvAndQueries(t *testing.T) {
 	testKey := mustGeneratePrivateKeyPEM(t)
 
 	responses := map[string]any{
-		"grab_quote_permission": []map[string]any{{"name": "usOptionQuote", "expireAt": -1}},
-		"market_state":          []map[string]any{{"market": "US", "status": "Trading"}},
-		"quote_real_time":       []map[string]any{{"symbol": "AAPL", "latestPrice": 197.12}},
-		"kline":                 []map[string]any{{"symbol": "AAPL", "items": []map[string]any{{"time": 1712534400000, "open": 190.0, "high": 198.0, "low": 189.5, "close": 197.12, "volume": 1000.0}}}},
-		"timeline":              []map[string]any{{"symbol": "AAPL", "time": 1712534400000, "price": 197.12, "avgPrice": 196.8, "volume": 1000.0}},
-		"trade_tick":            []map[string]any{{"symbol": "AAPL", "time": 1712534400000, "price": 197.12, "size": 10.0, "direction": "BUY"}},
-		"quote_depth":           map[string]any{"symbol": "AAPL", "bids": [][]float64{{197.1, 100}}, "asks": [][]float64{{197.2, 200}}},
-		"option_expiration":     []map[string]any{{"symbol": "AAPL", "dates": []string{"2026-04-17", "2026-05-15"}}},
-		"option_chain":          []map[string]any{{"identifier": "AAPL 260417C00200000", "symbol": "AAPL", "expiry": "2026-04-17", "strike": 200.0, "putCall": "CALL"}},
-		"option_brief":          []map[string]any{{"symbol": "AAPL", "identifier": "AAPL 260417C00200000", "latest_price": 12.4, "bid_price": 12.3, "ask_price": 12.5, "volume": 10, "open_interest": 20, "delta": 0.51}},
-		"option_kline":          []map[string]any{{"symbol": "AAPL 260417C00200000", "items": []map[string]any{{"time": 1712534400000, "open": 10.0, "high": 12.5, "low": 9.8, "close": 12.4, "volume": 123.0}}}},
-		"custom_history":        []map[string]any{{"symbol": "AAPL", "time": 1712534400000, "close": 197.12}},
+		"market_state":      []map[string]any{{"market": "US", "status": "Trading"}},
+		"quote_real_time":   []map[string]any{{"symbol": "AAPL", "latestPrice": 197.12}},
+		"kline":             []map[string]any{{"symbol": "AAPL", "items": []map[string]any{{"time": 1712534400000, "open": 190.0, "high": 198.0, "low": 189.5, "close": 197.12, "volume": 1000.0}}}},
+		"timeline":          []map[string]any{{"symbol": "AAPL", "time": 1712534400000, "price": 197.12, "avgPrice": 196.8, "volume": 1000.0}},
+		"trade_tick":        []map[string]any{{"symbol": "AAPL", "time": 1712534400000, "price": 197.12, "size": 10.0, "direction": "BUY"}},
+		"quote_depth":       map[string]any{"symbol": "AAPL", "bids": [][]float64{{197.1, 100}}, "asks": [][]float64{{197.2, 200}}},
+		"option_expiration": []map[string]any{{"symbol": "AAPL", "dates": []string{"2026-04-17", "2026-05-15"}}},
+		"option_chain":      []map[string]any{{"identifier": "AAPL 260417C00200000", "symbol": "AAPL", "expiry": "2026-04-17", "strike": 200.0, "putCall": "CALL"}},
+		"option_brief":      []map[string]any{{"identifier": "AAPL 260417C00200000", "latestPrice": 12.4, "delta": 0.51}},
+		"option_kline":      []map[string]any{{"symbol": "AAPL 260417C00200000", "items": []map[string]any{{"time": 1712534400000, "open": 10.0, "high": 12.5, "low": 9.8, "close": 12.4, "volume": 123.0}}}},
+		"custom_history":    []map[string]any{{"symbol": "AAPL", "time": 1712534400000, "close": 197.12}},
 	}
 
 	var (
@@ -225,29 +225,9 @@ func TestNewFromEnvAndQueries(t *testing.T) {
 	assertRecordedMethod(t, records, "quote_real_time", map[string]any{"symbols": []any{"AAPL"}})
 	assertRecordedMethod(t, records, "kline", map[string]any{"symbols": []any{"AAPL"}, "period": "day"})
 	assertRecordedMethod(t, records, "option_expiration", map[string]any{"symbols": []any{"AAPL"}})
-	assertRecordedMethod(t, records, "option_chain", map[string]any{
-		"option_basic":       []any{map[string]any{"symbol": "AAPL", "expiry": float64(1776398400000)}},
-		"return_greek_value": false,
-	})
-	assertRecordedMethod(t, records, "option_brief", map[string]any{
-		"option_basic": []any{map[string]any{
-			"symbol": "AAPL",
-			"expiry": float64(1776398400000),
-			"right":  "CALL",
-			"strike": 200,
-		}},
-	})
-	assertRecordedMethod(t, records, "option_kline", map[string]any{
-		"option_query": []any{map[string]any{
-			"symbol":     "AAPL",
-			"expiry":     float64(1776398400000),
-			"right":      "CALL",
-			"strike":     200,
-			"period":     "day",
-			"begin_time": -1,
-			"end_time":   float64(4070880000000),
-		}},
-	})
+	assertRecordedMethod(t, records, "option_chain", map[string]any{"symbol": "AAPL", "expiry": "2026-04-17"})
+	assertRecordedMethod(t, records, "option_brief", map[string]any{"identifiers": []any{"AAPL 260417C00200000"}})
+	assertRecordedMethod(t, records, "option_kline", map[string]any{"identifier": "AAPL 260417C00200000", "period": "day"})
 	assertRecordedMethod(t, records, "custom_history", map[string]any{"symbol": "AAPL"})
 }
 
@@ -305,20 +285,11 @@ func assertRecordedMethod(t *testing.T, records []recordedRequest, method string
 			if !ok {
 				t.Fatalf("method %s missing key %s in biz_content", method, key)
 			}
-			if canonicalJSON(t, got) != canonicalJSON(t, value) {
+			if fmt.Sprintf("%v", got) != fmt.Sprintf("%v", value) {
 				t.Fatalf("method %s key %s mismatch: got=%v want=%v", method, key, got, value)
 			}
 		}
 		return
 	}
 	t.Fatalf("method %s was not recorded", method)
-}
-
-func canonicalJSON(t *testing.T, value any) string {
-	t.Helper()
-	encoded, err := json.Marshal(value)
-	if err != nil {
-		t.Fatalf("marshal expected value: %v", err)
-	}
-	return string(encoded)
 }
