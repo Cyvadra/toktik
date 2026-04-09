@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 
+	runtimeconfig "github.com/Cyvadra/toktik/internal/config"
 	"github.com/massive-com/client-go/v3/rest"
 	"github.com/massive-com/client-go/v3/rest/gen"
 )
@@ -313,6 +314,14 @@ type optionContractPageItem struct {
 
 func NewFromEnv() (*Client, error) {
 	cfg, err := LoadConfigFromEnv()
+	if err != nil {
+		return nil, err
+	}
+	return New(cfg)
+}
+
+func NewFromRuntime(runtimeCfg runtimeconfig.Runtime) (*Client, error) {
+	cfg, err := LoadConfigFromRuntime(runtimeCfg)
 	if err != nil {
 		return nil, err
 	}

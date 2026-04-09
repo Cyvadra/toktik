@@ -18,6 +18,13 @@ const (
 	defaultReadTimeout = 30 * time.Minute
 )
 
+type FlatFileAssetState struct {
+	AssetClass   string
+	TableName    string
+	HasData      bool
+	LastImported time.Time
+}
+
 // ConnectClickHouse establishes a connection to ClickHouse.
 func ConnectClickHouse(ctx context.Context, dsn string) (driver.Conn, error) {
 	opts, err := clickhouse.ParseDSN(dsn)
@@ -232,6 +239,56 @@ func LatestOptionMarketDate(ctx context.Context, conn driver.Conn) (time.Time, b
 
 func LatestStockMarketDate(ctx context.Context, conn driver.Conn) (time.Time, bool, error) {
 	return latestMarketDate(ctx, conn, "us_stocks_bar_1m")
+}
+
+func InspectFlatFileAssetStates(ctx context.Context, conn driver.Conn) ([]FlatFileAssetState, error) {
+	assets := []FlatFileAssetState{
+		{AssetClass: "stocks", TableName: "us_stocks_bar_1m"},
+		{AssetClass: "options", TableName: "us_options_bar_1m"},
+	}
+
+	for idx := range assets {
+		exists, err := tableExists(ctx, conn, assets[idx].TableName)
+		if err != nil {
+			return nil, fmt.Errorf("inspect %s table %s: %w", assets[idx].AssetClass, assets[idx].TableName, err)
+		}
+		if !exists {
+			continue
+		}
+
+		latest, hasData, err := latestMarketDate(ctx, conn, assets[idx].TableName)
+		if err != nil {
+			return nil, fmt.Errorf("inspect latest %s market date: %w", assets[idx].AssetClass, err)
+		}
+		assets[idx].HasData = hasData
+		assets[idx].LastImported = latest
+	}
+
+	return assets, nil
+}
+
+func tableExists(ctx context.Context, conn driver.Conn, tableName string) (bool, error) {
+	rows, err := conn.Query(ctx, `SELECT count()
+FROM system.tables
+WHERE database = currentDatabase()
+  AND name = ?`, tableName)
+	if err != nil {
+		return false, fmt.Errorf("query system.tables: %w", err)
+	}
+	defer rows.Close()
+
+	if !rows.Next() {
+		return false, rows.Err()
+	}
+
+	var count uint64
+	if err := rows.Scan(&count); err != nil {
+		return false, fmt.Errorf("scan system.tables count: %w", err)
+	}
+	if err := rows.Err(); err != nil {
+		return false, fmt.Errorf("iterate system.tables count: %w", err)
+	}
+	return count > 0, nil
 }
 
 func latestMarketDate(ctx context.Context, conn driver.Conn, table string) (time.Time, bool, error) {

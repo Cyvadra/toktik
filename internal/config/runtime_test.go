@@ -42,7 +42,12 @@ func TestLoadRuntimeFromPathYAML(t *testing.T) {
 		"  token: \"runtime-token\"\n" +
 		"  token_file: \"/tmp/tiger-token.properties\"\n" +
 		"  server_url: \"https://tiger-proxy.internal\"\n" +
-		"  device_id: \"device-123\"\n")
+		"  device_id: \"device-123\"\n" +
+		"polygon:\n" +
+		"  flat_files_tool: \"mc\"\n" +
+		"  flat_files_cache_dir: \"/srv/toktik/polygon-cache\"\n" +
+		"  flat_files_access_key: \"flat-access\"\n" +
+		"  flat_files_secret_key: \"flat-secret\"\n")
 	if err := os.WriteFile(configPath, content, 0o644); err != nil {
 		t.Fatalf("WriteFile(%q) failed: %v", configPath, err)
 	}
@@ -90,6 +95,9 @@ func TestLoadRuntimeFromPathYAML(t *testing.T) {
 	}
 	if cfg.Tiger.Token != "runtime-token" || cfg.Tiger.TokenFile != "/tmp/tiger-token.properties" || cfg.Tiger.ServerURL != "https://tiger-proxy.internal" || cfg.Tiger.DeviceID != "device-123" {
 		t.Fatalf("unexpected tiger auth config: %#v", cfg.Tiger)
+	}
+	if cfg.Polygon.FlatFilesTool != "mc" || cfg.Polygon.FlatFilesCacheDir != "/srv/toktik/polygon-cache" || cfg.Polygon.FlatFilesAccessKey != "flat-access" || cfg.Polygon.FlatFilesSecretKey != "flat-secret" {
+		t.Fatalf("unexpected polygon flatfile config: %#v", cfg.Polygon)
 	}
 }
 
@@ -158,6 +166,31 @@ func TestLoadRuntimeFromPathEnvOverrides(t *testing.T) {
 	if cfg.Tiger.EnableDynamicDomain || cfg.Tiger.Token != "env-token" || cfg.Tiger.TokenFile != "/tmp/env-tiger-token.properties" || cfg.Tiger.ServerURL != "https://tiger-env.example" || cfg.Tiger.DeviceID != "env-device" {
 		t.Fatalf("unexpected tiger auth override: %#v", cfg.Tiger)
 	}
+	if cfg.Polygon != DefaultRuntime().Polygon {
+		t.Fatalf("unexpected polygon override from environment: %#v", cfg.Polygon)
+	}
+}
+
+func TestLoadRuntimeFromPathIgnoresLegacyPolygonEnvOverrides(t *testing.T) {
+	t.Setenv("POLYGON_API_KEY", "env-api-key")
+	t.Setenv("POLYGON_BASE_URL", "https://env.example")
+	t.Setenv("POLYGON_FLATFILES_BASE_URL", "https://env.example/flatfiles")
+	t.Setenv("POLYGON_FLATFILES_TOOL", "mc")
+	t.Setenv("POLYGON_FLATFILES_CACHE_DIR", "/env/polygon-cache")
+	t.Setenv("POLYGON_FLATFILES_ACCESS_KEY", "env-flat-access")
+	t.Setenv("POLYGON_FLATFILES_SECRET_KEY", "env-flat-secret")
+	t.Setenv("POLYGON_TIMEOUT_SECONDS", "11")
+	t.Setenv("POLYGON_TRACE", "true")
+	t.Setenv("POLYGON_PAGINATION", "false")
+
+	cfg, err := LoadRuntimeFromPath(filepath.Join(t.TempDir(), "missing.yaml"))
+	if err != nil {
+		t.Fatalf("LoadRuntimeFromPath(missing) failed: %v", err)
+	}
+
+	if cfg.Polygon != DefaultRuntime().Polygon {
+		t.Fatalf("unexpected polygon env override: %#v", cfg.Polygon)
+	}
 }
 
 func TestSchemaPathCandidates(t *testing.T) {
@@ -172,5 +205,12 @@ func TestSchemaPathCandidates(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("SchemaPathCandidates() = %#v, want %#v", got, want)
+	}
+}
+
+func TestDefaultRuntimeRequiresExplicitPolygonFlatfileCacheDir(t *testing.T) {
+	cfg := DefaultRuntime()
+	if cfg.Polygon.FlatFilesCacheDir != "" {
+		t.Fatalf("expected empty default polygon flatfile cache dir, got %q", cfg.Polygon.FlatFilesCacheDir)
 	}
 }

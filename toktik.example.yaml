@@ -46,7 +46,10 @@ polygon:
   api_key: ""
   base_url: "https://api.massive.com"
   flat_files_base_url: "https://files.massive.com/flatfiles"
+  flat_files_tool: "mc"
   flat_files_cache_dir: "tmp/polygon"
+  flat_files_access_key: ""
+  flat_files_secret_key: ""
   timeout_seconds: 60
   trace: false
   pagination: true

@@ -24,8 +24,8 @@ const (
 )
 
 type polygonClient interface {
-	DownloadStockMinuteAggregates(date time.Time, force bool) (string, error)
-	DownloadOptionMinuteAggregates(date time.Time, force bool) (string, error)
+	DownloadStockMinuteAggregates(ctx context.Context, date time.Time, force bool) (string, error)
+	DownloadOptionMinuteAggregates(ctx context.Context, date time.Time, force bool) (string, error)
 	StockSnapshot(symbol string) (*polygonpkg.StockSnapshot, error)
 	StockAggregates(req polygonpkg.AggregateRequest) ([]polygonpkg.AggregateBar, error)
 	StockQuotes(symbol string, req polygonpkg.QuoteRequest) ([]polygonpkg.Quote, error)
@@ -48,19 +48,19 @@ func NewPolygonService(client polygonClient, store cache.Store) *PolygonService 
 }
 
 func NewPolygonServiceFromConfig(cfg config.Runtime, store cache.Store) (*PolygonService, error) {
-	client, err := polygonpkg.New(cfg.PolygonClientConfig())
+	client, err := polygonpkg.NewFromRuntime(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("init polygon client: %w", err)
 	}
 	return NewPolygonService(client, store), nil
 }
 
-func (s *PolygonService) DownloadStockMinuteAggregates(_ context.Context, date time.Time, force bool) (string, error) {
-	return s.client.DownloadStockMinuteAggregates(date, force)
+func (s *PolygonService) DownloadStockMinuteAggregates(ctx context.Context, date time.Time, force bool) (string, error) {
+	return s.client.DownloadStockMinuteAggregates(ctx, date, force)
 }
 
-func (s *PolygonService) DownloadOptionMinuteAggregates(_ context.Context, date time.Time, force bool) (string, error) {
-	return s.client.DownloadOptionMinuteAggregates(date, force)
+func (s *PolygonService) DownloadOptionMinuteAggregates(ctx context.Context, date time.Time, force bool) (string, error) {
+	return s.client.DownloadOptionMinuteAggregates(ctx, date, force)
 }
 
 func (s *PolygonService) StockSnapshot(ctx context.Context, symbol string) (*polygonpkg.StockSnapshot, error) {

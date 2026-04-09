@@ -1,8 +1,10 @@
 package polygon
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -12,71 +14,87 @@ import (
 	"testing"
 	"time"
 
+	runtimeconfig "github.com/Cyvadra/toktik/internal/config"
 	"github.com/massive-com/client-go/v3/rest"
 )
 
-func TestLoadConfigFromEnvRequiresAPIKey(t *testing.T) {
-	t.Setenv(EnvMassiveAPIKey, "")
-	t.Setenv(EnvPolygonAPIKey, "")
+func TestLoadConfigFromEnvRequiresRuntimePolygonAPIKey(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "toktik.yaml")
+	t.Setenv(runtimeconfig.EnvConfigPath, configPath)
+
 	_, err := LoadConfigFromEnv()
 	if err == nil {
 		t.Fatal("expected missing API key error")
 	}
 }
 
-func TestLoadConfigFromEnvSupportsPolygonAliases(t *testing.T) {
-	t.Setenv(EnvMassiveAPIKey, "")
-	t.Setenv(EnvPolygonAPIKey, "poly_key")
-	t.Setenv(EnvPolygonBaseURL, "http://localhost:9999")
-	t.Setenv(EnvPolygonFlatFilesBaseURL, "http://localhost:7777/files")
-	t.Setenv(EnvPolygonFlatFilesCacheDir, "/tmp/polygon-cache")
-	t.Setenv(EnvPolygonTimeoutSeconds, "15")
-	t.Setenv(EnvPolygonTrace, "true")
-	t.Setenv(EnvPolygonPagination, "false")
+func TestLoadConfigFromEnvReadsRuntimePolygonConfig(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "toktik.yaml")
+	content := []byte("polygon:\n" +
+		"  api_key: \"yaml_key\"\n" +
+		"  base_url: \"http://localhost:9999\"\n" +
+		"  flat_files_base_url: \"http://localhost:7777/files\"\n" +
+		"  flat_files_tool: \"mc\"\n" +
+		"  flat_files_cache_dir: \"/tmp/polygon-cache\"\n" +
+		"  flat_files_access_key: \"flat-access\"\n" +
+		"  flat_files_secret_key: \"flat-secret\"\n" +
+		"  timeout_seconds: 15\n" +
+		"  trace: true\n" +
+		"  pagination: false\n")
+	if err := os.WriteFile(configPath, content, 0o644); err != nil {
+		t.Fatalf("WriteFile(%q) failed: %v", configPath, err)
+	}
+	t.Setenv(runtimeconfig.EnvConfigPath, configPath)
+	t.Setenv("POLYGON_API_KEY", "env_key_should_be_ignored")
 
 	cfg, err := LoadConfigFromEnv()
 	if err != nil {
 		t.Fatalf("LoadConfigFromEnv failed: %v", err)
 	}
-	if cfg.APIKey != "poly_key" || cfg.BaseURL != "http://localhost:9999" || cfg.FlatFilesBaseURL != "http://localhost:7777/files" || cfg.FlatFilesCacheDir != "/tmp/polygon-cache" || cfg.Timeout.Seconds() != 15 || !cfg.Trace || cfg.Pagination {
+	if cfg.APIKey != "yaml_key" || cfg.BaseURL != "http://localhost:9999" || cfg.FlatFilesBaseURL != "http://localhost:7777/files" || cfg.FlatFilesTool != "mc" || cfg.FlatFilesCacheDir != "/tmp/polygon-cache" || cfg.FlatFilesAccessKey != "flat-access" || cfg.FlatFilesSecretKey != "flat-secret" || cfg.Timeout.Seconds() != 15 || !cfg.Trace || cfg.Pagination {
 		t.Fatalf("unexpected config: %#v", cfg)
 	}
 }
 
 func TestDownloadMinuteAggregatesFlatFiles(t *testing.T) {
 	cacheDir := t.TempDir()
-	var requests []string
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requests = append(requests, r.Method+" "+r.URL.RequestURI())
-		if got := r.Header.Get("Authorization"); got != "Bearer test_massive_key" {
-			t.Fatalf("unexpected Authorization header: %q", got)
-		}
-		switch r.URL.Path {
-		case "/flatfiles/us_stocks_sip/minute_aggs_v1/2026/2026-04-07.csv.gz":
-			_, _ = w.Write([]byte("stock-file"))
-		case "/flatfiles/us_options_opra/minute_aggs_v1/2026/2026-04-07.csv.gz":
-			_, _ = w.Write([]byte("option-file"))
-		default:
-			t.Fatalf("unexpected request path: %s", r.URL.Path)
-		}
-	}))
-	defer server.Close()
+	logPath := filepath.Join(t.TempDir(), "mc.log")
+	installFakeCommand(t, "mc", fmt.Sprintf(`#!/bin/sh
+set -eu
+if [ "${MC_HOST_s3massive:-}" = "" ]; then
+	echo missing alias >&2
+	exit 2
+fi
+echo "$*" >> %q
+if [ "$1" != "cat" ]; then
+	echo unexpected command >&2
+	exit 2
+fi
+case "$2" in
+	s3massive/flatfiles/us_stocks_sip/minute_aggs_v1/2026/04/2026-04-07.csv.gz) printf stock-file ;;
+	s3massive/flatfiles/us_options_opra/minute_aggs_v1/2026/04/2026-04-07.csv.gz) printf option-file ;;
+	*) echo 'The specified key does not exist.' >&2; exit 1 ;;
+esac
+`, logPath))
 
 	client, err := New(Config{
-		APIKey:            "test_massive_key",
-		BaseURL:           server.URL,
-		FlatFilesBaseURL:  server.URL + "/flatfiles",
-		FlatFilesCacheDir: cacheDir,
+		APIKey:             "test_massive_key",
+		BaseURL:            "https://api.massive.com",
+		FlatFilesBaseURL:   "https://files.massive.com/flatfiles",
+		FlatFilesTool:      "mc",
+		FlatFilesCacheDir:  cacheDir,
+		FlatFilesAccessKey: "flat-access",
+		FlatFilesSecretKey: "flat-secret",
 	})
 	if err != nil {
 		t.Fatalf("New failed: %v", err)
 	}
 
-	stockPath, err := client.DownloadStockMinuteAggregates(time.Date(2026, 4, 7, 12, 34, 0, 0, time.UTC), false)
+	stockPath, err := client.DownloadStockMinuteAggregates(context.Background(), time.Date(2026, 4, 7, 12, 34, 0, 0, time.UTC), false)
 	if err != nil {
 		t.Fatalf("DownloadStockMinuteAggregates failed: %v", err)
 	}
-	optionPath, err := client.DownloadOptionMinuteAggregates(time.Date(2026, 4, 7, 9, 30, 0, 0, time.FixedZone("EST", -5*3600)), false)
+	optionPath, err := client.DownloadOptionMinuteAggregates(context.Background(), time.Date(2026, 4, 7, 9, 30, 0, 0, time.FixedZone("EST", -5*3600)), false)
 	if err != nil {
 		t.Fatalf("DownloadOptionMinuteAggregates failed: %v", err)
 	}
@@ -92,58 +110,68 @@ func TestDownloadMinuteAggregatesFlatFiles(t *testing.T) {
 	if string(stockBytes) != "stock-file" || string(optionBytes) != "option-file" {
 		t.Fatalf("unexpected cached content: stock=%q option=%q", string(stockBytes), string(optionBytes))
 	}
-	if !strings.HasSuffix(stockPath, filepath.Join("us_stocks_sip", "minute_aggs_v1", "2026", "2026-04-07.csv.gz")) {
+	if !strings.HasSuffix(stockPath, filepath.Join("us_stocks_sip", "minute_aggs_v1", "2026", "04", "2026-04-07.csv.gz")) {
 		t.Fatalf("unexpected stock cache path: %s", stockPath)
 	}
-	if !strings.HasSuffix(optionPath, filepath.Join("us_options_opra", "minute_aggs_v1", "2026", "2026-04-07.csv.gz")) {
+	if !strings.HasSuffix(optionPath, filepath.Join("us_options_opra", "minute_aggs_v1", "2026", "04", "2026-04-07.csv.gz")) {
 		t.Fatalf("unexpected option cache path: %s", optionPath)
 	}
+	logBytes, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read mc log: %v", err)
+	}
+	requests := strings.FieldsFunc(strings.TrimSpace(string(logBytes)), func(r rune) bool { return r == '\n' })
 	if len(requests) != 2 {
-		t.Fatalf("expected 2 download requests, got %d", len(requests))
+		t.Fatalf("expected 2 mc copy requests, got %d (%q)", len(requests), string(logBytes))
 	}
 
-	stockPathAgain, err := client.DownloadStockMinuteAggregates(time.Date(2026, 4, 7, 0, 0, 0, 0, time.UTC), false)
+	stockPathAgain, err := client.DownloadStockMinuteAggregates(context.Background(), time.Date(2026, 4, 7, 0, 0, 0, 0, time.UTC), false)
 	if err != nil {
 		t.Fatalf("DownloadStockMinuteAggregates cache hit failed: %v", err)
 	}
 	if stockPathAgain != stockPath {
 		t.Fatalf("unexpected cached stock path: %s", stockPathAgain)
 	}
+	logBytes, err = os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read mc log after cache hit: %v", err)
+	}
+	requests = strings.FieldsFunc(strings.TrimSpace(string(logBytes)), func(r rune) bool { return r == '\n' })
 	if len(requests) != 2 {
-		t.Fatalf("expected no extra request on cache hit, got %d", len(requests))
+		t.Fatalf("expected no extra mc request on cache hit, got %d", len(requests))
 	}
 
-	if _, err := client.DownloadStockMinuteAggregates(time.Time{}, false); err == nil {
+	if _, err := client.DownloadStockMinuteAggregates(context.Background(), time.Time{}, false); err == nil {
 		t.Fatal("expected zero date error")
 	}
 
-	missingCacheClient, err := New(Config{APIKey: "test_massive_key", BaseURL: server.URL, FlatFilesBaseURL: server.URL + "/flatfiles"})
+	missingCacheClient, err := New(Config{APIKey: "test_massive_key", BaseURL: "https://api.massive.com", FlatFilesBaseURL: "https://files.massive.com/flatfiles", FlatFilesTool: "mc", FlatFilesAccessKey: "flat-access", FlatFilesSecretKey: "flat-secret"})
 	if err != nil {
 		t.Fatalf("New missing cache client failed: %v", err)
 	}
-	if _, err := missingCacheClient.DownloadStockMinuteAggregates(time.Date(2026, 4, 7, 0, 0, 0, 0, time.UTC), false); err == nil {
+	if _, err := missingCacheClient.DownloadStockMinuteAggregates(context.Background(), time.Date(2026, 4, 7, 0, 0, 0, 0, time.UTC), false); err == nil {
 		t.Fatal("expected missing cache directory error")
 	}
 }
 
 func TestDownloadMinuteAggregatesFlatFilesNotFound(t *testing.T) {
 	cacheDir := t.TempDir()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.NotFound(w, r)
-	}))
-	defer server.Close()
+	installFakeCommand(t, "mc", "#!/bin/sh\nset -eu\necho 'The specified key does not exist.' >&2\nexit 1\n")
 
 	client, err := New(Config{
-		APIKey:            "test_massive_key",
-		BaseURL:           server.URL,
-		FlatFilesBaseURL:  server.URL + "/flatfiles",
-		FlatFilesCacheDir: cacheDir,
+		APIKey:             "test_massive_key",
+		BaseURL:            "https://api.massive.com",
+		FlatFilesBaseURL:   "https://files.massive.com/flatfiles",
+		FlatFilesTool:      "mc",
+		FlatFilesCacheDir:  cacheDir,
+		FlatFilesAccessKey: "flat-access",
+		FlatFilesSecretKey: "flat-secret",
 	})
 	if err != nil {
 		t.Fatalf("New failed: %v", err)
 	}
 
-	_, err = client.DownloadStockMinuteAggregates(time.Date(2026, 4, 8, 0, 0, 0, 0, time.UTC), true)
+	_, err = client.DownloadStockMinuteAggregates(context.Background(), time.Date(2026, 4, 8, 0, 0, 0, 0, time.UTC), true)
 	if err == nil {
 		t.Fatal("expected 404 error")
 	}
@@ -161,6 +189,185 @@ func TestDownloadMinuteAggregatesFlatFilesNotFound(t *testing.T) {
 	if statusErr.URL == "" {
 		t.Fatal("expected request URL in status error")
 	}
+}
+
+func TestDownloadMinuteAggregatesFlatFilesWithRclone(t *testing.T) {
+	cacheDir := t.TempDir()
+	logPath := filepath.Join(t.TempDir(), "rclone.log")
+	installFakeCommand(t, "rclone", fmt.Sprintf(`#!/bin/sh
+set -eu
+if [ "${RCLONE_CONFIG_S3MASSIVE_TYPE:-}" != "s3" ]; then
+	echo missing type >&2
+	exit 2
+fi
+if [ "${RCLONE_CONFIG_S3MASSIVE_PROVIDER:-}" != "Other" ]; then
+	echo missing provider >&2
+	exit 2
+fi
+if [ "${RCLONE_CONFIG_S3MASSIVE_ACCESS_KEY_ID:-}" != "flat-access" ]; then
+	echo missing access key >&2
+	exit 2
+fi
+if [ "${RCLONE_CONFIG_S3MASSIVE_SECRET_ACCESS_KEY:-}" != "flat-secret" ]; then
+	echo missing secret key >&2
+	exit 2
+fi
+if [ "${RCLONE_CONFIG_S3MASSIVE_ENDPOINT:-}" != "https://files.massive.com" ]; then
+	echo unexpected endpoint >&2
+	exit 2
+fi
+echo "$*" >> %q
+if [ "$1" != "cat" ]; then
+	echo unexpected command >&2
+	exit 2
+fi
+case "$2" in
+	s3massive:flatfiles/us_stocks_sip/minute_aggs_v1/2026/04/2026-04-07.csv.gz) printf stock-file ;;
+	*) echo 'object not found' >&2; exit 1 ;;
+esac
+`, logPath))
+
+	client, err := New(Config{
+		APIKey:             "test_massive_key",
+		BaseURL:            "https://api.massive.com",
+		FlatFilesBaseURL:   "https://files.massive.com/flatfiles",
+		FlatFilesTool:      "rclone",
+		FlatFilesCacheDir:  cacheDir,
+		FlatFilesAccessKey: "flat-access",
+		FlatFilesSecretKey: "flat-secret",
+	})
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+
+	stockPath, err := client.DownloadStockMinuteAggregates(context.Background(), time.Date(2026, 4, 7, 12, 34, 0, 0, time.UTC), false)
+	if err != nil {
+		t.Fatalf("DownloadStockMinuteAggregates failed: %v", err)
+	}
+
+	stockBytes, err := os.ReadFile(stockPath)
+	if err != nil {
+		t.Fatalf("read stock cache file: %v", err)
+	}
+	if string(stockBytes) != "stock-file" {
+		t.Fatalf("unexpected cached content: %q", string(stockBytes))
+	}
+	if !strings.HasSuffix(stockPath, filepath.Join("us_stocks_sip", "minute_aggs_v1", "2026", "04", "2026-04-07.csv.gz")) {
+		t.Fatalf("unexpected stock cache path: %s", stockPath)
+	}
+	logBytes, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read rclone log: %v", err)
+	}
+	requests := strings.FieldsFunc(strings.TrimSpace(string(logBytes)), func(r rune) bool { return r == '\n' })
+	if len(requests) != 1 {
+		t.Fatalf("expected 1 rclone request, got %d (%q)", len(requests), string(logBytes))
+	}
+
+	stockPathAgain, err := client.DownloadStockMinuteAggregates(context.Background(), time.Date(2026, 4, 7, 0, 0, 0, 0, time.UTC), false)
+	if err != nil {
+		t.Fatalf("DownloadStockMinuteAggregates cache hit failed: %v", err)
+	}
+	if stockPathAgain != stockPath {
+		t.Fatalf("unexpected cached stock path: %s", stockPathAgain)
+	}
+	logBytes, err = os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read rclone log after cache hit: %v", err)
+	}
+	requests = strings.FieldsFunc(strings.TrimSpace(string(logBytes)), func(r rune) bool { return r == '\n' })
+	if len(requests) != 1 {
+		t.Fatalf("expected no extra rclone request on cache hit, got %d", len(requests))
+	}
+}
+
+func TestDownloadMinuteAggregatesFlatFilesNotFoundWithRclone(t *testing.T) {
+	cacheDir := t.TempDir()
+	installFakeCommand(t, "rclone", "#!/bin/sh\nset -eu\necho 'object not found' >&2\nexit 1\n")
+
+	client, err := New(Config{
+		APIKey:             "test_massive_key",
+		BaseURL:            "https://api.massive.com",
+		FlatFilesBaseURL:   "https://files.massive.com/flatfiles",
+		FlatFilesTool:      "rclone",
+		FlatFilesCacheDir:  cacheDir,
+		FlatFilesAccessKey: "flat-access",
+		FlatFilesSecretKey: "flat-secret",
+	})
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+
+	_, err = client.DownloadStockMinuteAggregates(context.Background(), time.Date(2026, 4, 8, 0, 0, 0, 0, time.UTC), true)
+	if err == nil {
+		t.Fatal("expected 404 error")
+	}
+
+	var statusErr *HTTPStatusError
+	if !errors.As(err, &statusErr) {
+		t.Fatalf("expected HTTPStatusError, got %T: %v", err, err)
+	}
+	if statusErr.StatusCode != http.StatusNotFound {
+		t.Fatalf("unexpected status code: %d", statusErr.StatusCode)
+	}
+	if !IsHTTPStatus(statusErr, http.StatusNotFound) {
+		t.Fatal("expected IsHTTPStatus to match 404")
+	}
+}
+
+func TestDownloadMinuteAggregatesFlatFilesMissingObjectWithRcloneEmptyCat(t *testing.T) {
+	cacheDir := t.TempDir()
+	installFakeCommand(t, "rclone", `#!/bin/sh
+set -eu
+case "$1" in
+	cat)
+		exit 0
+		;;
+	lsjson)
+		printf '[]'
+		;;
+	*)
+		echo unexpected command >&2
+		exit 2
+		;;
+esac
+`)
+
+	client, err := New(Config{
+		APIKey:             "test_massive_key",
+		BaseURL:            "https://api.massive.com",
+		FlatFilesBaseURL:   "https://files.massive.com/flatfiles",
+		FlatFilesTool:      "rclone",
+		FlatFilesCacheDir:  cacheDir,
+		FlatFilesAccessKey: "flat-access",
+		FlatFilesSecretKey: "flat-secret",
+	})
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+
+	_, err = client.DownloadStockMinuteAggregates(context.Background(), time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), true)
+	if err == nil {
+		t.Fatal("expected 404 error")
+	}
+
+	var statusErr *HTTPStatusError
+	if !errors.As(err, &statusErr) {
+		t.Fatalf("expected HTTPStatusError, got %T: %v", err, err)
+	}
+	if statusErr.StatusCode != http.StatusNotFound {
+		t.Fatalf("unexpected status code: %d", statusErr.StatusCode)
+	}
+}
+
+func installFakeCommand(t *testing.T, name, script string) {
+	t.Helper()
+	binDir := t.TempDir()
+	path := filepath.Join(binDir, name)
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake command %s: %v", name, err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 }
 
 func TestNewFromEnvAndQueries(t *testing.T) {
@@ -334,9 +541,15 @@ func TestNewFromEnvAndQueries(t *testing.T) {
 	defer server.Close()
 	serverURL = server.URL
 
-	t.Setenv(EnvMassiveAPIKey, "test_massive_key")
-	t.Setenv(EnvMassiveBaseURL, server.URL)
-	t.Setenv(EnvMassivePagination, "true")
+	configPath := filepath.Join(t.TempDir(), "toktik.yaml")
+	content := []byte("polygon:\n" +
+		fmt.Sprintf("  api_key: \"%s\"\n", "test_massive_key") +
+		fmt.Sprintf("  base_url: \"%s\"\n", server.URL) +
+		"  pagination: true\n")
+	if err := os.WriteFile(configPath, content, 0o644); err != nil {
+		t.Fatalf("WriteFile(%q) failed: %v", configPath, err)
+	}
+	t.Setenv(runtimeconfig.EnvConfigPath, configPath)
 
 	client, err := NewFromEnv()
 	if err != nil {

@@ -360,7 +360,10 @@ polygon:
   api_key: "..."
   base_url: "https://api.massive.com"
   flat_files_base_url: "https://files.massive.com/flatfiles"
+  flat_files_tool: "mc" # or "rclone"
   flat_files_cache_dir: "tmp/polygon"
+  flat_files_access_key: "..."
+  flat_files_secret_key: "..."
   timeout_seconds: 60
   trace: false
   pagination: true
@@ -368,20 +371,11 @@ polygon:
 
 The `cmd/tools/polygon` CLI now reads Polygon settings from `toktik.yaml`. The old `polygon-env.sh` script remains only as a compatibility shim that exports `TOKTIK_CONFIG`.
 
-Legacy environment overrides still supported by `pkg/polygon`:
-- `MASSIVE_API_KEY` or `POLYGON_API_KEY`
-- `MASSIVE_BASE_URL` or `POLYGON_BASE_URL` for test or proxy overrides
-- `MASSIVE_FLATFILES_BASE_URL` or `POLYGON_FLATFILES_BASE_URL` for Massive flatfile host overrides. Defaults to `https://files.massive.com/flatfiles`
-- `MASSIVE_FLATFILES_CACHE_DIR` or `POLYGON_FLATFILES_CACHE_DIR` for downloaded flatfile cache storage. This must be set explicitly before using the flatfile download APIs.
-- `MASSIVE_TIMEOUT_SECONDS` / `POLYGON_TIMEOUT_SECONDS`
-- `MASSIVE_TRACE` / `POLYGON_TRACE`
-- `MASSIVE_PAGINATION` / `POLYGON_PAGINATION`
-
 Implemented package methods cover:
 - Stock snapshot, quotes, trades, and aggregate history
 - Option contract lookup, chain snapshot, quotes, trades, and aggregate history
-- Stock minute aggregate flatfile download from `us_stocks_sip/minute_aggs_v1/<year>/<date>.csv.gz`
-- Option minute aggregate flatfile download from `us_options_opra/minute_aggs_v1/<year>/<date>.csv.gz`
+- Stock minute aggregate flatfile download from `us_stocks_sip/minute_aggs_v1/<year>/<month>/<date>.csv.gz`
+- Option minute aggregate flatfile download from `us_options_opra/minute_aggs_v1/<year>/<month>/<date>.csv.gz`
 
 Supported CLI commands:
 - `stock-minute-flatfile`

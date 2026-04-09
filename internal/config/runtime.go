@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	polygonpkg "github.com/Cyvadra/toktik/pkg/polygon"
 	"gopkg.in/yaml.v3"
 )
 
@@ -52,7 +51,6 @@ const (
 	defaultThetaDataBaseURL  = "http://127.0.0.1:25503/v3"
 	defaultDeribitBaseURL    = "https://www.deribit.com"
 	defaultRedisKeyPrefix    = "toktik"
-	defaultPolygonCacheDir   = "tmp/polygon"
 	defaultRedisAddr         = "127.0.0.1:6379"
 	defaultPolygonTimeoutSec = 60
 )
@@ -117,13 +115,16 @@ type Tiger struct {
 }
 
 type Polygon struct {
-	APIKey            string `yaml:"api_key"`
-	BaseURL           string `yaml:"base_url"`
-	FlatFilesBaseURL  string `yaml:"flat_files_base_url"`
-	FlatFilesCacheDir string `yaml:"flat_files_cache_dir"`
-	TimeoutSeconds    int    `yaml:"timeout_seconds"`
-	Trace             bool   `yaml:"trace"`
-	Pagination        bool   `yaml:"pagination"`
+	APIKey             string `yaml:"api_key"`
+	BaseURL            string `yaml:"base_url"`
+	FlatFilesBaseURL   string `yaml:"flat_files_base_url"`
+	FlatFilesTool      string `yaml:"flat_files_tool"`
+	FlatFilesCacheDir  string `yaml:"flat_files_cache_dir"`
+	FlatFilesAccessKey string `yaml:"flat_files_access_key"`
+	FlatFilesSecretKey string `yaml:"flat_files_secret_key"`
+	TimeoutSeconds     int    `yaml:"timeout_seconds"`
+	Trace              bool   `yaml:"trace"`
+	Pagination         bool   `yaml:"pagination"`
 }
 
 type Redis struct {
@@ -166,11 +167,11 @@ func DefaultRuntime() Runtime {
 			EnableDynamicDomain: true,
 		},
 		Polygon: Polygon{
-			BaseURL:           "https://api.massive.com",
-			FlatFilesBaseURL:  "https://files.massive.com/flatfiles",
-			FlatFilesCacheDir: defaultPolygonCacheDir,
-			TimeoutSeconds:    defaultPolygonTimeoutSec,
-			Pagination:        true,
+			BaseURL:          "https://api.massive.com",
+			FlatFilesBaseURL: "https://files.massive.com/flatfiles",
+			FlatFilesTool:    "mc",
+			TimeoutSeconds:   defaultPolygonTimeoutSec,
+			Pagination:       true,
 		},
 		Redis: Redis{
 			Addr:                defaultRedisAddr,
@@ -289,33 +290,6 @@ func (c *Runtime) applyEnvOverrides() {
 	if value := strings.TrimSpace(os.Getenv(EnvTigerDeviceID)); value != "" {
 		c.Tiger.DeviceID = value
 	}
-	if value := firstEnv(polygonpkg.EnvMassiveAPIKey, polygonpkg.EnvPolygonAPIKey); value != "" {
-		c.Polygon.APIKey = value
-	}
-	if value := firstEnv(polygonpkg.EnvMassiveBaseURL, polygonpkg.EnvPolygonBaseURL); value != "" {
-		c.Polygon.BaseURL = value
-	}
-	if value := firstEnv(polygonpkg.EnvMassiveFlatFilesBaseURL, polygonpkg.EnvPolygonFlatFilesBaseURL); value != "" {
-		c.Polygon.FlatFilesBaseURL = value
-	}
-	if value := firstEnv(polygonpkg.EnvMassiveFlatFilesCacheDir, polygonpkg.EnvPolygonFlatFilesCacheDir); value != "" {
-		c.Polygon.FlatFilesCacheDir = value
-	}
-	if value := firstEnv(polygonpkg.EnvMassiveTimeoutSeconds, polygonpkg.EnvPolygonTimeoutSeconds); value != "" {
-		if parsed, err := strconv.Atoi(value); err == nil {
-			c.Polygon.TimeoutSeconds = parsed
-		}
-	}
-	if value := firstEnv(polygonpkg.EnvMassiveTrace, polygonpkg.EnvPolygonTrace); value != "" {
-		if parsed, err := strconv.ParseBool(value); err == nil {
-			c.Polygon.Trace = parsed
-		}
-	}
-	if value := firstEnv(polygonpkg.EnvMassivePagination, polygonpkg.EnvPolygonPagination); value != "" {
-		if parsed, err := strconv.ParseBool(value); err == nil {
-			c.Polygon.Pagination = parsed
-		}
-	}
 	if value := strings.TrimSpace(os.Getenv(EnvRedisEnabled)); value != "" {
 		if parsed, err := strconv.ParseBool(value); err == nil {
 			c.Redis.Enabled = parsed
@@ -406,12 +380,15 @@ func (c *Runtime) normalize() {
 	if c.Tiger.TimeoutSeconds < 0 {
 		c.Tiger.TimeoutSeconds = 0
 	}
-	if strings.TrimSpace(c.Polygon.FlatFilesCacheDir) == "" {
-		c.Polygon.FlatFilesCacheDir = defaultPolygonCacheDir
-	}
-	if !filepath.IsAbs(c.Polygon.FlatFilesCacheDir) {
+	c.Polygon.APIKey = strings.TrimSpace(c.Polygon.APIKey)
+	c.Polygon.BaseURL = strings.TrimSpace(c.Polygon.BaseURL)
+	c.Polygon.FlatFilesBaseURL = strings.TrimSpace(c.Polygon.FlatFilesBaseURL)
+	c.Polygon.FlatFilesTool = strings.ToLower(strings.TrimSpace(c.Polygon.FlatFilesTool))
+	if strings.TrimSpace(c.Polygon.FlatFilesCacheDir) != "" && !filepath.IsAbs(c.Polygon.FlatFilesCacheDir) {
 		c.Polygon.FlatFilesCacheDir = filepath.Clean(c.Polygon.FlatFilesCacheDir)
 	}
+	c.Polygon.FlatFilesAccessKey = strings.TrimSpace(c.Polygon.FlatFilesAccessKey)
+	c.Polygon.FlatFilesSecretKey = strings.TrimSpace(c.Polygon.FlatFilesSecretKey)
 	if c.Polygon.TimeoutSeconds <= 0 {
 		c.Polygon.TimeoutSeconds = defaultPolygonTimeoutSec
 	}
@@ -443,18 +420,6 @@ func (c Runtime) Validate() error {
 		return fmt.Errorf("redis.addr is required when redis is enabled")
 	}
 	return nil
-}
-
-func (c Runtime) PolygonClientConfig() polygonpkg.Config {
-	return polygonpkg.Config{
-		APIKey:            c.Polygon.APIKey,
-		BaseURL:           c.Polygon.BaseURL,
-		FlatFilesBaseURL:  c.Polygon.FlatFilesBaseURL,
-		FlatFilesCacheDir: c.Polygon.FlatFilesCacheDir,
-		Timeout:           time.Duration(c.Polygon.TimeoutSeconds) * time.Second,
-		Trace:             c.Polygon.Trace,
-		Pagination:        c.Polygon.Pagination,
-	}
 }
 
 func (c Runtime) RedisDialTimeout() time.Duration {

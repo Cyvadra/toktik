@@ -14,11 +14,11 @@ type stubPolygonClient struct {
 	stockAggregateCalls int
 }
 
-func (s *stubPolygonClient) DownloadStockMinuteAggregates(date time.Time, force bool) (string, error) {
+func (s *stubPolygonClient) DownloadStockMinuteAggregates(context.Context, time.Time, bool) (string, error) {
 	return "", nil
 }
 
-func (s *stubPolygonClient) DownloadOptionMinuteAggregates(date time.Time, force bool) (string, error) {
+func (s *stubPolygonClient) DownloadOptionMinuteAggregates(context.Context, time.Time, bool) (string, error) {
 	return "", nil
 }
 

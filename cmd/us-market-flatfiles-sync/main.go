@@ -1,15 +1,21 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"flag"
+	"fmt"
 	"log"
+	"os"
+	"strings"
 	"time"
 
 	appCli "github.com/Cyvadra/toktik/internal/cli"
 	"github.com/Cyvadra/toktik/internal/service"
 	"github.com/Cyvadra/toktik/internal/usmarket"
 )
+
+var coldStartDate = time.Date(2023, 1, 1, 0, 0, 0, 0, time.UTC)
 
 func main() {
 	runtimeCfg := appCli.MustLoadRuntime()
@@ -20,10 +26,14 @@ func main() {
 	schemaFile := flag.String("schema", "", "Path to DDL SQL file (auto-detected if empty)")
 	skipExisting := flag.Bool("skip-existing", true, "Skip files whose date already has data in ClickHouse")
 	forceDownload := flag.Bool("force-download", false, "Force re-download even if a flat file already exists in the local cache")
+	confirmColdStart := flag.Bool("confirm-cold-start", false, "Acknowledge that empty us-market tables will start syncing from 2023-01-01")
 	flag.Parse()
 
 	if *workers < 1 {
 		*workers = 1
+	}
+	if strings.TrimSpace(runtimeCfg.Polygon.FlatFilesCacheDir) == "" {
+		log.Fatal("polygon.flat_files_cache_dir is required; specify a local cache directory in runtime config")
 	}
 
 	ctx := context.Background()
@@ -41,6 +51,14 @@ func main() {
 	if err != nil {
 		log.Fatalf("connect ClickHouse: %v", err)
 	}
+	assetStates, err := usmarket.InspectFlatFileAssetStates(ctx, conn)
+	if err != nil {
+		log.Fatalf("inspect existing us-market data: %v", err)
+	}
+	if err := requireColdStartConfirmation(assetStates, *confirmColdStart); err != nil {
+		log.Fatal(err)
+	}
+
 	sessions, err := usmarket.InitializeImportStorage(ctx, conn, ddlFile)
 	if err != nil {
 		log.Fatalf("initialize import storage: %v", err)
@@ -51,6 +69,7 @@ func main() {
 		Conn:          conn,
 		Sessions:      sessions,
 		ForceDownload: *forceDownload,
+		ColdStartDate: coldStartDate,
 		Import: usmarket.ImportConfig{
 			DSN:          *dsn,
 			BatchSize:    *batchSize,
@@ -63,16 +82,18 @@ func main() {
 		log.Fatalf("sync Polygon flat files: %v", err)
 	}
 
-	log.Printf("Stocks sync: start=%s last_imported=%s last_available=%s downloaded=%d",
+	log.Printf("Stocks sync: start=%s last_imported=%s last_downloaded=%s scan_end=%s downloaded=%d",
 		formatDate(result.Stocks.StartDate),
 		formatDateIfPresent(result.Stocks.LastImported, result.Stocks.HasImportedData),
-		formatDate(result.Stocks.LastAvailable),
+		formatDate(result.Stocks.LastDownloaded),
+		formatDate(result.Stocks.ScanEnd),
 		len(result.Stocks.Files),
 	)
-	log.Printf("Options sync: start=%s last_imported=%s last_available=%s downloaded=%d",
+	log.Printf("Options sync: start=%s last_imported=%s last_downloaded=%s scan_end=%s downloaded=%d",
 		formatDate(result.Options.StartDate),
 		formatDateIfPresent(result.Options.LastImported, result.Options.HasImportedData),
-		formatDate(result.Options.LastAvailable),
+		formatDate(result.Options.LastDownloaded),
+		formatDate(result.Options.ScanEnd),
 		len(result.Options.Files),
 	)
 	log.Printf("Import complete: %d files succeeded, %d skipped, %d failed, %d option rows, %d stock rows, elapsed %s",
@@ -97,4 +118,36 @@ func formatDateIfPresent(value time.Time, ok bool) string {
 		return "n/a"
 	}
 	return formatDate(value)
+}
+
+func requireColdStartConfirmation(states []usmarket.FlatFileAssetState, confirmed bool) error {
+	missingAssets := coldStartAssetClasses(states)
+	if len(missingAssets) == 0 {
+		return nil
+	}
+	if !confirmed {
+		return fmt.Errorf("no existing data found for %s; rerun with --confirm-cold-start to allow syncing from %s", strings.Join(missingAssets, ", "), coldStartDate.Format("2006-01-02"))
+	}
+
+	reader := bufio.NewReader(os.Stdin)
+	_, _ = fmt.Fprintf(os.Stdout, "No existing data found for %s. This will start syncing from %s. Type %q to continue: ", strings.Join(missingAssets, ", "), coldStartDate.Format("2006-01-02"), coldStartDate.Format("2006-01-02"))
+	response, err := reader.ReadString('\n')
+	if err != nil {
+		return fmt.Errorf("read cold-start confirmation: %w", err)
+	}
+	if strings.TrimSpace(response) != coldStartDate.Format("2006-01-02") {
+		return fmt.Errorf("cold-start confirmation declined")
+	}
+	return nil
+}
+
+func coldStartAssetClasses(states []usmarket.FlatFileAssetState) []string {
+	assets := make([]string, 0)
+	for _, state := range states {
+		if state.HasData {
+			continue
+		}
+		assets = append(assets, state.AssetClass)
+	}
+	return assets
 }
