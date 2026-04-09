@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -11,21 +12,24 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Cyvadra/toktik/internal/cache"
+	"github.com/Cyvadra/toktik/internal/config"
+	"github.com/Cyvadra/toktik/internal/service"
 	"github.com/Cyvadra/toktik/pkg/polygon"
 )
 
 type polygonService interface {
-	DownloadStockMinuteAggregates(date time.Time, force bool) (string, error)
-	DownloadOptionMinuteAggregates(date time.Time, force bool) (string, error)
-	StockSnapshot(symbol string) (*polygon.StockSnapshot, error)
-	StockAggregates(req polygon.AggregateRequest) ([]polygon.AggregateBar, error)
-	StockQuotes(symbol string, req polygon.QuoteRequest) ([]polygon.Quote, error)
-	StockTrades(symbol string, req polygon.TradeRequest) ([]polygon.Trade, error)
-	OptionContract(ticker string) (*polygon.OptionContract, error)
-	OptionChain(req polygon.OptionChainRequest) ([]polygon.OptionChainContract, error)
-	OptionAggregates(req polygon.AggregateRequest) ([]polygon.AggregateBar, error)
-	OptionQuotes(ticker string, req polygon.QuoteRequest) ([]polygon.Quote, error)
-	OptionTrades(ticker string, req polygon.TradeRequest) ([]polygon.Trade, error)
+	DownloadStockMinuteAggregates(ctx context.Context, date time.Time, force bool) (string, error)
+	DownloadOptionMinuteAggregates(ctx context.Context, date time.Time, force bool) (string, error)
+	StockSnapshot(ctx context.Context, symbol string) (*polygon.StockSnapshot, error)
+	StockAggregates(ctx context.Context, req polygon.AggregateRequest) ([]polygon.AggregateBar, error)
+	StockQuotes(ctx context.Context, symbol string, req polygon.QuoteRequest) ([]polygon.Quote, error)
+	StockTrades(ctx context.Context, symbol string, req polygon.TradeRequest) ([]polygon.Trade, error)
+	OptionContract(ctx context.Context, ticker string) (*polygon.OptionContract, error)
+	OptionChain(ctx context.Context, req polygon.OptionChainRequest) ([]polygon.OptionChainContract, error)
+	OptionAggregates(ctx context.Context, req polygon.AggregateRequest) ([]polygon.AggregateBar, error)
+	OptionQuotes(ctx context.Context, ticker string, req polygon.QuoteRequest) ([]polygon.Quote, error)
+	OptionTrades(ctx context.Context, ticker string, req polygon.TradeRequest) ([]polygon.Trade, error)
 }
 
 type app struct {
@@ -39,7 +43,15 @@ func main() {
 		stdout: os.Stdout,
 		stderr: os.Stderr,
 		newClient: func() (polygonService, error) {
-			return polygon.NewFromEnv()
+			cfg, err := config.LoadRuntime()
+			if err != nil {
+				return nil, err
+			}
+			store, err := cache.NewStore(context.Background(), cfg)
+			if err != nil {
+				store = cache.NewMemoryStore()
+			}
+			return service.NewPolygonServiceFromConfig(cfg, store)
 		},
 	}
 	os.Exit(cli.run(os.Args[1:]))
@@ -101,7 +113,7 @@ func (a app) runStockMinuteFlatFile(client polygonService, args []string) int {
 	if err != nil {
 		return err.code(a)
 	}
-	path, runErr := client.DownloadStockMinuteAggregates(date, force)
+	path, runErr := client.DownloadStockMinuteAggregates(context.Background(), date, force)
 	if runErr != nil {
 		return a.failf("stock-minute-flatfile failed: %v", runErr)
 	}
@@ -118,7 +130,7 @@ func (a app) runStockSnapshot(client polygonService, args []string) int {
 	if strings.TrimSpace(*symbol) == "" {
 		return a.failf("stock-snapshot: --symbol is required")
 	}
-	data, err := client.StockSnapshot(*symbol)
+	data, err := client.StockSnapshot(context.Background(), *symbol)
 	if err != nil {
 		return a.failf("stock-snapshot failed: %v", err)
 	}
@@ -132,7 +144,7 @@ func (a app) runStockAggregates(client polygonService, args []string) int {
 	if err != nil {
 		return err.code(a)
 	}
-	data, runErr := client.StockAggregates(req)
+	data, runErr := client.StockAggregates(context.Background(), req)
 	if runErr != nil {
 		return a.failf("stock-aggregates failed: %v", runErr)
 	}
@@ -150,7 +162,7 @@ func (a app) runStockQuotes(client polygonService, args []string) int {
 	if strings.TrimSpace(*symbol) == "" {
 		return a.failf("stock-quotes: --symbol is required")
 	}
-	data, runErr := client.StockQuotes(*symbol, req)
+	data, runErr := client.StockQuotes(context.Background(), *symbol, req)
 	if runErr != nil {
 		return a.failf("stock-quotes failed: %v", runErr)
 	}
@@ -168,7 +180,7 @@ func (a app) runStockTrades(client polygonService, args []string) int {
 	if strings.TrimSpace(*symbol) == "" {
 		return a.failf("stock-trades: --symbol is required")
 	}
-	data, runErr := client.StockTrades(*symbol, req)
+	data, runErr := client.StockTrades(context.Background(), *symbol, req)
 	if runErr != nil {
 		return a.failf("stock-trades failed: %v", runErr)
 	}
@@ -182,7 +194,7 @@ func (a app) runOptionMinuteFlatFile(client polygonService, args []string) int {
 	if err != nil {
 		return err.code(a)
 	}
-	path, runErr := client.DownloadOptionMinuteAggregates(date, force)
+	path, runErr := client.DownloadOptionMinuteAggregates(context.Background(), date, force)
 	if runErr != nil {
 		return a.failf("option-minute-flatfile failed: %v", runErr)
 	}
@@ -199,7 +211,7 @@ func (a app) runOptionContract(client polygonService, args []string) int {
 	if strings.TrimSpace(*ticker) == "" {
 		return a.failf("option-contract: --ticker is required")
 	}
-	data, err := client.OptionContract(*ticker)
+	data, err := client.OptionContract(context.Background(), *ticker)
 	if err != nil {
 		return a.failf("option-contract failed: %v", err)
 	}
@@ -265,7 +277,7 @@ func (a app) runOptionChain(client polygonService, args []string) int {
 		return parseErr.code(a)
 	}
 
-	data, err := client.OptionChain(req)
+	data, err := client.OptionChain(context.Background(), req)
 	if err != nil {
 		return a.failf("option-chain failed: %v", err)
 	}
@@ -279,7 +291,7 @@ func (a app) runOptionAggregates(client polygonService, args []string) int {
 	if err != nil {
 		return err.code(a)
 	}
-	data, runErr := client.OptionAggregates(req)
+	data, runErr := client.OptionAggregates(context.Background(), req)
 	if runErr != nil {
 		return a.failf("option-aggregates failed: %v", runErr)
 	}
@@ -297,7 +309,7 @@ func (a app) runOptionQuotes(client polygonService, args []string) int {
 	if strings.TrimSpace(*ticker) == "" {
 		return a.failf("option-quotes: --ticker is required")
 	}
-	data, runErr := client.OptionQuotes(*ticker, req)
+	data, runErr := client.OptionQuotes(context.Background(), *ticker, req)
 	if runErr != nil {
 		return a.failf("option-quotes failed: %v", runErr)
 	}
@@ -315,7 +327,7 @@ func (a app) runOptionTrades(client polygonService, args []string) int {
 	if strings.TrimSpace(*ticker) == "" {
 		return a.failf("option-trades: --ticker is required")
 	}
-	data, runErr := client.OptionTrades(*ticker, req)
+	data, runErr := client.OptionTrades(context.Background(), *ticker, req)
 	if runErr != nil {
 		return a.failf("option-trades failed: %v", runErr)
 	}

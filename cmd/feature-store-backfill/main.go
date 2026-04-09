@@ -16,7 +16,8 @@ import (
 )
 
 func main() {
-	dsn := flag.String("clickhouse-dsn", appCli.DefaultDSN, "ClickHouse DSN")
+	runtimeCfg := appCli.MustLoadRuntime()
+	dsn := flag.String("clickhouse-dsn", runtimeCfg.ClickHouse.DSN, "ClickHouse DSN")
 	schemaFile := flag.String("schema", "", "Path to feature store DDL SQL file (auto-detected if empty)")
 	marketsFlag := flag.String("markets", "crypto-options,us-options", "Comma-separated markets to backfill")
 	underlyingsFlag := flag.String("underlyings", "", "Optional comma-separated underlying filter")

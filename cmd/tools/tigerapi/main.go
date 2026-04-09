@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 
+	appCli "github.com/Cyvadra/toktik/internal/cli"
 	"github.com/Cyvadra/toktik/pkg/tigerapi"
 )
 
@@ -38,7 +39,7 @@ func main() {
 		stdout: os.Stdout,
 		stderr: os.Stderr,
 		newClient: func() (tigerService, error) {
-			return tigerapi.NewFromEnv()
+			return tigerapi.NewFromRuntime(appCli.MustLoadRuntime())
 		},
 	}
 	os.Exit(cli.run(os.Args[1:]))

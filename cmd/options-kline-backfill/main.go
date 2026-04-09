@@ -15,7 +15,8 @@ import (
 )
 
 func main() {
-	dsn := flag.String("clickhouse-dsn", appCli.DefaultDSN, "ClickHouse DSN")
+	runtimeCfg := appCli.MustLoadRuntime()
+	dsn := flag.String("clickhouse-dsn", runtimeCfg.ClickHouse.DSN, "ClickHouse DSN")
 	market := flag.String("market", "crypto", "Market: crypto | us")
 	from := flag.String("from", "", "Optional start date/time (YYYY-MM-DD or RFC3339), inclusive")
 	to := flag.String("to", "", "Optional end date/time (YYYY-MM-DD or RFC3339), exclusive for RFC3339, next-day exclusive for YYYY-MM-DD")

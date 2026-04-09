@@ -46,11 +46,12 @@ type volumeRemainder struct {
 }
 
 func main() {
+	runtimeCfg := appCli.MustLoadRuntime()
 	jsonFile := flag.String("json-file", "btc2023_2025.json", "Path to JSON file providing 1m OHLC and minute volume weights")
 	csvFile := flag.String("csv-file", "BTCUSDT_1h.csv", "Path to CSV file providing 1h volume totals")
 	inputFile := flag.String("input-file", "", "Deprecated legacy single-source input file (.json or .csv)")
 	inputFormat := flag.String("format", "auto", "Deprecated legacy input format for --input-file: auto|json|csv")
-	dsn := flag.String("clickhouse-dsn", appCli.DefaultDSN, "ClickHouse DSN")
+	dsn := flag.String("clickhouse-dsn", runtimeCfg.ClickHouse.DSN, "ClickHouse DSN")
 	symbol := flag.String("symbol", "BTC", "Spot symbol written to crypto_spot_bar_1m.symbol")
 	priceSource := flag.String("price-source", "julia-json+csv-volume", "Value for crypto_spot_bar_1m.price_source")
 	jsonTimeOffset := flag.Duration("json-time-offset", 0, "Offset applied to JSON timestamps before merging/import, e.g. -8h")

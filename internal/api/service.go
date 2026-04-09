@@ -82,3 +82,15 @@ type FactorProvider interface {
 	ListFactors(ctx context.Context) (*dto.FactorCatalogResponse, error)
 	QueryFactorBars(ctx context.Context, req dto.FactorBarRequest) (*dto.FactorBarResponse, error)
 }
+
+type PolygonProvider interface {
+	QueryStockSnapshot(ctx context.Context, req dto.PolygonStockSnapshotRequest) (*dto.PolygonStockSnapshotResponse, error)
+	QueryStockAggregates(ctx context.Context, req dto.PolygonAggregateRequest) (*dto.PolygonAggregateResponse, error)
+	QueryStockQuotes(ctx context.Context, req dto.PolygonStockQuotesRequest) (*dto.PolygonQuoteResponse, error)
+	QueryStockTrades(ctx context.Context, req dto.PolygonStockTradesRequest) (*dto.PolygonTradeResponse, error)
+	QueryOptionContract(ctx context.Context, req dto.PolygonOptionContractRequest) (*dto.PolygonOptionContractResponse, error)
+	QueryOptionChain(ctx context.Context, req dto.PolygonOptionChainRequest) (*dto.PolygonOptionChainResponse, error)
+	QueryOptionAggregates(ctx context.Context, req dto.PolygonAggregateRequest) (*dto.PolygonAggregateResponse, error)
+	QueryOptionQuotes(ctx context.Context, req dto.PolygonOptionQuotesRequest) (*dto.PolygonQuoteResponse, error)
+	QueryOptionTrades(ctx context.Context, req dto.PolygonOptionTradesRequest) (*dto.PolygonTradeResponse, error)
+}

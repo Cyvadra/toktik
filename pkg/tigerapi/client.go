@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	runtimeconfig "github.com/Cyvadra/toktik/internal/config"
 	tigerclient "github.com/tigerfintech/openapi-go-sdk/client"
 	tigerconfig "github.com/tigerfintech/openapi-go-sdk/config"
 	"github.com/tigerfintech/openapi-go-sdk/quote"
@@ -137,6 +138,14 @@ type optionChainNode struct {
 
 func NewFromEnv() (*Client, error) {
 	cfg, err := LoadConfigFromEnv()
+	if err != nil {
+		return nil, err
+	}
+	return New(cfg)
+}
+
+func NewFromRuntime(runtimeCfg runtimeconfig.Runtime) (*Client, error) {
+	cfg, err := LoadConfigFromRuntime(runtimeCfg)
 	if err != nil {
 		return nil, err
 	}

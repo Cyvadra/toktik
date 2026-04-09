@@ -236,23 +236,39 @@ Notes:
 
 ### 2. Start the API Server
 
+Shared runtime defaults now live in `toktik.yaml`:
+
+```yaml
+clickhouse:
+  dsn: "clickhouse://default:@localhost:9000/default"
+
+api_server:
+  listen_addr: ":9010"
+
+paths:
+  schema_dir: "schema/clickhouse"
+```
+
+Flags still override the YAML values when you need a one-off run:
+
 ```bash
 bin/api-server \
   --clickhouse-dsn "clickhouse://default:@localhost:9000/default" \
-  --addr ":8080"
+  --addr ":9010"
 ```
 
-The server auto-detects `schema/clickhouse/crypto_options.sql` relative to the working directory. Override with `--schema path/to/file.sql`.
+The server auto-detects `crypto_options.sql` from `paths.schema_dir`. Override with `--schema path/to/file.sql`.
 
 Environment variable fallbacks:
 - `CLICKHOUSE_DSN` — ClickHouse connection string
 - `LISTEN_ADDR` — Server listen address
+- `TOKTIK_SCHEMA_DIR` — Base directory used for schema autodiscovery
 
 ### 3. Query the API
 
 **Check infra readiness:**
 ```bash
-curl "http://localhost:8080/ready"
+curl "http://localhost:9010/ready"
 ```
 
 **List available low-level markets:**
@@ -297,11 +313,20 @@ Supported commands:
 
 Setup:
 
-```bash
-source ./env.sh
+```yaml
+tiger:
+  tiger_id: "..."
+  private_key: "..."
+  account: "..."
+  license: "..."
+  environment: "PROD"
+  token: ""
+  token_file: ""
 ```
 
-Optional auth inputs for Tiger option endpoints:
+The `cmd/tools/tigerapi` CLI now reads Tiger settings from `toktik.yaml`. The old `tiger-env.sh` script remains only as a compatibility shim that exports `TOKTIK_CONFIG`.
+
+Optional auth inputs for Tiger option endpoints, either in YAML or as env overrides:
 - `TIGEROPEN_TOKEN` — sends the token as the HTTP `Authorization` header.
 - `TIGEROPEN_TOKEN_FILE` — optional path to a `token=...` properties file.
 - If `TIGEROPEN_TOKEN` is unset and `TIGEROPEN_TOKEN_FILE` is unset, `pkg/tigerapi` will also try the SDK default file name `tiger_openapi_token.properties` in the current working directory.
@@ -315,12 +340,12 @@ go run ./cmd/tools/tigerapi -- option-expirations --symbol AAPL
 go run ./cmd/tools/tigerapi -- raw --method option_expiration --biz-content '{"symbols":["AAPL"]}'
 ```
 
-Current live validation status with the checked-in `env.sh`:
+Current live validation status with the checked-in runtime config:
 - `market-state` works.
 - `stock-kline` works.
 - `option-expirations` works.
 - `stock-quote` currently fails with Tiger permission denied for US real-time quotes on the current account/device.
-- `option-chain`, `option-quote`, and `option-kline` may require additional Tiger token/device provisioning. In live testing, `option_chain` returned `device_id cannot be empty` from the upstream API. The current SDK exposes token-based auth, but no explicit `device_id` request configuration was found in the SDK source.
+- `option-chain`, `option-quote`, and `option-kline` may require additional Tiger token/device provisioning. In live testing, `option_chain` returned `device_id cannot be empty` from the upstream API. The runtime config includes `tiger.device_id` so the value is no longer stranded in a shell script, but the current SDK wrapper still has no explicit `device_id` request option.
 
 ## Massive REST Client
 
@@ -330,11 +355,20 @@ The repository also includes a CLI at `cmd/tools/polygon` for ad-hoc Massive RES
 
 Setup:
 
-```bash
-source ./polygon-env.sh
+```yaml
+polygon:
+  api_key: "..."
+  base_url: "https://api.massive.com"
+  flat_files_base_url: "https://files.massive.com/flatfiles"
+  flat_files_cache_dir: "tmp/polygon"
+  timeout_seconds: 60
+  trace: false
+  pagination: true
 ```
 
-Environment variables supported by `pkg/polygon`:
+The `cmd/tools/polygon` CLI now reads Polygon settings from `toktik.yaml`. The old `polygon-env.sh` script remains only as a compatibility shim that exports `TOKTIK_CONFIG`.
+
+Legacy environment overrides still supported by `pkg/polygon`:
 - `MASSIVE_API_KEY` or `POLYGON_API_KEY`
 - `MASSIVE_BASE_URL` or `POLYGON_BASE_URL` for test or proxy overrides
 - `MASSIVE_FLATFILES_BASE_URL` or `POLYGON_FLATFILES_BASE_URL` for Massive flatfile host overrides. Defaults to `https://files.massive.com/flatfiles`
@@ -689,7 +723,31 @@ Sample response:
 
 This request is equivalent to the CLI command:
 ```bash
-RETRACEMENT_RATIO_PROTECTIVE_SPREAD_SIGNAL_SOURCE=12h go run ./cmd/backtest-portfolio/main.go \
+SIGNAL_LEVEL=12h RRPS_DIRECTION=long go run ./cmd/backtest-portfolio/main.go \
+  --asset BTC \
+  --from 2023-01-01 \
+  --to 2025-12-31 \
+  --strategy retracement-ratio-protective-spread \
+  --interval 2h \
+  --capital 100 \
+  --spread-entry-price-mode mark_close \
+  --spread-exit-price-mode mark_close \
+  --spread-valuation-price-mode mark_close \
+  --direction long_only \
+  --clear-previous-data
+```
+
+策略运行方式：
+- `SIGNAL_LEVEL` 控制读取哪组信号文件，支持 `12h` 和 `1d`。
+- `RRPS_DIRECTION` 控制方向，`long` 读取 `12h_long.csv` / `1d_long.csv`，`short` 读取 `12h_short.csv` / `1d_short.csv`。
+- 策略会在信号出现时先关闭所有已存在的 order group，再按初始逻辑重新开仓。
+- 30% 盈利时会部分平掉卖方腿，并在同一个 order group 中重建买方腿，方便回测结果在 HTML 中按组展示。
+- 50% 盈利时会全部平仓，然后进入第二阶段趋势追击逻辑。
+
+如果你只想先跑多头版本，推荐先用下面这组参数：
+
+```bash
+SIGNAL_LEVEL=12h RRPS_DIRECTION=long go run ./cmd/backtest-portfolio/main.go \
   --asset BTC \
   --from 2023-01-01 \
   --to 2025-12-31 \

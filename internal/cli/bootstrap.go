@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+	"github.com/Cyvadra/toktik/internal/config"
 	"github.com/Cyvadra/toktik/internal/cryptooptions"
 )
 
@@ -87,33 +89,30 @@ func FindSchemaFile(candidates []string) (string, error) {
 	return "", fmt.Errorf("cannot find schema SQL file; specify --schema path")
 }
 
+func MustLoadRuntime() config.Runtime {
+	cfg, err := config.LoadRuntime()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "load runtime config: %v\n", err)
+		os.Exit(1)
+	}
+	return cfg
+}
+
 // CryptoOptionsSchemaFile returns the path to the crypto_options DDL file by
 // probing the standard locations. It wraps FindSchemaFile with the default
 // candidate list used across crypto-options CLI tools.
 func CryptoOptionsSchemaFile() (string, error) {
-	return FindSchemaFile([]string{
-		"schema/clickhouse/crypto_options.sql",
-		"../schema/clickhouse/crypto_options.sql",
-		"../../schema/clickhouse/crypto_options.sql",
-	})
+	return FindSchemaFile(schemaCandidates("crypto_options.sql"))
 }
 
 // UsMarketSchemaFile returns the path to the us_market DDL file.
 func UsMarketSchemaFile() (string, error) {
-	return FindSchemaFile([]string{
-		"schema/clickhouse/us_market.sql",
-		"../schema/clickhouse/us_market.sql",
-		"../../schema/clickhouse/us_market.sql",
-	})
+	return FindSchemaFile(schemaCandidates("us_market.sql"))
 }
 
 // FeatureStoreSchemaFile returns the path to the feature_store DDL file.
 func FeatureStoreSchemaFile() (string, error) {
-	return FindSchemaFile([]string{
-		"schema/clickhouse/feature_store.sql",
-		"../schema/clickhouse/feature_store.sql",
-		"../../schema/clickhouse/feature_store.sql",
-	})
+	return FindSchemaFile(schemaCandidates("feature_store.sql"))
 }
 
 // EnvOrDefault returns the value of an environment variable, or the fallback
@@ -155,4 +154,16 @@ func ResolveSchemaFile(explicit string, finder func() (string, error)) (string, 
 		return explicit, nil
 	}
 	return finder()
+}
+
+func schemaCandidates(fileName string) []string {
+	cfg, err := config.LoadRuntime()
+	if err == nil {
+		return cfg.SchemaPathCandidates(fileName)
+	}
+	return []string{
+		filepath.Join("schema", "clickhouse", fileName),
+		filepath.Join("..", "schema", "clickhouse", fileName),
+		filepath.Join("..", "..", "schema", "clickhouse", fileName),
+	}
 }

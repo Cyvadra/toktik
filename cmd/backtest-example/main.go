@@ -104,7 +104,8 @@ func (s *DeltaFilterStrategy) OnBar(ctx *backtest.BarContext) {
 }
 
 func main() {
-	dsn := flag.String("clickhouse-dsn", appCli.DefaultDSN, "ClickHouse DSN")
+	runtimeCfg := appCli.MustLoadRuntime()
+	dsn := flag.String("clickhouse-dsn", runtimeCfg.ClickHouse.DSN, "ClickHouse DSN")
 	symbol := flag.String("symbol", "BTC-3JAN25-100000-C", "Option symbol to backtest")
 	interval := flag.String("interval", "15m", "Bar interval")
 	fromStr := flag.String("from", "2024-12-01", "Start date (YYYY-MM-DD)")

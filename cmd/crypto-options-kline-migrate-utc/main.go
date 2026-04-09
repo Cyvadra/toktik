@@ -14,7 +14,8 @@ import (
 )
 
 func main() {
-	dsn := flag.String("clickhouse-dsn", appCli.DefaultDSN, "ClickHouse DSN")
+	runtimeCfg := appCli.MustLoadRuntime()
+	dsn := flag.String("clickhouse-dsn", runtimeCfg.ClickHouse.DSN, "ClickHouse DSN")
 	from := flag.String("from", "", "Optional start date/time (YYYY-MM-DD or RFC3339), inclusive backfill scope")
 	to := flag.String("to", "", "Optional end date/time (YYYY-MM-DD or RFC3339), exclusive for RFC3339, next-day exclusive for YYYY-MM-DD")
 	baseAsset := flag.String("base-asset", "", "Optional base asset filter for backfill, e.g. BTC")

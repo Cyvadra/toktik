@@ -24,8 +24,9 @@ const (
 )
 
 func main() {
+	runtimeCfg := appCli.MustLoadRuntime()
 	inputDir := flag.String("input-dir", "", "Directory containing .parquet files")
-	dsn := flag.String("clickhouse-dsn", appCli.DefaultDSN, "ClickHouse DSN")
+	dsn := flag.String("clickhouse-dsn", runtimeCfg.ClickHouse.DSN, "ClickHouse DSN")
 	batchSize := flag.Int("batch-size", 50000, "Rows per INSERT batch")
 	workers := flag.Int("workers", 2, "Number of parallel file importers")
 	schemaFile := flag.String("schema", "", "Path to DDL SQL file (auto-detected if empty)")

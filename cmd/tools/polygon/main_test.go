@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"strings"
 	"testing"
@@ -18,53 +19,53 @@ type stubPolygonService struct {
 	forceDownload     bool
 }
 
-func (s *stubPolygonService) DownloadStockMinuteAggregates(date time.Time, force bool) (string, error) {
+func (s *stubPolygonService) DownloadStockMinuteAggregates(_ context.Context, date time.Time, force bool) (string, error) {
 	s.stockMinuteDate = date
 	s.forceDownload = force
 	return "/tmp/polygon/stocks/2026-04-07.csv.gz", nil
 }
 
-func (s *stubPolygonService) DownloadOptionMinuteAggregates(date time.Time, force bool) (string, error) {
+func (s *stubPolygonService) DownloadOptionMinuteAggregates(_ context.Context, date time.Time, force bool) (string, error) {
 	s.optionMinuteDate = date
 	s.forceDownload = force
 	return "/tmp/polygon/options/2026-04-07.csv.gz", nil
 }
 
-func (s *stubPolygonService) StockSnapshot(symbol string) (*polygon.StockSnapshot, error) {
+func (s *stubPolygonService) StockSnapshot(_ context.Context, symbol string) (*polygon.StockSnapshot, error) {
 	return &polygon.StockSnapshot{Ticker: strings.ToUpper(symbol)}, nil
 }
 
-func (s *stubPolygonService) StockAggregates(req polygon.AggregateRequest) ([]polygon.AggregateBar, error) {
+func (s *stubPolygonService) StockAggregates(_ context.Context, req polygon.AggregateRequest) ([]polygon.AggregateBar, error) {
 	s.stockAggregateReq = req
 	return []polygon.AggregateBar{{Ticker: strings.ToUpper(req.Ticker), Close: 191.2}}, nil
 }
 
-func (s *stubPolygonService) StockQuotes(symbol string, req polygon.QuoteRequest) ([]polygon.Quote, error) {
+func (s *stubPolygonService) StockQuotes(_ context.Context, symbol string, req polygon.QuoteRequest) ([]polygon.Quote, error) {
 	return []polygon.Quote{{SequenceNumber: 10}}, nil
 }
 
-func (s *stubPolygonService) StockTrades(symbol string, req polygon.TradeRequest) ([]polygon.Trade, error) {
+func (s *stubPolygonService) StockTrades(_ context.Context, symbol string, req polygon.TradeRequest) ([]polygon.Trade, error) {
 	return []polygon.Trade{{ID: "trade-1", Price: 197.12}}, nil
 }
 
-func (s *stubPolygonService) OptionContract(ticker string) (*polygon.OptionContract, error) {
+func (s *stubPolygonService) OptionContract(_ context.Context, ticker string) (*polygon.OptionContract, error) {
 	return &polygon.OptionContract{Ticker: strings.ToUpper(ticker), StrikePrice: 650}, nil
 }
 
-func (s *stubPolygonService) OptionChain(req polygon.OptionChainRequest) ([]polygon.OptionChainContract, error) {
+func (s *stubPolygonService) OptionChain(_ context.Context, req polygon.OptionChainRequest) ([]polygon.OptionChainContract, error) {
 	s.optionChainReq = req
 	return []polygon.OptionChainContract{{Contract: polygon.OptionContract{Ticker: "O:SPY251219C00650000", StrikePrice: 650}}}, nil
 }
 
-func (s *stubPolygonService) OptionAggregates(req polygon.AggregateRequest) ([]polygon.AggregateBar, error) {
+func (s *stubPolygonService) OptionAggregates(_ context.Context, req polygon.AggregateRequest) ([]polygon.AggregateBar, error) {
 	return []polygon.AggregateBar{{Ticker: strings.ToUpper(req.Ticker), Close: 11.2}}, nil
 }
 
-func (s *stubPolygonService) OptionQuotes(ticker string, req polygon.QuoteRequest) ([]polygon.Quote, error) {
+func (s *stubPolygonService) OptionQuotes(_ context.Context, ticker string, req polygon.QuoteRequest) ([]polygon.Quote, error) {
 	return []polygon.Quote{{SequenceNumber: 31}}, nil
 }
 
-func (s *stubPolygonService) OptionTrades(ticker string, req polygon.TradeRequest) ([]polygon.Trade, error) {
+func (s *stubPolygonService) OptionTrades(_ context.Context, ticker string, req polygon.TradeRequest) ([]polygon.Trade, error) {
 	return []polygon.Trade{{Price: 11.15}}, nil
 }
 

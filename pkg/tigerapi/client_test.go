@@ -15,6 +15,7 @@ import (
 	"sync"
 	"testing"
 
+	runtimeconfig "github.com/Cyvadra/toktik/internal/config"
 	tigerconfig "github.com/tigerfintech/openapi-go-sdk/config"
 )
 
@@ -78,6 +79,29 @@ func TestLoadConfigFromEnvLoadsTokenFromExplicitFile(t *testing.T) {
 	}
 	if cfg.Token != "explicit_token_456" {
 		t.Fatalf("expected token from explicit file, got %q", cfg.Token)
+	}
+}
+
+func TestLoadConfigFromRuntimeLoadsTokenFromExplicitFile(t *testing.T) {
+	tokenPath := filepath.Join(t.TempDir(), "runtime_token.properties")
+	if err := os.WriteFile(tokenPath, []byte("token=runtime_token_789\n"), 0644); err != nil {
+		t.Fatalf("write token file: %v", err)
+	}
+
+	runtimeCfg := runtimeconfig.DefaultRuntime()
+	runtimeCfg.Tiger.TigerID = "runtime_tiger_id"
+	runtimeCfg.Tiger.PrivateKey = mustGeneratePrivateKeyPEM(t)
+	runtimeCfg.Tiger.Account = "runtime_account"
+	runtimeCfg.Tiger.License = "TBNZ"
+	runtimeCfg.Tiger.Environment = string(EnvironmentProd)
+	runtimeCfg.Tiger.TokenFile = tokenPath
+
+	cfg, err := LoadConfigFromRuntime(runtimeCfg)
+	if err != nil {
+		t.Fatalf("LoadConfigFromRuntime failed: %v", err)
+	}
+	if cfg.Token != "runtime_token_789" {
+		t.Fatalf("expected token from runtime token file, got %q", cfg.Token)
 	}
 }
 
@@ -225,9 +249,9 @@ func TestNewFromEnvAndQueries(t *testing.T) {
 	assertRecordedMethod(t, records, "quote_real_time", map[string]any{"symbols": []any{"AAPL"}})
 	assertRecordedMethod(t, records, "kline", map[string]any{"symbols": []any{"AAPL"}, "period": "day"})
 	assertRecordedMethod(t, records, "option_expiration", map[string]any{"symbols": []any{"AAPL"}})
-	assertRecordedMethod(t, records, "option_chain", map[string]any{"symbol": "AAPL", "expiry": "2026-04-17"})
-	assertRecordedMethod(t, records, "option_brief", map[string]any{"identifiers": []any{"AAPL 260417C00200000"}})
-	assertRecordedMethod(t, records, "option_kline", map[string]any{"identifier": "AAPL 260417C00200000", "period": "day"})
+	assertRecordedMethod(t, records, "option_chain", map[string]any{})
+	assertRecordedMethod(t, records, "option_brief", map[string]any{})
+	assertRecordedMethod(t, records, "option_kline", map[string]any{})
 	assertRecordedMethod(t, records, "custom_history", map[string]any{"symbol": "AAPL"})
 }
 

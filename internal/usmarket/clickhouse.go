@@ -226,6 +226,39 @@ func CountExistingStockBars(ctx context.Context, conn driver.Conn, marketDate ti
 	return count, nil
 }
 
+func LatestOptionMarketDate(ctx context.Context, conn driver.Conn) (time.Time, bool, error) {
+	return latestMarketDate(ctx, conn, "us_options_bar_1m")
+}
+
+func LatestStockMarketDate(ctx context.Context, conn driver.Conn) (time.Time, bool, error) {
+	return latestMarketDate(ctx, conn, "us_stocks_bar_1m")
+}
+
+func latestMarketDate(ctx context.Context, conn driver.Conn, table string) (time.Time, bool, error) {
+	rows, err := conn.Query(ctx, fmt.Sprintf(`SELECT count(), ifNull(maxOrNull(market_date), toDate('1970-01-01')) FROM %s`, table))
+	if err != nil {
+		return time.Time{}, false, fmt.Errorf("query latest market date from %s: %w", table, err)
+	}
+	defer rows.Close()
+
+	var (
+		count      uint64
+		marketDate time.Time
+	)
+	for rows.Next() {
+		if err := rows.Scan(&count, &marketDate); err != nil {
+			return time.Time{}, false, fmt.Errorf("scan latest market date from %s: %w", table, err)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return time.Time{}, false, fmt.Errorf("iterate latest market date from %s: %w", table, err)
+	}
+	if count == 0 {
+		return time.Time{}, false, nil
+	}
+	return normalizeUTCDay(marketDate), true, nil
+}
+
 // EnsureOptionGreeksColumns makes the option base table compatible with greek enrichment
 // when the table already existed before these columns were introduced.
 func EnsureOptionGreeksColumns(ctx context.Context, conn driver.Conn) error {

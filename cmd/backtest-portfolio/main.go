@@ -51,7 +51,8 @@ const (
 )
 
 func main() {
-	dsn := flag.String("clickhouse-dsn", appCli.DefaultDSN, "ClickHouse DSN")
+	runtimeCfg := appCli.MustLoadRuntime()
+	dsn := flag.String("clickhouse-dsn", runtimeCfg.ClickHouse.DSN, "ClickHouse DSN")
 	market := flag.String("market", marketCrypto, "Backtest market: crypto | us")
 	instrument := flag.String("instrument", string(instrumentAuto), "Trading scope: auto | spot | contract | mixed (contract currently means option-contract strategies)")
 	baseAsset := flag.String("asset", "BTC", "Underlying symbol or base asset (e.g. BTC, ETH, AAPL)")

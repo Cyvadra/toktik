@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	runtimeconfig "github.com/Cyvadra/toktik/internal/config"
 	tigerconfig "github.com/tigerfintech/openapi-go-sdk/config"
 )
 
@@ -44,7 +45,9 @@ type Config struct {
 	Timeout             time.Duration
 	EnableDynamicDomain bool
 	Token               string
+	TokenFile           string
 	ServerURL           string
+	DeviceID            string
 }
 
 func LoadConfigFromEnv() (Config, error) {
@@ -56,6 +59,7 @@ func LoadConfigFromEnv() (Config, error) {
 		Language:            strings.TrimSpace(os.Getenv(EnvLanguage)),
 		Timezone:            strings.TrimSpace(os.Getenv(EnvTimezone)),
 		Token:               strings.TrimSpace(os.Getenv(EnvToken)),
+		TokenFile:           strings.TrimSpace(os.Getenv(EnvTokenFile)),
 		ServerURL:           strings.TrimSpace(os.Getenv(EnvServerURL)),
 		EnableDynamicDomain: true,
 	}
@@ -82,7 +86,39 @@ func LoadConfigFromEnv() (Config, error) {
 	}
 
 	if cfg.Token == "" {
-		token, err := loadTokenFromFileIfAvailable(strings.TrimSpace(os.Getenv(EnvTokenFile)))
+		token, err := loadTokenFromFileIfAvailable(cfg.TokenFile)
+		if err != nil {
+			return Config{}, err
+		}
+		cfg.Token = token
+	}
+
+	if err := cfg.Validate(); err != nil {
+		return Config{}, err
+	}
+
+	return cfg, nil
+}
+
+func LoadConfigFromRuntime(runtimeCfg runtimeconfig.Runtime) (Config, error) {
+	cfg := Config{
+		TigerID:             strings.TrimSpace(runtimeCfg.Tiger.TigerID),
+		PrivateKey:          strings.TrimSpace(runtimeCfg.Tiger.PrivateKey),
+		Account:             strings.TrimSpace(runtimeCfg.Tiger.Account),
+		License:             strings.TrimSpace(runtimeCfg.Tiger.License),
+		Environment:         Environment(strings.ToUpper(strings.TrimSpace(runtimeCfg.Tiger.Environment))),
+		Language:            strings.TrimSpace(runtimeCfg.Tiger.Language),
+		Timezone:            strings.TrimSpace(runtimeCfg.Tiger.Timezone),
+		Timeout:             time.Duration(runtimeCfg.Tiger.TimeoutSeconds) * time.Second,
+		EnableDynamicDomain: runtimeCfg.Tiger.EnableDynamicDomain,
+		Token:               strings.TrimSpace(runtimeCfg.Tiger.Token),
+		TokenFile:           strings.TrimSpace(runtimeCfg.Tiger.TokenFile),
+		ServerURL:           strings.TrimSpace(runtimeCfg.Tiger.ServerURL),
+		DeviceID:            strings.TrimSpace(runtimeCfg.Tiger.DeviceID),
+	}
+
+	if cfg.Token == "" {
+		token, err := loadTokenFromFileIfAvailable(cfg.TokenFile)
 		if err != nil {
 			return Config{}, err
 		}

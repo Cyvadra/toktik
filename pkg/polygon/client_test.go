@@ -2,6 +2,7 @@ package polygon
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -122,6 +123,43 @@ func TestDownloadMinuteAggregatesFlatFiles(t *testing.T) {
 	}
 	if _, err := missingCacheClient.DownloadStockMinuteAggregates(time.Date(2026, 4, 7, 0, 0, 0, 0, time.UTC), false); err == nil {
 		t.Fatal("expected missing cache directory error")
+	}
+}
+
+func TestDownloadMinuteAggregatesFlatFilesNotFound(t *testing.T) {
+	cacheDir := t.TempDir()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+
+	client, err := New(Config{
+		APIKey:            "test_massive_key",
+		BaseURL:           server.URL,
+		FlatFilesBaseURL:  server.URL + "/flatfiles",
+		FlatFilesCacheDir: cacheDir,
+	})
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+
+	_, err = client.DownloadStockMinuteAggregates(time.Date(2026, 4, 8, 0, 0, 0, 0, time.UTC), true)
+	if err == nil {
+		t.Fatal("expected 404 error")
+	}
+
+	var statusErr *HTTPStatusError
+	if !errors.As(err, &statusErr) {
+		t.Fatalf("expected HTTPStatusError, got %T: %v", err, err)
+	}
+	if statusErr.StatusCode != http.StatusNotFound {
+		t.Fatalf("unexpected status code: %d", statusErr.StatusCode)
+	}
+	if !IsHTTPStatus(statusErr, http.StatusNotFound) {
+		t.Fatal("expected IsHTTPStatus to match 404")
+	}
+	if statusErr.URL == "" {
+		t.Fatal("expected request URL in status error")
 	}
 }
 

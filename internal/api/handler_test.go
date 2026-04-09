@@ -12,6 +12,7 @@ import (
 
 	"github.com/Cyvadra/toktik/internal/backtest"
 	"github.com/Cyvadra/toktik/internal/dto"
+	polygonpkg "github.com/Cyvadra/toktik/pkg/polygon"
 	"github.com/gin-gonic/gin"
 )
 
@@ -64,6 +65,16 @@ type mockStrategyBacktests struct {
 	statusResp *dto.StrategyBacktestRunStatus
 	stream     <-chan dto.StrategyBacktestSSEvent
 	err        error
+}
+
+type mockPolygonProvider struct {
+	snapshotResp  *dto.PolygonStockSnapshotResponse
+	aggregateResp *dto.PolygonAggregateResponse
+	quoteResp     *dto.PolygonQuoteResponse
+	tradeResp     *dto.PolygonTradeResponse
+	contractResp  *dto.PolygonOptionContractResponse
+	chainResp     *dto.PolygonOptionChainResponse
+	err           error
 }
 
 func (m *mockQuerier) QueryBars(_ context.Context, _ dto.BarRequest) (*dto.BarResponse, error) {
@@ -182,6 +193,42 @@ func (m *mockStrategyBacktests) SubscribeStrategyBacktest(_ context.Context, _ s
 	return m.stream, func() {}, nil
 }
 
+func (m *mockPolygonProvider) QueryStockSnapshot(_ context.Context, _ dto.PolygonStockSnapshotRequest) (*dto.PolygonStockSnapshotResponse, error) {
+	return m.snapshotResp, m.err
+}
+
+func (m *mockPolygonProvider) QueryStockAggregates(_ context.Context, _ dto.PolygonAggregateRequest) (*dto.PolygonAggregateResponse, error) {
+	return m.aggregateResp, m.err
+}
+
+func (m *mockPolygonProvider) QueryStockQuotes(_ context.Context, _ dto.PolygonStockQuotesRequest) (*dto.PolygonQuoteResponse, error) {
+	return m.quoteResp, m.err
+}
+
+func (m *mockPolygonProvider) QueryStockTrades(_ context.Context, _ dto.PolygonStockTradesRequest) (*dto.PolygonTradeResponse, error) {
+	return m.tradeResp, m.err
+}
+
+func (m *mockPolygonProvider) QueryOptionContract(_ context.Context, _ dto.PolygonOptionContractRequest) (*dto.PolygonOptionContractResponse, error) {
+	return m.contractResp, m.err
+}
+
+func (m *mockPolygonProvider) QueryOptionChain(_ context.Context, _ dto.PolygonOptionChainRequest) (*dto.PolygonOptionChainResponse, error) {
+	return m.chainResp, m.err
+}
+
+func (m *mockPolygonProvider) QueryOptionAggregates(_ context.Context, _ dto.PolygonAggregateRequest) (*dto.PolygonAggregateResponse, error) {
+	return m.aggregateResp, m.err
+}
+
+func (m *mockPolygonProvider) QueryOptionQuotes(_ context.Context, _ dto.PolygonOptionQuotesRequest) (*dto.PolygonQuoteResponse, error) {
+	return m.quoteResp, m.err
+}
+
+func (m *mockPolygonProvider) QueryOptionTrades(_ context.Context, _ dto.PolygonOptionTradesRequest) (*dto.PolygonTradeResponse, error) {
+	return m.tradeResp, m.err
+}
+
 // --- helpers ---
 
 func setupRouter(q CryptoOptionsQuerier) *gin.Engine {
@@ -258,6 +305,49 @@ func TestGetBars_InternalError(t *testing.T) {
 	}
 	if errResp.Error != "internal server error" {
 		t.Fatalf("expected generic error, got %q", errResp.Error)
+	}
+}
+
+func TestGetPolygonStockSnapshot_Success(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	provider := &mockPolygonProvider{snapshotResp: &dto.PolygonStockSnapshotResponse{Data: &polygonpkg.StockSnapshot{Ticker: "AAPL"}}}
+	r := NewRouter(&mockQuerier{}, &mockUSStocksQuerier{}, &mockUSOptionsQuerier{}, &mockInfra{}, &mockFeature{}, nil, nil, nil, nil, nil, provider)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/api/v1/polygon/stocks/snapshot?symbol=AAPL", nil)
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "AAPL") {
+		t.Fatalf("expected AAPL in response, got %s", w.Body.String())
+	}
+}
+
+func TestGetPolygonOptionChain_NotConfigured(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := NewRouter(&mockQuerier{}, &mockUSStocksQuerier{}, &mockUSOptionsQuerier{}, &mockInfra{}, &mockFeature{}, nil, nil, nil, nil, nil)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/api/v1/polygon/options/chain?underlying=SPY", nil)
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotImplemented {
+		t.Fatalf("expected 501, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestGetPolygonStockAggregates_BadRequest(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := NewRouter(&mockQuerier{}, &mockUSStocksQuerier{}, &mockUSOptionsQuerier{}, &mockInfra{}, &mockFeature{}, nil, nil, nil, nil, nil, &mockPolygonProvider{})
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/api/v1/polygon/stocks/aggregates?ticker=AAPL", nil)
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
 	}
 }
 

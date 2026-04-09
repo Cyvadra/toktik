@@ -111,7 +111,12 @@ func (c *Client) downloadToFile(ctx context.Context, requestURL string, cachePat
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return fmt.Errorf("download flatfile %s: %s body=%s", requestURL, resp.Status, strings.TrimSpace(string(body)))
+		return &HTTPStatusError{
+			URL:        requestURL,
+			StatusCode: resp.StatusCode,
+			Status:     resp.Status,
+			Body:       strings.TrimSpace(string(body)),
+		}
 	}
 
 	tempFile, err := os.CreateTemp(filepath.Dir(cachePath), ".polygon-flatfile-*")

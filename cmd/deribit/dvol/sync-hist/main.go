@@ -11,16 +11,18 @@ import (
 	"syscall"
 	"time"
 
+	appCli "github.com/Cyvadra/toktik/internal/cli"
 	"github.com/Cyvadra/toktik/pkg/feeds"
 	"github.com/Cyvadra/toktik/pkg/feeds/dvol"
 )
 
 func main() {
+	runtimeCfg := appCli.MustLoadRuntime()
 	currenciesArg := flag.String("currencies", strings.Join(dvol.DefaultCurrencies, ","), "Comma-separated currencies to sync")
 	startDate := flag.String("start-date", "2020-01-01", "Start date (YYYY-MM-DD, UTC)")
 	endDate := flag.String("end-date", time.Now().UTC().Format("2006-01-02"), "End date inclusive (YYYY-MM-DD, UTC)")
-	baseURL := flag.String("base-url", dvol.DefaultBaseURL, "Deribit API base URL")
-	chDSN := flag.String("clickhouse-dsn", "clickhouse://default:@localhost:9000/default", "ClickHouse DSN")
+	baseURL := flag.String("base-url", runtimeCfg.Deribit.BaseURL, "Deribit API base URL")
+	chDSN := flag.String("clickhouse-dsn", runtimeCfg.ClickHouse.DSN, "ClickHouse DSN")
 	flag.Parse()
 
 	startDay, err := time.Parse("2006-01-02", *startDate)

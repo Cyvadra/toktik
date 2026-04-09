@@ -1,0 +1,62 @@
+# Runtime configuration for shared infrastructure, external market-data integrations,
+# and cache backends.
+# Environment variables still override these values when present.
+
+clickhouse:
+  dsn: "clickhouse://default:@localhost:9000/default"
+
+api_server:
+  listen_addr: ":9010"
+  read_header_timeout_seconds: 10
+  read_timeout_seconds: 30
+  write_timeout_seconds: 60
+  idle_timeout_seconds: 120
+
+api:
+  cors_origins: []
+  api_keys: []
+  rate_limit_rps: 50
+
+paths:
+  schema_dir: "schema/clickhouse"
+
+thetadata:
+  base_url: "http://127.0.0.1:25503/v3"
+  timeout_seconds: 120
+
+deribit:
+  base_url: "https://www.deribit.com"
+
+tiger:
+  tiger_id: ""
+  private_key: ""
+  account: ""
+  license: ""
+  environment: ""
+  language: ""
+  timezone: ""
+  timeout_seconds: 0
+  enable_dynamic_domain: true
+  token: ""
+  token_file: ""
+  server_url: ""
+  device_id: ""
+
+polygon:
+  api_key: ""
+  base_url: "https://api.massive.com"
+  flat_files_base_url: "https://files.massive.com/flatfiles"
+  flat_files_cache_dir: "tmp/polygon"
+  timeout_seconds: 60
+  trace: false
+  pagination: true
+
+redis:
+  enabled: false
+  addr: "127.0.0.1:6379"
+  password: ""
+  db: 0
+  key_prefix: "toktik"
+  dial_timeout_seconds: 2
+  read_timeout_seconds: 2
+  write_timeout_seconds: 2

@@ -22,8 +22,9 @@ import (
 )
 
 func main() {
+	runtimeCfg := appCli.MustLoadRuntime()
 	dataDir := flag.String("data-dir", "data/crypto-15m", "Directory containing 15m CSV files (<SYMBOL>USDT.csv)")
-	dsn := flag.String("clickhouse-dsn", appCli.DefaultDSN, "ClickHouse DSN")
+	dsn := flag.String("clickhouse-dsn", runtimeCfg.ClickHouse.DSN, "ClickHouse DSN")
 	priceSource := flag.String("price-source", "binance-15m-csv", "Value for price_source column")
 	batchSize := flag.Int("batch-size", 50000, "Rows per INSERT batch")
 	overwrite := flag.Bool("overwrite", false, "Delete existing rows for each symbol before import")

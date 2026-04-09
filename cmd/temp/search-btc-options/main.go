@@ -67,7 +67,8 @@ type expiryLifecycle struct {
 }
 
 func main() {
-	dsn := flag.String("clickhouse-dsn", appCli.DefaultDSN, "ClickHouse DSN")
+	runtimeCfg := appCli.MustLoadRuntime()
+	dsn := flag.String("clickhouse-dsn", runtimeCfg.ClickHouse.DSN, "ClickHouse DSN")
 	asset := flag.String("asset", "BTC", "Base asset")
 	interval := flag.String("interval", "1h", "Options bar interval")
 	dateStr := flag.String("date", "2023-01-04", "UTC date in YYYY-MM-DD")

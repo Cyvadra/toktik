@@ -18,12 +18,13 @@ import (
 )
 
 func main() {
+	runtimeCfg := appCli.MustLoadRuntime()
 	date := flag.String("date", "", "Single market date to backfill (YYYY-MM-DD)")
 	startDate := flag.String("start-date", "", "Start market date to backfill (YYYY-MM-DD)")
 	endDate := flag.String("end-date", "", "End market date to backfill (YYYY-MM-DD)")
 	symbolsFlag := flag.String("symbols", "", "Optional comma-separated underlying symbols to restrict backfill")
-	dsn := flag.String("clickhouse-dsn", appCli.DefaultDSN, "ClickHouse DSN")
-	thetaBaseURL := flag.String("theta-base-url", usmarketDefaultThetaBaseURL(), "ThetaData v3 base URL")
+	dsn := flag.String("clickhouse-dsn", runtimeCfg.ClickHouse.DSN, "ClickHouse DSN")
+	thetaBaseURL := flag.String("theta-base-url", runtimeCfg.ThetaData.BaseURL, "ThetaData v3 base URL")
 	workers := flag.Int("workers", 2, "Number of parallel backfill workers")
 	batchSize := flag.Int("batch-size", 100000, "Rows per ClickHouse INSERT batch")
 	limitTasks := flag.Int("limit-tasks", 0, "Optional limit of underlying/day tasks to process")
@@ -54,7 +55,7 @@ func main() {
 
 	log.Printf("Found %d underlying/day tasks to backfill between %s and %s", len(tasks), from.Format("2006-01-02"), to.Format("2006-01-02"))
 
-	httpClient := &http.Client{Timeout: 2 * time.Minute}
+	httpClient := &http.Client{Timeout: runtimeCfg.ThetaDataTimeout()}
 	taskCh := make(chan usmarket.MissingOptionGreeksTask)
 
 	var (
@@ -208,8 +209,4 @@ func parseSymbols(raw string) []string {
 	}
 	sort.Strings(symbols)
 	return symbols
-}
-
-func usmarketDefaultThetaBaseURL() string {
-	return "http://127.0.0.1:25503/v3"
 }

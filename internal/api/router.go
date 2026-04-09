@@ -9,9 +9,13 @@ import (
 )
 
 // NewRouter builds the Gin engine with all API routes registered.
-func NewRouter(cos CryptoOptionsQuerier, usStocks USStocksQuerier, usOptions USOptionsQuerier, infra InfraProvider, features FeatureProvider, strategyBacktests StrategyBacktestProvider, cryptoSpot CryptoSpotQuerier, screener ScreenerProvider, strategyCatalog StrategyCatalogProvider, factors FactorProvider) *gin.Engine {
+func NewRouter(cos CryptoOptionsQuerier, usStocks USStocksQuerier, usOptions USOptionsQuerier, infra InfraProvider, features FeatureProvider, strategyBacktests StrategyBacktestProvider, cryptoSpot CryptoSpotQuerier, screener ScreenerProvider, strategyCatalog StrategyCatalogProvider, factors FactorProvider, polygon ...PolygonProvider) *gin.Engine {
 	r := gin.Default()
-	h := NewHandler(cos, usStocks, usOptions, infra, features, strategyBacktests, cryptoSpot, screener, strategyCatalog, factors)
+	var polygonProvider PolygonProvider
+	if len(polygon) > 0 {
+		polygonProvider = polygon[0]
+	}
+	h := NewHandler(cos, usStocks, usOptions, infra, features, strategyBacktests, cryptoSpot, screener, strategyCatalog, factors, polygonProvider)
 
 	// Apply middleware
 	r.Use(CORSMiddleware())
@@ -84,6 +88,20 @@ func NewRouter(cos CryptoOptionsQuerier, usStocks USStocksQuerier, usOptions USO
 		factorsGroup := v1.Group("/factors")
 		factorsGroup.GET("", h.ListFactors)
 		factorsGroup.GET("/bars", h.GetFactorBars)
+
+		polygonGroup := v1.Group("/polygon")
+		polygonStocks := polygonGroup.Group("/stocks")
+		polygonStocks.GET("/snapshot", h.GetPolygonStockSnapshot)
+		polygonStocks.GET("/aggregates", h.GetPolygonStockAggregates)
+		polygonStocks.GET("/quotes", h.GetPolygonStockQuotes)
+		polygonStocks.GET("/trades", h.GetPolygonStockTrades)
+
+		polygonOptions := polygonGroup.Group("/options")
+		polygonOptions.GET("/contract", h.GetPolygonOptionContract)
+		polygonOptions.GET("/chain", h.GetPolygonOptionChain)
+		polygonOptions.GET("/aggregates", h.GetPolygonOptionAggregates)
+		polygonOptions.GET("/quotes", h.GetPolygonOptionQuotes)
+		polygonOptions.GET("/trades", h.GetPolygonOptionTrades)
 
 		v1.GET("/strategies", h.ListStrategies)
 	}

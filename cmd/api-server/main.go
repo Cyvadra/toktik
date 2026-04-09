@@ -31,15 +31,23 @@ import (
 
 	_ "github.com/Cyvadra/toktik/docs"
 	"github.com/Cyvadra/toktik/internal/api"
+	"github.com/Cyvadra/toktik/internal/cache"
 	appCli "github.com/Cyvadra/toktik/internal/cli"
+	"github.com/Cyvadra/toktik/internal/config"
 	"github.com/Cyvadra/toktik/internal/service"
 	"github.com/Cyvadra/toktik/pkg/feeds"
 	_ "github.com/Cyvadra/toktik/pkg/feeds/dvol"
 )
 
 func main() {
-	dsn := flag.String("clickhouse-dsn", appCli.EnvOrDefault("CLICKHOUSE_DSN", appCli.DefaultDSN), "ClickHouse DSN")
-	addr := flag.String("addr", appCli.EnvOrDefault("LISTEN_ADDR", ":8080"), "Listen address")
+	runtimeCfg, err := config.LoadRuntime()
+	if err != nil {
+		slog.Error("load runtime config", "error", err)
+		os.Exit(1)
+	}
+
+	dsn := flag.String("clickhouse-dsn", runtimeCfg.ClickHouse.DSN, "ClickHouse DSN")
+	addr := flag.String("addr", runtimeCfg.APIServer.ListenAddr, "Listen address")
 	schemaFile := flag.String("schema", "", "Path to DDL SQL file (auto-detected if empty)")
 	flag.Parse()
 
@@ -85,15 +93,34 @@ func main() {
 	screenerSvc := service.NewScreenerService(conn)
 	strategyCatalogSvc := service.NewStrategyCatalogService()
 	factorSvc := service.NewFactorService(factorStore)
-	router := api.NewRouter(svc, usStocksSvc, usOptionsSvc, infraSvc, featureSvc, strategyBacktestSvc, cryptoSpotSvc, screenerSvc, strategyCatalogSvc, factorSvc)
+	cacheStore, err := cache.NewStore(ctx, runtimeCfg)
+	if err != nil {
+		slog.Warn("init cache backend failed, falling back to memory cache", "error", err)
+		cacheStore = cache.NewMemoryStore()
+	}
+	defer func() {
+		if closeErr := cacheStore.Close(); closeErr != nil {
+			slog.Error("close cache store", "error", closeErr)
+		}
+	}()
+
+	var polygonSvc api.PolygonProvider
+	polygonService, err := service.NewPolygonServiceFromConfig(runtimeCfg, cacheStore)
+	if err != nil {
+		slog.Warn("polygon service disabled", "error", err)
+	} else {
+		polygonSvc = polygonService
+	}
+
+	router := api.NewRouter(svc, usStocksSvc, usOptionsSvc, infraSvc, featureSvc, strategyBacktestSvc, cryptoSpotSvc, screenerSvc, strategyCatalogSvc, factorSvc, polygonSvc)
 
 	srv := &http.Server{
 		Addr:              *addr,
 		Handler:           router,
-		ReadHeaderTimeout: 10 * time.Second,
-		ReadTimeout:       30 * time.Second,
-		WriteTimeout:      60 * time.Second,
-		IdleTimeout:       120 * time.Second,
+		ReadHeaderTimeout: runtimeCfg.APIServerReadHeaderTimeout(),
+		ReadTimeout:       runtimeCfg.APIServerReadTimeout(),
+		WriteTimeout:      runtimeCfg.APIServerWriteTimeout(),
+		IdleTimeout:       runtimeCfg.APIServerIdleTimeout(),
 	}
 
 	// Start server in background

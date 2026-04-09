@@ -14,9 +14,10 @@ import (
 )
 
 func main() {
+	runtimeCfg := appCli.MustLoadRuntime()
 	from := flag.String("from", "", "Start date in YYYY-MM-DD")
 	to := flag.String("to", "", "End date in YYYY-MM-DD")
-	dsn := flag.String("clickhouse-dsn", appCli.DefaultDSN, "ClickHouse DSN")
+	dsn := flag.String("clickhouse-dsn", runtimeCfg.ClickHouse.DSN, "ClickHouse DSN")
 	baseAsset := flag.String("base-asset", "", "Optional base asset filter, e.g. BTC or ETH")
 	flag.Parse()
 
