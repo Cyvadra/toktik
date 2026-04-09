@@ -90,6 +90,11 @@ func RegisterInputBuiltins(ip *Interpreter) {
 		if len(args) >= 2 {
 			title = args[1].Str()
 		}
+		if title != "" && ip.InputStrings != nil {
+			if v, ok := ip.InputStrings[title]; ok {
+				return StringVal(v)
+			}
+		}
 		if title != "" && ip.Inputs != nil {
 			if v, ok := ip.Inputs[title]; ok {
 				return FloatVal(v)

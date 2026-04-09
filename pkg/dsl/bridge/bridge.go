@@ -3,6 +3,7 @@ package bridge
 
 import (
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -15,6 +16,17 @@ import (
 
 type Options struct {
 	SignalSource string
+	// Params provides mixed-type parameter overrides for DSL input.*() calls.
+	// Keys are matched against input titles. Values can be float64, int, bool, or string.
+	Params map[string]interface{}
+	// Config provides catalog-level configuration values accessible via config.get().
+	Config map[string]interface{}
+	// InitHook is called during Init after standard setup, allowing strategies to
+	// register custom computed fields (via ctx.Register) that the DSL accesses via expose_fields.
+	InitHook func(ctx *backtest.SetupContext) error
+	// PreloadHook is called during Preload after signal loading, allowing strategies to
+	// pre-compute series columns (via ctx.Primary().SetColumn) that the DSL accesses via expose_fields.
+	PreloadHook func(ctx *backtest.PreloadContext) error
 }
 
 type strategyMetadata struct {
@@ -27,8 +39,14 @@ type strategyMetadata struct {
 	SignalValueCols     []string
 	SignalEntryMatchers []string
 	SignalTextHasIndex  bool
-	ExposeFields        []string
-	Requests            []requestSpec
+	// Rich event column mappings.
+	SignalNameColumn      string
+	SignalDirectionColumn string
+	SignalActionColumn    string
+	SignalRemarksColumn   string
+	SignalQtyColumn       string
+	ExposeFields          []string
+	Requests              []requestSpec
 }
 
 type requestSpec struct {
@@ -52,6 +70,7 @@ type DslStrategy struct {
 	meta    strategyMetadata
 	secRefs map[string]backtest.SecurityRef
 	facRefs map[string]backtest.FactorRef
+	events  []signals.SignalEvent // structured events loaded during Preload
 }
 
 // New creates a DslStrategy from DSL source code.
@@ -99,6 +118,7 @@ func (ds *DslStrategy) Init(ctx *backtest.SetupContext) error {
 		}
 	}
 	ds.ip = runtime.NewInterpreter(ds.prog)
+	ApplyParams(ds.ip, ds.opts.Params)
 	runtime.RegisterTABuiltins(ds.ip)
 	runtime.RegisterMathBuiltins(ds.ip)
 	runtime.RegisterStrBuiltins(ds.ip)
@@ -107,7 +127,17 @@ func (ds *DslStrategy) Init(ctx *backtest.SetupContext) error {
 	runtime.RegisterRequestBuiltins(ds.ip, ds.requestSecurityBuiltin(), ds.requestFactorBuiltin())
 	runtime.RegisterOptionsBuiltins(ds.ip)
 	runtime.RegisterAlphaBuiltins(ds.ip)
+	runtime.RegisterSignalBuiltins(ds.ip)
+	runtime.RegisterEventBuiltins(ds.ip)
+	runtime.RegisterOrderBuiltins(ds.ip)
+	runtime.RegisterConfigBuiltins(ds.ip)
+	runtime.RegisterRefBuiltins(ds.ip)
 	ds.ip.Init()
+	if ds.opts.InitHook != nil {
+		if err := ds.opts.InitHook(ctx); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -118,6 +148,9 @@ func (ds *DslStrategy) Preload(ctx *backtest.PreloadContext) error {
 		signalPaths = splitCSVOrList(ds.meta.SignalSource)
 	}
 	if len(signalPaths) == 0 {
+		if ds.opts.PreloadHook != nil {
+			return ds.opts.PreloadHook(ctx)
+		}
 		return nil
 	}
 	outputName := strings.TrimSpace(ds.meta.SignalName)
@@ -128,7 +161,7 @@ func (ds *DslStrategy) Preload(ctx *backtest.PreloadContext) error {
 	if err != nil {
 		return err
 	}
-	times, err := signals.LoadTimes(signals.Config{
+	cfg := signals.Config{
 		Paths:             signalPaths,
 		TimestampColumns:  defaultStrings(ds.meta.SignalTimestampCols, []string{"日期和时间", "timestamp", "time", "datetime"}),
 		TypeColumns:       ds.meta.SignalTypeCols,
@@ -139,20 +172,49 @@ func (ds *DslStrategy) Preload(ctx *backtest.PreloadContext) error {
 		EntryMatchers:     ds.meta.SignalEntryMatchers,
 		SkipMissing:       true,
 		TextOptionalIndex: ds.meta.SignalTextHasIndex,
-	})
+		// Rich event column mappings from metadata.
+		NameColumn:      ds.meta.SignalNameColumn,
+		DirectionColumn: ds.meta.SignalDirectionColumn,
+		ActionColumn:    ds.meta.SignalActionColumn,
+		RemarksColumn:   ds.meta.SignalRemarksColumn,
+		QtyColumn:       ds.meta.SignalQtyColumn,
+	}
+	// Load structured events (superset of LoadTimes).
+	events, err := signals.LoadEvents(cfg)
 	if err != nil {
 		return fmt.Errorf("dsl signal preload: %w", err)
 	}
+	ds.events = events
+
+	// Inject backward-compatible binary series.
+	times := signals.EventsToTimes(events)
 	series := signals.BuildBinarySeries(ctx.Primary().Timestamps(), times)
 	if err := ctx.Primary().SetColumn(outputName, series); err != nil {
 		return err
+	}
+
+	// Inject rich multi-column event series.
+	eventSeries := signals.BuildEventSeries(ctx.Primary().Timestamps(), events, outputName)
+	for colName, colData := range eventSeries {
+		if colName == outputName {
+			continue // already set above
+		}
+		if err := ctx.Primary().SetColumn(colName, colData); err != nil {
+			return err
+		}
+	}
+	if ds.opts.PreloadHook != nil {
+		if err := ds.opts.PreloadHook(ctx); err != nil {
+			return err
+		}
 	}
 	return nil
 }
 
 // OnBar implements backtest.Strategy.
 func (ds *DslStrategy) OnBar(ctx *backtest.BarContext) {
-	ds.ip.Bridge = &barContextBridge{ctx: ctx}
+	barEvents := signals.EventsAtTime(ds.events, ctx.Time())
+	ds.ip.Bridge = &barContextBridge{ctx: ctx, events: barEvents, config: ds.opts.Config}
 	for _, field := range ds.exposedFields() {
 		ds.ip.SetNamedField(field, ctx.Field(field))
 	}
@@ -188,9 +250,23 @@ func (ds *DslStrategy) ReportSeries() map[string][]float64 {
 	return ds.ip.PlotSeries()
 }
 
+// ParamSchema returns the extracted parameter declarations from the DSL script.
+// This enables external tools (API, UI, optimizer) to discover available parameters
+// and their types, defaults, and constraints without executing the script.
+func (ds *DslStrategy) ParamSchema() []ParamSchema {
+	return ExtractParams(ds.prog)
+}
+
+// Events returns the structured signal events loaded during Preload.
+func (ds *DslStrategy) Events() []signals.SignalEvent {
+	return ds.events
+}
+
 // barContextBridge adapts backtest.BarContext to the runtime.Bridge interface.
 type barContextBridge struct {
-	ctx *backtest.BarContext
+	ctx    *backtest.BarContext
+	events []signals.SignalEvent // events at current bar
+	config map[string]interface{}
 }
 
 func (b *barContextBridge) BarIndex() int                   { return b.ctx.BarIndex() }
@@ -201,6 +277,9 @@ func (b *barContextBridge) Low() float64                    { return b.ctx.Low()
 func (b *barContextBridge) Volume() float64                 { return b.ctx.Volume() }
 func (b *barContextBridge) Field(n string) float64          { return b.ctx.Field(n) }
 func (b *barContextBridge) FieldAt(n string, o int) float64 { return b.ctx.FieldAt(n, o) }
+
+// SignalEvents implements runtime.SignalBridge for signal.* builtins.
+func (b *barContextBridge) SignalEvents() []signals.SignalEvent { return b.events }
 
 func (b *barContextBridge) Buy(qty float64)  { b.ctx.Buy(b.primaryRef(), qty) }
 func (b *barContextBridge) Sell(qty float64) { b.ctx.Sell(b.primaryRef(), qty) }
@@ -233,8 +312,96 @@ func (b *barContextBridge) PositionAvgPrice() float64 {
 	return b.ctx.Close()
 }
 
+func (b *barContextBridge) Equity() float64 { return b.ctx.Equity() }
+func (b *barContextBridge) Cash() float64   { return b.ctx.Cash() }
+
 func (b *barContextBridge) Ind(name string) float64          { return b.ctx.Ind(name) }
 func (b *barContextBridge) IndAt(name string, o int) float64 { return b.ctx.IndAt(name, o) }
+
+// SubmitOrder implements runtime.OrderBridge by delegating to OrderBuilder.
+func (b *barContextBridge) SubmitOrder(intent runtime.OrderIntent) int {
+	ref := b.primaryRef()
+	ob := b.ctx.Order(ref)
+
+	switch intent.Side {
+	case runtime.SideBuy:
+		ob.Buy()
+	case runtime.SideSell:
+		ob.Sell()
+	default:
+		ob.Buy()
+	}
+
+	if intent.Notional > 0 {
+		ob.Notional(intent.Notional)
+	} else {
+		qty := intent.Qty
+		if qty == 0 {
+			qty = 1
+		}
+		ob.Qty(qty)
+	}
+
+	if intent.Note != "" {
+		ob.Note(intent.Note)
+	}
+
+	switch intent.Type {
+	case runtime.OrderLimit:
+		ob.Limit(intent.LimitPrice)
+	case runtime.OrderStop:
+		ob.Stop(intent.StopPrice)
+	case runtime.OrderStopLimit:
+		ob.StopLimit(intent.StopPrice, intent.LimitPrice)
+	case runtime.OrderTWAP:
+		ob.TWAP(intent.TWAPBars)
+	}
+
+	if intent.Immediate {
+		ob.Immediate()
+	}
+
+	return ob.Submit()
+}
+
+// ConfigFloat implements runtime.ConfigBridge.
+func (b *barContextBridge) ConfigFloat(name string, defval float64) float64 {
+	if b.config == nil {
+		return defval
+	}
+	v, ok := b.config[name]
+	if !ok {
+		return defval
+	}
+	switch t := v.(type) {
+	case float64:
+		return t
+	case int:
+		return float64(t)
+	case bool:
+		if t {
+			return 1
+		}
+		return 0
+	default:
+		return defval
+	}
+}
+
+// ConfigString implements runtime.ConfigBridge.
+func (b *barContextBridge) ConfigString(name string, defval string) string {
+	if b.config == nil {
+		return defval
+	}
+	v, ok := b.config[name]
+	if !ok {
+		return defval
+	}
+	if s, ok := v.(string); ok {
+		return s
+	}
+	return fmt.Sprintf("%v", v)
+}
 
 func (b *barContextBridge) primaryRef() backtest.SecurityRef {
 	return backtest.SecurityRef{Index: 0}
@@ -417,6 +584,13 @@ func (b *barContextBridge) ContractStrike(c interface{}) float64 {
 	return 0
 }
 
+func (b *barContextBridge) ContractExpiry(c interface{}) float64 {
+	if oc, ok := c.(*backtest.OptionContract); ok {
+		return float64(oc.Expiration.UTC().Unix())
+	}
+	return 0
+}
+
 func (b *barContextBridge) ContractDTE(c interface{}) float64 {
 	if oc, ok := c.(*backtest.OptionContract); ok {
 		return oc.DaysToExpiry(b.ctx.Time())
@@ -475,7 +649,7 @@ func (b *barContextBridge) ContractAsk(c interface{}) float64 {
 
 func (b *barContextBridge) ContractMark(c interface{}) float64 {
 	if oc, ok := c.(*backtest.OptionContract); ok {
-		return oc.MarkPrice
+		return backtest.OptionPriceMarkClose.EntryPrice(backtest.Buy, *oc)
 	}
 	return 0
 }
@@ -506,9 +680,25 @@ func (b *barContextBridge) OpenSpreadInGroup(legs []runtime.SpreadLegInput, tag 
 }
 
 func (b *barContextBridge) CloseSpread(spreadID int) {
-	b.ctx.CloseSpread(spreadID, func(oc backtest.OptionContract) float64 {
-		return oc.MarkPrice
-	})
+	b.CloseSpreadWithReason(spreadID, "")
+}
+
+func (b *barContextBridge) CloseSpreadWithReason(spreadID int, reason string) {
+	sp := b.ctx.Spreads().Get(spreadID)
+	if sp == nil {
+		return
+	}
+	for i := range sp.Legs {
+		if sp.Legs[i].Closed {
+			continue
+		}
+		price := backtest.OptionPriceMarkClose.EntryPrice(backtest.Buy, sp.Legs[i].Contract)
+		if reason != "" {
+			b.ctx.CloseSpreadLegWithReason(spreadID, i, price, reason)
+		} else {
+			b.ctx.CloseSpreadLeg(spreadID, i, price)
+		}
+	}
 }
 
 func (b *barContextBridge) CloseSpreadLeg(spreadID, legIndex int, closePrice float64) bool {
@@ -557,8 +747,64 @@ func (b *barContextBridge) SpreadPnL(spreadID int) float64 {
 		return 0
 	}
 	return sp.TotalUnrealizedPnL(func(oc backtest.OptionContract) float64 {
-		return oc.MarkPrice
+		return backtest.OptionPriceMarkClose.EntryPrice(backtest.Buy, oc)
 	})
+}
+
+func (b *barContextBridge) SpreadLegContract(spreadID, legIndex int) interface{} {
+	leg := b.spreadLeg(spreadID, legIndex)
+	if leg == nil {
+		return nil
+	}
+	contract := leg.Contract
+	return &contract
+}
+
+func (b *barContextBridge) SpreadLegEntryPrice(spreadID, legIndex int) float64 {
+	leg := b.spreadLeg(spreadID, legIndex)
+	if leg == nil {
+		return 0
+	}
+	return leg.EntryPrice
+}
+
+func (b *barContextBridge) SpreadLegQty(spreadID, legIndex int) float64 {
+	leg := b.spreadLeg(spreadID, legIndex)
+	if leg == nil {
+		return 0
+	}
+	return leg.Qty
+}
+
+func (b *barContextBridge) SpreadLegSide(spreadID, legIndex int) string {
+	leg := b.spreadLeg(spreadID, legIndex)
+	if leg == nil {
+		return ""
+	}
+	if leg.Side == backtest.Sell {
+		return "sell"
+	}
+	return "buy"
+}
+
+func (b *barContextBridge) SpreadLegIsOpen(spreadID, legIndex int) bool {
+	leg := b.spreadLeg(spreadID, legIndex)
+	if leg == nil {
+		return false
+	}
+	return !leg.Closed
+}
+
+func (b *barContextBridge) spreadLeg(spreadID, legIndex int) *backtest.SpreadLeg {
+	st := b.ctx.Spreads()
+	if st == nil {
+		return nil
+	}
+	sp := st.Get(spreadID)
+	if sp == nil || legIndex < 0 || legIndex >= len(sp.Legs) {
+		return nil
+	}
+	return &sp.Legs[legIndex]
 }
 
 // Spread groups.
@@ -588,12 +834,13 @@ func (b *barContextBridge) GroupGet(groupID int) runtime.GroupInfo {
 		return runtime.GroupInfo{}
 	}
 	return runtime.GroupInfo{
-		ID:        g.ID,
-		Tag:       g.Tag,
-		Amount:    g.CurrentAmount(),
-		RollCount: g.RollCount,
-		IsClosed:  g.Closed,
-		SpreadIDs: g.SpreadIDs,
+		ID:          g.ID,
+		Tag:         g.Tag,
+		Amount:      g.CurrentAmount(),
+		RollCount:   g.RollCount,
+		IsClosed:    g.Closed,
+		SpreadIDs:   g.SpreadIDs,
+		SpreadCount: len(g.SpreadIDs),
 	}
 }
 
@@ -603,6 +850,14 @@ func (b *barContextBridge) GroupAddSpread(groupID, spreadID int) {
 		return
 	}
 	gt.AddSpread(groupID, spreadID)
+}
+
+func (b *barContextBridge) GroupIncrementRoll(groupID int) {
+	gt := b.ctx.SpreadGroups()
+	if gt == nil {
+		return
+	}
+	gt.IncrementRoll(groupID)
 }
 
 func (b *barContextBridge) OpenGroups() []int {
@@ -620,14 +875,46 @@ func (b *barContextBridge) OpenGroups() []int {
 
 // Scheduling.
 func (b *barContextBridge) ScheduleCloseSpread(triggerBarOffset int, spreadID int) {
-	// Approximate bar duration from context interval or use 1 hour default.
-	dur := time.Duration(triggerBarOffset) * time.Hour
-	b.ctx.ScheduleCloseAfter(dur, spreadID)
+	b.ctx.ScheduleCloseAfter(b.barOffsetDuration(triggerBarOffset), spreadID)
+}
+
+func (b *barContextBridge) ScheduleCloseSpreadWithReason(triggerBarOffset int, spreadID int, reason string) {
+	b.ctx.ScheduleCloseSpreadOrder(
+		b.ctx.Time().Add(b.barOffsetDuration(triggerBarOffset)),
+		spreadID,
+		backtest.SpreadOrderMarket,
+		backtest.Sell,
+		math.NaN(),
+		0,
+		reason,
+	)
 }
 
 func (b *barContextBridge) ScheduleCloseLeg(triggerBarOffset int, spreadID, legIndex int) {
-	dur := time.Duration(triggerBarOffset) * time.Hour
-	b.ctx.ScheduleCloseLegAfter(dur, spreadID, legIndex)
+	b.ctx.ScheduleCloseLegAfter(b.barOffsetDuration(triggerBarOffset), spreadID, legIndex)
+}
+
+func (b *barContextBridge) ScheduleCloseGroup(triggerBarOffset int, groupID int) {
+	info := b.GroupGet(groupID)
+	if info.ID == 0 {
+		return
+	}
+	for _, spreadID := range info.SpreadIDs {
+		if spreadID > 0 {
+			b.ScheduleCloseSpread(triggerBarOffset, spreadID)
+		}
+	}
+}
+
+func (b *barContextBridge) barOffsetDuration(triggerBarOffset int) time.Duration {
+	if triggerBarOffset <= 0 {
+		return 0
+	}
+	barDur := time.Hour
+	if next := b.ctx.NextBarTime(); !next.IsZero() && next.After(b.ctx.Time()) {
+		barDur = next.Sub(b.ctx.Time())
+	}
+	return time.Duration(triggerBarOffset) * barDur
 }
 
 // convertLegs converts DSL SpreadLegInput to backtest SpreadLeg.
@@ -713,6 +1000,16 @@ func extractMetadata(prog *ast.Program) strategyMetadata {
 					meta.SignalEntryMatchers = literalStringArray(arg.Value)
 				case "signal_optional_index":
 					meta.SignalTextHasIndex = literalBool(arg.Value)
+				case "signal_name_column":
+					meta.SignalNameColumn = literalString(arg.Value)
+				case "signal_direction_column":
+					meta.SignalDirectionColumn = literalString(arg.Value)
+				case "signal_action_column":
+					meta.SignalActionColumn = literalString(arg.Value)
+				case "signal_remarks_column":
+					meta.SignalRemarksColumn = literalString(arg.Value)
+				case "signal_qty_column":
+					meta.SignalQtyColumn = literalString(arg.Value)
 				case "expose_fields":
 					meta.ExposeFields = literalStringArray(arg.Value)
 				}

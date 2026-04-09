@@ -45,12 +45,19 @@ type Interpreter struct {
 
 	// Builtins registered at init time.
 	builtins     map[string]Value
+	// propertyFns holds zero-arg native functions that are auto-invoked when
+	// accessed as dot-properties (e.g. strategy.position_size, strategy.equity).
+	propertyFns  map[string]func() Value
 	plots        []*PlotSpec
 	queuedFields map[string]float64
 
 	// Inputs: user-supplied parameter overrides keyed by input title.
 	// When an input(defval, title=T) call is evaluated, Inputs[T] takes priority.
 	Inputs map[string]float64
+
+	// InputStrings: string parameter overrides keyed by input title.
+	// Used by input.string() when the override is not numeric.
+	InputStrings map[string]string
 
 	// Bridge for strategy/trading calls (set externally).
 	Bridge Bridge
@@ -84,6 +91,10 @@ type Bridge interface {
 	PositionSize() float64
 	PositionAvgPrice() float64
 
+	// Account.
+	Equity() float64
+	Cash() float64
+
 	// Indicators.
 	Ind(name string) float64
 	IndAt(name string, offset int) float64
@@ -91,15 +102,18 @@ type Bridge interface {
 
 // NewInterpreter creates a new interpreter for the given program.
 func NewInterpreter(prog *ast.Program) *Interpreter {
-	return &Interpreter{
+	ip := &Interpreter{
 		Program:      prog,
 		Global:       NewScope(),
 		persist:      make(map[string]Value),
 		varip:        make(map[string]Value),
 		seriesMap:    make(map[string]*Series),
 		builtins:     make(map[string]Value),
+		propertyFns:  make(map[string]func() Value),
 		queuedFields: make(map[string]float64),
 	}
+	RegisterCoreBuiltins(ip)
+	return ip
 }
 
 // RegisterBuiltin adds a native function.
@@ -117,6 +131,13 @@ func (ip *Interpreter) RegisterNamespace(name string, v Value) {
 	ip.builtins[name] = v
 }
 
+// RegisterProperty registers a zero-arg function as an auto-invoked property.
+// When the DSL accesses `namespace.field` (e.g. strategy.position_size) via dot
+// notation without calling it as a function, this fn is called instead.
+func (ip *Interpreter) RegisterProperty(name string, fn func() Value) {
+	ip.propertyFns[name] = fn
+}
+
 // Init runs the top-level strategy/input declarations (called once before bars).
 func (ip *Interpreter) Init() {
 	// Bind builtins into global scope.
@@ -124,7 +145,6 @@ func (ip *Interpreter) Init() {
 		ip.Global.Set(k, v)
 	}
 	// Bind built-in constants.
-	ip.Global.Set("na", NaVal())
 	ip.Global.Set("math_pi", FloatVal(math.Pi))
 	ip.Global.Set("math_e", FloatVal(math.E))
 	ip.Global.Set("math_phi", FloatVal(math.Phi))
@@ -280,6 +300,8 @@ func (ip *Interpreter) execStmt(stmt ast.Stmt, scope *Scope) Value {
 		return ip.execVarDecl(s, scope)
 	case *ast.AssignStmt:
 		return ip.execAssign(s, scope)
+	case *ast.IndexAssignStmt:
+		return ip.execIndexAssign(s, scope)
 	case *ast.TupleAssign:
 		return ip.execTupleAssign(s, scope)
 	case *ast.ExprStmt:
@@ -319,6 +341,20 @@ func (ip *Interpreter) execStmt(stmt ast.Stmt, scope *Scope) Value {
 }
 
 func (ip *Interpreter) execVarDecl(d *ast.VarDecl, scope *Scope) Value {
+	if !d.Persist && !d.Varip {
+		if _, ok := ip.persist[d.Name]; ok {
+			val := ip.evalExpr(d.Value, scope)
+			ip.persist[d.Name] = val
+			scope.Set(d.Name, val)
+			return val
+		}
+		if _, ok := ip.varip[d.Name]; ok {
+			val := ip.evalExpr(d.Value, scope)
+			ip.varip[d.Name] = val
+			scope.Set(d.Name, val)
+			return val
+		}
+	}
 	if d.Persist {
 		// var: evaluate once, persist across bars.
 		if v, ok := ip.persist[d.Name]; ok {
@@ -365,6 +401,10 @@ func (ip *Interpreter) execVarDecl(d *ast.VarDecl, scope *Scope) Value {
 func (ip *Interpreter) execAssign(a *ast.AssignStmt, scope *Scope) Value {
 	val := ip.evalExpr(a.Value, scope)
 	switch a.Op {
+	case token.Eq:
+		if !scope.Update(a.Name, val) {
+			scope.Set(a.Name, val)
+		}
 	case token.ColonEq:
 		if !scope.Update(a.Name, val) {
 			scope.Set(a.Name, val)
@@ -405,6 +445,17 @@ func (ip *Interpreter) execAssign(a *ast.AssignStmt, scope *Scope) Value {
 	return val
 }
 
+func (ip *Interpreter) execIndexAssign(s *ast.IndexAssignStmt, scope *Scope) Value {
+	left := ip.evalExpr(s.Left, scope)
+	idx := int(ip.evalExpr(s.Index, scope).Float())
+	val := snapshotContainerValue(ip.evalExpr(s.Value, scope))
+
+	if left.tag == TagArray && idx >= 0 && idx < len(left.array) {
+		left.array[idx] = val
+	}
+	return val
+}
+
 func (ip *Interpreter) execTupleAssign(t *ast.TupleAssign, scope *Scope) Value {
 	val := ip.evalExpr(t.Value, scope)
 	arr := val.Array()
@@ -436,7 +487,6 @@ func (ip *Interpreter) execIf(s *ast.IfStmt, scope *Scope) Value {
 }
 
 func (ip *Interpreter) execFor(s *ast.ForStmt, scope *Scope) Value {
-	child := scope.Child()
 	start := ip.evalExpr(s.Start, scope).Float()
 	end := ip.evalExpr(s.End, scope).Float()
 	step := 1.0
@@ -449,8 +499,10 @@ func (ip *Interpreter) execFor(s *ast.ForStmt, scope *Scope) Value {
 
 	var last Value
 	for i := start; (step > 0 && i <= end) || (step < 0 && i >= end); i += step {
-		child.Set(s.Var, FloatVal(i))
-		last = ip.execBlock(s.Body.Stmts, child)
+		if !scope.Update(s.Var, FloatVal(i)) {
+			scope.Set(s.Var, FloatVal(i))
+		}
+		last = ip.execBlock(s.Body.Stmts, scope)
 		if ip.sig == sigBreak {
 			ip.sig = sigNone
 			break
@@ -467,13 +519,14 @@ func (ip *Interpreter) execFor(s *ast.ForStmt, scope *Scope) Value {
 }
 
 func (ip *Interpreter) execForIn(s *ast.ForInStmt, scope *Scope) Value {
-	child := scope.Child()
 	coll := ip.evalExpr(s.Collection, scope)
 	arr := coll.Array()
 	var last Value
 	for _, elem := range arr {
-		child.Set(s.Var, elem)
-		last = ip.execBlock(s.Body.Stmts, child)
+		if !scope.Update(s.Var, elem) {
+			scope.Set(s.Var, elem)
+		}
+		last = ip.execBlock(s.Body.Stmts, scope)
 		if ip.sig == sigBreak {
 			ip.sig = sigNone
 			break
@@ -490,14 +543,13 @@ func (ip *Interpreter) execForIn(s *ast.ForInStmt, scope *Scope) Value {
 }
 
 func (ip *Interpreter) execWhile(s *ast.WhileStmt, scope *Scope) Value {
-	child := scope.Child()
 	var last Value
 	limit := 100_000
 	for i := 0; i < limit; i++ {
 		if !ip.evalExpr(s.Condition, scope).Bool() {
 			break
 		}
-		last = ip.execBlock(s.Body.Stmts, child)
+		last = ip.execBlock(s.Body.Stmts, scope)
 		if ip.sig == sigBreak {
 			ip.sig = sigNone
 			break
@@ -587,7 +639,7 @@ func (ip *Interpreter) evalExpr(expr ast.Expr, scope *Scope) Value {
 	case *ast.ArrayLit:
 		vals := make([]Value, len(e.Elements))
 		for i, el := range e.Elements {
-			vals[i] = ip.evalExpr(el, scope)
+			vals[i] = snapshotContainerValue(ip.evalExpr(el, scope))
 		}
 		return ArrayVal(vals)
 	case *ast.LambdaExpr:
@@ -606,6 +658,24 @@ func (ip *Interpreter) evalExpr(expr ast.Expr, scope *Scope) Value {
 	}
 }
 
+func snapshotContainerValue(v Value) Value {
+	switch v.tag {
+	case TagSeries:
+		return FloatVal(v.Float())
+	case TagArray:
+		if v.obj != nil {
+			return v
+		}
+		cloned := make([]Value, len(v.array))
+		for i := range v.array {
+			cloned[i] = snapshotContainerValue(v.array[i])
+		}
+		return ArrayVal(cloned)
+	default:
+		return v
+	}
+}
+
 func (ip *Interpreter) evalBinary(e *ast.BinaryExpr, scope *Scope) Value {
 	left := ip.evalExpr(e.Left, scope)
 	right := ip.evalExpr(e.Right, scope)
@@ -613,6 +683,12 @@ func (ip *Interpreter) evalBinary(e *ast.BinaryExpr, scope *Scope) Value {
 	// String concatenation.
 	if e.Op == token.Plus && (left.tag == TagString || right.tag == TagString) {
 		return StringVal(left.String() + right.String())
+	}
+	if e.Op == token.Plus && left.tag == TagArray && right.tag == TagArray {
+		joined := make([]Value, 0, len(left.array)+len(right.array))
+		joined = append(joined, left.array...)
+		joined = append(joined, right.array...)
+		return ArrayVal(joined)
 	}
 
 	lf, rf := left.Float(), right.Float()
@@ -749,6 +825,10 @@ func (ip *Interpreter) evalDot(e *ast.DotExpr, scope *Scope) Value {
 	// Always try namespace convention first: "namespace.field" or "namespace_field"
 	if id, ok := e.Object.(*ast.IdentExpr); ok {
 		composedName := id.Name + "." + e.Field
+		// Check if this is a registered auto-invoked property.
+		if fn, ok2 := ip.propertyFns[composedName]; ok2 {
+			return fn()
+		}
 		if v, ok2 := scope.Get(composedName); ok2 {
 			return v
 		}

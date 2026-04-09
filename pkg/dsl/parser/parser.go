@@ -205,7 +205,7 @@ func (p *Parser) parseExprOrAssignStmt() ast.Stmt {
 		next := p.peekRaw()
 		switch next.Type {
 		case token.Eq:
-			// ident = expr  → treated as var decl (re-evaluated each bar)
+			// ident = expr  → treated as a regular declaration/expression binding.
 			tok := p.advance()
 			p.advance() // skip =
 			val := p.parseExpr(0)
@@ -228,6 +228,19 @@ func (p *Parser) parseExprOrAssignStmt() ast.Stmt {
 	}
 
 	expr := p.parseExpr(0)
+
+	// Check for index assignment: expr[idx] = value
+	if idx, ok := expr.(*ast.IndexExpr); ok && p.cur().Type == token.Eq {
+		p.advance() // skip =
+		val := p.parseExpr(0)
+		return &ast.IndexAssignStmt{
+			Token: idx.Token,
+			Left:  idx.Left,
+			Index: idx.Index,
+			Value: val,
+		}
+	}
+
 	return &ast.ExprStmt{Expression: expr}
 }
 
@@ -584,6 +597,10 @@ func (p *Parser) parsePrefix() ast.Expr {
 		p.advance()
 		return &ast.BoolLit{Token: tok, Value: false}
 	case token.Na:
+		if p.peekRaw().Type == token.LParen {
+			p.advance()
+			return &ast.IdentExpr{Token: tok, Name: tok.Literal}
+		}
 		p.advance()
 		return &ast.NaLit{Token: tok}
 	case token.Ident:

@@ -1,0 +1,23 @@
+package runtime
+
+// RegisterCoreBuiltins adds language-level builtins that should always exist.
+func RegisterCoreBuiltins(ip *Interpreter) {
+	ip.RegisterBuiltin("len", func(args []Value) Value {
+		if len(args) < 1 {
+			return FloatVal(0)
+		}
+		value := args[0]
+		switch value.tag {
+		case TagArray:
+			if value.obj != nil {
+				if sized, ok := value.obj.(interface{ Len() int }); ok {
+					return FloatVal(float64(sized.Len()))
+				}
+			}
+			return FloatVal(float64(len(value.array)))
+		case TagString:
+			return FloatVal(float64(len(value.sval)))
+		}
+		return FloatVal(0)
+	})
+}

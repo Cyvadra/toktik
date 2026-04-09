@@ -72,6 +72,60 @@ func TestInterpreterFor(t *testing.T) {
 	}
 }
 
+func TestInterpreterWhileAssignmentPersistsAcrossIterations(t *testing.T) {
+	src := "i = 0\nout = 0\nwhile i < 3 {\n  out = i + 1\n  i = i + 1\n}"
+	prog, errs := parser.Parse(src)
+	if len(errs) > 0 {
+		t.Fatal(errs)
+	}
+	ip := NewInterpreter(prog)
+	ip.Init()
+	ip.OnBar()
+	v, _ := ip.Global.Get("out")
+	if v.Float() != 3 {
+		t.Errorf("expected 3, got %g", v.Float())
+	}
+	i, _ := ip.Global.Get("i")
+	if i.Float() != 3 {
+		t.Errorf("expected i=3, got %g", i.Float())
+	}
+}
+
+func TestNaBuiltinTreatsSeriesNaNAsNa(t *testing.T) {
+	src := "x = na\nout = 0\nif na(x) {\n  out = 1\n}"
+	prog, errs := parser.Parse(src)
+	if len(errs) > 0 {
+		t.Fatal(errs)
+	}
+	ip := NewInterpreter(prog)
+	RegisterMathBuiltins(ip)
+	ip.Init()
+	ip.OnBar()
+	v, _ := ip.Global.Get("out")
+	if v.Float() != 1 {
+		t.Errorf("expected 1, got %g", v.Float())
+	}
+}
+
+func TestInterpreterEqAssignUpdatesVaripStorage(t *testing.T) {
+	src := "varip x = 0\nif 1 {\n  x = 7\n}\nout = x"
+	prog, errs := parser.Parse(src)
+	if len(errs) > 0 {
+		t.Fatal(errs)
+	}
+	ip := NewInterpreter(prog)
+	ip.Init()
+	ip.OnBar()
+	v, _ := ip.Global.Get("out")
+	if v.Float() != 7 {
+		t.Fatalf("expected out=7, got %g", v.Float())
+	}
+	stored, ok := ip.varip["x"]
+	if !ok || stored.Float() != 7 {
+		t.Fatalf("expected varip x to persist as 7, got %#v (exists=%v)", stored, ok)
+	}
+}
+
 func TestInterpreterFnCall(t *testing.T) {
 	src := "fn double(x) {\n  return x * 2\n}\ny = double(21)"
 	prog, errs := parser.Parse(src)
@@ -100,6 +154,88 @@ func TestInterpreterMathBuiltins(t *testing.T) {
 	v, _ := ip.Global.Get("x")
 	if v.Float() != 5 {
 		t.Errorf("expected 5, got %g", v.Float())
+	}
+}
+
+func TestInterpreterLenBuiltinOnArray(t *testing.T) {
+	src := "arr = [1, 2, 3]\nout = len(arr)"
+	prog, errs := parser.Parse(src)
+	if len(errs) > 0 {
+		t.Fatal(errs)
+	}
+	ip := NewInterpreter(prog)
+	ip.Init()
+	ip.OnBar()
+	v, _ := ip.Global.Get("out")
+	if v.Float() != 3 {
+		t.Errorf("expected 3, got %g", v.Float())
+	}
+}
+
+func TestInterpreterArrayConcatenation(t *testing.T) {
+	src := "arr = [1, 2]\narr2 = arr + [3]\nout = len(arr2)"
+	prog, errs := parser.Parse(src)
+	if len(errs) > 0 {
+		t.Fatal(errs)
+	}
+	ip := NewInterpreter(prog)
+	ip.Init()
+	ip.OnBar()
+	v, _ := ip.Global.Get("out")
+	if v.Float() != 3 {
+		t.Errorf("expected 3, got %g", v.Float())
+	}
+	a, _ := ip.Global.Get("arr2")
+	if len(a.Array()) != 3 || a.Array()[2].Float() != 3 {
+		t.Fatalf("unexpected concatenated array: %#v", a.Array())
+	}
+}
+
+func TestInterpreterArrayConcatenationSnapshotsLoopValues(t *testing.T) {
+	src := "arr = [1, 2, 3]\nout = []\ni = 0\nwhile i < len(arr) {\n  x = arr[i]\n  if x < 3 {\n    out = out + [x]\n  }\n  i = i + 1\n}"
+	prog, errs := parser.Parse(src)
+	if len(errs) > 0 {
+		t.Fatal(errs)
+	}
+	ip := NewInterpreter(prog)
+	ip.Init()
+	ip.OnBar()
+	out, _ := ip.Global.Get("out")
+	if len(out.Array()) != 2 {
+		t.Fatalf("expected 2 values, got %#v", out.Array())
+	}
+	if out.Array()[0].Float() != 1 || out.Array()[1].Float() != 2 {
+		t.Fatalf("expected [1 2], got %#v", out.Array())
+	}
+	if out.Array()[0].Tag() == TagSeries || out.Array()[1].Tag() == TagSeries {
+		t.Fatalf("expected snapshot values, got %#v", out.Array())
+	}
+}
+
+func TestInterpreterArrayFilteringPreservesDistinctIndexedValues(t *testing.T) {
+	src := "ids = [1, 2, 3]\nopen = []\ni = 0\nwhile i < len(ids) {\n  sid = ids[i]\n  if sid > 1 {\n    open = open + [sid]\n  }\n  i = i + 1\n}\nout0 = open[0]\nout1 = open[1]"
+	prog, errs := parser.Parse(src)
+	if len(errs) > 0 {
+		t.Fatal(errs)
+	}
+	ip := NewInterpreter(prog)
+	ip.Init()
+	ip.OnBar()
+	open, _ := ip.Global.Get("open")
+	if len(open.Array()) != 2 {
+		t.Fatalf("expected filtered array len 2, got %#v", open.Array())
+	}
+	if open.Array()[0].Float() != 2 || open.Array()[1].Float() != 3 {
+		t.Fatalf("expected [2 3], got %#v", open.Array())
+	}
+	if open.Array()[0].Tag() == TagSeries || open.Array()[1].Tag() == TagSeries {
+		t.Fatalf("expected scalar snapshots, got %#v", open.Array())
+	}
+	if out0, _ := ip.Global.Get("out0"); out0.Float() != 2 {
+		t.Fatalf("expected out0=2, got %g", out0.Float())
+	}
+	if out1, _ := ip.Global.Get("out1"); out1.Float() != 3 {
+		t.Fatalf("expected out1=3, got %g", out1.Float())
 	}
 }
 
@@ -241,6 +377,7 @@ bs = ta.barssince(sig)
 type mockBridge struct {
 	closeVal float64
 	barIdx   int
+	orders   []OrderIntent
 }
 
 func (m *mockBridge) BarIndex() int                     { m.barIdx++; return m.barIdx }
@@ -259,5 +396,42 @@ func (m *mockBridge) ExitLong(id string)                {}
 func (m *mockBridge) ExitShort(id string)               {}
 func (m *mockBridge) PositionSize() float64             { return 0 }
 func (m *mockBridge) PositionAvgPrice() float64         { return m.closeVal }
+func (m *mockBridge) Equity() float64                   { return 100000 }
+func (m *mockBridge) Cash() float64                     { return 100000 }
 func (m *mockBridge) Ind(name string) float64           { return m.closeVal }
 func (m *mockBridge) IndAt(name string, o int) float64  { return m.closeVal }
+func (m *mockBridge) SubmitOrder(intent OrderIntent) int {
+	m.orders = append(m.orders, intent)
+	return len(m.orders)
+}
+
+func TestOrderSubmitBuildsStructuredIntent(t *testing.T) {
+	src := "oid = order.submit(id=\"entry-1\", side=order.sell, qty=2, type=\"stop_limit\", limit=105, stop=100, immediate=true, note=\"protective\", ref=\"sig-1\", group_ref=\"cycle-1\", schedule_at=3)"
+	prog, errs := parser.Parse(src)
+	if len(errs) > 0 {
+		t.Fatal(errs)
+	}
+	bridge := &mockBridge{}
+	ip := NewInterpreter(prog)
+	ip.Bridge = bridge
+	RegisterOrderBuiltins(ip)
+	ip.Init()
+	ip.OnBar()
+	if len(bridge.orders) != 1 {
+		t.Fatalf("expected 1 submitted order, got %d", len(bridge.orders))
+	}
+	got := bridge.orders[0]
+	if got.ID != "entry-1" || got.Side != SideSell || got.Type != OrderStopLimit {
+		t.Fatalf("unexpected order intent identity: %#v", got)
+	}
+	if got.Qty != 2 || got.LimitPrice != 105 || got.StopPrice != 100 {
+		t.Fatalf("unexpected order prices/qty: %#v", got)
+	}
+	if !got.Immediate || got.Note != "protective" || got.Ref != "sig-1" || got.GroupRef != "cycle-1" || got.ScheduleAt != 3 {
+		t.Fatalf("unexpected order metadata: %#v", got)
+	}
+	v, ok := ip.Global.Get("oid")
+	if !ok || v.Float() != 1 {
+		t.Fatalf("expected oid=1, got %#v (exists=%v)", v, ok)
+	}
+}

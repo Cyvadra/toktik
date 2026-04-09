@@ -113,6 +113,15 @@ func RegisterMathBuiltins(ip *Interpreter) {
 		if len(args) < 1 {
 			return BoolVal(true)
 		}
-		return BoolVal(args[0].IsNa())
+		v := args[0]
+		if v.IsNa() {
+			return BoolVal(true)
+		}
+		switch v.Tag() {
+		case TagFloat, TagSeries:
+			return BoolVal(math.IsNaN(v.Float()))
+		default:
+			return BoolVal(false)
+		}
 	})
 }

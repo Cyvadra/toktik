@@ -278,6 +278,123 @@ Sample response:
 }
 ```
 
+## Tiger API CLI
+
+The repository includes a Tiger OpenAPI testing CLI at `cmd/tools/tigerapi` for ad-hoc US stock and option market-data checks.
+
+Supported commands:
+- `market-state`
+- `stock-quote`
+- `stock-kline`
+- `stock-timeline`
+- `stock-trade-tick`
+- `stock-depth`
+- `option-expirations`
+- `option-chain`
+- `option-quote`
+- `option-kline`
+- `raw`
+
+Setup:
+
+```bash
+source ./env.sh
+```
+
+Optional auth inputs for Tiger option endpoints:
+- `TIGEROPEN_TOKEN` — sends the token as the HTTP `Authorization` header.
+- `TIGEROPEN_TOKEN_FILE` — optional path to a `token=...` properties file.
+- If `TIGEROPEN_TOKEN` is unset and `TIGEROPEN_TOKEN_FILE` is unset, `pkg/tigerapi` will also try the SDK default file name `tiger_openapi_token.properties` in the current working directory.
+
+Examples:
+
+```bash
+go run ./cmd/tools/tigerapi -- market-state --market US
+go run ./cmd/tools/tigerapi -- stock-kline --symbol AAPL --period day
+go run ./cmd/tools/tigerapi -- option-expirations --symbol AAPL
+go run ./cmd/tools/tigerapi -- raw --method option_expiration --biz-content '{"symbols":["AAPL"]}'
+```
+
+Current live validation status with the checked-in `env.sh`:
+- `market-state` works.
+- `stock-kline` works.
+- `option-expirations` works.
+- `stock-quote` currently fails with Tiger permission denied for US real-time quotes on the current account/device.
+- `option-chain`, `option-quote`, and `option-kline` may require additional Tiger token/device provisioning. In live testing, `option_chain` returned `device_id cannot be empty` from the upstream API. The current SDK exposes token-based auth, but no explicit `device_id` request configuration was found in the SDK source.
+
+## Massive REST Client
+
+The repository includes a Massive (Polygon) REST wrapper in `pkg/polygon` for stock and option market data plus history.
+
+The repository also includes a CLI at `cmd/tools/polygon` for ad-hoc Massive REST queries.
+
+Setup:
+
+```bash
+source ./polygon-env.sh
+```
+
+Environment variables supported by `pkg/polygon`:
+- `MASSIVE_API_KEY` or `POLYGON_API_KEY`
+- `MASSIVE_BASE_URL` or `POLYGON_BASE_URL` for test or proxy overrides
+- `MASSIVE_FLATFILES_BASE_URL` or `POLYGON_FLATFILES_BASE_URL` for Massive flatfile host overrides. Defaults to `https://files.massive.com/flatfiles`
+- `MASSIVE_FLATFILES_CACHE_DIR` or `POLYGON_FLATFILES_CACHE_DIR` for downloaded flatfile cache storage. This must be set explicitly before using the flatfile download APIs.
+- `MASSIVE_TIMEOUT_SECONDS` / `POLYGON_TIMEOUT_SECONDS`
+- `MASSIVE_TRACE` / `POLYGON_TRACE`
+- `MASSIVE_PAGINATION` / `POLYGON_PAGINATION`
+
+Implemented package methods cover:
+- Stock snapshot, quotes, trades, and aggregate history
+- Option contract lookup, chain snapshot, quotes, trades, and aggregate history
+- Stock minute aggregate flatfile download from `us_stocks_sip/minute_aggs_v1/<year>/<date>.csv.gz`
+- Option minute aggregate flatfile download from `us_options_opra/minute_aggs_v1/<year>/<date>.csv.gz`
+
+Supported CLI commands:
+- `stock-minute-flatfile`
+- `stock-snapshot`
+- `stock-aggregates`
+- `stock-quotes`
+- `stock-trades`
+- `option-minute-flatfile`
+- `option-contract`
+- `option-chain`
+- `option-aggregates`
+- `option-quotes`
+- `option-trades`
+
+Examples:
+
+```bash
+go run ./cmd/tools/polygon -- stock-snapshot --symbol AAPL
+go run ./cmd/tools/polygon -- stock-minute-flatfile --date 2026-04-07
+go run ./cmd/tools/polygon -- stock-aggregates --ticker AAPL --multiplier 1 --timespan minute --from 2025-11-03 --to 2025-11-28
+go run ./cmd/tools/polygon -- option-chain --underlying SPY --expiration-date 2025-12-19 --contract-type call
+go run ./cmd/tools/polygon -- option-minute-flatfile --date 2026-04-07
+go run ./cmd/tools/polygon -- option-trades --ticker O:SPY251219C00650000 --limit 10
+```
+
+Flatfile download example from Go:
+
+```go
+client, err := polygon.NewFromEnv()
+if err != nil {
+  log.Fatal(err)
+}
+
+stockPath, err := client.DownloadStockMinuteAggregates(time.Date(2026, 4, 7, 0, 0, 0, 0, time.UTC), false)
+if err != nil {
+  log.Fatal(err)
+}
+
+optionPath, err := client.DownloadOptionMinuteAggregates(time.Date(2026, 4, 7, 0, 0, 0, 0, time.UTC), false)
+if err != nil {
+  log.Fatal(err)
+}
+
+fmt.Println(stockPath)
+fmt.Println(optionPath)
+```
+
 **Inspect dataset freshness and summary:**
 ```bash
 curl "http://localhost:8080/api/v1/infra/datasets?market=feature-store"
@@ -582,8 +699,11 @@ RETRACEMENT_RATIO_PROTECTIVE_SPREAD_SIGNAL_SOURCE=12h go run ./cmd/backtest-port
   --spread-entry-price-mode mark_close \
   --spread-exit-price-mode mark_close \
   --spread-valuation-price-mode mark_close \
-  --direction long_only
+  --direction long_only \
+  --clear-previous-data
 ```
+
+When `--clear-previous-data` is set, `backtest-portfolio` removes existing `.csv` and `.json` files under `reports/backtests/` before writing fresh outputs.
 
 **Poll run status:**
 ```bash

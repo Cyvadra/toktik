@@ -2,18 +2,57 @@ package runtime
 
 // RegisterStrategyBuiltins adds strategy.* functions that call through the Bridge.
 func RegisterStrategyBuiltins(ip *Interpreter) {
-	// strategy.entry(id, direction, qty)
+	// strategy.entry(id, direction, qty, limit=na, stop=na, twap_bars=0, immediate=false, note="")
 	// direction: 1 = long, -1 = short
-	ip.RegisterBuiltinWithParams("strategy.entry", []string{"id", "direction", "qty"}, func(args []Value) Value {
+	// When limit/stop/twap_bars are specified and OrderBridge is available,
+	// uses the richer OrderIntent path. Otherwise falls back to basic Buy/Sell.
+	ip.RegisterBuiltinWithParams("strategy.entry", []string{"id", "direction", "qty", "limit", "stop", "twap_bars", "immediate", "note"}, func(args []Value) Value {
 		if ip.Bridge == nil || len(args) < 2 {
 			return NaVal()
 		}
 		id := args[0].Str()
 		dir := args[1].Float()
-		qty := 1.0
-		if len(args) >= 3 {
-			qty = args[2].Float()
+		qty := argFloat(args, 2, 1)
+		limitPrice := argFloat(args, 3, 0)
+		stopPrice := argFloat(args, 4, 0)
+		twapBars := int(argFloat(args, 5, 0))
+		immediate := len(args) >= 7 && args[6].Bool()
+		note := argStr(args, 7, id)
+
+		hasAdvanced := limitPrice > 0 || stopPrice > 0 || twapBars > 0 || immediate
+
+		if hasAdvanced {
+			if ob, ok := ip.Bridge.(OrderBridge); ok {
+				intent := OrderIntent{ID: id, Note: note, Qty: qty}
+				if dir >= 0 {
+					intent.Side = SideBuy
+				} else {
+					intent.Side = SideSell
+				}
+				switch {
+				case stopPrice > 0 && limitPrice > 0:
+					intent.Type = OrderStopLimit
+					intent.StopPrice = stopPrice
+					intent.LimitPrice = limitPrice
+				case limitPrice > 0:
+					intent.Type = OrderLimit
+					intent.LimitPrice = limitPrice
+				case stopPrice > 0:
+					intent.Type = OrderStop
+					intent.StopPrice = stopPrice
+				case twapBars > 0:
+					intent.Type = OrderTWAP
+					intent.TWAPBars = twapBars
+				default:
+					intent.Type = OrderMarket
+				}
+				intent.Immediate = immediate
+				ob.SubmitOrder(intent)
+				return NaVal()
+			}
 		}
+
+		// Fallback: basic entry through Bridge.
 		if dir >= 0 {
 			ip.Bridge.EntryLong(id, qty)
 		} else {
@@ -94,20 +133,32 @@ func RegisterStrategyBuiltins(ip *Interpreter) {
 		return NaVal()
 	})
 
-	// strategy.position_size
-	ip.RegisterBuiltin("strategy.position_size", func(args []Value) Value {
+	// strategy.position_size / strategy.position_avg_price / strategy.equity / strategy.cash
+	// These are accessed as bare properties (no call parens) in DSL scripts, so they
+	// must be registered as auto-invoked properties via RegisterProperty.
+	ip.RegisterProperty("strategy.position_size", func() Value {
 		if ip.Bridge == nil {
 			return FloatVal(0)
 		}
 		return FloatVal(ip.Bridge.PositionSize())
 	})
-
-	// strategy.position_avg_price
-	ip.RegisterBuiltin("strategy.position_avg_price", func(args []Value) Value {
+	ip.RegisterProperty("strategy.position_avg_price", func() Value {
 		if ip.Bridge == nil {
 			return FloatVal(0)
 		}
 		return FloatVal(ip.Bridge.PositionAvgPrice())
+	})
+	ip.RegisterProperty("strategy.equity", func() Value {
+		if ip.Bridge == nil {
+			return FloatVal(0)
+		}
+		return FloatVal(ip.Bridge.Equity())
+	})
+	ip.RegisterProperty("strategy.cash", func() Value {
+		if ip.Bridge == nil {
+			return FloatVal(0)
+		}
+		return FloatVal(ip.Bridge.Cash())
 	})
 
 	// Constants.

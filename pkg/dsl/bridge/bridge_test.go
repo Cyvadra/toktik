@@ -5,6 +5,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -26,13 +27,17 @@ func (f *testDataFeed) Load(_ context.Context, req backtest.DataRequest) (*backt
 	low := make([]float64, nBars)
 	closeCol := make([]float64, nBars)
 	volume := make([]float64, nBars)
+	step := time.Hour
+	if d, err := time.ParseDuration(strings.TrimSpace(req.Interval)); err == nil && d > 0 {
+		step = d
+	}
 	baseOffset := 0.0
 	if req.Symbol == "ALT" {
 		baseOffset = 100
 	}
 	for i := 0; i < nBars; i++ {
 		price := 100.0 + baseOffset + float64(i)
-		ts[i] = req.From.Add(time.Duration(i) * time.Hour)
+		ts[i] = req.From.Add(time.Duration(i) * step)
 		open[i] = price
 		high[i] = price + 1
 		low[i] = price - 1
@@ -50,6 +55,17 @@ func (f *testDataFeed) Load(_ context.Context, req backtest.DataRequest) (*backt
 
 type testFactorFeed struct{}
 
+type testOptionsChainProvider struct{}
+
+func (p *testOptionsChainProvider) AvailableContracts(t time.Time) []backtest.OptionContract {
+	expiry := t.Add(30 * 24 * time.Hour)
+	return []backtest.OptionContract{
+		{Symbol: "C-100", Type: backtest.Call, StrikePrice: 100, Expiration: expiry, Delta: 0.50, BidPrice: 5.0, AskPrice: 5.2, MarkPrice: 5.1},
+		{Symbol: "C-105", Type: backtest.Call, StrikePrice: 105, Expiration: expiry, Delta: 0.38, BidPrice: 2.4, AskPrice: 2.6, MarkPrice: 2.5},
+		{Symbol: "C-110", Type: backtest.Call, StrikePrice: 110, Expiration: expiry, Delta: 0.29, BidPrice: 2.0, AskPrice: 2.2, MarkPrice: 2.1},
+	}
+}
+
 func (f *testFactorFeed) Fields() []string { return []string{"dvol"} }
 
 func (f *testFactorFeed) Load(_ context.Context, req backtest.FactorRequest) (*backtest.DataSet, error) {
@@ -57,8 +73,12 @@ func (f *testFactorFeed) Load(_ context.Context, req backtest.FactorRequest) (*b
 	ds := backtest.NewDataSet(nBars)
 	ts := make([]time.Time, nBars)
 	dvol := make([]float64, nBars)
+	step := time.Hour
+	if d, err := time.ParseDuration(strings.TrimSpace(req.Interval)); err == nil && d > 0 {
+		step = d
+	}
 	for i := 0; i < nBars; i++ {
-		ts[i] = req.From.Add(time.Duration(i) * time.Hour)
+		ts[i] = req.From.Add(time.Duration(i) * step)
 		dvol[i] = 50 + float64(i)
 	}
 	ds.SetTimestamps(ts)
@@ -258,6 +278,285 @@ if bar_index == 0 {
 	}
 }
 
+func TestDslStrategyCanOpenGroupedSpread(t *testing.T) {
+	src := `strategy("Grouped Spread")
+if bar_index == 0 {
+  chain = options.calls(options.chain())
+  near = options.expiry_nearest(chain, 30)
+  contracts = options.sort_by_delta(near, 0.5)
+  if len(contracts) >= 3 {
+    gid = group.open("test-group", 5, 1)
+    legs = [leg.sell(contracts[0], 1), leg.buy(contracts[1], 1), leg.buy(contracts[2], 1)]
+    sid = spread.open_in_group(legs, "test-spread", gid)
+    plot(gid, title="gid", precision=0)
+    plot(sid, title="sid", precision=0)
+  }
+}
+`
+
+	engine := backtest.NewEngine(backtest.Config{InitialCapital: 10000})
+	engine.RegisterDataFeed("test", &testDataFeed{fields: []string{"open", "high", "low", "close", "volume"}})
+	engine.SetOptionsChainProvider(&testOptionsChainProvider{})
+
+	from := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	to := from.Add(6 * time.Hour)
+
+	result, err := engine.Run(context.Background(), "test", "TEST", "1h", from, to, New(src), nil)
+	if err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+	if result.SpreadSummary == nil || result.SpreadSummary.TotalSpreads != 1 {
+		t.Fatalf("unexpected spread summary: %#v", result.SpreadSummary)
+	}
+	if len(result.SpreadGroups) != 1 {
+		t.Fatalf("len(result.SpreadGroups) = %d, want 1", len(result.SpreadGroups))
+	}
+	if len(result.SpreadGroups[0].SpreadIDs) != 1 {
+		t.Fatalf("unexpected spread group contents: %#v", result.SpreadGroups[0])
+	}
+}
+
+func TestDslContractAccessAfterSortByDelta(t *testing.T) {
+	src := `strategy("Contract Access")
+chain = options.chain()
+calls = options.calls(chain)
+contracts = options.sort_by_delta(calls, 0.5)
+if len(contracts) > 0 {
+  c = contracts[0]
+  plot(contract.strike(c), title="strike", precision=2)
+	plot(contract.expiry(c), title="expiry", precision=0)
+  plot(contract.delta(c), title="delta", precision=4)
+  plot(contract.mark(c), title="mark", precision=4)
+}
+`
+
+	engine := backtest.NewEngine(backtest.Config{InitialCapital: 10000})
+	engine.RegisterDataFeed("test", &testDataFeed{fields: []string{"open", "high", "low", "close", "volume"}})
+	engine.SetOptionsChainProvider(&testOptionsChainProvider{})
+
+	from := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	to := from.Add(2 * time.Hour)
+
+	result, err := engine.Run(context.Background(), "test", "TEST", "1h", from, to, New(src), nil)
+	if err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+
+	strikeSeries := result.Series[result.ReportColumns[0].Source]
+	expirySeries := result.Series[result.ReportColumns[1].Source]
+	deltaSeries := result.Series[result.ReportColumns[2].Source]
+	markSeries := result.Series[result.ReportColumns[3].Source]
+	if strikeSeries[0] != 100 {
+		t.Fatalf("unexpected strike series: %#v", strikeSeries[:1])
+	}
+	if expirySeries[0] <= 0 {
+		t.Fatalf("unexpected expiry series: %#v", expirySeries[:1])
+	}
+	if deltaSeries[0] != 0.5 {
+		t.Fatalf("unexpected delta series: %#v", deltaSeries[:1])
+	}
+	if markSeries[0] != 5.1 {
+		t.Fatalf("unexpected mark series: %#v", markSeries[:1])
+	}
+}
+
+func TestDslContractAccessInsideWhileLoop(t *testing.T) {
+	src := `strategy("Contract Access Loop")
+chain = options.chain()
+calls = options.calls(chain)
+contracts = options.sort_by_delta(calls, 0.5)
+idx = 0
+while idx < len(contracts) {
+  c = contracts[idx]
+  plot(contract.strike(c), title="strike", precision=2)
+  plot(contract.delta(c), title="delta", precision=4)
+  idx = idx + 1
+}
+`
+
+	engine := backtest.NewEngine(backtest.Config{InitialCapital: 10000})
+	engine.RegisterDataFeed("test", &testDataFeed{fields: []string{"open", "high", "low", "close", "volume"}})
+	engine.SetOptionsChainProvider(&testOptionsChainProvider{})
+
+	from := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	to := from.Add(2 * time.Hour)
+
+	result, err := engine.Run(context.Background(), "test", "TEST", "1h", from, to, New(src), nil)
+	if err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+
+	strikeSeries := result.Series[result.ReportColumns[0].Source]
+	deltaSeries := result.Series[result.ReportColumns[1].Source]
+	if strikeSeries[0] != 110 {
+		t.Fatalf("unexpected loop strike series: %#v", strikeSeries[:1])
+	}
+	if deltaSeries[0] != 0.29 {
+		t.Fatalf("unexpected loop delta series: %#v", deltaSeries[:1])
+	}
+}
+
+func TestDslSpreadLegAndGroupRollAccess(t *testing.T) {
+	src := `strategy("Spread Leg Access")
+if bar_index == 0 {
+  chain = options.calls(options.chain())
+  near = options.expiry_nearest(chain, 30)
+  contracts = options.sort_by_delta(near, 0.5)
+  if len(contracts) >= 3 {
+    gid = group.open("test-group", 5, 0.9)
+    legs = [leg.sell(contracts[0], 1), leg.buy(contracts[1], 2), leg.buy(contracts[2], 3)]
+    sid = spread.open_in_group(legs, "test-spread", gid)
+    group.increment_roll(gid)
+    plot(spread.leg_entry_price(sid, 0), title="entry_price", precision=4)
+    plot(spread.leg_qty(sid, 1), title="qty", precision=0)
+    plot(contract.strike(spread.leg_contract(sid, 2)), title="strike", precision=0)
+    plot(group.get(gid)[2], title="amount", precision=4)
+  }
+}
+`
+
+	engine := backtest.NewEngine(backtest.Config{InitialCapital: 10000})
+	engine.RegisterDataFeed("test", &testDataFeed{fields: []string{"open", "high", "low", "close", "volume"}})
+	engine.SetOptionsChainProvider(&testOptionsChainProvider{})
+
+	from := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	to := from.Add(2 * time.Hour)
+
+	result, err := engine.Run(context.Background(), "test", "TEST", "1h", from, to, New(src), nil)
+	if err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+
+	entrySeries := result.Series[result.ReportColumns[0].Source]
+	qtySeries := result.Series[result.ReportColumns[1].Source]
+	strikeSeries := result.Series[result.ReportColumns[2].Source]
+	amountSeries := result.Series[result.ReportColumns[3].Source]
+	if entrySeries[0] <= 0 {
+		t.Fatalf("unexpected entry price series: %#v", entrySeries[:1])
+	}
+	if qtySeries[0] != 2 {
+		t.Fatalf("unexpected qty series: %#v", qtySeries[:1])
+	}
+	if strikeSeries[0] != 110 {
+		t.Fatalf("unexpected strike series: %#v", strikeSeries[:1])
+	}
+	if amountSeries[0] != 4.5 {
+		t.Fatalf("unexpected decayed amount series: %#v", amountSeries[:1])
+	}
+}
+
+func TestDslSpreadCloseReasonIsRecorded(t *testing.T) {
+	src := `strategy("Spread Close Reason")
+varip tracked_spread = 0
+
+if bar_index == 0 {
+  chain = options.calls(options.chain())
+  contracts = options.sort_by_delta(chain, 0.5)
+  if len(contracts) >= 3 {
+    legs = [leg.sell(contracts[0], 1), leg.buy(contracts[1], 1), leg.buy(contracts[2], 1)]
+    tracked_spread = spread.open(legs, "open-tag")
+  }
+}
+
+if bar_index == 1 and tracked_spread > 0 {
+  spread.close(tracked_spread, "close-reason")
+}
+`
+
+	engine := backtest.NewEngine(backtest.Config{InitialCapital: 10000})
+	engine.RegisterDataFeed("test", &testDataFeed{fields: []string{"open", "high", "low", "close", "volume"}})
+	engine.SetOptionsChainProvider(&testOptionsChainProvider{})
+
+	from := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	to := from.Add(3 * time.Hour)
+
+	result, err := engine.Run(context.Background(), "test", "TEST", "1h", from, to, New(src), nil)
+	if err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+	if len(result.SpreadPositions) != 1 {
+		t.Fatalf("unexpected spread positions: %#v", result.SpreadPositions)
+	}
+	if result.SpreadPositions[0].CloseNote != "close-reason" {
+		t.Fatalf("unexpected close note: got %q want %q", result.SpreadPositions[0].CloseNote, "close-reason")
+	}
+}
+
+func TestDslScheduleCloseGroupTargetsGroupSpreads(t *testing.T) {
+	src := `strategy("Schedule Group Close")
+varip tracked_group1 = 0
+varip tracked_group2 = 0
+varip tracked_spread1b = 0
+varip tracked_spread2 = 0
+
+if bar_index == 0 {
+  chain = options.calls(options.chain())
+  contracts = options.sort_by_delta(chain, 0.5)
+  if len(contracts) >= 3 {
+    legs = [leg.sell(contracts[0], 1), leg.buy(contracts[1], 1), leg.buy(contracts[2], 1)]
+    tracked_group1 = group.open("g1", 5, 1)
+    spread.open_in_group(legs, "g1-a", tracked_group1)
+    tracked_spread1b = spread.open_in_group(legs, "g1-b", tracked_group1)
+    tracked_group2 = group.open("g2", 5, 1)
+    tracked_spread2 = spread.open_in_group(legs, "g2-a", tracked_group2)
+    schedule.close_group(1, tracked_group2)
+  }
+}
+
+group1b_open = 0
+group2_open = 0
+if tracked_spread1b > 0 {
+  info1 = spread.get(tracked_spread1b)
+  if info1[4] {
+    group1b_open = 1
+  }
+}
+if tracked_spread2 > 0 {
+  info2 = spread.get(tracked_spread2)
+  if info2[4] {
+    group2_open = 1
+  }
+}
+
+plot(group1b_open, title="group1b_open", precision=0)
+plot(group2_open, title="group2_open", precision=0)
+`
+
+	engine := backtest.NewEngine(backtest.Config{InitialCapital: 10000})
+	engine.RegisterDataFeed("test", &testDataFeed{fields: []string{"open", "high", "low", "close", "volume"}})
+	engine.SetOptionsChainProvider(&testOptionsChainProvider{})
+
+	from := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	to := from.Add(2 * time.Hour)
+
+	result, err := engine.Run(context.Background(), "test", "TEST", "15m", from, to, New(src), nil)
+	if err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+
+	plotSource := func(label string) string {
+		for _, col := range result.ReportColumns {
+			if col.Label == label {
+				return col.Source
+			}
+		}
+		return ""
+	}
+	group1Source := plotSource("group1b_open")
+	group2Source := plotSource("group2_open")
+	if group1Source == "" || group2Source == "" {
+		t.Fatalf("missing expected plot columns: %#v", result.ReportColumns)
+	}
+	group1Series := result.Series[group1Source]
+	group2Series := result.Series[group2Source]
+	if group1Series[len(group1Series)-1] != 1 {
+		t.Fatalf("expected group1 spread to remain open, got series tail %v", group1Series[len(group1Series)-3:])
+	}
+	if group2Series[len(group2Series)-1] != 0 {
+		t.Fatalf("expected scheduled group2 spread close, got series tail %v", group2Series[len(group2Series)-3:])
+	}
+}
+
 func TestDslStrategySignalPreloadBuildsEntrySignal(t *testing.T) {
 	dir := t.TempDir()
 	signalPath := filepath.Join(dir, "entry-signals.txt")
@@ -403,4 +702,94 @@ plot(alt_sma3, title="ALT SMA3", precision=2)
 	if math.Abs(series[2]-wantSMA3) > 1e-9 {
 		t.Fatalf("alt_sma3[2]: expected %g, got %g", wantSMA3, series[2])
 	}
+}
+
+// TestStrategyPositionSizeProperty verifies strategy.position_size and strategy.cash/equity
+// are readable as properties and trigger trades correctly.
+func TestStrategyPositionSizeProperty(t *testing.T) {
+	// Simple: buy on first bar using strategy.position_size as a property
+	src := `strategy("PositionPropTest")
+if strategy.position_size == 0 {
+  strategy.entry(id="long", direction=strategy.long, qty=1)
+}
+`
+	engine := backtest.NewEngine(backtest.Config{InitialCapital: 10000})
+	engine.RegisterDataFeed("test", &testDataFeed{fields: []string{"open", "high", "low", "close", "volume"}})
+
+	from := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	to := from.Add(6 * time.Hour)
+
+	result, err := engine.Run(context.Background(), "test", "TEST", "1h", from, to, New(src), nil)
+	if err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+	if len(result.Trades) == 0 {
+		t.Fatal("expected at least one trade from strategy.position_size property check")
+	}
+}
+
+// TestCrossoverStrategy verifies ta.crossover detects crossovers and generates trades.
+func TestCrossoverStrategy(t *testing.T) {
+	src := `strategy("CrossoverTest")
+fast = ta.sma(close, 3)
+slow = ta.sma(close, 5)
+buy_sig = ta.crossover(fast, slow)
+if buy_sig {
+  strategy.entry(id="long", direction=strategy.long, qty=1)
+  strategy.close(id="long")
+}
+`
+	// Use a feed with prices that force multiple crossovers
+	engine := backtest.NewEngine(backtest.Config{InitialCapital: 10000})
+	// Use the zigzag feed override to get crossovers
+	engine.RegisterDataFeed("test", &crossoverTestFeed{})
+
+	from := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	to := from.Add(100 * time.Hour)
+
+	result, err := engine.Run(context.Background(), "test", "TEST", "1h", from, to, New(src), nil)
+	if err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+	if len(result.Trades) == 0 {
+		t.Fatal("expected at least one trade from crossover detection")
+	}
+	t.Logf("crossover trades: %d", len(result.Trades))
+}
+
+type crossoverTestFeed struct{}
+
+func (f *crossoverTestFeed) Fields() []string {
+	return []string{"open", "high", "low", "close", "volume"}
+}
+
+func (f *crossoverTestFeed) Load(_ context.Context, req backtest.DataRequest) (*backtest.DataSet, error) {
+	// Create a price series with clear crossovers:
+	// 50 declining bars then 50 rising bars
+	nBars := 100
+	ds := backtest.NewDataSet(nBars)
+	ts := make([]time.Time, nBars)
+	open := make([]float64, nBars)
+	high := make([]float64, nBars)
+	low := make([]float64, nBars)
+	closeCol := make([]float64, nBars)
+	volume := make([]float64, nBars)
+	for i := 0; i < nBars; i++ {
+		var price float64
+		if i < 50 {
+			price = 100.0 - float64(i)*0.5 // declining: 100 → 75
+		} else {
+			price = 75.0 + float64(i-50)*1.0 // rising: 75 → 125
+		}
+		ts[i] = req.From.Add(time.Duration(i) * time.Hour)
+		open[i], high[i], low[i], closeCol[i] = price, price+0.5, price-0.5, price
+		volume[i] = 1000
+	}
+	ds.SetTimestamps(ts)
+	ds.AddColumn("open", open)
+	ds.AddColumn("high", high)
+	ds.AddColumn("low", low)
+	ds.AddColumn("close", closeCol)
+	ds.AddColumn("volume", volume)
+	return ds, nil
 }

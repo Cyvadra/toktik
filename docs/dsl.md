@@ -422,7 +422,7 @@ mark = contract.mark(best)
 
 - `spread.open(legs_array, tag)`
 - `spread.open_in_group(legs_array, tag, group_id)`
-- `spread.close(spread_id)`
+- `spread.close(spread_id, reason?)`
 - `spread.close_leg(spread_id, leg_index, close_price)`
 - `spread.get(spread_id)`
 - `spread.pnl(spread_id)`
@@ -446,6 +446,10 @@ mark = contract.mark(best)
 - `group.get(group_id)`
 - `group.add_spread(group_id, spread_id)`
 - `group.open_ids()`
+
+### `schedule.*`
+
+- `schedule.close_spread(offset_bars, spread_id, reason?)`
 
 `group.get(group_id)` 当前返回数组：
 

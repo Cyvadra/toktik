@@ -66,6 +66,14 @@ type AssignStmt struct {
 	Value Expr
 }
 
+// IndexAssignStmt: arr[i] = expr
+type IndexAssignStmt struct {
+	Token token.Token
+	Left  Expr // the object being indexed (e.g. arr)
+	Index Expr // the index expression
+	Value Expr // the value to assign
+}
+
 // TupleAssign: [a, b] = func(...)
 type TupleAssign struct {
 	Token token.Token
@@ -268,87 +276,90 @@ type LambdaExpr struct {
 }
 
 // Pos implementations
-func (n *StrategyDecl) Pos() token.Token { return n.Token }
-func (n *InputDecl) Pos() token.Token    { return n.Token }
-func (n *VarDecl) Pos() token.Token      { return n.Token }
-func (n *AssignStmt) Pos() token.Token   { return n.Token }
-func (n *TupleAssign) Pos() token.Token  { return n.Token }
-func (n *ExprStmt) Pos() token.Token     { return n.Expression.Pos() }
-func (n *IfStmt) Pos() token.Token       { return n.Token }
-func (n *ForStmt) Pos() token.Token      { return n.Token }
-func (n *ForInStmt) Pos() token.Token    { return n.Token }
-func (n *WhileStmt) Pos() token.Token    { return n.Token }
-func (n *SwitchStmt) Pos() token.Token   { return n.Token }
-func (n *FnDecl) Pos() token.Token       { return n.Token }
-func (n *ReturnStmt) Pos() token.Token   { return n.Token }
-func (n *BreakStmt) Pos() token.Token    { return n.Token }
-func (n *ContinueStmt) Pos() token.Token { return n.Token }
-func (n *ImportStmt) Pos() token.Token   { return n.Token }
-func (n *Block) Pos() token.Token        { return n.Token }
-func (n *NumberLit) Pos() token.Token    { return n.Token }
-func (n *StringLit) Pos() token.Token    { return n.Token }
-func (n *BoolLit) Pos() token.Token      { return n.Token }
-func (n *NaLit) Pos() token.Token        { return n.Token }
-func (n *IdentExpr) Pos() token.Token    { return n.Token }
-func (n *BinaryExpr) Pos() token.Token   { return n.Token }
-func (n *UnaryExpr) Pos() token.Token    { return n.Token }
-func (n *CallExpr) Pos() token.Token     { return n.Token }
-func (n *DotExpr) Pos() token.Token      { return n.Token }
-func (n *IndexExpr) Pos() token.Token    { return n.Token }
-func (n *TernaryExpr) Pos() token.Token  { return n.Token }
-func (n *ArrayLit) Pos() token.Token     { return n.Token }
-func (n *LambdaExpr) Pos() token.Token   { return n.Token }
+func (n *StrategyDecl) Pos() token.Token    { return n.Token }
+func (n *InputDecl) Pos() token.Token       { return n.Token }
+func (n *VarDecl) Pos() token.Token         { return n.Token }
+func (n *AssignStmt) Pos() token.Token      { return n.Token }
+func (n *IndexAssignStmt) Pos() token.Token { return n.Token }
+func (n *TupleAssign) Pos() token.Token     { return n.Token }
+func (n *ExprStmt) Pos() token.Token        { return n.Expression.Pos() }
+func (n *IfStmt) Pos() token.Token          { return n.Token }
+func (n *ForStmt) Pos() token.Token         { return n.Token }
+func (n *ForInStmt) Pos() token.Token       { return n.Token }
+func (n *WhileStmt) Pos() token.Token       { return n.Token }
+func (n *SwitchStmt) Pos() token.Token      { return n.Token }
+func (n *FnDecl) Pos() token.Token          { return n.Token }
+func (n *ReturnStmt) Pos() token.Token      { return n.Token }
+func (n *BreakStmt) Pos() token.Token       { return n.Token }
+func (n *ContinueStmt) Pos() token.Token    { return n.Token }
+func (n *ImportStmt) Pos() token.Token      { return n.Token }
+func (n *Block) Pos() token.Token           { return n.Token }
+func (n *NumberLit) Pos() token.Token       { return n.Token }
+func (n *StringLit) Pos() token.Token       { return n.Token }
+func (n *BoolLit) Pos() token.Token         { return n.Token }
+func (n *NaLit) Pos() token.Token           { return n.Token }
+func (n *IdentExpr) Pos() token.Token       { return n.Token }
+func (n *BinaryExpr) Pos() token.Token      { return n.Token }
+func (n *UnaryExpr) Pos() token.Token       { return n.Token }
+func (n *CallExpr) Pos() token.Token        { return n.Token }
+func (n *DotExpr) Pos() token.Token         { return n.Token }
+func (n *IndexExpr) Pos() token.Token       { return n.Token }
+func (n *TernaryExpr) Pos() token.Token     { return n.Token }
+func (n *ArrayLit) Pos() token.Token        { return n.Token }
+func (n *LambdaExpr) Pos() token.Token      { return n.Token }
 
 // nodeTag implementations
-func (*StrategyDecl) nodeTag() {}
-func (*InputDecl) nodeTag()    {}
-func (*VarDecl) nodeTag()      {}
-func (*AssignStmt) nodeTag()   {}
-func (*TupleAssign) nodeTag()  {}
-func (*ExprStmt) nodeTag()     {}
-func (*IfStmt) nodeTag()       {}
-func (*ForStmt) nodeTag()      {}
-func (*ForInStmt) nodeTag()    {}
-func (*WhileStmt) nodeTag()    {}
-func (*SwitchStmt) nodeTag()   {}
-func (*FnDecl) nodeTag()       {}
-func (*ReturnStmt) nodeTag()   {}
-func (*BreakStmt) nodeTag()    {}
-func (*ContinueStmt) nodeTag() {}
-func (*ImportStmt) nodeTag()   {}
-func (*Block) nodeTag()        {}
-func (*NumberLit) nodeTag()    {}
-func (*StringLit) nodeTag()    {}
-func (*BoolLit) nodeTag()      {}
-func (*NaLit) nodeTag()        {}
-func (*IdentExpr) nodeTag()    {}
-func (*BinaryExpr) nodeTag()   {}
-func (*UnaryExpr) nodeTag()    {}
-func (*CallExpr) nodeTag()     {}
-func (*DotExpr) nodeTag()      {}
-func (*IndexExpr) nodeTag()    {}
-func (*TernaryExpr) nodeTag()  {}
-func (*ArrayLit) nodeTag()     {}
-func (*LambdaExpr) nodeTag()   {}
+func (*StrategyDecl) nodeTag()    {}
+func (*InputDecl) nodeTag()       {}
+func (*VarDecl) nodeTag()         {}
+func (*AssignStmt) nodeTag()      {}
+func (*IndexAssignStmt) nodeTag() {}
+func (*TupleAssign) nodeTag()     {}
+func (*ExprStmt) nodeTag()        {}
+func (*IfStmt) nodeTag()          {}
+func (*ForStmt) nodeTag()         {}
+func (*ForInStmt) nodeTag()       {}
+func (*WhileStmt) nodeTag()       {}
+func (*SwitchStmt) nodeTag()      {}
+func (*FnDecl) nodeTag()          {}
+func (*ReturnStmt) nodeTag()      {}
+func (*BreakStmt) nodeTag()       {}
+func (*ContinueStmt) nodeTag()    {}
+func (*ImportStmt) nodeTag()      {}
+func (*Block) nodeTag()           {}
+func (*NumberLit) nodeTag()       {}
+func (*StringLit) nodeTag()       {}
+func (*BoolLit) nodeTag()         {}
+func (*NaLit) nodeTag()           {}
+func (*IdentExpr) nodeTag()       {}
+func (*BinaryExpr) nodeTag()      {}
+func (*UnaryExpr) nodeTag()       {}
+func (*CallExpr) nodeTag()        {}
+func (*DotExpr) nodeTag()         {}
+func (*IndexExpr) nodeTag()       {}
+func (*TernaryExpr) nodeTag()     {}
+func (*ArrayLit) nodeTag()        {}
+func (*LambdaExpr) nodeTag()      {}
 
 // stmtTag implementations
-func (*StrategyDecl) stmtTag() {}
-func (*InputDecl) stmtTag()    {}
-func (*VarDecl) stmtTag()      {}
-func (*AssignStmt) stmtTag()   {}
-func (*TupleAssign) stmtTag()  {}
-func (*ExprStmt) stmtTag()     {}
-func (*IfStmt) stmtTag()       {}
-func (*ForStmt) stmtTag()      {}
-func (*ForInStmt) stmtTag()    {}
-func (*WhileStmt) stmtTag()    {}
-func (*SwitchStmt) stmtTag()   {}
-func (*FnDecl) stmtTag()       {}
-func (*ReturnStmt) stmtTag()   {}
-func (*BreakStmt) stmtTag()    {}
-func (*ContinueStmt) stmtTag() {}
-func (*ImportStmt) stmtTag()   {}
-func (*Block) stmtTag()        {}
+func (*StrategyDecl) stmtTag()    {}
+func (*InputDecl) stmtTag()       {}
+func (*VarDecl) stmtTag()         {}
+func (*AssignStmt) stmtTag()      {}
+func (*IndexAssignStmt) stmtTag() {}
+func (*TupleAssign) stmtTag()     {}
+func (*ExprStmt) stmtTag()        {}
+func (*IfStmt) stmtTag()          {}
+func (*ForStmt) stmtTag()         {}
+func (*ForInStmt) stmtTag()       {}
+func (*WhileStmt) stmtTag()       {}
+func (*SwitchStmt) stmtTag()      {}
+func (*FnDecl) stmtTag()          {}
+func (*ReturnStmt) stmtTag()      {}
+func (*BreakStmt) stmtTag()       {}
+func (*ContinueStmt) stmtTag()    {}
+func (*ImportStmt) stmtTag()      {}
+func (*Block) stmtTag()           {}
 
 // exprTag implementations
 func (*NumberLit) exprTag()   {}

@@ -34,6 +34,7 @@ type OptionsBridge interface {
 	ContractSymbol(c interface{}) string
 	ContractType(c interface{}) string // "call" or "put"
 	ContractStrike(c interface{}) float64
+	ContractExpiry(c interface{}) float64
 	ContractDTE(c interface{}) float64
 	ContractDelta(c interface{}) float64
 	ContractGamma(c interface{}) float64
@@ -54,6 +55,8 @@ type OptionsBridge interface {
 	OpenSpreadInGroup(legs []SpreadLegInput, tag string, groupID int) int
 	// CloseSpread closes all legs of a spread.
 	CloseSpread(spreadID int)
+	// CloseSpreadWithReason closes all legs of a spread with a close note.
+	CloseSpreadWithReason(spreadID int, reason string)
 	// CloseSpreadLeg closes a single leg.
 	CloseSpreadLeg(spreadID, legIndex int, closePrice float64) bool
 	// SpreadGet returns spread info as [id, tag, barsHeld, realizedPnl, isOpen].
@@ -62,17 +65,26 @@ type OptionsBridge interface {
 	OpenSpreads() []int
 	// SpreadPnL returns unrealized PnL of a spread.
 	SpreadPnL(spreadID int) float64
+	// Spread leg inspection.
+	SpreadLegContract(spreadID, legIndex int) interface{}
+	SpreadLegEntryPrice(spreadID, legIndex int) float64
+	SpreadLegQty(spreadID, legIndex int) float64
+	SpreadLegSide(spreadID, legIndex int) string
+	SpreadLegIsOpen(spreadID, legIndex int) bool
 
 	// Spread groups.
 	GroupOpen(tag string, initAmount, decayFactor float64) int
 	GroupClose(groupID int)
 	GroupGet(groupID int) GroupInfo
 	GroupAddSpread(groupID, spreadID int)
+	GroupIncrementRoll(groupID int)
 	OpenGroups() []int
 
 	// Scheduling.
 	ScheduleCloseSpread(triggerBarOffset int, spreadID int)
+	ScheduleCloseSpreadWithReason(triggerBarOffset int, spreadID int, reason string)
 	ScheduleCloseLeg(triggerBarOffset int, spreadID, legIndex int)
+	ScheduleCloseGroup(triggerBarOffset int, groupID int)
 }
 
 // SpreadLegInput describes a leg to open.
@@ -94,12 +106,13 @@ type SpreadInfo struct {
 
 // GroupInfo summarizes a spread group.
 type GroupInfo struct {
-	ID        int
-	Tag       string
-	Amount    float64
-	RollCount int
-	IsClosed  bool
-	SpreadIDs []int
+	ID          int
+	Tag         string
+	Amount      float64
+	RollCount   int
+	IsClosed    bool
+	SpreadIDs   []int
+	SpreadCount int
 }
 
 // RegisterOptionsBuiltins adds options.* and spread.* DSL functions.
@@ -246,6 +259,7 @@ func RegisterOptionsBuiltins(ip *Interpreter) {
 
 	// ------- contract field accessors -------
 	// contract.symbol, contract.type, contract.strike, contract.dte,
+	// contract.expiry,
 	// contract.delta, contract.gamma, contract.vega, contract.theta,
 	// contract.iv, contract.bid, contract.ask, contract.mark,
 	// contract.volume, contract.oi
@@ -270,6 +284,13 @@ func RegisterOptionsBuiltins(ip *Interpreter) {
 			return NaVal()
 		}
 		return FloatVal(b.ContractStrike(args[0].Obj()))
+	})
+	ip.RegisterBuiltin("contract.expiry", func(args []Value) Value {
+		b := ob()
+		if b == nil || len(args) < 1 {
+			return NaVal()
+		}
+		return FloatVal(b.ContractExpiry(args[0].Obj()))
 	})
 	ip.RegisterBuiltin("contract.dte", func(args []Value) Value {
 		b := ob()
@@ -385,13 +406,22 @@ func RegisterOptionsBuiltins(ip *Interpreter) {
 		return FloatVal(float64(id))
 	})
 
-	// spread.close(spread_id)
+	// spread.close(spread_id, reason?)
 	ip.RegisterBuiltin("spread.close", func(args []Value) Value {
 		b := ob()
 		if b == nil || len(args) < 1 {
 			return NaVal()
 		}
-		b.CloseSpread(int(args[0].Float()))
+		spreadID := int(args[0].Float())
+		reason := ""
+		if len(args) >= 2 {
+			reason = args[1].Str()
+		}
+		if reason != "" {
+			b.CloseSpreadWithReason(spreadID, reason)
+		} else {
+			b.CloseSpread(spreadID)
+		}
 		return NaVal()
 	})
 
@@ -429,6 +459,55 @@ func RegisterOptionsBuiltins(ip *Interpreter) {
 			return NaVal()
 		}
 		return FloatVal(b.SpreadPnL(int(args[0].Float())))
+	})
+
+	// spread.leg_contract(spread_id, leg_index) → contract object
+	ip.RegisterBuiltin("spread.leg_contract", func(args []Value) Value {
+		b := ob()
+		if b == nil || len(args) < 2 {
+			return NaVal()
+		}
+		contract := b.SpreadLegContract(int(args[0].Float()), int(args[1].Float()))
+		if contract == nil {
+			return NaVal()
+		}
+		return ObjVal(contract)
+	})
+
+	// spread.leg_entry_price(spread_id, leg_index)
+	ip.RegisterBuiltin("spread.leg_entry_price", func(args []Value) Value {
+		b := ob()
+		if b == nil || len(args) < 2 {
+			return NaVal()
+		}
+		return FloatVal(b.SpreadLegEntryPrice(int(args[0].Float()), int(args[1].Float())))
+	})
+
+	// spread.leg_qty(spread_id, leg_index)
+	ip.RegisterBuiltin("spread.leg_qty", func(args []Value) Value {
+		b := ob()
+		if b == nil || len(args) < 2 {
+			return NaVal()
+		}
+		return FloatVal(b.SpreadLegQty(int(args[0].Float()), int(args[1].Float())))
+	})
+
+	// spread.leg_side(spread_id, leg_index)
+	ip.RegisterBuiltin("spread.leg_side", func(args []Value) Value {
+		b := ob()
+		if b == nil || len(args) < 2 {
+			return NaVal()
+		}
+		return StringVal(b.SpreadLegSide(int(args[0].Float()), int(args[1].Float())))
+	})
+
+	// spread.leg_open(spread_id, leg_index)
+	ip.RegisterBuiltin("spread.leg_open", func(args []Value) Value {
+		b := ob()
+		if b == nil || len(args) < 2 {
+			return NaVal()
+		}
+		return BoolVal(b.SpreadLegIsOpen(int(args[0].Float()), int(args[1].Float())))
 	})
 
 	// spread.open_ids() → array of open spread IDs
@@ -507,6 +586,16 @@ func RegisterOptionsBuiltins(ip *Interpreter) {
 		return NaVal()
 	})
 
+	// group.increment_roll(group_id)
+	ip.RegisterBuiltin("group.increment_roll", func(args []Value) Value {
+		b := ob()
+		if b == nil || len(args) < 1 {
+			return NaVal()
+		}
+		b.GroupIncrementRoll(int(args[0].Float()))
+		return NaVal()
+	})
+
 	// group.open_ids() → array of open group IDs
 	ip.RegisterBuiltin("group.open_ids", func(args []Value) Value {
 		b := ob()
@@ -523,13 +612,23 @@ func RegisterOptionsBuiltins(ip *Interpreter) {
 
 	// ------- scheduling -------
 
-	// schedule.close_spread(bars_offset, spread_id)
+	// schedule.close_spread(bars_offset, spread_id, reason?)
 	ip.RegisterBuiltin("schedule.close_spread", func(args []Value) Value {
 		b := ob()
 		if b == nil || len(args) < 2 {
 			return NaVal()
 		}
-		b.ScheduleCloseSpread(int(args[0].Float()), int(args[1].Float()))
+		offset := int(args[0].Float())
+		spreadID := int(args[1].Float())
+		reason := ""
+		if len(args) >= 3 {
+			reason = args[2].Str()
+		}
+		if reason != "" {
+			b.ScheduleCloseSpreadWithReason(offset, spreadID, reason)
+		} else {
+			b.ScheduleCloseSpread(offset, spreadID)
+		}
 		return NaVal()
 	})
 
@@ -540,6 +639,42 @@ func RegisterOptionsBuiltins(ip *Interpreter) {
 			return NaVal()
 		}
 		b.ScheduleCloseLeg(int(args[0].Float()), int(args[1].Float()), int(args[2].Float()))
+		return NaVal()
+	})
+
+	// ------- Extended spread/group/schedule functions -------
+
+	// spread.pnl_all() — sum of PnL across all open spreads
+	ip.RegisterBuiltin("spread.pnl_all", func(args []Value) Value {
+		b := ob()
+		if b == nil {
+			return FloatVal(0)
+		}
+		ids := b.OpenSpreads()
+		total := 0.0
+		for _, id := range ids {
+			total += b.SpreadPnL(id)
+		}
+		return FloatVal(total)
+	})
+
+	// group.spread_count(group_id) — returns count of spreads in a group
+	ip.RegisterBuiltin("group.spread_count", func(args []Value) Value {
+		b := ob()
+		if b == nil || len(args) < 1 {
+			return FloatVal(0)
+		}
+		info := b.GroupGet(int(args[0].Float()))
+		return FloatVal(float64(info.SpreadCount))
+	})
+
+	// schedule.close_group(bars_offset, group_id) — schedule group close
+	ip.RegisterBuiltinWithParams("schedule.close_group", []string{"bars_offset", "group_id"}, func(args []Value) Value {
+		b := ob()
+		if b == nil || len(args) < 2 {
+			return NaVal()
+		}
+		b.ScheduleCloseGroup(int(args[0].Float()), int(args[1].Float()))
 		return NaVal()
 	})
 
