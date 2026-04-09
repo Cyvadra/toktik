@@ -974,3 +974,71 @@ func alignSeriesValues(targetTimes, sourceTimes []time.Time, sourceValues []floa
 	}
 	return out, nil
 }
+
+// DSLHooks returns an InitHook and PreloadHook pair for use by the DSL strategy
+// version (dual-spreads-btc-volatility-dsl). Both hooks share state via closure
+// so the 12h security ref and dvol factor ref from Init are available in Preload.
+func DSLHooks() (initHook func(*backtest.SetupContext) error, preloadHook func(*backtest.PreloadContext) error) {
+	var ref12h backtest.SecurityRef
+	var dvolRef backtest.FactorRef
+	initHook = func(ctx *backtest.SetupContext) error {
+		primary := ctx.PrimaryRef()
+		ref12h = ctx.AddSecurity(primary.Market, primary.Symbol, interval12h)
+		ctx.RegisterOn(ref12h, hvReturnColumn, logReturnIndicator("close"))
+		ctx.RegisterOn(ref12h, hvValueColumn, tradingViewHVIndicator(hvReturnColumn, 10))
+		ctx.RegisterOn(ref12h, hvPercentileColumn, optutil.PercentileRank(hvValueColumn, hvPercentileLookback))
+		dvolRef = ctx.AddFactor("dvol", interval12h)
+		ctx.RegisterFactor(dvolRef, ivPercentileColumn, optutil.PercentileRank("close", ivPercentileLookback))
+		ctx.SetWarmup(120 * 24 * time.Hour)
+		return nil
+	}
+	preloadHook = func(ctx *backtest.PreloadContext) error {
+		primary := ctx.Primary()
+		if primary == nil || primary.Len() == 0 {
+			return nil
+		}
+		htf := ctx.Security(ref12h)
+		if htf == nil || htf.Len() == 0 {
+			return fmt.Errorf("12h security unavailable for DSL dual-spreads")
+		}
+		dvol := ctx.Factor(dvolRef)
+		if dvol == nil || dvol.Len() == 0 {
+			return fmt.Errorf("12h dvol factor unavailable for DSL dual-spreads")
+		}
+		if err := htf.Quantile(hvThresholdColumn, hvValueColumn, hvPercentileLookback, defaultVolPercentile/100); err != nil {
+			return err
+		}
+		if err := dvol.Quantile(ivThresholdColumn, "close", ivPercentileLookback, defaultVolPercentile/100); err != nil {
+			return err
+		}
+		ivPercentile12h, err := alignSeriesValues(htf.Timestamps(), dvol.Timestamps(), dvol.Column(ivPercentileColumn))
+		if err != nil {
+			return err
+		}
+		if err := htf.SetColumn(ivPercentileColumn, ivPercentile12h); err != nil {
+			return err
+		}
+		ivThreshold12h, err := alignSeriesValues(htf.Timestamps(), dvol.Timestamps(), dvol.Column(ivThresholdColumn))
+		if err != nil {
+			return err
+		}
+		if err := htf.SetColumn(ivThresholdColumn, ivThreshold12h); err != nil {
+			return err
+		}
+		for _, name := range []string{hvValueColumn, hvPercentileColumn, hvThresholdColumn, ivPercentileColumn, ivThresholdColumn} {
+			aligned, err := ctx.ColumnAlignedToPrimary(ref12h, name)
+			if err != nil {
+				return err
+			}
+			if err := primary.SetColumn(name, aligned); err != nil {
+				return err
+			}
+		}
+		dvolValue, err := ctx.ColumnAlignedFactorToPrimary(dvolRef, "close")
+		if err != nil {
+			return err
+		}
+		return primary.SetColumn(dvolValueColumn, dvolValue)
+	}
+	return initHook, preloadHook
+}
