@@ -273,7 +273,7 @@ curl "http://localhost:9010/ready"
 
 **List available low-level markets:**
 ```bash
-curl "http://localhost:8080/api/v1/infra/markets"
+curl "http://localhost:9010/api/v1/infra/markets"
 ```
 
 Sample response:
@@ -425,7 +425,7 @@ fmt.Println(optionPath)
 
 **Inspect dataset freshness and summary:**
 ```bash
-curl "http://localhost:8080/api/v1/infra/datasets?market=feature-store"
+curl "http://localhost:9010/api/v1/infra/datasets?market=feature-store"
 ```
 
 Sample response:
@@ -469,32 +469,32 @@ Sample response:
 
 **List symbols:**
 ```bash
-curl "http://localhost:8080/api/v1/crypto-options/symbols?base_asset=BTC&limit=10"
+curl "http://localhost:9010/api/v1/crypto-options/symbols?base_asset=BTC&limit=10"
 ```
 
 **List US option symbols from the unified market namespace:**
 ```bash
-curl "http://localhost:8080/api/v1/markets/us-options/symbols?underlying=SPY&limit=10"
+curl "http://localhost:9010/api/v1/markets/us-options/symbols?underlying=SPY&limit=10"
 ```
 
 **Get OHLCV bars:**
 ```bash
-curl "http://localhost:8080/api/v1/crypto-options/bars?symbol=BTC-28MAR25-100000-C&interval=1h&from=2025-01-01&to=2025-03-01&limit=500"
+curl "http://localhost:9010/api/v1/crypto-options/bars?symbol=BTC-28MAR25-100000-C&interval=1h&from=2025-01-01&to=2025-03-01&limit=500"
 ```
 
 **Get US stock bars from the unified market namespace:**
 ```bash
-curl "http://localhost:8080/api/v1/markets/us-stocks/bars?symbol=AAPL&interval=1h&from=2025-01-01&to=2025-03-01&limit=500"
+curl "http://localhost:9010/api/v1/markets/us-stocks/bars?symbol=AAPL&interval=1h&from=2025-01-01&to=2025-03-01&limit=500"
 ```
 
 **Get greeks time series:**
 ```bash
-curl "http://localhost:8080/api/v1/crypto-options/greeks?symbol=BTC-28MAR25-100000-C&from=2025-01-01&to=2025-03-01"
+curl "http://localhost:9010/api/v1/crypto-options/greeks?symbol=BTC-28MAR25-100000-C&from=2025-01-01&to=2025-03-01"
 ```
 
 **Get a volatility feature snapshot:**
 ```bash
-curl "http://localhost:8080/api/v1/features/volatility-snapshot?market=us-options&underlying=SPY"
+curl "http://localhost:9010/api/v1/features/volatility-snapshot?market=us-options&underlying=SPY"
 ```
 
 Sample response:
@@ -518,12 +518,12 @@ Sample response:
 
 **Get volatility feature history:**
 ```bash
-curl "http://localhost:8080/api/v1/features/volatility-history?market=crypto-options&underlying=BTC&from=2025-01-01&to=2025-03-01"
+curl "http://localhost:9010/api/v1/features/volatility-history?market=crypto-options&underlying=BTC&from=2025-01-01&to=2025-03-01"
 ```
 
 **Get a term-structure snapshot:**
 ```bash
-curl "http://localhost:8080/api/v1/features/term-structure-snapshot?market=us-options&underlying=SPY&min_days_to_expiry=7&max_days_to_expiry=90"
+curl "http://localhost:9010/api/v1/features/term-structure-snapshot?market=us-options&underlying=SPY&min_days_to_expiry=7&max_days_to_expiry=90"
 ```
 
 Sample response:
@@ -547,7 +547,7 @@ Sample response:
 
 **Get a skew snapshot:**
 ```bash
-curl "http://localhost:8080/api/v1/features/skew-snapshot?market=us-options&underlying=SPY&min_days_to_expiry=7&max_days_to_expiry=90"
+curl "http://localhost:9010/api/v1/features/skew-snapshot?market=us-options&underlying=SPY&min_days_to_expiry=7&max_days_to_expiry=90"
 ```
 
 Sample response:
@@ -571,7 +571,7 @@ Sample response:
 
 **Get a crypto-options liquidity snapshot:**
 ```bash
-curl "http://localhost:8080/api/v1/features/liquidity-snapshot?market=crypto-options&underlying=BTC&min_days_to_expiry=7&max_days_to_expiry=60"
+curl "http://localhost:9010/api/v1/features/liquidity-snapshot?market=crypto-options&underlying=BTC&min_days_to_expiry=7&max_days_to_expiry=60"
 ```
 
 Sample response:
@@ -600,7 +600,7 @@ Sample response:
 
 **Get a liquidity history window:**
 ```bash
-curl "http://localhost:8080/api/v1/features/liquidity-history?market=us-options&underlying=AAPL&from=2026-03-01&to=2026-04-01&min_days_to_expiry=7&max_days_to_expiry=60"
+curl "http://localhost:9010/api/v1/features/liquidity-history?market=us-options&underlying=AAPL&from=2026-03-01&to=2026-04-01&min_days_to_expiry=7&max_days_to_expiry=60"
 ```
 
 Sample response:
@@ -626,7 +626,7 @@ Sample response:
 
 **Get an event-window snapshot:**
 ```bash
-curl "http://localhost:8080/api/v1/features/event-window-snapshot?market=us-options&underlying=AAPL"
+curl "http://localhost:9010/api/v1/features/event-window-snapshot?market=us-options&underlying=AAPL"
 ```
 
 Sample response:
@@ -645,7 +645,7 @@ Sample response:
 
 **Get event-window history:**
 ```bash
-curl "http://localhost:8080/api/v1/features/event-window-history?market=us-options&underlying=AAPL&from=2026-03-01&to=2026-04-01"
+curl "http://localhost:9010/api/v1/features/event-window-history?market=us-options&underlying=AAPL&from=2026-03-01&to=2026-04-01"
 ```
 
 Sample response:
@@ -685,7 +685,7 @@ Completed runs return HTML report file paths only, not inline HTML content.
 
 **Start an async backtest run:**
 ```bash
-curl -X POST http://localhost:8080/api/v1/backtests/runs \
+curl -X POST http://localhost:9010/api/v1/backtests/runs \
   -H 'Content-Type: application/json' \
   -d '{
     "market": "crypto",
@@ -759,7 +759,7 @@ When `--clear-previous-data` is set, `backtest-portfolio` removes existing `.csv
 
 **Poll run status:**
 ```bash
-curl "http://localhost:8080/api/v1/backtests/runs/c40505f1a16f02f33380b4ccbe4f74db"
+curl "http://localhost:9010/api/v1/backtests/runs/c40505f1a16f02f33380b4ccbe4f74db"
 ```
 
 Sample terminal result excerpt:
@@ -787,7 +787,7 @@ Sample terminal result excerpt:
 
 **Subscribe to SSE progress updates:**
 ```bash
-curl -N "http://localhost:8080/api/v1/backtests/runs/c40505f1a16f02f33380b4ccbe4f74db/events"
+curl -N "http://localhost:9010/api/v1/backtests/runs/c40505f1a16f02f33380b4ccbe4f74db/events"
 ```
 
 SSE emits at most 1 message per second and uses event names such as `status`, `progress`, `completed`, and `failed`.
@@ -805,7 +805,7 @@ Notes:
 
 **Get a merged daily feature panel:**
 ```bash
-curl "http://localhost:8080/api/v1/features/daily-feature-panel?market=us-options&underlying=AAPL&from=2026-03-01&to=2026-04-01&min_days_to_expiry=7&max_days_to_expiry=60"
+curl "http://localhost:9010/api/v1/features/daily-feature-panel?market=us-options&underlying=AAPL&from=2026-03-01&to=2026-04-01&min_days_to_expiry=7&max_days_to_expiry=60"
 ```
 
 Sample response:
@@ -842,7 +842,7 @@ Sample response:
 
 **Run a backtest:**
 ```bash
-curl -X POST http://localhost:8080/api/v1/crypto-options/backtest \
+curl -X POST http://localhost:9010/api/v1/crypto-options/backtest \
   -H "Content-Type: application/json" \
   -d '{
     "symbol": "BTC-28MAR25-100000-C",
@@ -1210,7 +1210,7 @@ Key test files:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `CLICKHOUSE_DSN` | `clickhouse://default:@localhost:9000/default` | ClickHouse connection string |
-| `LISTEN_ADDR` | `:8080` | API server listen address |
+| `LISTEN_ADDR` | `:9010` | API server listen address |
 
 ## License
 

@@ -10,7 +10,7 @@
 // @license.name  Proprietary
 // @license.url   https://toktik.dev/license
 
-// @host      localhost:8080
+// @host      localhost:9010
 // @BasePath  /api/v1
 
 // @securityDefinitions.apikey ApiKeyAuth
@@ -88,6 +88,7 @@ func main() {
 	usOptionsSvc := service.NewUSOptionsService(conn)
 	infraSvc := service.NewInfraService(conn)
 	featureSvc := service.NewFeatureService(conn)
+	indicatorSvc := service.NewIndicatorService(conn)
 	strategyBacktestSvc := service.NewPortfolioBacktestService(conn, factorStore)
 	cryptoSpotSvc := service.NewCryptoSpotService(conn)
 	screenerSvc := service.NewScreenerService(conn)
@@ -112,7 +113,7 @@ func main() {
 		polygonSvc = polygonService
 	}
 
-	router := api.NewRouter(svc, usStocksSvc, usOptionsSvc, infraSvc, featureSvc, strategyBacktestSvc, cryptoSpotSvc, screenerSvc, strategyCatalogSvc, factorSvc, polygonSvc)
+	router := api.NewRouter(svc, usStocksSvc, usOptionsSvc, infraSvc, featureSvc, indicatorSvc, strategyBacktestSvc, cryptoSpotSvc, screenerSvc, strategyCatalogSvc, factorSvc, polygonSvc)
 
 	srv := &http.Server{
 		Addr:              *addr,

@@ -7,7 +7,7 @@
 -- Uses ReplacingMergeTree to deduplicate on repeated imports.
 CREATE TABLE IF NOT EXISTS crypto_options_symbol_meta
 (
-    symbol_id        UInt32,
+    symbol_id        UInt64,
     symbol           String,
     base_asset       LowCardinality(String),
     option_type      Enum8('call' = 1, 'put' = 2),
@@ -27,7 +27,7 @@ CREATE TABLE IF NOT EXISTS crypto_options_bar_1m
 (
     -- Key columns
     timestamp              DateTime('UTC'),
-    symbol_id              UInt32,
+    symbol_id              UInt64,
     base_asset             LowCardinality(String),
 
     -- Mark price OHLC
@@ -68,6 +68,7 @@ CREATE TABLE IF NOT EXISTS crypto_options_bar_1m
     rho                    Float32,
 
     -- Open interest & activity
+    volume                 Float64 DEFAULT toFloat64(tick_count),
     open_interest          Float32,
     tick_count             UInt16
 )
@@ -88,6 +89,7 @@ CREATE TABLE IF NOT EXISTS crypto_spot_bar_1m
     high         Float32,
     low          Float32,
     close        Float32,
+    volume       Float64 DEFAULT volume_base,
     tick_count   UInt32,
     volume_base  Float64 DEFAULT 0,
     volume_quote Float64 DEFAULT 0,

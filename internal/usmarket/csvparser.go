@@ -77,7 +77,7 @@ func ParseOptionCSV(path string) (<-chan OptionBar1m, *error, error) {
 				High:         parseFloat32(record[colIdx["high"]]),
 				Low:          parseFloat32(record[colIdx["low"]]),
 				Close:        parseFloat32(record[colIdx["close"]]),
-				Volume:       parseUint32(record[colIdx["volume"]]),
+				Volume:       parseFloat64(record[colIdx["volume"]]),
 				Transactions: parseUint32(record[colIdx["transactions"]]),
 			}
 			ch <- bar
@@ -135,7 +135,7 @@ func ParseStockCSV(path string) (<-chan StockBar1m, *error, error) {
 				High:         parseFloat32(record[colIdx["high"]]),
 				Low:          parseFloat32(record[colIdx["low"]]),
 				Close:        parseFloat32(record[colIdx["close"]]),
-				Volume:       parseUint32(record[colIdx["volume"]]),
+				Volume:       parseFloat64(record[colIdx["volume"]]),
 				Transactions: parseUint32(record[colIdx["transactions"]]),
 			}
 			ch <- bar
@@ -215,6 +215,14 @@ func parseNanosTimestamp(s string) time.Time {
 func parseFloat32(s string) float32 {
 	v, _ := strconv.ParseFloat(s, 32)
 	return float32(v)
+}
+
+func parseFloat64(s string) float64 {
+	v, _ := strconv.ParseFloat(s, 64)
+	if v < 0 {
+		return 0
+	}
+	return v
 }
 
 func parseUint32(s string) uint32 {

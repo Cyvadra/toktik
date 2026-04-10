@@ -85,7 +85,8 @@ ORDER BY timestamp`, tableName)
 		var (
 			ts                     time.Time
 			open, high, low, close float32
-			volume, tx             uint64
+			volume                 float64
+			tx                     uint64
 		)
 		if err := rows.Scan(&ts, &open, &high, &low, &close, &volume, &tx); err != nil {
 			return nil, fmt.Errorf("scan US underlying row: %w", err)

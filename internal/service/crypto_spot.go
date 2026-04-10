@@ -73,7 +73,7 @@ func (s *CryptoSpotService) QuerySymbols(ctx context.Context, req dto.CryptoSpot
 		return nil, fmt.Errorf("iterate crypto spot symbol rows: %w", err)
 	}
 
-	resp := &dto.CryptoSpotSymbolResponse{}
+	resp := &dto.CryptoSpotSymbolResponse{Data: make([]dto.CryptoSpotSymbolRow, 0)}
 	if len(symbols) > limit {
 		resp.NextCursor = encodeCursorString(symbols[limit-1].Symbol)
 		resp.Data = symbols[:limit]
@@ -114,7 +114,7 @@ func (s *CryptoSpotService) QueryBars(ctx context.Context, req dto.CryptoSpotBar
     high,
     low,
     close,
-    toFloat64(volume_base) AS volume,
+	volume,
     tick_count
 FROM %s
 WHERE symbol = {symbol:String}
@@ -154,7 +154,7 @@ LIMIT %d`, tableName, limit+1)
 		return nil, fmt.Errorf("iterate crypto spot bar rows: %w", err)
 	}
 
-	resp := &dto.CryptoSpotBarResponse{}
+	resp := &dto.CryptoSpotBarResponse{Data: make([]dto.CryptoSpotBarRow, 0)}
 	if len(bars) > limit {
 		resp.NextCursor = encodeCursor(bars[limit-1].Timestamp)
 		resp.Data = bars[:limit]

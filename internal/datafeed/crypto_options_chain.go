@@ -39,7 +39,7 @@ type symbolMetaRecord struct {
 // merge all table parts before returning, which is very expensive for large
 // tables. GROUP BY + anyLast() achieves the same deduplication semantics (last
 // written value wins) without triggering a full merge.
-func loadSymbolMeta(ctx context.Context, conn driver.Conn, baseAsset string) (map[uint32]symbolMetaRecord, error) {
+func loadSymbolMeta(ctx context.Context, conn driver.Conn, baseAsset string) (map[uint64]symbolMetaRecord, error) {
 	rows, err := conn.Query(ctx, `
 SELECT
     symbol_id,
@@ -57,9 +57,9 @@ GROUP BY symbol_id`,
 	}
 	defer rows.Close()
 
-	meta := make(map[uint32]symbolMetaRecord)
+	meta := make(map[uint64]symbolMetaRecord)
 	for rows.Next() {
-		var id uint32
+		var id uint64
 		var r symbolMetaRecord
 		if err := rows.Scan(&id, &r.symbol, &r.optionType, &r.strike, &r.expiration); err != nil {
 			return nil, fmt.Errorf("scan symbol meta: %w", err)
@@ -209,7 +209,7 @@ func shouldUseCachedChainSnapshots(resolution, cacheResolution time.Duration) bo
 	return resolution >= cacheResolution
 }
 
-func loadCandidateSymbolIDsFromCache(ctx context.Context, conn driver.Conn, chainView, baseAsset, fromParam, toParam string) ([]uint32, error) {
+func loadCandidateSymbolIDsFromCache(ctx context.Context, conn driver.Conn, chainView, baseAsset, fromParam, toParam string) ([]uint64, error) {
 	query := fmt.Sprintf(`SELECT
     c.symbol_ids
 FROM %s AS c
@@ -227,9 +227,9 @@ WHERE c.base_asset = {base_asset:String}
 	}
 	defer rows.Close()
 
-	seen := make(map[uint32]struct{})
+	seen := make(map[uint64]struct{})
 	for rows.Next() {
-		var symbolIDs []uint32
+		var symbolIDs []uint64
 		if err := rows.Scan(&symbolIDs); err != nil {
 			return nil, fmt.Errorf("scan candidate symbol row: %w", err)
 		}
@@ -244,7 +244,7 @@ WHERE c.base_asset = {base_asset:String}
 	if len(seen) == 0 {
 		return nil, nil
 	}
-	ids := make([]uint32, 0, len(seen))
+	ids := make([]uint64, 0, len(seen))
 	for symbolID := range seen {
 		ids = append(ids, symbolID)
 	}
@@ -259,7 +259,7 @@ func loadOptionsChainFromCache(
 	from, to time.Time,
 	fromParam, toParam, underlyingCloseExpr, joinClause string,
 	resolution, cacheResolution time.Duration,
-	metaMap map[uint32]symbolMetaRecord,
+	metaMap map[uint64]symbolMetaRecord,
 	numTimestamps int,
 ) (map[int64][]backtest.OptionContract, uint64, uint64, error) {
 	query := fmt.Sprintf(`SELECT
@@ -305,7 +305,7 @@ WHERE c.base_asset = {base_asset:String}
 	for rows.Next() {
 		var (
 			ts              time.Time
-			symbolIDs       []uint32
+			symbolIDs       []uint64
 			deltas          []float32
 			gammas          []float32
 			vegas           []float32
@@ -315,7 +315,7 @@ WHERE c.base_asset = {base_asset:String}
 			askPrices       []float32
 			markPrices      []float32
 			markIVs         []float32
-			volumes         []uint64
+			volumes         []float64
 			openInterests   []float32
 			underlyingClose float32
 		)
@@ -408,7 +408,7 @@ func loadOptionsChainFromBars(
 	from, to time.Time,
 	underlyingCloseExpr, joinClause string,
 	resolution time.Duration,
-	metaMap map[uint32]symbolMetaRecord,
+	metaMap map[uint64]symbolMetaRecord,
 	numTimestamps int,
 ) (map[int64][]backtest.OptionContract, uint64, error) {
 	return loadOptionsChainFromBarsForSymbols(ctx, conn, baseAsset, interval, from, to, underlyingCloseExpr, joinClause, resolution, metaMap, numTimestamps, nil)
@@ -421,14 +421,14 @@ func loadOptionsChainFromBarsForSymbols(
 	from, to time.Time,
 	underlyingCloseExpr, joinClause string,
 	resolution time.Duration,
-	metaMap map[uint32]symbolMetaRecord,
+	metaMap map[uint64]symbolMetaRecord,
 	numTimestamps int,
-	symbolIDs []uint32,
+	symbolIDs []uint64,
 ) (map[int64][]backtest.OptionContract, uint64, error) {
 	optionTableName := resolveOptionTableName(interval)
 	symbolFilter := ""
 	if len(symbolIDs) > 0 {
-		symbolFilter = "\n    AND has({symbol_ids:Array(UInt32)}, b.symbol_id)"
+		symbolFilter = "\n    AND has({symbol_ids:Array(UInt64)}, b.symbol_id)"
 	}
 	query := fmt.Sprintf(`SELECT
     b.timestamp,
@@ -443,7 +443,7 @@ func loadOptionsChainFromBarsForSymbols(
     b.mark_close,
     b.mark_iv_close,
     %s AS underlying_close,
-    toUInt64(b.tick_count) AS tick_count,
+	b.volume,
     b.open_interest
 FROM %s AS b
 %s
@@ -477,9 +477,9 @@ func loadOptionsChainChunk(
 	conn driver.Conn,
 	query, baseAsset string,
 	chunkStart, chunkEnd time.Time,
-	symbolIDs []uint32,
+	symbolIDs []uint64,
 	resolution time.Duration,
-	metaMap map[uint32]symbolMetaRecord,
+	metaMap map[uint64]symbolMetaRecord,
 	byTimestamp map[int64][]backtest.OptionContract,
 ) (uint64, error) {
 	queryArgs := []any{
@@ -502,7 +502,7 @@ func loadOptionsChainChunk(
 	for rows.Next() {
 		var (
 			ts              time.Time
-			symbolID        uint32
+			symbolID        uint64
 			delta           float32
 			gamma           float32
 			vega            float32
@@ -513,7 +513,7 @@ func loadOptionsChainChunk(
 			markClose       float32
 			markIVClose     float32
 			underlyingClose float32
-			tickCount       uint64
+			volume          float64
 			openInterest    float32
 		)
 
@@ -521,7 +521,7 @@ func loadOptionsChainChunk(
 			&ts, &symbolID,
 			&delta, &gamma, &vega, &theta, &rho,
 			&bidClose, &askClose, &markClose, &markIVClose,
-			&underlyingClose, &tickCount, &openInterest,
+			&underlyingClose, &volume, &openInterest,
 		); err != nil {
 			return 0, fmt.Errorf("scan chain row: %w", err)
 		}
@@ -533,7 +533,7 @@ func loadOptionsChainChunk(
 		}
 
 		key := ts.UTC().Truncate(resolution).Unix()
-		byTimestamp[key] = append(byTimestamp[key], buildOptionContract(meta, delta, gamma, vega, theta, rho, bidClose, askClose, markClose, markIVClose, underlyingClose, tickCount, openInterest))
+		byTimestamp[key] = append(byTimestamp[key], buildOptionContract(meta, delta, gamma, vega, theta, rho, bidClose, askClose, markClose, markIVClose, underlyingClose, volume, openInterest))
 	}
 	if err := rows.Err(); err != nil {
 		return 0, fmt.Errorf("iterate chain rows for %s [%s,%s): %w", baseAsset, backtestTimeParam(chunkStart), backtestTimeParam(chunkEnd), err)
@@ -549,7 +549,7 @@ func minTime(left, right time.Time) time.Time {
 	return right
 }
 
-func buildOptionContract(meta symbolMetaRecord, delta, gamma, vega, theta, rho, bidClose, askClose, markClose, markIVClose, underlyingClose float32, tickCount uint64, openInterest float32) backtest.OptionContract {
+func buildOptionContract(meta symbolMetaRecord, delta, gamma, vega, theta, rho, bidClose, askClose, markClose, markIVClose, underlyingClose float32, volume float64, openInterest float32) backtest.OptionContract {
 	ot := backtest.Call
 	if meta.optionType == "put" {
 		ot = backtest.Put
@@ -571,7 +571,7 @@ func buildOptionContract(meta symbolMetaRecord, delta, gamma, vega, theta, rho, 
 		MarkPrice:       float64(markClose),
 		IV:              float64(markIVClose),
 		UnderlyingPrice: float64(underlyingClose),
-		Volume:          float64(tickCount),
+		Volume:          volume,
 		OpenInterest:    float64(openInterest),
 	}
 }

@@ -38,6 +38,11 @@ Thumbs.db
 # Generated reports
 reports/
 
+# Swagger-generated docs
+docs/docs.go
+docs/swagger.json
+docs/swagger.yaml
+
 *.json
 *.csv
 *.npy

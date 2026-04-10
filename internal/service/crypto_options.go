@@ -74,6 +74,7 @@ func (s *CryptoOptionsService) QueryBars(ctx context.Context, req dto.BarRequest
     ifNull(u.high, toFloat32(0))  AS underlying_price_high,
     ifNull(u.low, toFloat32(0))   AS underlying_price_low,
     ifNull(u.close, toFloat32(0)) AS underlying_price_close,
+	b.volume,
     b.open_interest,
     toUInt16(b.tick_count) AS tick_count
 FROM (%s) AS b
@@ -101,7 +102,7 @@ LIMIT %d`, barSourceSQL, spotSourceSQL, limit+1)
 		return nil, fmt.Errorf("iterate bar rows: %w", err)
 	}
 
-	resp := &dto.BarResponse{}
+	resp := &dto.BarResponse{Data: make([]dto.BarRow, 0)}
 	if len(bars) > limit {
 		resp.NextCursor = encodeCursor(bars[limit-1].Timestamp)
 		resp.Data = bars[:limit]
@@ -130,11 +131,11 @@ FROM crypto_options_symbol_meta FINAL`
 		args = append(args, clickhouse.Named("search", "%"+req.Search+"%"))
 	}
 	if req.Cursor != "" {
-		cursorID, err := decodeCursorUint32(req.Cursor)
+		cursorID, err := decodeCursorUint64(req.Cursor)
 		if err != nil {
 			return nil, fmt.Errorf("invalid cursor: %w", err)
 		}
-		conditions = append(conditions, "symbol_id > {cursor_id:UInt32}")
+		conditions = append(conditions, "symbol_id > {cursor_id:UInt64}")
 		args = append(args, clickhouse.Named("cursor_id", cursorID))
 	}
 
@@ -156,7 +157,7 @@ FROM crypto_options_symbol_meta FINAL`
 	}
 	defer rows.Close()
 
-	var symbols []dto.SymbolRow
+	symbols := make([]dto.SymbolRow, 0, limit)
 	for rows.Next() {
 		var r dto.SymbolRow
 		if err := rows.Scan(
@@ -171,9 +172,9 @@ FROM crypto_options_symbol_meta FINAL`
 		return nil, fmt.Errorf("iterate symbol rows: %w", err)
 	}
 
-	resp := &dto.SymbolResponse{}
+	resp := &dto.SymbolResponse{Data: make([]dto.SymbolRow, 0)}
 	if len(symbols) > limit {
-		resp.NextCursor = encodeCursorUint32(symbols[limit-1].SymbolID)
+		resp.NextCursor = encodeCursorUint64(symbols[limit-1].SymbolID)
 		resp.Data = symbols[:limit]
 	} else {
 		resp.Data = symbols
@@ -241,7 +242,7 @@ LIMIT %d`, barSourceSQL, spotSourceSQL, limit+1)
 	}
 	defer rows.Close()
 
-	var greeks []dto.GreeksRow
+	greeks := make([]dto.GreeksRow, 0, limit)
 	for rows.Next() {
 		var r dto.GreeksRow
 		if err := rows.Scan(
@@ -259,7 +260,7 @@ LIMIT %d`, barSourceSQL, spotSourceSQL, limit+1)
 		return nil, fmt.Errorf("iterate greeks rows: %w", err)
 	}
 
-	resp := &dto.GreeksResponse{}
+	resp := &dto.GreeksResponse{Data: make([]dto.GreeksRow, 0)}
 	if len(greeks) > limit {
 		resp.NextCursor = encodeCursor(greeks[limit-1].Timestamp)
 		resp.Data = greeks[:limit]
@@ -272,7 +273,7 @@ LIMIT %d`, barSourceSQL, spotSourceSQL, limit+1)
 // --- helpers ---
 
 func scanBarRows(rows driver.Rows) ([]dto.BarRow, error) {
-	var bars []dto.BarRow
+	bars := make([]dto.BarRow, 0)
 	for rows.Next() {
 		var r dto.BarRow
 		if err := rows.Scan(
@@ -284,7 +285,7 @@ func scanBarRows(rows driver.Rows) ([]dto.BarRow, error) {
 			&r.MarkIVOpen, &r.MarkIVClose, &r.BidIVOpen, &r.AskIVOpen,
 			&r.Delta, &r.Gamma, &r.Vega, &r.Theta, &r.Rho,
 			&r.UnderlyingPriceOpen, &r.UnderlyingPriceHigh, &r.UnderlyingPriceLow, &r.UnderlyingPriceClose,
-			&r.OpenInterest, &r.TickCount,
+			&r.Volume, &r.OpenInterest, &r.TickCount,
 		); err != nil {
 			return nil, fmt.Errorf("scan bar row: %w", err)
 		}
@@ -318,20 +319,20 @@ func decodeCursor(cursor string) (time.Time, error) {
 	return time.Parse(time.RFC3339, string(b))
 }
 
-func encodeCursorUint32(id uint32) string {
+func encodeCursorUint64(id uint64) string {
 	return base64.RawURLEncoding.EncodeToString([]byte(strconv.FormatUint(uint64(id), 10)))
 }
 
-func decodeCursorUint32(cursor string) (uint32, error) {
+func decodeCursorUint64(cursor string) (uint64, error) {
 	b, err := base64.RawURLEncoding.DecodeString(cursor)
 	if err != nil {
 		return 0, err
 	}
-	v, err := strconv.ParseUint(string(b), 10, 32)
+	v, err := strconv.ParseUint(string(b), 10, 64)
 	if err != nil {
 		return 0, err
 	}
-	return uint32(v), nil
+	return v, nil
 }
 
 // QueryChain returns crypto option chain snapshots for a base asset over a time range.
@@ -376,6 +377,7 @@ SELECT
     c.vega,
     c.theta,
     c.rho,
+	c.volume,
     c.open_interest,
     c.tick_count,
     c.underlying_close
@@ -401,7 +403,7 @@ LIMIT {limit:UInt32}
 
 	type rawRow struct {
 		timestamp       time.Time
-		symbolID        uint32
+		symbolID        uint64
 		symbol          string
 		optionType      string
 		expiration      time.Time
@@ -415,6 +417,7 @@ LIMIT {limit:UInt32}
 		vega            float32
 		theta           float32
 		rho             float32
+		volume          float64
 		openInterest    float32
 		tickCount       uint16
 		underlyingClose float32
@@ -427,7 +430,7 @@ LIMIT {limit:UInt32}
 			&r.expiration, &r.strike,
 			&r.markClose, &r.bidClose, &r.askClose,
 			&r.markIV, &r.delta, &r.gamma, &r.vega, &r.theta, &r.rho,
-			&r.openInterest, &r.tickCount, &r.underlyingClose,
+			&r.volume, &r.openInterest, &r.tickCount, &r.underlyingClose,
 		); err != nil {
 			return nil, fmt.Errorf("scan chain row: %w", err)
 		}
@@ -466,6 +469,7 @@ LIMIT {limit:UInt32}
 			Vega:            r.vega,
 			Theta:           r.theta,
 			Rho:             r.rho,
+			Volume:          r.volume,
 			OpenInterest:    r.openInterest,
 			TickCount:       r.tickCount,
 			UnderlyingClose: r.underlyingClose,
@@ -475,7 +479,7 @@ LIMIT {limit:UInt32}
 		snapshots = append(snapshots, *cur)
 	}
 
-	resp := &dto.CryptoOptionChainResponse{}
+	resp := &dto.CryptoOptionChainResponse{Data: make([]dto.CryptoOptionChainSnapshot, 0)}
 	if len(allRows) > limit {
 		// Trim last snapshot if it exceeds the limit
 		resp.Data = snapshots

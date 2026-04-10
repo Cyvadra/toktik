@@ -21,7 +21,7 @@ type OptionBar1m struct {
 	Vega              float32
 	Theta             float32
 	Rho               float32
-	Volume            uint32
+	Volume            float64
 	Transactions      uint32
 	// Session metadata
 	MarketDate       time.Time // trading date in America/New_York
@@ -39,7 +39,7 @@ type StockBar1m struct {
 	High         float32
 	Low          float32
 	Close        float32
-	Volume       uint32
+	Volume       float64
 	Transactions uint32
 	// Session metadata
 	MarketDate       time.Time

@@ -60,7 +60,7 @@ type CryptoOptionChainRequest struct {
 
 // CryptoOptionChainContract is one contract inside a crypto option chain snapshot.
 type CryptoOptionChainContract struct {
-	SymbolID        uint32    `json:"symbol_id"`
+	SymbolID        uint64    `json:"symbol_id"`
 	Symbol          string    `json:"symbol"`
 	OptionType      string    `json:"option_type"`
 	Expiration      time.Time `json:"expiration"`
@@ -74,6 +74,7 @@ type CryptoOptionChainContract struct {
 	Vega            float32   `json:"vega"`
 	Theta           float32   `json:"theta"`
 	Rho             float32   `json:"rho"`
+	Volume          float64   `json:"volume"`
 	OpenInterest    float32   `json:"open_interest"`
 	TickCount       uint16    `json:"tick_count"`
 	UnderlyingClose float32   `json:"underlying_close"`

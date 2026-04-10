@@ -19,7 +19,7 @@ func (s *PolygonService) QueryStockAggregates(ctx context.Context, req dto.Polyg
 	if err != nil {
 		return nil, err
 	}
-	return &dto.PolygonAggregateResponse{Data: data}, nil
+	return &dto.PolygonAggregateResponse{Data: sliceOrEmpty(data)}, nil
 }
 
 func (s *PolygonService) QueryStockQuotes(ctx context.Context, req dto.PolygonStockQuotesRequest) (*dto.PolygonQuoteResponse, error) {
@@ -27,7 +27,7 @@ func (s *PolygonService) QueryStockQuotes(ctx context.Context, req dto.PolygonSt
 	if err != nil {
 		return nil, err
 	}
-	return &dto.PolygonQuoteResponse{Data: data}, nil
+	return &dto.PolygonQuoteResponse{Data: sliceOrEmpty(data)}, nil
 }
 
 func (s *PolygonService) QueryStockTrades(ctx context.Context, req dto.PolygonStockTradesRequest) (*dto.PolygonTradeResponse, error) {
@@ -35,7 +35,7 @@ func (s *PolygonService) QueryStockTrades(ctx context.Context, req dto.PolygonSt
 	if err != nil {
 		return nil, err
 	}
-	return &dto.PolygonTradeResponse{Data: data}, nil
+	return &dto.PolygonTradeResponse{Data: sliceOrEmpty(data)}, nil
 }
 
 func (s *PolygonService) QueryOptionContract(ctx context.Context, req dto.PolygonOptionContractRequest) (*dto.PolygonOptionContractResponse, error) {
@@ -51,7 +51,7 @@ func (s *PolygonService) QueryOptionChain(ctx context.Context, req dto.PolygonOp
 	if err != nil {
 		return nil, err
 	}
-	return &dto.PolygonOptionChainResponse{Data: data}, nil
+	return &dto.PolygonOptionChainResponse{Data: sliceOrEmpty(data)}, nil
 }
 
 func (s *PolygonService) QueryOptionAggregates(ctx context.Context, req dto.PolygonAggregateRequest) (*dto.PolygonAggregateResponse, error) {
@@ -59,7 +59,7 @@ func (s *PolygonService) QueryOptionAggregates(ctx context.Context, req dto.Poly
 	if err != nil {
 		return nil, err
 	}
-	return &dto.PolygonAggregateResponse{Data: data}, nil
+	return &dto.PolygonAggregateResponse{Data: sliceOrEmpty(data)}, nil
 }
 
 func (s *PolygonService) QueryOptionQuotes(ctx context.Context, req dto.PolygonOptionQuotesRequest) (*dto.PolygonQuoteResponse, error) {
@@ -67,7 +67,7 @@ func (s *PolygonService) QueryOptionQuotes(ctx context.Context, req dto.PolygonO
 	if err != nil {
 		return nil, err
 	}
-	return &dto.PolygonQuoteResponse{Data: data}, nil
+	return &dto.PolygonQuoteResponse{Data: sliceOrEmpty(data)}, nil
 }
 
 func (s *PolygonService) QueryOptionTrades(ctx context.Context, req dto.PolygonOptionTradesRequest) (*dto.PolygonTradeResponse, error) {
@@ -75,5 +75,5 @@ func (s *PolygonService) QueryOptionTrades(ctx context.Context, req dto.PolygonO
 	if err != nil {
 		return nil, err
 	}
-	return &dto.PolygonTradeResponse{Data: data}, nil
+	return &dto.PolygonTradeResponse{Data: sliceOrEmpty(data)}, nil
 }

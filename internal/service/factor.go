@@ -119,7 +119,7 @@ func (s *FactorService) QueryFactorBars(ctx context.Context, req dto.FactorBarRe
 		})
 	}
 
-	resp := &dto.FactorBarResponse{}
+	resp := &dto.FactorBarResponse{Data: make([]dto.FactorBarRow, 0)}
 	if len(data) > limit {
 		resp.Data = data[:limit]
 		resp.NextCursor = encodeCursor(data[limit-1].Timestamp)

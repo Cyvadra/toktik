@@ -163,7 +163,7 @@ WHERE underlying = {underlying:String}
 			vegas       []float32
 			thetas      []float32
 			rhos        []float32
-			volumes     []uint64
+			volumes     []float64
 			txs         []uint64
 		)
 		if err := rows.Scan(
@@ -256,7 +256,7 @@ WHERE underlying = {underlying:String}
 			vega            float32
 			theta           float32
 			rho             float32
-			volume          uint64
+			volume          float64
 			transactions    uint64
 		)
 		if err := rows.Scan(
@@ -293,7 +293,8 @@ func buildUSOptionContract(
 	expiration time.Time,
 	strike float64,
 	close, underlyingClose, iv, delta, gamma, vega, theta, rho float32,
-	volume, transactions uint64,
+	volume float64,
+	transactions uint64,
 ) backtest.OptionContract {
 	ot := backtest.Call
 	if strings.EqualFold(optionType, "P") {
@@ -316,7 +317,7 @@ func buildUSOptionContract(
 		MarkPrice:       mark,
 		IV:              float64(iv),
 		UnderlyingPrice: float64(underlyingClose),
-		Volume:          float64(volume + transactions),
+		Volume:          volume,
 		OpenInterest:    0,
 	}
 }

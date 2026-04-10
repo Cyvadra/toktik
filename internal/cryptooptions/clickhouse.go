@@ -35,6 +35,9 @@ func InitSchema(ctx context.Context, conn driver.Conn, ddlPath string) error {
 	if err := ensureUTCExpirationColumns(ctx, conn); err != nil {
 		return err
 	}
+	if err := ensureMarketVolumeColumns(ctx, conn); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -87,6 +90,21 @@ WHERE database = currentDatabase()
 	return nil
 }
 
+func ensureMarketVolumeColumns(ctx context.Context, conn driver.Conn) error {
+	stmts := []string{
+		"ALTER TABLE crypto_options_bar_1m ADD COLUMN IF NOT EXISTS volume Float64 DEFAULT toFloat64(tick_count)",
+		"ALTER TABLE crypto_spot_bar_1m ADD COLUMN IF NOT EXISTS volume Float64 DEFAULT volume_base",
+		"ALTER TABLE crypto_options_bar_1m MODIFY COLUMN volume Float64 DEFAULT toFloat64(tick_count)",
+		"ALTER TABLE crypto_spot_bar_1m MODIFY COLUMN volume Float64 DEFAULT volume_base",
+	}
+	for _, stmt := range stmts {
+		if err := conn.Exec(ctx, stmt); err != nil {
+			return fmt.Errorf("ensure volume columns: %w", err)
+		}
+	}
+	return nil
+}
+
 func splitSQLStatements(ddl string) []string {
 	lines := strings.Split(ddl, "\n")
 	filtered := make([]string, 0, len(lines))
@@ -136,7 +154,7 @@ func ConnectClickHouse(ctx context.Context, dsn string) (driver.Conn, error) {
 }
 
 // InsertSymbols batch-inserts symbol metadata into crypto_options_symbol_meta.
-// It validates that no CRC32 symbol ID collisions exist within the batch or
+// It validates that no xxHash64 symbol ID collisions exist within the batch or
 // against existing data in ClickHouse before inserting.
 func InsertSymbols(ctx context.Context, conn driver.Conn, symbols []SymbolMeta) error {
 	if len(symbols) == 0 {
@@ -144,7 +162,7 @@ func InsertSymbols(ctx context.Context, conn driver.Conn, symbols []SymbolMeta) 
 	}
 
 	// Check for ID collisions within this batch.
-	idToSymbol := make(map[uint32]string, len(symbols))
+	idToSymbol := make(map[uint64]string, len(symbols))
 	for _, s := range symbols {
 		if existing, ok := idToSymbol[s.SymbolID]; ok && existing != s.Symbol {
 			return fmt.Errorf("symbol ID collision within batch: %q and %q both produce ID %d", existing, s.Symbol, s.SymbolID)
@@ -185,17 +203,17 @@ symbol_id, symbol, base_asset, option_type, strike_price, expiration, underlying
 }
 
 // checkSymbolCollisions queries existing symbol metadata and returns an error
-// if any new symbol produces the same CRC32 ID as a different existing symbol.
+// if any new symbol produces the same xxHash64 ID as a different existing symbol.
 func checkSymbolCollisions(ctx context.Context, conn driver.Conn, symbols []SymbolMeta) error {
-	ids := make([]uint32, len(symbols))
-	byID := make(map[uint32]string, len(symbols))
+	ids := make([]uint64, len(symbols))
+	byID := make(map[uint64]string, len(symbols))
 	for i, s := range symbols {
 		ids[i] = s.SymbolID
 		byID[s.SymbolID] = s.Symbol
 	}
 
 	rows, err := conn.Query(ctx,
-		`SELECT symbol_id, symbol FROM crypto_options_symbol_meta FINAL WHERE symbol_id IN ({ids:Array(UInt32)})`,
+		`SELECT symbol_id, symbol FROM crypto_options_symbol_meta FINAL WHERE symbol_id IN ({ids:Array(UInt64)})`,
 		clickhouse.Named("ids", ids))
 	if err != nil {
 		return fmt.Errorf("check symbol collisions: %w", err)
@@ -203,13 +221,13 @@ func checkSymbolCollisions(ctx context.Context, conn driver.Conn, symbols []Symb
 	defer rows.Close()
 
 	for rows.Next() {
-		var id uint32
+		var id uint64
 		var existingSymbol string
 		if err := rows.Scan(&id, &existingSymbol); err != nil {
 			return fmt.Errorf("scan collision check: %w", err)
 		}
 		if newSymbol, ok := byID[id]; ok && newSymbol != existingSymbol {
-			return fmt.Errorf("symbol ID collision: new %q vs existing %q both produce CRC32 ID %d", newSymbol, existingSymbol, id)
+			return fmt.Errorf("symbol ID collision: new %q vs existing %q both produce xxHash64 ID %d", newSymbol, existingSymbol, id)
 		}
 	}
 	return nil
@@ -277,13 +295,13 @@ bid_open, bid_high, bid_low, bid_close,
 ask_open, ask_high, ask_low, ask_close,
 mark_iv_open, mark_iv_close, bid_iv_open, ask_iv_open,
 delta, gamma, vega, theta, rho,
-open_interest, tick_count
+volume, open_interest, tick_count
 )`
 
 const spotBarInsertSQL = `INSERT INTO crypto_spot_bar_1m (
 timestamp, symbol, price_source,
 open, high, low, close,
-tick_count, volume_base, volume_quote, bar_interval
+volume, tick_count, volume_base, volume_quote, bar_interval
 )`
 
 // InsertBars batch-inserts 1-minute bars into crypto_options_bar_1m.
@@ -297,6 +315,10 @@ func InsertBars(ctx context.Context, conn driver.Conn, bars <-chan Bar1m, batchS
 
 	batchCount := 0
 	for bar := range bars {
+		volume := bar.Volume
+		if volume == 0 {
+			volume = float64(bar.TickCount)
+		}
 		if err := batch.Append(
 			bar.Timestamp,
 			bar.SymbolID,
@@ -307,7 +329,7 @@ func InsertBars(ctx context.Context, conn driver.Conn, bars <-chan Bar1m, batchS
 			bar.AskOpen, bar.AskHigh, bar.AskLow, bar.AskClose,
 			bar.MarkIVOpen, bar.MarkIVClose, bar.BidIVOpen, bar.AskIVOpen,
 			bar.Delta, bar.Gamma, bar.Vega, bar.Theta, bar.Rho,
-			bar.OpenInterest, bar.TickCount,
+			volume, bar.OpenInterest, bar.TickCount,
 		); err != nil {
 			return totalRows, fmt.Errorf("append bar row: %w", err)
 		}
@@ -400,6 +422,14 @@ func InsertSpotBars(ctx context.Context, conn driver.Conn, bars <-chan SpotBar1m
 		if barInterval == "" {
 			barInterval = "1m"
 		}
+		volume := bar.Volume
+		if volume == 0 {
+			if bar.VolumeBase != 0 {
+				volume = bar.VolumeBase
+			} else {
+				volume = float64(bar.TickCount)
+			}
+		}
 		if err := batch.Append(
 			bar.Timestamp,
 			bar.Symbol,
@@ -408,6 +438,7 @@ func InsertSpotBars(ctx context.Context, conn driver.Conn, bars <-chan SpotBar1m
 			bar.High,
 			bar.Low,
 			bar.Close,
+			volume,
 			bar.TickCount,
 			bar.VolumeBase,
 			bar.VolumeQuote,

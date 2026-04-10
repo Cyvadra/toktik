@@ -107,22 +107,39 @@ func normalizeBackfillIntervals(input []string) ([]string, error) {
 func backfillOptionInterval(ctx context.Context, conn driver.Conn, iv KlineInterval, from, to time.Time, baseAsset string, replace bool) error {
 	aggTable := fmt.Sprintf("crypto_options_bar_%s_agg", iv.Suffix)
 
-	hasRows, err := optionAggHasRows(ctx, conn, aggTable, from, to, baseAsset)
+	effectiveFrom, effectiveTo, hasSourceRows, err := resolveOptionSourceBounds(ctx, conn, from, to, baseAsset)
 	if err != nil {
 		return err
 	}
-	if hasRows && !replace {
-		log.Printf("[kline-backfill] skip option %s: target table already has rows in selected scope", iv.Suffix)
+	if !hasSourceRows {
+		log.Printf("[kline-backfill] skip option %s: no source rows in selected scope", iv.Suffix)
 		return nil
 	}
 
-	if hasRows && replace {
-		if err := optionAggDeleteScope(ctx, conn, aggTable, from, to, baseAsset); err != nil {
-			return fmt.Errorf("clear existing option scope: %w", err)
-		}
+	windows := splitMonthlyBackfillWindows(effectiveFrom, effectiveTo)
+	if len(windows) == 0 {
+		log.Printf("[kline-backfill] skip option %s: no backfill windows generated", iv.Suffix)
+		return nil
 	}
 
-	query := fmt.Sprintf(`INSERT INTO %s
+	log.Printf("[kline-backfill] option interval %s processing %d month-sized chunks from %s to %s", iv.Suffix, len(windows), effectiveFrom.Format(time.RFC3339), effectiveTo.Format(time.RFC3339))
+
+	for idx, window := range windows {
+		hasRows, err := optionAggHasRows(ctx, conn, aggTable, window.From, window.To, baseAsset)
+		if err != nil {
+			return err
+		}
+		if hasRows && !replace {
+			log.Printf("[kline-backfill] skip option %s chunk %d/%d: target table already has rows in %s to %s", iv.Suffix, idx+1, len(windows), window.From.Format(time.RFC3339), window.To.Format(time.RFC3339))
+			continue
+		}
+		if hasRows && replace {
+			if err := optionAggDeleteScope(ctx, conn, aggTable, window.From, window.To, baseAsset); err != nil {
+				return fmt.Errorf("clear existing option scope: %w", err)
+			}
+		}
+
+		query := fmt.Sprintf(`INSERT INTO %s
 SELECT
     %s AS ts,
     symbol_id,
@@ -152,17 +169,21 @@ SELECT
     argMinState(vega, timestamp)                   AS vega_state,
     argMinState(theta, timestamp)                  AS theta_state,
     argMinState(rho, timestamp)                    AS rho_state,
+    sumState(volume)                               AS volume_state,
     argMaxState(open_interest, timestamp)          AS open_interest_state,
     sumState(tick_count)                           AS tick_count_state
 FROM crypto_options_bar_1m
 %s
-GROUP BY ts, symbol_id, base_asset`, aggTable, iv.TimeFunc, optionSourceWhere(from, to, baseAsset))
+GROUP BY ts, symbol_id, base_asset`, aggTable, iv.TimeFunc, optionSourceWhere(window.From, window.To, baseAsset))
 
-	args := optionSourceArgs(from, to, baseAsset)
-	if err := retryBackfillTimeout(ctx, fmt.Sprintf("insert aggregated option rows for %s", iv.Suffix), func() error {
-		return conn.Exec(ctx, query, args...)
-	}); err != nil {
-		return fmt.Errorf("insert aggregated option rows: %w", err)
+		args := optionSourceArgs(window.From, window.To, baseAsset)
+		log.Printf("[kline-backfill] option interval %s chunk %d/%d started: %s to %s", iv.Suffix, idx+1, len(windows), window.From.Format(time.RFC3339), window.To.Format(time.RFC3339))
+		if err := retryBackfillTimeout(ctx, fmt.Sprintf("insert aggregated option rows for %s chunk %d/%d", iv.Suffix, idx+1, len(windows)), func() error {
+			return conn.Exec(ctx, query, args...)
+		}); err != nil {
+			return fmt.Errorf("insert aggregated option rows: %w", err)
+		}
+		log.Printf("[kline-backfill] option interval %s chunk %d/%d completed", iv.Suffix, idx+1, len(windows))
 	}
 
 	log.Printf("[kline-backfill] option interval %s completed", iv.Suffix)
@@ -172,22 +193,39 @@ GROUP BY ts, symbol_id, base_asset`, aggTable, iv.TimeFunc, optionSourceWhere(fr
 func backfillSpotInterval(ctx context.Context, conn driver.Conn, iv KlineInterval, from, to time.Time, baseAsset string, replace bool) error {
 	aggTable := fmt.Sprintf("crypto_spot_bar_%s_agg", iv.Suffix)
 
-	hasRows, err := spotAggHasRows(ctx, conn, aggTable, from, to, baseAsset)
+	effectiveFrom, effectiveTo, hasSourceRows, err := resolveSpotSourceBounds(ctx, conn, from, to, baseAsset)
 	if err != nil {
 		return err
 	}
-	if hasRows && !replace {
-		log.Printf("[kline-backfill] skip spot %s: target table already has rows in selected scope", iv.Suffix)
+	if !hasSourceRows {
+		log.Printf("[kline-backfill] skip spot %s: no source rows in selected scope", iv.Suffix)
 		return nil
 	}
 
-	if hasRows && replace {
-		if err := spotAggDeleteScope(ctx, conn, aggTable, from, to, baseAsset); err != nil {
-			return fmt.Errorf("clear existing spot scope: %w", err)
-		}
+	windows := splitMonthlyBackfillWindows(effectiveFrom, effectiveTo)
+	if len(windows) == 0 {
+		log.Printf("[kline-backfill] skip spot %s: no backfill windows generated", iv.Suffix)
+		return nil
 	}
 
-	query := fmt.Sprintf(`INSERT INTO %s
+	log.Printf("[kline-backfill] spot interval %s processing %d month-sized chunks from %s to %s", iv.Suffix, len(windows), effectiveFrom.Format(time.RFC3339), effectiveTo.Format(time.RFC3339))
+
+	for idx, window := range windows {
+		hasRows, err := spotAggHasRows(ctx, conn, aggTable, window.From, window.To, baseAsset)
+		if err != nil {
+			return err
+		}
+		if hasRows && !replace {
+			log.Printf("[kline-backfill] skip spot %s chunk %d/%d: target table already has rows in %s to %s", iv.Suffix, idx+1, len(windows), window.From.Format(time.RFC3339), window.To.Format(time.RFC3339))
+			continue
+		}
+		if hasRows && replace {
+			if err := spotAggDeleteScope(ctx, conn, aggTable, window.From, window.To, baseAsset); err != nil {
+				return fmt.Errorf("clear existing spot scope: %w", err)
+			}
+		}
+
+		query := fmt.Sprintf(`INSERT INTO %s
 SELECT
     %s AS ts,
     symbol,
@@ -196,16 +234,22 @@ SELECT
     maxState(high)                               AS high_state,
     minState(low)                                AS low_state,
     argMaxState(close, timestamp)                AS close_state,
-    sumState(tick_count)                         AS tick_count_state
+    sumState(volume)                             AS volume_state,
+    sumState(tick_count)                         AS tick_count_state,
+    sumState(volume_base)                        AS volume_base_state,
+    sumState(volume_quote)                       AS volume_quote_state
 FROM crypto_spot_bar_1m
 %s
-GROUP BY ts, symbol`, aggTable, iv.TimeFunc, spotSourceWhere(from, to, baseAsset))
+GROUP BY ts, symbol`, aggTable, iv.TimeFunc, spotSourceWhere(window.From, window.To, baseAsset))
 
-	args := spotSourceArgs(from, to, baseAsset)
-	if err := retryBackfillTimeout(ctx, fmt.Sprintf("insert aggregated spot rows for %s", iv.Suffix), func() error {
-		return conn.Exec(ctx, query, args...)
-	}); err != nil {
-		return fmt.Errorf("insert aggregated spot rows: %w", err)
+		args := spotSourceArgs(window.From, window.To, baseAsset)
+		log.Printf("[kline-backfill] spot interval %s chunk %d/%d started: %s to %s", iv.Suffix, idx+1, len(windows), window.From.Format(time.RFC3339), window.To.Format(time.RFC3339))
+		if err := retryBackfillTimeout(ctx, fmt.Sprintf("insert aggregated spot rows for %s chunk %d/%d", iv.Suffix, idx+1, len(windows)), func() error {
+			return conn.Exec(ctx, query, args...)
+		}); err != nil {
+			return fmt.Errorf("insert aggregated spot rows: %w", err)
+		}
+		log.Printf("[kline-backfill] spot interval %s chunk %d/%d completed", iv.Suffix, idx+1, len(windows))
 	}
 
 	log.Printf("[kline-backfill] spot interval %s completed", iv.Suffix)
@@ -281,6 +325,7 @@ SELECT
 	argMaxState(ask_close, timestamp)     AS ask_close_state,
 	argMaxState(mark_close, timestamp)    AS mark_close_state,
 	argMaxState(mark_iv_close, timestamp) AS mark_iv_close_state,
+	    sumState(volume)                   AS volume_state,
 	    sumState(toUInt64(tick_count))   AS tick_count_state,
 	argMaxState(open_interest, timestamp) AS open_interest_state
 FROM crypto_options_bar_1m
@@ -302,6 +347,7 @@ SELECT
 	 argMaxState(ask_close, last_ts)       AS ask_close_state,
 	 argMaxState(mark_close, last_ts)      AS mark_close_state,
 	 argMaxState(mark_iv_close, last_ts)   AS mark_iv_close_state,
+	 sumState(volume)                      AS volume_state,
 	 sumState(tick_count)                  AS tick_count_state,
 	 argMaxState(open_interest, last_ts)   AS open_interest_state
 FROM
@@ -321,6 +367,7 @@ FROM
 	 	argMax(ask_close, timestamp)     AS ask_close,
 	 	argMax(mark_close, timestamp)    AS mark_close,
 	 	argMax(mark_iv_close, timestamp) AS mark_iv_close,
+	 	sum(volume)                      AS volume,
 	 	sum(toUInt64(tick_count))        AS tick_count,
 	 	argMax(open_interest, timestamp) AS open_interest
 	 FROM crypto_options_bar_1m
@@ -347,6 +394,28 @@ func splitBackfillWindows(from, to time.Time, step time.Duration) []backfillWind
 			next = to.UTC()
 		}
 		windows = append(windows, backfillWindow{From: current, To: next})
+	}
+	return windows
+}
+
+func splitMonthlyBackfillWindows(from, to time.Time) []backfillWindow {
+	if from.IsZero() || to.IsZero() || !to.After(from) {
+		return nil
+	}
+
+	current := from.UTC()
+	end := to.UTC()
+	windows := make([]backfillWindow, 0, 64)
+	for current.Before(end) {
+		next := time.Date(current.Year(), current.Month()+1, 1, 0, 0, 0, 0, time.UTC)
+		if !next.After(current) {
+			next = current.Add(31 * 24 * time.Hour)
+		}
+		if next.After(end) {
+			next = end
+		}
+		windows = append(windows, backfillWindow{From: current, To: next})
+		current = next
 	}
 	return windows
 }
@@ -394,6 +463,53 @@ func resolveOptionSourceBounds(ctx context.Context, conn driver.Conn, from, to t
 	}
 	if !resolvedTo.After(resolvedFrom) {
 		return time.Time{}, time.Time{}, false, fmt.Errorf("resolved option source bounds are invalid: from=%s to=%s", resolvedFrom.Format(time.RFC3339), resolvedTo.Format(time.RFC3339))
+	}
+	return resolvedFrom, resolvedTo, true, nil
+}
+
+func resolveSpotSourceBounds(ctx context.Context, conn driver.Conn, from, to time.Time, baseAsset string) (time.Time, time.Time, bool, error) {
+	if !from.IsZero() && !to.IsZero() {
+		return from.UTC(), to.UTC(), true, nil
+	}
+
+	query := fmt.Sprintf(`SELECT count(), min(timestamp), max(timestamp) FROM crypto_spot_bar_1m %s`, spotSourceWhere(from, to, baseAsset))
+	args := spotSourceArgs(from, to, baseAsset)
+
+	var count uint64
+	var minTS time.Time
+	var maxTS time.Time
+	if err := retryBackfillTimeout(ctx, "resolve spot source bounds", func() error {
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return fmt.Errorf("query spot source bounds: %w", err)
+		}
+		defer rows.Close()
+		if !rows.Next() {
+			count = 0
+			return nil
+		}
+		if err := rows.Scan(&count, &minTS, &maxTS); err != nil {
+			return fmt.Errorf("scan spot source bounds: %w", err)
+		}
+		return nil
+	}); err != nil {
+		return time.Time{}, time.Time{}, false, err
+	}
+
+	if count == 0 {
+		return time.Time{}, time.Time{}, false, nil
+	}
+
+	resolvedFrom := from.UTC()
+	if resolvedFrom.IsZero() {
+		resolvedFrom = minTS.UTC()
+	}
+	resolvedTo := to.UTC()
+	if resolvedTo.IsZero() {
+		resolvedTo = maxTS.UTC().Add(time.Minute)
+	}
+	if !resolvedTo.After(resolvedFrom) {
+		return time.Time{}, time.Time{}, false, fmt.Errorf("resolved spot source bounds are invalid: from=%s to=%s", resolvedFrom.Format(time.RFC3339), resolvedTo.Format(time.RFC3339))
 	}
 	return resolvedFrom, resolvedTo, true, nil
 }

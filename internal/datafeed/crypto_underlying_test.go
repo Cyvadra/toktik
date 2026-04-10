@@ -7,11 +7,11 @@ import (
 	"time"
 )
 
-func TestProjectUnderlyingSpotQueryIncludesVolumeBase(t *testing.T) {
+func TestProjectUnderlyingSpotQueryIncludesVolume(t *testing.T) {
 	query := projectUnderlyingSpotQuery("SELECT * FROM crypto_spot_bar_30m")
 
-	if !strings.Contains(query, "volume_base") {
-		t.Fatalf("projectUnderlyingSpotQuery() = %q, want volume_base in projection", query)
+	if !strings.Contains(query, "volume") {
+		t.Fatalf("projectUnderlyingSpotQuery() = %q, want volume in projection", query)
 	}
 	if !strings.Contains(query, "tick_count") {
 		t.Fatalf("projectUnderlyingSpotQuery() = %q, want tick_count in projection", query)

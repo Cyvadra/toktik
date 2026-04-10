@@ -38,7 +38,7 @@ type TickRow struct {
 type Bar1m struct {
 	// Key / identity columns (written to Parquet for self-contained files)
 	Timestamp  time.Time `parquet:"timestamp,timestamp(millisecond)"`
-	SymbolID   uint32    `parquet:"symbol_id"`
+	SymbolID   uint64    `parquet:"symbol_id"`
 	Symbol     string    `parquet:"symbol"`
 	BaseAsset  string    `parquet:"base_asset"`
 	OptionType string    `parquet:"option_type"`
@@ -85,6 +85,7 @@ type Bar1m struct {
 
 	// Open interest and activity
 	OpenInterest float32 `parquet:"open_interest"`
+	Volume       float64 `parquet:"volume"`
 	TickCount    uint16  `parquet:"tick_count"`
 }
 
@@ -99,6 +100,7 @@ type SpotBar1m struct {
 	High        float32   `parquet:"high"`
 	Low         float32   `parquet:"low"`
 	Close       float32   `parquet:"close"`
+	Volume      float64   `parquet:"volume"`
 	TickCount   uint32    `parquet:"tick_count"`
 	VolumeBase  float64   `parquet:"volume_base"`
 	VolumeQuote float64   `parquet:"volume_quote"`
@@ -108,7 +110,7 @@ type SpotBar1m struct {
 // SymbolMeta holds parsed option contract metadata extracted from
 // a symbol string. Maps to crypto_options_symbol_meta in ClickHouse.
 type SymbolMeta struct {
-	SymbolID        uint32
+	SymbolID        uint64
 	Symbol          string
 	BaseAsset       string
 	OptionType      string // "call" or "put"

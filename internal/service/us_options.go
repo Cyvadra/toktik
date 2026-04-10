@@ -75,7 +75,7 @@ LIMIT %d`, limit+1)
 		return nil, fmt.Errorf("iterate US option symbol rows: %w", err)
 	}
 
-	resp := &dto.USOptionSymbolResponse{}
+	resp := &dto.USOptionSymbolResponse{Data: make([]dto.USOptionSymbolRow, 0)}
 	if len(symbols) > limit {
 		resp.NextCursor = encodeCursorString(symbols[limit-1].Symbol)
 		resp.Data = symbols[:limit]
@@ -130,7 +130,7 @@ func (s *USOptionsService) QueryBars(ctx context.Context, req dto.USOptionBarReq
     vega,
     theta,
     rho,
-    toUInt64(volume) AS volume,
+	toFloat64(volume) AS volume,
     toUInt64(transactions) AS transactions
 FROM %s
 WHERE symbol = {symbol:String}
@@ -181,7 +181,7 @@ LIMIT %d`, tableName, usSessionCondition(session), limit+1)
 		return nil, fmt.Errorf("iterate US option bar rows: %w", err)
 	}
 
-	resp := &dto.USOptionBarResponse{}
+	resp := &dto.USOptionBarResponse{Data: make([]dto.USOptionBarRow, 0)}
 	if len(bars) > limit {
 		resp.NextCursor = encodeCursor(bars[limit-1].Timestamp)
 		resp.Data = bars[:limit]
@@ -232,7 +232,7 @@ func (s *USOptionsService) QueryGreeks(ctx context.Context, req dto.USOptionGree
     vega,
     theta,
     rho,
-    toUInt64(volume) AS volume,
+	toFloat64(volume) AS volume,
     toUInt64(transactions) AS transactions
 FROM %s
 WHERE symbol = {symbol:String}
@@ -279,7 +279,7 @@ LIMIT %d`, tableName, usSessionCondition(session), limit+1)
 		return nil, fmt.Errorf("iterate US option greeks rows: %w", err)
 	}
 
-	resp := &dto.USOptionGreeksResponse{}
+	resp := &dto.USOptionGreeksResponse{Data: make([]dto.USOptionGreeksRow, 0)}
 	if len(greeks) > limit {
 		resp.NextCursor = encodeCursor(greeks[limit-1].Timestamp)
 		resp.Data = greeks[:limit]
@@ -369,7 +369,7 @@ LIMIT %d`, viewName, limit+1)
 			vegas            []float32
 			thetas           []float32
 			rhos             []float32
-			volumes          []uint64
+			volumes          []float64
 			transactions     []uint64
 		)
 		if err := rows.Scan(
@@ -424,7 +424,7 @@ LIMIT %d`, viewName, limit+1)
 		return nil, fmt.Errorf("iterate US option chain rows: %w", err)
 	}
 
-	resp := &dto.USOptionChainResponse{}
+	resp := &dto.USOptionChainResponse{Data: make([]dto.USOptionChainSnapshot, 0)}
 	if len(snapshots) > limit {
 		resp.NextCursor = encodeCursor(snapshots[limit-1].Timestamp)
 		resp.Data = snapshots[:limit]

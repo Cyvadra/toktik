@@ -62,7 +62,7 @@ LIMIT %d`, limit+1)
 		return nil, fmt.Errorf("iterate US stock symbol rows: %w", err)
 	}
 
-	resp := &dto.USStockSymbolResponse{}
+	resp := &dto.USStockSymbolResponse{Data: make([]dto.USStockSymbolRow, 0)}
 	if len(symbols) > limit {
 		resp.NextCursor = encodeCursorString(symbols[limit-1].Symbol)
 		resp.Data = symbols[:limit]
@@ -105,7 +105,7 @@ func (s *USStocksService) QueryBars(ctx context.Context, req dto.USStockBarReque
     high,
     low,
     close,
-    toUInt64(volume) AS volume,
+	toFloat64(volume) AS volume,
     toUInt64(transactions) AS transactions
 FROM %s
 WHERE symbol = {symbol:String}
@@ -145,7 +145,7 @@ LIMIT %d`, tableName, usSessionCondition(session), limit+1)
 		return nil, fmt.Errorf("iterate US stock bar rows: %w", err)
 	}
 
-	resp := &dto.USStockBarResponse{}
+	resp := &dto.USStockBarResponse{Data: make([]dto.USStockBarRow, 0)}
 	if len(bars) > limit {
 		resp.NextCursor = encodeCursor(bars[limit-1].Timestamp)
 		resp.Data = bars[:limit]

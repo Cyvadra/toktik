@@ -2,17 +2,19 @@ package cryptooptions
 
 import (
 	"fmt"
-	"hash/crc32"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/cespare/xxhash/v2"
 )
 
-// SymbolID returns a deterministic uint32 ID for a symbol string
-// using CRC32 (IEEE). Collision risk is negligible for the expected
-// symbol space (~100K unique symbols).
-func SymbolID(symbol string) uint32 {
-	return crc32.ChecksumIEEE([]byte(symbol))
+const SymbolIDHashName = "xxHash64"
+
+// SymbolID returns a deterministic uint64 ID for a symbol string
+// using xxHash64.
+func SymbolID(symbol string) uint64 {
+	return xxhash.Sum64String(symbol)
 }
 
 // ParseSymbol parses a deribit option symbol string into its components.

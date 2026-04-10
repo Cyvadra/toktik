@@ -77,7 +77,7 @@ WHERE database = currentDatabase()
 	if len(types) == 0 {
 		return nil
 	}
-	if types["volume_state"] == "AggregateFunction(sum, UInt64)" && types["transactions_state"] == "AggregateFunction(sum, UInt64)" {
+	if types["volume_state"] == "AggregateFunction(sum, Float64)" && types["transactions_state"] == "AggregateFunction(sum, UInt64)" {
 		return nil
 	}
 
@@ -137,7 +137,7 @@ func optionChainCacheDDL(iv KlineInterval) []string {
     vega_state AggregateFunction(argMax, Float32, DateTime('UTC')),
     theta_state AggregateFunction(argMax, Float32, DateTime('UTC')),
     rho_state AggregateFunction(argMax, Float32, DateTime('UTC')),
-    volume_state AggregateFunction(sum, UInt64),
+    volume_state AggregateFunction(sum, Float64),
     transactions_state AggregateFunction(sum, UInt64)
 )
 ENGINE = AggregatingMergeTree()
@@ -164,7 +164,7 @@ AS SELECT
         argMaxState(vega, last_ts)                 AS vega_state,
         argMaxState(theta, last_ts)                AS theta_state,
         argMaxState(rho, last_ts)                  AS rho_state,
-    sumState(toUInt64(volume))                 AS volume_state,
+    sumState(volume)                           AS volume_state,
     sumState(toUInt64(transactions))           AS transactions_state
 FROM
 (
@@ -183,7 +183,7 @@ FROM
         argMax(vega, timestamp)               AS vega,
         argMax(theta, timestamp)              AS theta,
         argMax(rho, timestamp)                AS rho,
-        sum(toUInt64(volume))                 AS volume,
+        sum(volume)                           AS volume,
         sum(toUInt64(transactions))           AS transactions,
         max(timestamp)                        AS last_ts
     FROM us_options_bar_1m
@@ -285,7 +285,7 @@ SELECT
         argMaxState(vega, last_ts)                 AS vega_state,
         argMaxState(theta, last_ts)                AS theta_state,
         argMaxState(rho, last_ts)                  AS rho_state,
-    sumState(toUInt64(volume))                 AS volume_state,
+    sumState(volume)                           AS volume_state,
     sumState(toUInt64(transactions))           AS transactions_state
 FROM
 (
@@ -304,7 +304,7 @@ FROM
         argMax(vega, timestamp)               AS vega,
         argMax(theta, timestamp)              AS theta,
         argMax(rho, timestamp)                AS rho,
-        sum(toUInt64(volume))                 AS volume,
+        sum(volume)                           AS volume,
         sum(toUInt64(transactions))           AS transactions,
         max(timestamp)                        AS last_ts
     FROM us_options_bar_1m

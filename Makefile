@@ -3,9 +3,9 @@ BUILD_DIR := bin
 GOFLAGS := -trimpath
 LDFLAGS := -s -w
 
-.PHONY: build-convert build-import build-missing-days build-kline-backfill build-kline-migrate-utc build-api build-backtest-example build-backtest-portfolio build-backtest-btc-portfolio build-us-market-import build-feature-store-backfill build-all build-win-arm clean
+`.PHONY: build-convert build-import build-missing-days build-kline-backfill build-kline-migrate-utc build-symbol-id-migrate build-volume-migrate build-api build-backtest-example build-backtest-portfolio build-backtest-btc-portfolio build-us-market-import build-feature-store-backfill swagger-docs export-market-api-md refresh-api-docs build-all build-win-arm clean
 
-build-all: build-convert build-import build-missing-days build-kline-backfill build-kline-migrate-utc build-api build-backtest-example build-backtest-portfolio build-us-market-import build-feature-store-backfill
+build-all: build-convert build-import build-missing-days build-kline-backfill build-kline-migrate-utc build-symbol-id-migrate build-volume-migrate build-api build-backtest-example build-backtest-portfolio build-us-market-import build-feature-store-backfill
 
 build-convert:
 	@mkdir -p $(BUILD_DIR)
@@ -26,6 +26,14 @@ build-kline-backfill:
 build-kline-migrate-utc:
 	@mkdir -p $(BUILD_DIR)
 	go build $(GOFLAGS) -ldflags '$(LDFLAGS)' -o $(BUILD_DIR)/crypto-options-kline-migrate-utc ./cmd/crypto-options-kline-migrate-utc
+
+build-symbol-id-migrate:
+	@mkdir -p $(BUILD_DIR)
+	go build $(GOFLAGS) -ldflags '$(LDFLAGS)' -o $(BUILD_DIR)/crypto-options-symbol-id-migrate ./cmd/crypto-options-symbol-id-migrate
+
+build-volume-migrate:
+	@mkdir -p $(BUILD_DIR)
+	go build $(GOFLAGS) -ldflags '$(LDFLAGS)' -o $(BUILD_DIR)/market-volume-migrate ./cmd/market-volume-migrate
 
 build-api:
 	@mkdir -p $(BUILD_DIR)
@@ -48,6 +56,14 @@ build-us-market-import:
 build-feature-store-backfill:
 	@mkdir -p $(BUILD_DIR)
 	go build $(GOFLAGS) -ldflags '$(LDFLAGS)' -o $(BUILD_DIR)/feature-store-backfill ./cmd/feature-store-backfill
+
+swagger-docs:
+	go run github.com/swaggo/swag/cmd/swag@v1.8.12 init --parseDependency --parseInternal -g cmd/api-server/main.go -o docs
+
+export-market-api-md:
+	go run ./cmd/api-docs-markdown -input docs/swagger.json -output docs/db-market-indicator-api.md
+
+refresh-api-docs: swagger-docs export-market-api-md
 
 build-win-arm:
 	@mkdir -p $(BUILD_DIR)

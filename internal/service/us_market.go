@@ -42,18 +42,28 @@ func resolveUSBarTable(interval string, tables map[string]string, label string) 
 
 func normalizeUSSession(session string, interval string) (string, error) {
 	value := strings.ToLower(strings.TrimSpace(session))
+	intervalKey := strings.ToLower(strings.TrimSpace(interval))
+	if intervalKey != "1m" {
+		switch value {
+		case "", "regular", "all":
+			// Pre-aggregated US bar views are already built from regular-session 1m data.
+			return "all", nil
+		case "extended":
+			return "", dto.NewValidationError("session %q is only supported for 1m US market bars", value)
+		default:
+			return "", dto.NewValidationError("unsupported session %q", session)
+		}
+	}
+
 	if value == "" {
 		value = "regular"
 	}
 	switch value {
 	case "regular", "all", "extended":
+		return value, nil
 	default:
 		return "", dto.NewValidationError("unsupported session %q", session)
 	}
-	if strings.ToLower(strings.TrimSpace(interval)) != "1m" && value != "regular" {
-		return "", dto.NewValidationError("session %q is only supported for 1m US market bars", value)
-	}
-	return value, nil
 }
 
 func usSessionCondition(session string) string {

@@ -46,7 +46,7 @@ func chainCacheDDL(iv KlineInterval) []string {
 (
     ts DateTime('UTC'),
     base_asset LowCardinality(String),
-    symbol_id UInt32,
+    symbol_id UInt64,
     delta_state AggregateFunction(argMin, Float32, DateTime('UTC')),
     gamma_state AggregateFunction(argMin, Float32, DateTime('UTC')),
     vega_state AggregateFunction(argMin, Float32, DateTime('UTC')),
@@ -56,6 +56,7 @@ func chainCacheDDL(iv KlineInterval) []string {
     ask_close_state AggregateFunction(argMax, Float32, DateTime('UTC')),
     mark_close_state AggregateFunction(argMax, Float32, DateTime('UTC')),
     mark_iv_close_state AggregateFunction(argMax, Float32, DateTime('UTC')),
+    volume_state AggregateFunction(sum, Float64),
     tick_count_state AggregateFunction(sum, UInt64),
     open_interest_state AggregateFunction(argMax, Float32, DateTime('UTC'))
 )
@@ -80,6 +81,7 @@ SELECT
     argMaxState(ask_close, last_ts)       AS ask_close_state,
     argMaxState(mark_close, last_ts)      AS mark_close_state,
     argMaxState(mark_iv_close, last_ts)   AS mark_iv_close_state,
+    sumState(volume)                      AS volume_state,
     sumState(toUInt64(tick_count))        AS tick_count_state,
     argMaxState(open_interest, last_ts)   AS open_interest_state
 FROM
@@ -99,6 +101,7 @@ FROM
         argMax(ask_close, timestamp)     AS ask_close,
         argMax(mark_close, timestamp)    AS mark_close,
         argMax(mark_iv_close, timestamp) AS mark_iv_close,
+        sum(volume)                      AS volume,
         sum(toUInt64(tick_count))        AS tick_count,
         argMax(open_interest, timestamp) AS open_interest
     FROM crypto_options_bar_1m
@@ -121,7 +124,8 @@ SELECT
     arrayMap(x -> tupleElement(x, 9), contracts) AS mark_prices,
     arrayMap(x -> tupleElement(x, 10), contracts) AS mark_ivs,
     arrayMap(x -> tupleElement(x, 11), contracts) AS volumes,
-    arrayMap(x -> tupleElement(x, 12), contracts) AS open_interests
+    arrayMap(x -> tupleElement(x, 12), contracts) AS tick_counts,
+    arrayMap(x -> tupleElement(x, 13), contracts) AS open_interests
 FROM
 (
     SELECT
@@ -140,6 +144,7 @@ FROM
                 ask_close,
                 mark_close,
                 mark_iv_close,
+                volume,
                 tick_count,
                 open_interest
             ))
@@ -159,6 +164,7 @@ FROM
             argMaxMerge(ask_close_state)     AS ask_close,
             argMaxMerge(mark_close_state)    AS mark_close,
             argMaxMerge(mark_iv_close_state) AS mark_iv_close,
+            sumMerge(volume_state)           AS volume,
             sumMerge(tick_count_state)       AS tick_count,
             argMaxMerge(open_interest_state) AS open_interest
         FROM %s

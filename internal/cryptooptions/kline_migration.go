@@ -136,10 +136,10 @@ func dropOptionKlineObjects(ctx context.Context, conn driver.Conn, prefix string
 		if err := execMigrationDDL(ctx, conn, fmt.Sprintf("DROP VIEW IF EXISTS %s", viewName)); err != nil {
 			return fmt.Errorf("drop option view %s: %w", viewName, err)
 		}
-		if err := execMigrationDDL(ctx, conn, fmt.Sprintf("DROP TABLE IF EXISTS %s", mvName)); err != nil {
+		if err := execMigrationDDL(ctx, conn, dropTableIfExistsDDL(mvName)); err != nil {
 			return fmt.Errorf("drop option mv %s: %w", mvName, err)
 		}
-		if err := execMigrationDDL(ctx, conn, fmt.Sprintf("DROP TABLE IF EXISTS %s", aggName)); err != nil {
+		if err := execMigrationDDL(ctx, conn, dropTableIfExistsDDL(aggName)); err != nil {
 			return fmt.Errorf("drop option agg %s: %w", aggName, err)
 		}
 	}
@@ -155,10 +155,10 @@ func dropSpotKlineObjects(ctx context.Context, conn driver.Conn, prefix string) 
 		if err := execMigrationDDL(ctx, conn, fmt.Sprintf("DROP VIEW IF EXISTS %s", viewName)); err != nil {
 			return fmt.Errorf("drop spot view %s: %w", viewName, err)
 		}
-		if err := execMigrationDDL(ctx, conn, fmt.Sprintf("DROP TABLE IF EXISTS %s", mvName)); err != nil {
+		if err := execMigrationDDL(ctx, conn, dropTableIfExistsDDL(mvName)); err != nil {
 			return fmt.Errorf("drop spot mv %s: %w", mvName, err)
 		}
-		if err := execMigrationDDL(ctx, conn, fmt.Sprintf("DROP TABLE IF EXISTS %s", aggName)); err != nil {
+		if err := execMigrationDDL(ctx, conn, dropTableIfExistsDDL(aggName)); err != nil {
 			return fmt.Errorf("drop spot agg %s: %w", aggName, err)
 		}
 	}
@@ -180,14 +180,18 @@ func dropChainCacheObjects(ctx context.Context, conn driver.Conn) error {
 		if err := execMigrationDDL(ctx, conn, fmt.Sprintf("DROP VIEW IF EXISTS %s", viewName)); err != nil {
 			return fmt.Errorf("drop chain view %s: %w", viewName, err)
 		}
-		if err := execMigrationDDL(ctx, conn, fmt.Sprintf("DROP TABLE IF EXISTS %s", mvName)); err != nil {
+		if err := execMigrationDDL(ctx, conn, dropTableIfExistsDDL(mvName)); err != nil {
 			return fmt.Errorf("drop chain mv %s: %w", mvName, err)
 		}
-		if err := execMigrationDDL(ctx, conn, fmt.Sprintf("DROP TABLE IF EXISTS %s", aggName)); err != nil {
+		if err := execMigrationDDL(ctx, conn, dropTableIfExistsDDL(aggName)); err != nil {
 			return fmt.Errorf("drop chain agg %s: %w", aggName, err)
 		}
 	}
 	return nil
+}
+
+func dropTableIfExistsDDL(tableName string) string {
+	return fmt.Sprintf("DROP TABLE IF EXISTS %s SETTINGS max_table_size_to_drop=0, max_partition_size_to_drop=0", tableName)
 }
 
 func execMigrationDDL(ctx context.Context, conn driver.Conn, stmt string) error {

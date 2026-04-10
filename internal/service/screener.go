@@ -156,7 +156,7 @@ WHERE 1 = 1`
 		return nil, fmt.Errorf("iterate screened underlyings: %w", err)
 	}
 
-	resp := &dto.ScreenUnderlyingResponse{}
+	resp := &dto.ScreenUnderlyingResponse{Data: make([]dto.ScreenedUnderlying, 0)}
 	if len(results) > limit {
 		resp.NextCursor = encodeCursorString(results[limit-1].Underlying)
 		resp.Data = results[:limit]
@@ -204,7 +204,7 @@ SELECT
     c.vega,
     c.theta,
     c.open_interest,
-    toInt32(c.tick_count) AS volume,
+	toFloat64(c.volume) AS volume,
     if(c.mark_close > 0, (c.ask_close - c.bid_close) / c.mark_close, 0) AS relative_spread,
     c.underlying_close
 FROM %s AS chain
@@ -220,7 +220,7 @@ ARRAY JOIN
     chain.mark_closes AS mark_close_val,
     chain.mark_ivs AS mark_iv_val,
     chain.open_interests AS oi_val,
-    chain.tick_counts AS tc_val
+	chain.volumes AS volume_val
 INNER JOIN crypto_options_symbol_meta FINAL AS m ON m.symbol_id = sid
 CROSS JOIN latest
 WHERE chain.timestamp = latest.ts
@@ -247,7 +247,7 @@ SELECT
     chain.vega,
     chain.theta,
     toFloat64(0) AS open_interest,
-    toInt32(chain.volume) AS volume,
+	toFloat64(chain.volume) AS volume,
     toFloat64(0) AS relative_spread,
     chain.underlying_close
 FROM %s AS chain
@@ -265,7 +265,7 @@ WHERE chain.timestamp = latest.ts
 	deltaCol := "delta_val"
 	ivCol := "mark_iv_val"
 	premiumCol := "mark_close_val"
-	volumeCol := "tc_val"
+	volumeCol := "volume_val"
 	oiCol := "oi_val"
 	if !isCrypto {
 		deltaCol = "chain.delta"
@@ -317,8 +317,8 @@ WHERE chain.timestamp = latest.ts
 		args = append(args, clickhouse.Named("prem_max", *req.PremiumMax))
 	}
 	if req.VolumeMin != nil {
-		query += fmt.Sprintf(` AND %s >= {vol_min:Int32}`, volumeCol)
-		args = append(args, clickhouse.Named("vol_min", int32(*req.VolumeMin)))
+		query += fmt.Sprintf(` AND %s >= {vol_min:Float64}`, volumeCol)
+		args = append(args, clickhouse.Named("vol_min", *req.VolumeMin))
 	}
 	if req.OpenInterestMin != nil {
 		query += fmt.Sprintf(` AND %s >= {oi_min:Float64}`, oiCol)
@@ -372,7 +372,7 @@ WHERE chain.timestamp = latest.ts
 		return nil, fmt.Errorf("iterate screened options: %w", err)
 	}
 
-	resp := &dto.ScreenOptionResponse{}
+	resp := &dto.ScreenOptionResponse{Data: make([]dto.ScreenedOption, 0)}
 	if len(results) > limit {
 		resp.Data = results[:limit]
 		// Cursor-based pagination by symbol

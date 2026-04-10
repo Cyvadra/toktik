@@ -77,7 +77,7 @@ func optionKlineDDLWithPrefix(prefix string, iv KlineInterval) []string {
 	createAgg := fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s
 (
     ts                           DateTime('UTC'),
-    symbol_id                    UInt32,
+    symbol_id                    UInt64,
     base_asset                   LowCardinality(String),
     mark_open_state              AggregateFunction(argMin, Float32, DateTime('UTC')),
     mark_high_state              AggregateFunction(max, Float32),
@@ -104,6 +104,7 @@ func optionKlineDDLWithPrefix(prefix string, iv KlineInterval) []string {
     vega_state                   AggregateFunction(argMin, Float32, DateTime('UTC')),
     theta_state                  AggregateFunction(argMin, Float32, DateTime('UTC')),
     rho_state                    AggregateFunction(argMin, Float32, DateTime('UTC')),
+    volume_state                 AggregateFunction(sum, Float64),
     open_interest_state          AggregateFunction(argMax, Float32, DateTime('UTC')),
     tick_count_state             AggregateFunction(sum, UInt16)
 )
@@ -143,6 +144,7 @@ AS SELECT
     argMinState(vega, timestamp)                   AS vega_state,
     argMinState(theta, timestamp)                  AS theta_state,
     argMinState(rho, timestamp)                    AS rho_state,
+    sumState(volume)                               AS volume_state,
     argMaxState(open_interest, timestamp)          AS open_interest_state,
     sumState(tick_count)                           AS tick_count_state
 FROM %s
@@ -178,6 +180,7 @@ SELECT
     argMinMerge(vega_state)                   AS vega,
     argMinMerge(theta_state)                  AS theta,
     argMinMerge(rho_state)                    AS rho,
+    sumMerge(volume_state)                    AS volume,
     argMaxMerge(open_interest_state)          AS open_interest,
     sumMerge(tick_count_state)                AS tick_count
 FROM %s
@@ -207,6 +210,7 @@ func spotKlineDDLWithPrefix(prefix string, iv KlineInterval) []string {
     high_state            AggregateFunction(max, Float32),
     low_state             AggregateFunction(min, Float32),
     close_state           AggregateFunction(argMax, Float32, DateTime('UTC')),
+    volume_state          AggregateFunction(sum, Float64),
     tick_count_state      AggregateFunction(sum, UInt32),
     volume_base_state     AggregateFunction(sum, Float64),
     volume_quote_state    AggregateFunction(sum, Float64)
@@ -226,6 +230,7 @@ AS SELECT
     maxState(high)                               AS high_state,
     minState(low)                                AS low_state,
     argMaxState(close, timestamp)                AS close_state,
+    sumState(volume)                            AS volume_state,
     sumState(tick_count)                         AS tick_count_state,
     sumState(volume_base)                        AS volume_base_state,
     sumState(volume_quote)                       AS volume_quote_state
@@ -241,6 +246,7 @@ SELECT
     maxMerge(high_state)              AS high,
     minMerge(low_state)               AS low,
     argMaxMerge(close_state)          AS close,
+    sumMerge(volume_state)            AS volume,
     sumMerge(tick_count_state)        AS tick_count,
     sumMerge(volume_base_state)       AS volume_base,
     sumMerge(volume_quote_state)      AS volume_quote
@@ -333,7 +339,7 @@ var SpotPrecomputedIntervals = map[string]string{
 //
 // The returned query expects ClickHouse named parameters:
 //
-//	{symbol_id:UInt32}, {from:String}, {to:String}
+//	{symbol_id:UInt64}, {from:String}, {to:String}
 func QueryTimeAggregationSQL(interval string) (string, error) {
 	chInterval, ok := validAdHocIntervals[interval]
 	if !ok {
@@ -369,10 +375,11 @@ func QueryTimeAggregationSQL(interval string) (string, error) {
     argMin(vega, timestamp)                   AS vega,
     argMin(theta, timestamp)                  AS theta,
     argMin(rho, timestamp)                    AS rho,
+    sum(volume)                               AS volume,
         argMax(open_interest, timestamp)          AS open_interest,
         sum(tick_count)                           AS tick_count
 FROM crypto_options_bar_1m
-WHERE symbol_id = {symbol_id:UInt32}
+WHERE symbol_id = {symbol_id:UInt64}
     AND timestamp >= toDateTime({from:String}, 'UTC')
     AND timestamp < toDateTime({to:String}, 'UTC')
 GROUP BY
@@ -398,6 +405,7 @@ func QuerySpotAggregationSQL(interval string) (string, error) {
     max(high)                                 AS high,
     min(low)                                  AS low,
     argMax(close, timestamp)                  AS close,
+    sum(volume)                               AS volume,
     sum(tick_count)                           AS tick_count,
     sum(volume_base)                          AS volume_base,
     sum(volume_quote)                         AS volume_quote

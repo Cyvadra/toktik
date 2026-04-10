@@ -13,10 +13,10 @@ const OptionBarColumns = `timestamp, symbol_id, base_asset,
     ask_open, ask_high, ask_low, ask_close,
     mark_iv_open, mark_iv_close, bid_iv_open, ask_iv_open,
     delta, gamma, vega, theta, rho,
-    open_interest, tick_count`
+  volume, open_interest, tick_count`
 
 // SpotBarColumns is the standard column list for spot bar queries.
-const SpotBarColumns = `timestamp, symbol, price_source, open, high, low, close, tick_count, volume_base, volume_quote`
+const SpotBarColumns = `timestamp, symbol, price_source, open, high, low, close, volume, tick_count, volume_base, volume_quote`
 
 // ClickHouseTimeParam formats a timestamp for string-bound query parameters.
 func ClickHouseTimeParam(t time.Time) string {
@@ -24,13 +24,13 @@ func ClickHouseTimeParam(t time.Time) string {
 }
 
 // BuildOptionBarSubquery returns a SQL subquery for option bars using
-// ClickHouse named parameters: {symbol_id:UInt32}, {from:String}, {to:String}.
+// ClickHouse named parameters: {symbol_id:UInt64}, {from:String}, {to:String}.
 func BuildOptionBarSubquery(interval string) (string, error) {
 	if interval == "1m" {
 		return fmt.Sprintf(`SELECT
     %s
 FROM crypto_options_bar_1m
-WHERE symbol_id = {symbol_id:UInt32}
+WHERE symbol_id = {symbol_id:UInt64}
   AND timestamp >= toDateTime({from:String}, 'UTC')
   AND timestamp < toDateTime({to:String}, 'UTC')`, OptionBarColumns), nil
 	}
@@ -39,7 +39,7 @@ WHERE symbol_id = {symbol_id:UInt32}
 		return fmt.Sprintf(`SELECT
     %s
 FROM %s
-WHERE symbol_id = {symbol_id:UInt32}
+WHERE symbol_id = {symbol_id:UInt64}
   AND timestamp >= toDateTime({from:String}, 'UTC')
   AND timestamp < toDateTime({to:String}, 'UTC')`, OptionBarColumns, viewName), nil
 	}

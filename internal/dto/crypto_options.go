@@ -19,7 +19,7 @@ type BarRequest struct {
 // BarRow is a single OHLCV bar returned by the API.
 type BarRow struct {
 	Timestamp            time.Time `json:"timestamp"`
-	SymbolID             uint32    `json:"symbol_id"`
+	SymbolID             uint64    `json:"symbol_id"`
 	BaseAsset            string    `json:"base_asset"`
 	MarkOpen             float32   `json:"mark_open"`
 	MarkHigh             float32   `json:"mark_high"`
@@ -50,6 +50,7 @@ type BarRow struct {
 	UnderlyingPriceHigh  float32   `json:"underlying_price_high"`
 	UnderlyingPriceLow   float32   `json:"underlying_price_low"`
 	UnderlyingPriceClose float32   `json:"underlying_price_close"`
+	Volume               float64   `json:"volume"`
 	OpenInterest         float32   `json:"open_interest"`
 	TickCount            uint16    `json:"tick_count"`
 }
@@ -70,7 +71,7 @@ type SymbolRequest struct {
 
 // SymbolRow is a single option symbol returned by the API.
 type SymbolRow struct {
-	SymbolID        uint32    `json:"symbol_id"`
+	SymbolID        uint64    `json:"symbol_id"`
 	Symbol          string    `json:"symbol"`
 	BaseAsset       string    `json:"base_asset"`
 	OptionType      string    `json:"option_type"`
@@ -98,7 +99,7 @@ type GreeksRequest struct {
 // GreeksRow is a single greeks snapshot returned by the API.
 type GreeksRow struct {
 	Timestamp            time.Time `json:"timestamp"`
-	SymbolID             uint32    `json:"symbol_id"`
+	SymbolID             uint64    `json:"symbol_id"`
 	Delta                float32   `json:"delta"`
 	Gamma                float32   `json:"gamma"`
 	Vega                 float32   `json:"vega"`

@@ -54,6 +54,11 @@ type FeatureProvider interface {
 	QueryDailyFeaturePanel(ctx context.Context, req dto.FeatureDailyPanelRequest) (*dto.FeatureDailyPanelResponse, error)
 }
 
+// IndicatorSeriesProvider describes DSL-driven indicator sequence evaluation.
+type IndicatorSeriesProvider interface {
+	QueryIndicatorSeries(ctx context.Context, req dto.IndicatorSeriesRequest) (*dto.IndicatorSeriesResponse, error)
+}
+
 type StrategyBacktestProvider interface {
 	StartStrategyBacktest(ctx context.Context, req dto.StrategyBacktestRunRequest) (*dto.StrategyBacktestRunAccepted, error)
 	GetStrategyBacktestRun(ctx context.Context, runID string) (*dto.StrategyBacktestRunStatus, error)

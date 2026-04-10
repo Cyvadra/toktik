@@ -17,7 +17,7 @@ var CryptoOptionsFieldAliases = map[string]string{
 	"high":   "mark_high",
 	"low":    "mark_low",
 	"close":  "mark_close",
-	"volume": "tick_count",
+	"volume": "volume",
 }
 
 // allBarColumns lists every numeric column in the crypto_options_bar tables,
@@ -30,7 +30,7 @@ var allBarColumns = []string{
 	"mark_iv_open", "mark_iv_close", "bid_iv_open", "ask_iv_open",
 	"delta", "gamma", "vega", "theta", "rho",
 	"underlying_price_open", "underlying_price_high", "underlying_price_low", "underlying_price_close",
-	"open_interest", "tick_count",
+	"volume", "open_interest", "tick_count",
 }
 
 // CryptoOptionsDataFeed implements backtest.DataFeed for crypto options data
@@ -81,7 +81,7 @@ func (f *CryptoOptionsDataFeed) Load(ctx context.Context, req backtest.DataReque
     ifNull(u.high, toFloat32(0))  AS underlying_price_high,
     ifNull(u.low, toFloat32(0))   AS underlying_price_low,
     ifNull(u.close, toFloat32(0)) AS underlying_price_close,
-    b.open_interest, b.tick_count
+	b.volume, b.open_interest, b.tick_count
 FROM (%s) AS b
 LEFT JOIN (%s) AS u
     ON u.timestamp = b.timestamp AND u.symbol = b.base_asset
@@ -108,7 +108,7 @@ ORDER BY b.timestamp`, barSourceSQL, spotSourceSQL)
 	for rows.Next() {
 		var (
 			ts        time.Time
-			symbolID  uint32
+			symbolID  uint64
 			baseAsset string
 			// Precomputed/ad-hoc views expose tick_count as UInt64 via sumMerge.
 			markOpen, markHigh, markLow, markClose   float32
@@ -120,6 +120,7 @@ ORDER BY b.timestamp`, barSourceSQL, spotSourceSQL)
 			delta, gamma, vega, theta, rho           float32
 			underlyingPriceOpen, underlyingPriceHigh float32
 			underlyingPriceLow, underlyingPriceClose float32
+			volume                                   float64
 			openInterest                             float32
 			tickCount                                uint64
 		)
@@ -133,7 +134,7 @@ ORDER BY b.timestamp`, barSourceSQL, spotSourceSQL)
 			&markIVOpen, &markIVClose, &bidIVOpen, &askIVOpen,
 			&delta, &gamma, &vega, &theta, &rho,
 			&underlyingPriceOpen, &underlyingPriceHigh, &underlyingPriceLow, &underlyingPriceClose,
-			&openInterest, &tickCount,
+			&volume, &openInterest, &tickCount,
 		); err != nil {
 			return nil, fmt.Errorf("scan bar: %w", err)
 		}
@@ -148,7 +149,7 @@ ORDER BY b.timestamp`, barSourceSQL, spotSourceSQL)
 			float64(markIVOpen), float64(markIVClose), float64(bidIVOpen), float64(askIVOpen),
 			float64(delta), float64(gamma), float64(vega), float64(theta), float64(rho),
 			float64(underlyingPriceOpen), float64(underlyingPriceHigh), float64(underlyingPriceLow), float64(underlyingPriceClose),
-			float64(openInterest), float64(tickCount),
+			volume, float64(openInterest), float64(tickCount),
 		}
 		for i, v := range vals {
 			colData[i] = append(colData[i], v)

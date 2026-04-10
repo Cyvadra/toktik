@@ -74,6 +74,22 @@ func InitSchema(ctx context.Context, conn driver.Conn, ddlPath string) error {
 			return fmt.Errorf("exec DDL: %w\nStatement: %s", err, stmt)
 		}
 	}
+	if err := ensureMarketVolumeColumns(ctx, conn); err != nil {
+		return err
+	}
+	return nil
+}
+
+func ensureMarketVolumeColumns(ctx context.Context, conn driver.Conn) error {
+	stmts := []string{
+		"ALTER TABLE us_options_bar_1m MODIFY COLUMN volume Float64",
+		"ALTER TABLE us_stocks_bar_1m MODIFY COLUMN volume Float64",
+	}
+	for _, stmt := range stmts {
+		if err := conn.Exec(ctx, stmt); err != nil {
+			return fmt.Errorf("ensure us market volume columns: %w", err)
+		}
+	}
 	return nil
 }
 

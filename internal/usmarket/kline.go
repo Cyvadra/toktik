@@ -130,7 +130,7 @@ func optionKlineDDL(iv KlineInterval) []string {
     vega_state         AggregateFunction(argMax, Float32, DateTime('UTC')),
     theta_state        AggregateFunction(argMax, Float32, DateTime('UTC')),
     rho_state          AggregateFunction(argMax, Float32, DateTime('UTC')),
-    volume_state       AggregateFunction(sum, UInt32),
+    volume_state       AggregateFunction(sum, Float64),
     transactions_state AggregateFunction(sum, UInt32)
 )
 ENGINE = AggregatingMergeTree()
@@ -239,7 +239,7 @@ func stockKlineDDL(iv KlineInterval) []string {
     high_state         AggregateFunction(max, Float32),
     low_state          AggregateFunction(min, Float32),
     close_state        AggregateFunction(argMax, Float32, DateTime('UTC')),
-    volume_state       AggregateFunction(sum, UInt32),
+    volume_state       AggregateFunction(sum, Float64),
     transactions_state AggregateFunction(sum, UInt32)
 )
 ENGINE = AggregatingMergeTree()

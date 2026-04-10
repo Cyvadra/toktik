@@ -18,6 +18,7 @@ type Handler struct {
 	usOptions         USOptionsQuerier
 	infra             InfraProvider
 	features          FeatureProvider
+	indicators        IndicatorSeriesProvider
 	strategyBacktests StrategyBacktestProvider
 	cryptoSpot        CryptoSpotQuerier
 	screener          ScreenerProvider
@@ -26,8 +27,8 @@ type Handler struct {
 	polygon           PolygonProvider
 }
 
-func NewHandler(cos CryptoOptionsQuerier, usStocks USStocksQuerier, usOptions USOptionsQuerier, infra InfraProvider, features FeatureProvider, strategyBacktests StrategyBacktestProvider, cryptoSpot CryptoSpotQuerier, screener ScreenerProvider, strategyCatalog StrategyCatalogProvider, factors FactorProvider, polygon PolygonProvider) *Handler {
-	return &Handler{cryptoOptions: cos, usStocks: usStocks, usOptions: usOptions, infra: infra, features: features, strategyBacktests: strategyBacktests, cryptoSpot: cryptoSpot, screener: screener, strategyCatalog: strategyCatalog, factors: factors, polygon: polygon}
+func NewHandler(cos CryptoOptionsQuerier, usStocks USStocksQuerier, usOptions USOptionsQuerier, infra InfraProvider, features FeatureProvider, indicators IndicatorSeriesProvider, strategyBacktests StrategyBacktestProvider, cryptoSpot CryptoSpotQuerier, screener ScreenerProvider, strategyCatalog StrategyCatalogProvider, factors FactorProvider, polygon PolygonProvider) *Handler {
+	return &Handler{cryptoOptions: cos, usStocks: usStocks, usOptions: usOptions, infra: infra, features: features, indicators: indicators, strategyBacktests: strategyBacktests, cryptoSpot: cryptoSpot, screener: screener, strategyCatalog: strategyCatalog, factors: factors, polygon: polygon}
 }
 
 // handleServiceError maps service-level errors to appropriate HTTP responses.
@@ -512,6 +513,38 @@ func (h *Handler) GetSymbols(c *gin.Context) {
 	}
 
 	resp, err := h.cryptoOptions.QuerySymbols(c.Request.Context(), req)
+	if err != nil {
+		handleServiceError(c, err)
+		return
+	}
+
+	c.JSON(http.StatusOK, resp)
+}
+
+// RunIndicatorSeries handles POST /api/v1/indicators/series.
+//
+// @Summary      Run indicator series query
+// @Description  Evaluates either a full DSL script or a simplified indicators[] expression list over market bars and returns aligned series arrays.
+// @Tags         Indicators
+// @Accept       json
+// @Produce      json
+// @Param        body  body      dto.IndicatorSeriesRequest  true  "Indicator query"
+// @Success      200   {object}  dto.IndicatorSeriesResponse
+// @Failure      400   {object}  dto.ErrorResponse
+// @Failure      500   {object}  dto.ErrorResponse
+// @Router       /indicators/series [post]
+func (h *Handler) RunIndicatorSeries(c *gin.Context) {
+	var req dto.IndicatorSeriesRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: err.Error()})
+		return
+	}
+	if h.indicators == nil {
+		c.JSON(http.StatusNotImplemented, dto.ErrorResponse{Error: "indicator provider not configured"})
+		return
+	}
+
+	resp, err := h.indicators.QueryIndicatorSeries(c.Request.Context(), req)
 	if err != nil {
 		handleServiceError(c, err)
 		return

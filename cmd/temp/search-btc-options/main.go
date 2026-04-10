@@ -34,7 +34,7 @@ type symbolMetaRecord struct {
 
 type chainRow struct {
 	timestamp    time.Time
-	symbolID     uint32
+	symbolID     uint64
 	delta        float32
 	bidClose     float32
 	askClose     float32
@@ -123,7 +123,7 @@ func parseInspectTime(dateStr, timeStr string) (time.Time, error) {
 	return ts.UTC(), nil
 }
 
-func loadSymbolMeta(ctx context.Context, conn driver.Conn, baseAsset string) (map[uint32]symbolMetaRecord, error) {
+func loadSymbolMeta(ctx context.Context, conn driver.Conn, baseAsset string) (map[uint64]symbolMetaRecord, error) {
 	query := `SELECT
     symbol_id,
     anyLast(symbol)       AS symbol,
@@ -142,9 +142,9 @@ GROUP BY symbol_id`
 	}
 	defer rows.Close()
 
-	metaMap := make(map[uint32]symbolMetaRecord)
+	metaMap := make(map[uint64]symbolMetaRecord)
 	for rows.Next() {
-		var id uint32
+		var id uint64
 		var meta symbolMetaRecord
 		if err := rows.Scan(&id, &meta.symbol, &meta.optionType, &meta.strike, &meta.expiration); err != nil {
 			return nil, fmt.Errorf("scan symbol meta: %w", err)
@@ -159,7 +159,7 @@ GROUP BY symbol_id`
 	return metaMap, nil
 }
 
-func loadBarRows(ctx context.Context, conn driver.Conn, baseAsset, interval string, inspectTime time.Time, metaMap map[uint32]symbolMetaRecord) ([]chainRow, error) {
+func loadBarRows(ctx context.Context, conn driver.Conn, baseAsset, interval string, inspectTime time.Time, metaMap map[uint64]symbolMetaRecord) ([]chainRow, error) {
 	tableName := resolveOptionTableName(interval)
 	fromParam := cryptooptions.ClickHouseTimeParam(inspectTime)
 	toParam := cryptooptions.ClickHouseTimeParam(inspectTime.Add(intervalDuration(interval)))
@@ -398,7 +398,7 @@ func printDeltaCandidates(label string, target float64, contracts []backtest.Opt
 	}
 }
 
-func printNearestMetadataExpiries(metaMap map[uint32]symbolMetaRecord, inspectTime time.Time, targetDTE, top int) {
+func printNearestMetadataExpiries(metaMap map[uint64]symbolMetaRecord, inspectTime time.Time, targetDTE, top int) {
 	expiries := distinctMetaExpiries(metaMap)
 	sort.Slice(expiries, func(i, j int) bool {
 		di := math.Abs(expiries[i].Sub(inspectTime).Hours()/24 - float64(targetDTE))
@@ -418,7 +418,7 @@ func printNearestMetadataExpiries(metaMap map[uint32]symbolMetaRecord, inspectTi
 	}
 }
 
-func printLifecycleDiagnostics(ctx context.Context, conn driver.Conn, baseAsset, interval string, inspectTime time.Time, metaMap map[uint32]symbolMetaRecord, targetDTE int) {
+func printLifecycleDiagnostics(ctx context.Context, conn driver.Conn, baseAsset, interval string, inspectTime time.Time, metaMap map[uint64]symbolMetaRecord, targetDTE int) {
 	expiries := distinctMetaExpiries(metaMap)
 	sort.Slice(expiries, func(i, j int) bool {
 		di := math.Abs(expiries[i].Sub(inspectTime).Hours()/24 - float64(targetDTE))
@@ -490,7 +490,7 @@ ORDER BY m.expiration`, resolveOptionTableName(interval), expiryArraySQL)
 	}
 }
 
-func distinctMetaExpiries(metaMap map[uint32]symbolMetaRecord) []time.Time {
+func distinctMetaExpiries(metaMap map[uint64]symbolMetaRecord) []time.Time {
 	seen := make(map[time.Time]struct{})
 	expiries := make([]time.Time, 0, len(metaMap))
 	for _, meta := range metaMap {
@@ -503,7 +503,7 @@ func distinctMetaExpiries(metaMap map[uint32]symbolMetaRecord) []time.Time {
 	return expiries
 }
 
-func countDistinctMetaExpiries(metaMap map[uint32]symbolMetaRecord) int {
+func countDistinctMetaExpiries(metaMap map[uint64]symbolMetaRecord) int {
 	return len(distinctMetaExpiries(metaMap))
 }
 

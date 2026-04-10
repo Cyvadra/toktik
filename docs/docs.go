@@ -2,7 +2,7 @@
 
 package docs
 
-import "github.com/swaggo/swag/v2"
+import "github.com/swaggo/swag"
 
 const docTemplate = `{
     "schemes": {{ marshal .Schemes }},
@@ -1223,6 +1223,52 @@ const docTemplate = `{
                 }
             }
         },
+        "/indicators/series": {
+            "post": {
+                "description": "Evaluates either a full DSL script or a simplified indicators[] expression list over market bars and returns aligned series arrays.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Indicators"
+                ],
+                "summary": "Run indicator series query",
+                "parameters": [
+                    {
+                        "description": "Indicator query",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.IndicatorSeriesRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.IndicatorSeriesResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/infra/datasets": {
             "get": {
                 "description": "Returns all dataset descriptors with freshness and row count metadata. Filter by market or status.",
@@ -1903,6 +1949,741 @@ const docTemplate = `{
                 }
             }
         },
+        "/polygon/options/aggregates": {
+            "get": {
+                "description": "Proxies Polygon aggregate bars for a US option contract over a requested time window.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Polygon"
+                ],
+                "summary": "Get US option aggregate bars via Polygon",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Option ticker",
+                        "name": "ticker",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Aggregate multiplier",
+                        "name": "multiplier",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Timespan (minute,hour,day,...)",
+                        "name": "timespan",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Start time (RFC3339 or YYYY-MM-DD)",
+                        "name": "from",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "End time (RFC3339 or YYYY-MM-DD)",
+                        "name": "to",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "Adjusted results",
+                        "name": "adjusted",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Sort direction",
+                        "name": "sort",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Page size",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.PolygonAggregateResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/polygon/options/chain": {
+            "get": {
+                "description": "Proxies Polygon option chain snapshots for a US underlying. This is the recommended endpoint for realtime option surface reads.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Polygon"
+                ],
+                "summary": "Get realtime US option chain snapshot via Polygon",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Underlying ticker symbol",
+                        "name": "underlying",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Exact expiration date",
+                        "name": "expiration_date",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Minimum expiration date",
+                        "name": "expiration_date_gte",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Expiration date greater than",
+                        "name": "expiration_date_gt",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Maximum expiration date",
+                        "name": "expiration_date_lte",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Expiration date less than",
+                        "name": "expiration_date_lt",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "call or put",
+                        "name": "contract_type",
+                        "in": "query"
+                    },
+                    {
+                        "type": "number",
+                        "description": "Exact strike price",
+                        "name": "strike_price",
+                        "in": "query"
+                    },
+                    {
+                        "type": "number",
+                        "description": "Minimum strike price",
+                        "name": "strike_price_gte",
+                        "in": "query"
+                    },
+                    {
+                        "type": "number",
+                        "description": "Strike price greater than",
+                        "name": "strike_price_gt",
+                        "in": "query"
+                    },
+                    {
+                        "type": "number",
+                        "description": "Maximum strike price",
+                        "name": "strike_price_lte",
+                        "in": "query"
+                    },
+                    {
+                        "type": "number",
+                        "description": "Strike price less than",
+                        "name": "strike_price_lt",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Sort direction",
+                        "name": "order",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Sort field",
+                        "name": "sort",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Page size",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.PolygonOptionChainResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/polygon/options/contract": {
+            "get": {
+                "description": "Returns static contract metadata for a single OCC-style Polygon option ticker.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Polygon"
+                ],
+                "summary": "Get US option contract metadata via Polygon",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Option ticker, e.g. O:SPY251219C00650000",
+                        "name": "ticker",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.PolygonOptionContractResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/polygon/options/quotes": {
+            "get": {
+                "description": "Proxies Polygon quote history for a US option contract.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Polygon"
+                ],
+                "summary": "Get US option quotes via Polygon",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Option ticker",
+                        "name": "ticker",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Exact timestamp",
+                        "name": "timestamp",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Timestamp greater than or equal",
+                        "name": "timestamp_gte",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Timestamp greater than",
+                        "name": "timestamp_gt",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Timestamp less than or equal",
+                        "name": "timestamp_lte",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Timestamp less than",
+                        "name": "timestamp_lt",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Sort order",
+                        "name": "order",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Sort field",
+                        "name": "sort",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Page size",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.PolygonQuoteResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/polygon/options/trades": {
+            "get": {
+                "description": "Proxies Polygon trade history for a US option contract.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Polygon"
+                ],
+                "summary": "Get US option trades via Polygon",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Option ticker",
+                        "name": "ticker",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Exact timestamp",
+                        "name": "timestamp",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Timestamp greater than or equal",
+                        "name": "timestamp_gte",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Timestamp greater than",
+                        "name": "timestamp_gt",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Timestamp less than or equal",
+                        "name": "timestamp_lte",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Timestamp less than",
+                        "name": "timestamp_lt",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Sort order",
+                        "name": "order",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Sort field",
+                        "name": "sort",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Page size",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.PolygonTradeResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/polygon/stocks/aggregates": {
+            "get": {
+                "description": "Proxies Polygon aggregate bars for historical or near-realtime stock data with short-TTL caching based on the requested time window.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Polygon"
+                ],
+                "summary": "Get US stock aggregate bars via Polygon",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Stock ticker symbol",
+                        "name": "ticker",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Aggregate multiplier",
+                        "name": "multiplier",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Timespan (minute,hour,day,...)",
+                        "name": "timespan",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Start time (RFC3339 or YYYY-MM-DD)",
+                        "name": "from",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "End time (RFC3339 or YYYY-MM-DD)",
+                        "name": "to",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "Adjusted results",
+                        "name": "adjusted",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Sort direction",
+                        "name": "sort",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Page size",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.PolygonAggregateResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/polygon/stocks/quotes": {
+            "get": {
+                "description": "Proxies Polygon quote history for a stock ticker. Use near-now windows for realtime quote polling.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Polygon"
+                ],
+                "summary": "Get US stock quotes via Polygon",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Stock ticker symbol",
+                        "name": "symbol",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Exact timestamp",
+                        "name": "timestamp",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Timestamp greater than or equal",
+                        "name": "timestamp_gte",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Timestamp greater than",
+                        "name": "timestamp_gt",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Timestamp less than or equal",
+                        "name": "timestamp_lte",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Timestamp less than",
+                        "name": "timestamp_lt",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Sort order",
+                        "name": "order",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Sort field",
+                        "name": "sort",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Page size",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.PolygonQuoteResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/polygon/stocks/snapshot": {
+            "get": {
+                "description": "Proxies Polygon stock snapshot data. This endpoint bypasses the platform database and is intended for realtime client reads.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Polygon"
+                ],
+                "summary": "Get realtime US stock snapshot via Polygon",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Stock ticker symbol",
+                        "name": "symbol",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.PolygonStockSnapshotResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/polygon/stocks/trades": {
+            "get": {
+                "description": "Proxies Polygon trade history for a stock ticker. Use this when you need prints instead of NBBO quotes.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Polygon"
+                ],
+                "summary": "Get US stock trades via Polygon",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Stock ticker symbol",
+                        "name": "symbol",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Exact timestamp",
+                        "name": "timestamp",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Timestamp greater than or equal",
+                        "name": "timestamp_gte",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Timestamp greater than",
+                        "name": "timestamp_gt",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Timestamp less than or equal",
+                        "name": "timestamp_lte",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Timestamp less than",
+                        "name": "timestamp_lt",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Sort order",
+                        "name": "order",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Sort field",
+                        "name": "sort",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Page size",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.PolygonTradeResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/ready": {
             "get": {
                 "description": "Returns the readiness status of the API server and its backend dependencies.",
@@ -2296,6 +3077,9 @@ const docTemplate = `{
                 },
                 "vega": {
                     "type": "number"
+                },
+                "volume": {
+                    "type": "number"
                 }
             }
         },
@@ -2351,6 +3135,9 @@ const docTemplate = `{
                     "type": "number"
                 },
                 "vega": {
+                    "type": "number"
+                },
+                "volume": {
                     "type": "number"
                 }
             }
@@ -3288,6 +4075,81 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_Cyvadra_toktik_internal_dto.IndicatorSeriesRequest": {
+            "type": "object",
+            "required": [
+                "from",
+                "interval",
+                "market",
+                "symbol",
+                "to"
+            ],
+            "properties": {
+                "dsl": {
+                    "type": "string"
+                },
+                "from": {
+                    "type": "string"
+                },
+                "indicators": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "interval": {
+                    "type": "string"
+                },
+                "market": {
+                    "type": "string"
+                },
+                "params": {
+                    "type": "object",
+                    "additionalProperties": true
+                },
+                "precision": {
+                    "type": "integer"
+                },
+                "session": {
+                    "type": "string"
+                },
+                "symbol": {
+                    "type": "string"
+                },
+                "to": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_Cyvadra_toktik_internal_dto.IndicatorSeriesResponse": {
+            "type": "object",
+            "properties": {
+                "interval": {
+                    "type": "string"
+                },
+                "market": {
+                    "type": "string"
+                },
+                "series": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "array",
+                        "items": {
+                            "type": "number"
+                        }
+                    }
+                },
+                "symbol": {
+                    "type": "string"
+                },
+                "timestamps": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
         "github_com_Cyvadra_toktik_internal_dto.MarketCatalogResponse": {
             "type": "object",
             "properties": {
@@ -3313,6 +4175,66 @@ const docTemplate = `{
                 },
                 "status": {
                     "type": "string"
+                }
+            }
+        },
+        "github_com_Cyvadra_toktik_internal_dto.PolygonAggregateResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_Cyvadra_toktik_pkg_polygon.AggregateBar"
+                    }
+                }
+            }
+        },
+        "github_com_Cyvadra_toktik_internal_dto.PolygonOptionChainResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_Cyvadra_toktik_pkg_polygon.OptionChainContract"
+                    }
+                }
+            }
+        },
+        "github_com_Cyvadra_toktik_internal_dto.PolygonOptionContractResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/github_com_Cyvadra_toktik_pkg_polygon.OptionContract"
+                }
+            }
+        },
+        "github_com_Cyvadra_toktik_internal_dto.PolygonQuoteResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_Cyvadra_toktik_pkg_polygon.Quote"
+                    }
+                }
+            }
+        },
+        "github_com_Cyvadra_toktik_internal_dto.PolygonStockSnapshotResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/github_com_Cyvadra_toktik_pkg_polygon.StockSnapshot"
+                }
+            }
+        },
+        "github_com_Cyvadra_toktik_internal_dto.PolygonTradeResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_Cyvadra_toktik_pkg_polygon.Trade"
+                    }
                 }
             }
         },
@@ -3407,7 +4329,7 @@ const docTemplate = `{
                     "type": "number"
                 },
                 "volume": {
-                    "type": "integer"
+                    "type": "number"
                 }
             }
         },
@@ -3903,7 +4825,7 @@ const docTemplate = `{
                     "type": "number"
                 },
                 "volume": {
-                    "type": "integer"
+                    "type": "number"
                 }
             }
         },
@@ -3950,7 +4872,7 @@ const docTemplate = `{
                     "type": "number"
                 },
                 "volume": {
-                    "type": "integer"
+                    "type": "number"
                 }
             }
         },
@@ -4045,7 +4967,7 @@ const docTemplate = `{
                     "type": "number"
                 },
                 "volume": {
-                    "type": "integer"
+                    "type": "number"
                 }
             }
         },
@@ -4122,7 +5044,7 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "volume": {
-                    "type": "integer"
+                    "type": "number"
                 }
             }
         },
@@ -4147,6 +5069,379 @@ const docTemplate = `{
                     "type": "string"
                 }
             }
+        },
+        "github_com_Cyvadra_toktik_pkg_polygon.AggregateBar": {
+            "type": "object",
+            "properties": {
+                "adjusted": {
+                    "type": "boolean"
+                },
+                "close": {
+                    "type": "number"
+                },
+                "high": {
+                    "type": "number"
+                },
+                "low": {
+                    "type": "number"
+                },
+                "open": {
+                    "type": "number"
+                },
+                "otc": {
+                    "type": "boolean"
+                },
+                "ticker": {
+                    "type": "string"
+                },
+                "timestamp": {
+                    "type": "integer"
+                },
+                "tradeCount": {
+                    "type": "integer"
+                },
+                "volume": {
+                    "type": "number"
+                },
+                "vwap": {
+                    "type": "number"
+                }
+            }
+        },
+        "github_com_Cyvadra_toktik_pkg_polygon.OptionChainContract": {
+            "type": "object",
+            "properties": {
+                "breakEvenPrice": {
+                    "type": "number"
+                },
+                "contract": {
+                    "$ref": "#/definitions/github_com_Cyvadra_toktik_pkg_polygon.OptionContract"
+                },
+                "day": {
+                    "$ref": "#/definitions/github_com_Cyvadra_toktik_pkg_polygon.OptionDay"
+                },
+                "fairMarketUpdated": {
+                    "type": "integer"
+                },
+                "fairMarketValue": {
+                    "type": "number"
+                },
+                "greeks": {
+                    "$ref": "#/definitions/github_com_Cyvadra_toktik_pkg_polygon.OptionGreeks"
+                },
+                "impliedVolatility": {
+                    "type": "number"
+                },
+                "lastQuote": {
+                    "$ref": "#/definitions/github_com_Cyvadra_toktik_pkg_polygon.Quote"
+                },
+                "lastTrade": {
+                    "$ref": "#/definitions/github_com_Cyvadra_toktik_pkg_polygon.Trade"
+                },
+                "openInterest": {
+                    "type": "number"
+                },
+                "underlyingAsset": {
+                    "$ref": "#/definitions/github_com_Cyvadra_toktik_pkg_polygon.UnderlyingAsset"
+                }
+            }
+        },
+        "github_com_Cyvadra_toktik_pkg_polygon.OptionContract": {
+            "type": "object",
+            "properties": {
+                "cfi": {
+                    "type": "string"
+                },
+                "contractType": {
+                    "type": "string"
+                },
+                "correction": {
+                    "type": "integer"
+                },
+                "exerciseStyle": {
+                    "type": "string"
+                },
+                "expirationDate": {
+                    "type": "string"
+                },
+                "primaryExchange": {
+                    "type": "string"
+                },
+                "sharesPerContract": {
+                    "type": "number"
+                },
+                "strikePrice": {
+                    "type": "number"
+                },
+                "ticker": {
+                    "type": "string"
+                },
+                "underlyingTicker": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_Cyvadra_toktik_pkg_polygon.OptionDay": {
+            "type": "object",
+            "properties": {
+                "change": {
+                    "type": "number"
+                },
+                "changePercent": {
+                    "type": "number"
+                },
+                "close": {
+                    "type": "number"
+                },
+                "high": {
+                    "type": "number"
+                },
+                "lastUpdated": {
+                    "type": "integer"
+                },
+                "low": {
+                    "type": "number"
+                },
+                "open": {
+                    "type": "number"
+                },
+                "previousClose": {
+                    "type": "number"
+                },
+                "volume": {
+                    "type": "number"
+                },
+                "vwap": {
+                    "type": "number"
+                }
+            }
+        },
+        "github_com_Cyvadra_toktik_pkg_polygon.OptionGreeks": {
+            "type": "object",
+            "properties": {
+                "delta": {
+                    "type": "number"
+                },
+                "gamma": {
+                    "type": "number"
+                },
+                "theta": {
+                    "type": "number"
+                },
+                "vega": {
+                    "type": "number"
+                }
+            }
+        },
+        "github_com_Cyvadra_toktik_pkg_polygon.Quote": {
+            "type": "object",
+            "properties": {
+                "askExchange": {
+                    "type": "integer"
+                },
+                "askPrice": {
+                    "type": "number"
+                },
+                "askSize": {
+                    "type": "number"
+                },
+                "bidExchange": {
+                    "type": "integer"
+                },
+                "bidPrice": {
+                    "type": "number"
+                },
+                "bidSize": {
+                    "type": "number"
+                },
+                "conditions": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "indicators": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "participantTimestamp": {
+                    "type": "integer"
+                },
+                "sequenceNumber": {
+                    "type": "integer"
+                },
+                "sipTimestamp": {
+                    "type": "integer"
+                },
+                "tape": {
+                    "type": "integer"
+                },
+                "trfTimestamp": {
+                    "type": "integer"
+                }
+            }
+        },
+        "github_com_Cyvadra_toktik_pkg_polygon.SnapshotBar": {
+            "type": "object",
+            "properties": {
+                "close": {
+                    "type": "number"
+                },
+                "high": {
+                    "type": "number"
+                },
+                "low": {
+                    "type": "number"
+                },
+                "open": {
+                    "type": "number"
+                },
+                "volume": {
+                    "type": "number"
+                },
+                "vwap": {
+                    "type": "number"
+                }
+            }
+        },
+        "github_com_Cyvadra_toktik_pkg_polygon.SnapshotMinuteBar": {
+            "type": "object",
+            "properties": {
+                "accumulatedVolume": {
+                    "type": "integer"
+                },
+                "close": {
+                    "type": "number"
+                },
+                "high": {
+                    "type": "number"
+                },
+                "low": {
+                    "type": "number"
+                },
+                "open": {
+                    "type": "number"
+                },
+                "timestamp": {
+                    "type": "integer"
+                },
+                "tradeCount": {
+                    "type": "integer"
+                },
+                "volume": {
+                    "type": "number"
+                },
+                "vwap": {
+                    "type": "number"
+                }
+            }
+        },
+        "github_com_Cyvadra_toktik_pkg_polygon.StockSnapshot": {
+            "type": "object",
+            "properties": {
+                "day": {
+                    "$ref": "#/definitions/github_com_Cyvadra_toktik_pkg_polygon.SnapshotBar"
+                },
+                "fairMarketValue": {
+                    "type": "number"
+                },
+                "lastQuote": {
+                    "$ref": "#/definitions/github_com_Cyvadra_toktik_pkg_polygon.Quote"
+                },
+                "lastTrade": {
+                    "$ref": "#/definitions/github_com_Cyvadra_toktik_pkg_polygon.Trade"
+                },
+                "minute": {
+                    "$ref": "#/definitions/github_com_Cyvadra_toktik_pkg_polygon.SnapshotMinuteBar"
+                },
+                "previousDay": {
+                    "$ref": "#/definitions/github_com_Cyvadra_toktik_pkg_polygon.SnapshotBar"
+                },
+                "ticker": {
+                    "type": "string"
+                },
+                "todaysChange": {
+                    "type": "number"
+                },
+                "todaysChangePerc": {
+                    "type": "number"
+                },
+                "updated": {
+                    "type": "integer"
+                }
+            }
+        },
+        "github_com_Cyvadra_toktik_pkg_polygon.Trade": {
+            "type": "object",
+            "properties": {
+                "conditions": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "correction": {
+                    "type": "integer"
+                },
+                "decimalSize": {
+                    "type": "string"
+                },
+                "exchange": {
+                    "type": "integer"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "participantTimestamp": {
+                    "type": "integer"
+                },
+                "price": {
+                    "type": "number"
+                },
+                "sequenceNumber": {
+                    "type": "integer"
+                },
+                "sipTimestamp": {
+                    "type": "integer"
+                },
+                "size": {
+                    "type": "number"
+                },
+                "tape": {
+                    "type": "integer"
+                },
+                "trfId": {
+                    "type": "integer"
+                },
+                "trfTimestamp": {
+                    "type": "integer"
+                }
+            }
+        },
+        "github_com_Cyvadra_toktik_pkg_polygon.UnderlyingAsset": {
+            "type": "object",
+            "properties": {
+                "changeToBreakEven": {
+                    "type": "number"
+                },
+                "lastUpdated": {
+                    "type": "integer"
+                },
+                "price": {
+                    "type": "number"
+                },
+                "ticker": {
+                    "type": "string"
+                },
+                "timeframe": {
+                    "type": "string"
+                },
+                "value": {
+                    "type": "number"
+                }
+            }
         }
     },
     "securityDefinitions": {
@@ -4161,15 +5456,13 @@ const docTemplate = `{
 // SwaggerInfo holds exported Swagger Info so clients can modify it
 var SwaggerInfo = &swag.Spec{
 	Version:          "1.0",
-	Host:             "localhost:8080",
+	Host:             "localhost:9010",
 	BasePath:         "/api/v1",
 	Schemes:          []string{},
 	Title:            "Toktik Options Platform API",
 	Description:      "Backend data services for multi-market options analytics, including market data retrieval, feature/factor queries, screening, strategy catalog, and backtesting.",
 	InfoInstanceName: "swagger",
 	SwaggerTemplate:  docTemplate,
-	LeftDelim:        "{{",
-	RightDelim:       "}}",
 }
 
 func init() {

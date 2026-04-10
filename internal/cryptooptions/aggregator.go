@@ -167,6 +167,7 @@ func (s *spotAccumulator) finalize() {
 	}
 
 	s.bar.TickCount = uint32(len(allPrices))
+	s.bar.Volume = float64(s.bar.TickCount)
 	if len(selectedSources) == 1 {
 		s.bar.PriceSource = selectedSources[0]
 	} else {
@@ -377,6 +378,7 @@ func (a *Aggregator) Add(tick TickRow) {
 	}
 
 	acc.bar.TickCount++
+	acc.bar.Volume = float64(acc.bar.TickCount)
 
 	if tick.UnderlyingPrice <= 0 || tick.Timestamp.UnixNano() <= 0 {
 		return

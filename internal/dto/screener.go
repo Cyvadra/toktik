@@ -56,7 +56,7 @@ type ScreenOptionRequest struct {
 	IVMax             *float64 `form:"iv_max" binding:"omitempty"`
 	PremiumMin        *float64 `form:"premium_min" binding:"omitempty"`
 	PremiumMax        *float64 `form:"premium_max" binding:"omitempty"`
-	VolumeMin         *int     `form:"volume_min" binding:"omitempty"`
+	VolumeMin         *float64 `form:"volume_min" binding:"omitempty"`
 	OpenInterestMin   *float64 `form:"open_interest_min" binding:"omitempty"`
 	RelativeSpreadMax *float64 `form:"relative_spread_max" binding:"omitempty"`
 	SortBy            string   `form:"sort_by" binding:"omitempty"`
@@ -81,7 +81,7 @@ type ScreenedOption struct {
 	Vega              float64   `json:"vega"`
 	Theta             float64   `json:"theta"`
 	OpenInterest      float64   `json:"open_interest"`
-	Volume            int       `json:"volume"`
+	Volume            float64   `json:"volume"`
 	RelativeSpread    *float64  `json:"relative_spread,omitempty"`
 	UnderlyingClose   float64   `json:"underlying_close"`
 }

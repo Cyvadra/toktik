@@ -103,7 +103,7 @@ func buildSpotSourceSQLWithFallback(ctx context.Context, conn driver.Conn, inter
 		}
 		if exists {
 			return fmt.Sprintf(`SELECT
-    timestamp, symbol, price_source, open, high, low, close, tick_count, volume_base, volume_quote
+    timestamp, symbol, price_source, open, high, low, close, volume, tick_count, volume_base, volume_quote
 FROM %s
 WHERE symbol = {symbol:String}
 	AND timestamp >= toDateTime({from:String}, 'UTC')
@@ -121,7 +121,7 @@ WHERE symbol = {symbol:String}
 
 	if interval == "1m" {
 		return `SELECT
-    timestamp, symbol, price_source, open, high, low, close, tick_count, volume_base, volume_quote
+    timestamp, symbol, price_source, open, high, low, close, volume, tick_count, volume_base, volume_quote
 FROM crypto_spot_bar_1m
 WHERE symbol = {symbol:String}
 	AND timestamp >= toDateTime({from:String}, 'UTC')

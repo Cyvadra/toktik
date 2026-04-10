@@ -186,7 +186,7 @@ func importOptionFile(ctx context.Context, dsn, pqPath string, batchSize int) (i
 	defer closer()
 
 	var bars []cryptooptions.Bar1m
-	symbolMap := make(map[uint32]cryptooptions.SymbolMeta)
+	symbolMap := make(map[uint64]cryptooptions.SymbolMeta)
 
 	for bar := range barCh {
 		bars = append(bars, bar)

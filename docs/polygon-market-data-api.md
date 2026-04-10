@@ -12,7 +12,7 @@ This document describes the external Polygon-backed market data endpoints for US
 
 Base path: `/api/v1/polygon`
 
-Replace `http://localhost:9010` in the examples below with your assigned API domain.
+Replace `http://192.168.1.9:9010` in the examples below with your assigned API domain.
 
 Stocks:
 
@@ -30,13 +30,13 @@ Options:
 Realtime stock snapshot:
 
 ```bash
-curl "http://localhost:9010/api/v1/polygon/stocks/snapshot?symbol=AAPL"
+curl "http://192.168.1.9:9010/api/v1/polygon/stocks/snapshot?symbol=AAPL"
 ```
 
 Realtime option chain snapshot:
 
 ```bash
-curl "http://localhost:9010/api/v1/polygon/options/chain?underlying=SPY&expiration_date_gte=2026-04-09&expiration_date_lte=2026-05-16&contract_type=call&limit=50"
+curl "http://192.168.1.9:9010/api/v1/polygon/options/chain?underlying=SPY&expiration_date_gte=2026-04-09&expiration_date_lte=2026-05-16&contract_type=call&limit=50"
 ```
 
 ## Historical queries
@@ -44,13 +44,13 @@ curl "http://localhost:9010/api/v1/polygon/options/chain?underlying=SPY&expirati
 Historical stock minute bars:
 
 ```bash
-curl "http://localhost:9010/api/v1/polygon/stocks/aggregates?ticker=NVDA&multiplier=1&timespan=minute&from=2026-04-02&to=2026-04-08&adjusted=true&limit=50000"
+curl "http://192.168.1.9:9010/api/v1/polygon/stocks/aggregates?ticker=NVDA&multiplier=1&timespan=minute&from=2026-04-02&to=2026-04-08&adjusted=true&limit=50000"
 ```
 
 Historical option minute bars:
 
 ```bash
-curl "http://localhost:9010/api/v1/polygon/options/aggregates?ticker=O:SPY260417C00580000&multiplier=1&timespan=minute&from=2026-04-08&to=2026-04-09&limit=50000"
+curl "http://192.168.1.9:9010/api/v1/polygon/options/aggregates?ticker=O:SPY260417C00580000&multiplier=1&timespan=minute&from=2026-04-08&to=2026-04-09&limit=50000"
 ```
 
 ## Python examples
@@ -60,7 +60,7 @@ Realtime stock snapshot:
 ```python
 import requests
 
-base_url = "http://localhost:9010/api/v1/polygon"
+base_url = "http://192.168.1.9:9010/api/v1/polygon"
 resp = requests.get(f"{base_url}/stocks/snapshot", params={"symbol": "AAPL"}, timeout=10)
 resp.raise_for_status()
 data = resp.json()["data"]
@@ -72,7 +72,7 @@ Realtime option chain:
 ```python
 import requests
 
-base_url = "http://localhost:9010/api/v1/polygon"
+base_url = "http://192.168.1.9:9010/api/v1/polygon"
 params = {
     "underlying": "SPY",
     "expiration_date_gte": "2026-04-09",
@@ -91,7 +91,7 @@ Historical aggregates:
 ```python
 import requests
 
-base_url = "http://localhost:9010/api/v1/polygon"
+base_url = "http://192.168.1.9:9010/api/v1/polygon"
 params = {
     "ticker": "AAPL",
     "multiplier": 1,

@@ -29,7 +29,7 @@ func (f *CryptoUnderlyingDataFeed) Fields() []string {
 }
 
 func projectUnderlyingSpotQuery(baseQuery string) string {
-	return fmt.Sprintf(`SELECT timestamp, open, close, high, low, toUInt64(tick_count) AS tick_count, volume_base FROM (%s) ORDER BY timestamp`, baseQuery)
+	return fmt.Sprintf(`SELECT timestamp, open, close, high, low, toUInt64(tick_count) AS tick_count, volume FROM (%s) ORDER BY timestamp`, baseQuery)
 }
 
 func buildUnderlyingDataSet(
@@ -108,10 +108,10 @@ func (f *CryptoUnderlyingDataFeed) Load(ctx context.Context, req backtest.DataRe
 			ts                         time.Time
 			uopen, uclose, uhigh, ulow float32
 			tickCount                  uint64
-			volumeBase                 float64
+			volume                     float64
 		)
 		if hasNativeVolume {
-			if err := rows.Scan(&ts, &uopen, &uclose, &uhigh, &ulow, &tickCount, &volumeBase); err != nil {
+			if err := rows.Scan(&ts, &uopen, &uclose, &uhigh, &ulow, &tickCount, &volume); err != nil {
 				return nil, fmt.Errorf("scan underlying row with volume: %w", err)
 			}
 		} else {
@@ -119,7 +119,7 @@ func (f *CryptoUnderlyingDataFeed) Load(ctx context.Context, req backtest.DataRe
 				return nil, fmt.Errorf("scan underlying row: %w", err)
 			}
 			tickCount = 0
-			volumeBase = math.NaN()
+			volume = math.NaN()
 		}
 		timestamps = append(timestamps, ts)
 		opens = append(opens, float64(uopen))
@@ -131,7 +131,7 @@ func (f *CryptoUnderlyingDataFeed) Load(ctx context.Context, req backtest.DataRe
 		} else {
 			tickCounts = append(tickCounts, math.NaN())
 		}
-		volumes = append(volumes, volumeBase)
+		volumes = append(volumes, volume)
 	}
 
 	return buildUnderlyingDataSet(timestamps, opens, highs, lows, closes, tickCounts, volumes, degraded), nil

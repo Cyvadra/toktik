@@ -21,7 +21,7 @@ type USStockBarRow struct {
 	High         float32   `json:"high"`
 	Low          float32   `json:"low"`
 	Close        float32   `json:"close"`
-	Volume       uint64    `json:"volume"`
+	Volume       float64   `json:"volume"`
 	Transactions uint64    `json:"transactions"`
 }
 
@@ -79,7 +79,7 @@ type USOptionBarRow struct {
 	Vega              float32   `json:"vega"`
 	Theta             float32   `json:"theta"`
 	Rho               float32   `json:"rho"`
-	Volume            uint64    `json:"volume"`
+	Volume            float64   `json:"volume"`
 	Transactions      uint64    `json:"transactions"`
 }
 
@@ -138,7 +138,7 @@ type USOptionGreeksRow struct {
 	Vega              float32   `json:"vega"`
 	Theta             float32   `json:"theta"`
 	Rho               float32   `json:"rho"`
-	Volume            uint64    `json:"volume"`
+	Volume            float64   `json:"volume"`
 	Transactions      uint64    `json:"transactions"`
 }
 
@@ -172,7 +172,7 @@ type USOptionChainContract struct {
 	Vega              float32   `json:"vega"`
 	Theta             float32   `json:"theta"`
 	Rho               float32   `json:"rho"`
-	Volume            uint64    `json:"volume"`
+	Volume            float64   `json:"volume"`
 	Transactions      uint64    `json:"transactions"`
 }
 

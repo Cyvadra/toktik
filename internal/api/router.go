@@ -9,13 +9,13 @@ import (
 )
 
 // NewRouter builds the Gin engine with all API routes registered.
-func NewRouter(cos CryptoOptionsQuerier, usStocks USStocksQuerier, usOptions USOptionsQuerier, infra InfraProvider, features FeatureProvider, strategyBacktests StrategyBacktestProvider, cryptoSpot CryptoSpotQuerier, screener ScreenerProvider, strategyCatalog StrategyCatalogProvider, factors FactorProvider, polygon ...PolygonProvider) *gin.Engine {
+func NewRouter(cos CryptoOptionsQuerier, usStocks USStocksQuerier, usOptions USOptionsQuerier, infra InfraProvider, features FeatureProvider, indicators IndicatorSeriesProvider, strategyBacktests StrategyBacktestProvider, cryptoSpot CryptoSpotQuerier, screener ScreenerProvider, strategyCatalog StrategyCatalogProvider, factors FactorProvider, polygon ...PolygonProvider) *gin.Engine {
 	r := gin.Default()
 	var polygonProvider PolygonProvider
 	if len(polygon) > 0 {
 		polygonProvider = polygon[0]
 	}
-	h := NewHandler(cos, usStocks, usOptions, infra, features, strategyBacktests, cryptoSpot, screener, strategyCatalog, factors, polygonProvider)
+	h := NewHandler(cos, usStocks, usOptions, infra, features, indicators, strategyBacktests, cryptoSpot, screener, strategyCatalog, factors, polygonProvider)
 
 	// Apply middleware
 	r.Use(CORSMiddleware())
@@ -51,6 +51,9 @@ func NewRouter(cos CryptoOptionsQuerier, usStocks USStocksQuerier, usOptions USO
 		featuresGroup.GET("/event-window-snapshot", h.GetEventWindowSnapshot)
 		featuresGroup.GET("/event-window-history", h.GetEventWindowHistory)
 		featuresGroup.GET("/daily-feature-panel", h.GetDailyFeaturePanel)
+
+		indicatorsGroup := v1.Group("/indicators")
+		indicatorsGroup.POST("/series", h.RunIndicatorSeries)
 
 		co := v1.Group("/crypto-options")
 		co.GET("/bars", h.GetBars)
