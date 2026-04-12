@@ -81,6 +81,7 @@ type htmlReportView struct {
 	TradeOverview             tradeOverviewView
 	SpreadSummary             *spreadSummaryView
 	SpreadGroups              []spreadGroupView
+	TopDrawdownGroups         []spreadGroupDrawdownView
 	UngroupedSpreads          []spreadRowView
 	Trades                    []tradeRowView
 	Spreads                   []spreadRowView
@@ -182,21 +183,36 @@ type spreadRowView struct {
 }
 
 type spreadGroupView struct {
-	ID          int
-	Tag         string
-	AnchorID    string
-	Status      string
-	StatusClass string
-	OpenTime    string
-	CloseTime   string
-	InitAmount  string
-	DecayFactor string
-	RollCount   string
-	TotalPnL    string
-	SpreadCount int
-	EventCount  int
-	eventUnix   int64
-	Spreads     []spreadRowView
+	ID            int
+	Tag           string
+	AnchorID      string
+	Status        string
+	StatusClass   string
+	OpenTime      string
+	CloseTime     string
+	InitAmount    string
+	HighestEquity string
+	LowestEquity  string
+	MaxDrawdown   string
+	DecayFactor   string
+	RollCount     string
+	TotalPnL      string
+	SpreadCount   int
+	EventCount    int
+	eventUnix     int64
+	Spreads       []spreadRowView
+}
+
+type spreadGroupDrawdownView struct {
+	ID            int
+	Tag           string
+	AnchorID      string
+	Status        string
+	StatusClass   string
+	MaxDrawdown   string
+	HighestEquity string
+	LowestEquity  string
+	TotalPnL      string
 }
 
 type spreadLegRowView struct {
@@ -639,6 +655,7 @@ func buildHTMLView(result *backtest.Result, meta HTMLMeta) htmlReportView {
 	priceResolver := newUnderlyingPriceResolver(result)
 	view.Spreads = buildSpreadRows(result.SpreadPositions, result.AccountUnit, metricResolver, priceResolver)
 	view.SpreadGroups, view.UngroupedSpreads = buildSpreadGroupViews(result.SpreadGroups, result.SpreadPositions, result.AccountUnit, metricResolver, priceResolver)
+	view.TopDrawdownGroups = buildTopSpreadGroupDrawdownViews(result.SpreadGroups, result.AccountUnit)
 
 	if result.SpreadSummary != nil {
 		s := result.SpreadSummary
@@ -967,20 +984,23 @@ func buildSpreadGroupViews(groups []backtest.SpreadGroupReport, spreads []backte
 		totalPnL := totalGroupedSpreadPnL(orderedSpreads)
 		status := groupedSpreadStatus(report, orderedSpreads)
 		view := spreadGroupView{
-			ID:          groupID,
-			Tag:         groupedSpreadTag(report, groupID),
-			AnchorID:    fmt.Sprintf("spread-group-%d", groupID),
-			Status:      translateSpreadStatus(status),
-			StatusClass: statusClass(status),
-			OpenTime:    formatDateTime(openTime),
-			CloseTime:   nullableTime(closeTime),
-			InitAmount:  groupedInitAmount(report, unit),
-			DecayFactor: groupedDecayFactor(report),
-			RollCount:   groupedRollCount(report),
-			TotalPnL:    signedAmount(totalPnL, unit),
-			SpreadCount: len(orderedSpreads),
-			EventCount:  len(rows),
-			Spreads:     rows,
+			ID:            groupID,
+			Tag:           groupedSpreadTag(report, groupID),
+			AnchorID:      fmt.Sprintf("spread-group-%d", groupID),
+			Status:        translateSpreadStatus(status),
+			StatusClass:   statusClass(status),
+			OpenTime:      formatDateTime(openTime),
+			CloseTime:     nullableTime(closeTime),
+			InitAmount:    groupedInitAmount(report, unit),
+			HighestEquity: amount(report.HighestEquity, unit),
+			LowestEquity:  amount(report.LowestEquity, unit),
+			MaxDrawdown:   pct(report.MaxDrawdown),
+			DecayFactor:   groupedDecayFactor(report),
+			RollCount:     groupedRollCount(report),
+			TotalPnL:      signedAmount(totalPnL, unit),
+			SpreadCount:   len(orderedSpreads),
+			EventCount:    len(rows),
+			Spreads:       rows,
 		}
 		if !openTime.IsZero() {
 			view.eventUnix = openTime.Unix()
@@ -996,6 +1016,41 @@ func buildSpreadGroupViews(groups []backtest.SpreadGroupReport, spreads []backte
 	})
 
 	return views, buildSpreadRows(ungrouped, unit, metricResolver, priceResolver)
+}
+
+func buildTopSpreadGroupDrawdownViews(groups []backtest.SpreadGroupReport, unit string) []spreadGroupDrawdownView {
+	if len(groups) == 0 {
+		return nil
+	}
+	ordered := append([]backtest.SpreadGroupReport(nil), groups...)
+	sort.Slice(ordered, func(i, j int) bool {
+		if ordered[i].MaxDrawdown != ordered[j].MaxDrawdown {
+			return ordered[i].MaxDrawdown > ordered[j].MaxDrawdown
+		}
+		return ordered[i].ID < ordered[j].ID
+	})
+	if len(ordered) > 5 {
+		ordered = ordered[:5]
+	}
+	views := make([]spreadGroupDrawdownView, 0, len(ordered))
+	for _, group := range ordered {
+		status := strings.TrimSpace(group.Status)
+		if status == "" {
+			status = "open"
+		}
+		views = append(views, spreadGroupDrawdownView{
+			ID:            group.ID,
+			Tag:           groupedSpreadTag(group, group.ID),
+			AnchorID:      fmt.Sprintf("spread-group-%d", group.ID),
+			Status:        translateSpreadStatus(status),
+			StatusClass:   statusClass(status),
+			MaxDrawdown:   pct(group.MaxDrawdown),
+			HighestEquity: amount(group.HighestEquity, unit),
+			LowestEquity:  amount(group.LowestEquity, unit),
+			TotalPnL:      signedAmount(group.TotalPnL, unit),
+		})
+	}
+	return views
 }
 
 func orderedGroupedSpreads(report backtest.SpreadGroupReport, spreads []backtest.SpreadPositionReport, spreadMap map[int]backtest.SpreadPositionReport) []backtest.SpreadPositionReport {
@@ -2574,6 +2629,36 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
       </div>
     </div>
 
+	{{ if .TopDrawdownGroups }}
+	<div class="section">
+		<div class="flex items-center justify-between mb-3 gap-3">
+			<h2 class="!mb-0">最大回撤前 5 订单组</h2>
+			<span class="mono text-xs text-slate-400">按组内最大回撤从高到低排序</span>
+		</div>
+		<div class="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+			{{ range .TopDrawdownGroups }}
+			<a href="#{{ .AnchorID }}" class="block rounded-xl border border-white/8 bg-white/[0.03] p-4 transition hover:border-white/15 hover:bg-white/[0.05]">
+				<div class="flex items-start justify-between gap-3">
+					<div>
+						<div class="font-medium text-slate-100">组 #{{ .ID }} {{ .Tag }}</div>
+						<div class="mt-2 inline-flex rounded-full px-2 py-0.5 text-[11px] font-mono {{ .StatusClass }}">{{ .Status }}</div>
+					</div>
+					<div class="text-right">
+						<div class="text-[11px] tracking-[0.2em] text-slate-500">最大回撤</div>
+						<div class="mt-1 font-mono text-base text-rose-200">{{ .MaxDrawdown }}</div>
+					</div>
+				</div>
+				<dl class="mt-4 grid grid-cols-2 gap-3 text-sm">
+					<div><dt class="text-slate-400">最高权益</dt><dd class="mt-1 font-mono text-white">{{ .HighestEquity }}</dd></div>
+					<div><dt class="text-slate-400">最低权益</dt><dd class="mt-1 font-mono text-white">{{ .LowestEquity }}</dd></div>
+					<div class="col-span-2"><dt class="text-slate-400">组盈亏</dt><dd class="mt-1 font-mono text-white">{{ .TotalPnL }}</dd></div>
+				</dl>
+			</a>
+			{{ end }}
+		</div>
+	</div>
+	{{ end }}
+
     {{ if not .NoSpreadRows }}
     <div class="section">
       <div class="flex items-center justify-between mb-3">
@@ -2611,6 +2696,9 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
 								<span>{{ .EventCount }} 个事件</span>
 								<span>滚仓 {{ .RollCount }} 次</span>
 								<span>初始资金 <span class="mono text-slate-300">{{ .InitAmount }}</span></span>
+								<span>Highest Equity <span class="mono text-slate-300">{{ .HighestEquity }}</span></span>
+								<span>Lowest Equity <span class="mono text-slate-300">{{ .LowestEquity }}</span></span>
+								<span>Max Drawdown <span class="mono text-rose-200">{{ .MaxDrawdown }}</span></span>
 								<span>衰减 <span class="mono text-slate-300">{{ .DecayFactor }}</span></span>
 								<span>组盈亏 <span class="mono text-slate-200">{{ .TotalPnL }}</span></span>
 							</div>
@@ -4048,6 +4136,29 @@ const combinedHTMLTemplate = `{{ define "combinedSpreadEventCard" }}
 							<div class="mt-5 rounded-2xl border border-dashed border-white/15 bg-white/5 px-4 py-6 text-sm text-slate-300">本次运行未记录价差持仓。</div>
 							{{ else }}
 							<p class="mt-3 text-sm text-slate-300">开仓和平仓会按时间顺序分别列出。可使用跳转链接在同一价差的两个事件之间切换。</p>
+							{{ if .Report.TopDrawdownGroups }}
+							<div class="mt-5 grid gap-3 xl:grid-cols-2">
+								{{ range .Report.TopDrawdownGroups }}
+								<a href="#{{ .AnchorID }}" class="block rounded-2xl border border-white/10 bg-white/[0.03] p-4 transition hover:border-white/15 hover:bg-white/[0.05]">
+									<div class="flex items-start justify-between gap-3">
+										<div>
+											<div class="text-base font-bold text-white">组 #{{ .ID }} {{ .Tag }}</div>
+											<div class="mt-2 inline-flex rounded-full px-2.5 py-1 text-[11px] font-mono ring-1 {{ .StatusClass }}">{{ .Status }}</div>
+										</div>
+										<div class="text-right">
+											<div class="text-[11px] tracking-[0.18em] text-slate-500">最大回撤</div>
+											<div class="mt-1 font-mono text-lg text-rose-200">{{ .MaxDrawdown }}</div>
+										</div>
+									</div>
+									<div class="mt-4 grid grid-cols-2 gap-3 text-sm">
+										<div><div class="text-slate-400">最高权益</div><div class="mt-1 font-mono text-white">{{ .HighestEquity }}</div></div>
+										<div><div class="text-slate-400">最低权益</div><div class="mt-1 font-mono text-white">{{ .LowestEquity }}</div></div>
+										<div class="col-span-2"><div class="text-slate-400">组盈亏</div><div class="mt-1 font-mono text-white">{{ .TotalPnL }}</div></div>
+									</div>
+								</a>
+								{{ end }}
+							</div>
+							{{ end }}
 							<div class="mt-5 space-y-4">
 								{{ if .Report.SpreadGroups }}
 								{{ range .Report.SpreadGroups }}
@@ -4064,6 +4175,9 @@ const combinedHTMLTemplate = `{{ define "combinedSpreadEventCard" }}
 											<div class="grid grid-cols-2 gap-4 text-sm lg:text-right">
 												<div><div class="text-slate-400">初始资金</div><div class="font-mono text-white">{{ .InitAmount }}</div></div>
 												<div><div class="text-slate-400">组盈亏</div><div class="font-mono text-white">{{ .TotalPnL }}</div></div>
+												<div><div class="text-slate-400">Highest Equity</div><div class="font-mono text-white">{{ .HighestEquity }}</div></div>
+												<div><div class="text-slate-400">Lowest Equity</div><div class="font-mono text-white">{{ .LowestEquity }}</div></div>
+												<div><div class="text-slate-400">Max Drawdown</div><div class="font-mono text-rose-200">{{ .MaxDrawdown }}</div></div>
 												<div><div class="text-slate-400">滚仓次数</div><div class="font-mono text-white">{{ .RollCount }}</div></div>
 												<div><div class="text-slate-400">衰减系数</div><div class="font-mono text-white">{{ .DecayFactor }}</div></div>
 											</div>

@@ -13,7 +13,8 @@ import (
 	_ "github.com/Cyvadra/toktik/pkg/strategies/golden_cross"
 	_ "github.com/Cyvadra/toktik/pkg/strategies/lvol_scalper"
 	_ "github.com/Cyvadra/toktik/pkg/strategies/ma_deviation_spread_outer_source"
-	_ "github.com/Cyvadra/toktik/pkg/strategies/retracement_ratio_protective_spread"
+	_ "github.com/Cyvadra/toktik/pkg/strategies/retracement_ratio_protective_spread_long"
+	_ "github.com/Cyvadra/toktik/pkg/strategies/retracement_ratio_protective_spread_short"
 	_ "github.com/Cyvadra/toktik/pkg/strategies/turtle_trend_simp"
 )
 

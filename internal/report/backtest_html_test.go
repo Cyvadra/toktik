@@ -6,6 +6,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -900,16 +901,19 @@ func TestWriteBacktestHTMLIncludesSpreadGroupSections(t *testing.T) {
 			"close": {70150, 70250},
 		},
 		SpreadGroups: []backtest.SpreadGroupReport{{
-			ID:          3,
-			Tag:         "bull-call",
-			SpreadIDs:   []int{1},
-			InitAmount:  2,
-			DecayFactor: 0.8,
-			RollCount:   0,
-			TotalPnL:    1,
-			Status:      "closed",
-			OpenTime:    openTime,
-			CloseTime:   &closeTime,
+			ID:            3,
+			Tag:           "bull-call",
+			SpreadIDs:     []int{1},
+			InitAmount:    2,
+			HighestEquity: 2.4,
+			LowestEquity:  1.6,
+			MaxDrawdown:   0.15,
+			DecayFactor:   0.8,
+			RollCount:     0,
+			TotalPnL:      1,
+			Status:        "closed",
+			OpenTime:      openTime,
+			CloseTime:     &closeTime,
 		}},
 		SpreadPositions: []backtest.SpreadPositionReport{
 			{
@@ -973,11 +977,62 @@ func TestWriteBacktestHTMLIncludesSpreadGroupSections(t *testing.T) {
 	if !strings.Contains(html, "组 #3 bull-call") {
 		t.Fatalf("expected generated html to include spread group header")
 	}
+	if !strings.Contains(html, "最大回撤前 5 订单组") {
+		t.Fatalf("expected generated html to include spread group drawdown section")
+	}
+	if !strings.Contains(html, "最高权益") || !strings.Contains(html, "最低权益") || !strings.Contains(html, "15.00%") {
+		t.Fatalf("expected generated html to include spread group equity stats")
+	}
 	if !strings.Contains(html, "未分组持仓") {
 		t.Fatalf("expected generated html to include ungrouped spread section")
 	}
 	if !strings.Contains(html, "grouped-spread") || !strings.Contains(html, "standalone") {
 		t.Fatalf("expected generated html to include both grouped and ungrouped spread tags")
+	}
+}
+
+func TestBuildHTMLViewRanksTopSpreadGroupDrawdowns(t *testing.T) {
+	openTime := time.Date(2024, time.January, 2, 3, 4, 0, 0, time.UTC)
+	result := &backtest.Result{
+		StrategyName:   "spread-group-ranking",
+		StartTime:      openTime,
+		EndTime:        openTime.Add(6 * time.Hour),
+		BarsCount:      2,
+		InitialCapital: 100,
+		FinalEquity:    101,
+		AccountUnit:    "USD",
+		EquityCurve:    []float64{100, 101},
+		Timestamps:     []time.Time{openTime, openTime.Add(6 * time.Hour)},
+		Series: map[string][]float64{
+			"open":  {70000, 70100},
+			"high":  {70200, 70300},
+			"low":   {69900, 70050},
+			"close": {70150, 70250},
+		},
+		SpreadGroups: []backtest.SpreadGroupReport{
+			{ID: 1, Tag: "g1", MaxDrawdown: 0.05, HighestEquity: 110, LowestEquity: 100, TotalPnL: 3, Status: "closed"},
+			{ID: 2, Tag: "g2", MaxDrawdown: 0.18, HighestEquity: 112, LowestEquity: 92, TotalPnL: -4, Status: "closed"},
+			{ID: 3, Tag: "g3", MaxDrawdown: 0.12, HighestEquity: 108, LowestEquity: 95, TotalPnL: 1, Status: "open"},
+			{ID: 4, Tag: "g4", MaxDrawdown: 0.22, HighestEquity: 115, LowestEquity: 88, TotalPnL: -8, Status: "closed"},
+			{ID: 5, Tag: "g5", MaxDrawdown: 0.09, HighestEquity: 109, LowestEquity: 99, TotalPnL: 2, Status: "closed"},
+			{ID: 6, Tag: "g6", MaxDrawdown: 0.02, HighestEquity: 103, LowestEquity: 100, TotalPnL: 1, Status: "closed"},
+		},
+	}
+
+	view := buildHTMLView(result, HTMLMeta{})
+	if len(view.TopDrawdownGroups) != 5 {
+		t.Fatalf("len(view.TopDrawdownGroups) = %d, want 5", len(view.TopDrawdownGroups))
+	}
+	gotOrder := []int{
+		view.TopDrawdownGroups[0].ID,
+		view.TopDrawdownGroups[1].ID,
+		view.TopDrawdownGroups[2].ID,
+		view.TopDrawdownGroups[3].ID,
+		view.TopDrawdownGroups[4].ID,
+	}
+	wantOrder := []int{4, 2, 3, 5, 1}
+	if !reflect.DeepEqual(gotOrder, wantOrder) {
+		t.Fatalf("TopDrawdownGroups order = %v, want %v", gotOrder, wantOrder)
 	}
 }
 

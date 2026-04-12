@@ -363,6 +363,61 @@ func TestBuildSpreadGroupReportsSkipsEmptyGroups(t *testing.T) {
 	}
 }
 
+func TestSpreadGroupEquityAccumulatorTracksHighLowAndDrawdown(t *testing.T) {
+	groupTracker := NewSpreadGroupTracker()
+	spreadTracker := NewSpreadTracker()
+	openTime := time.Date(2024, time.January, 3, 9, 0, 0, 0, time.UTC)
+	groupID := groupTracker.Open("drawdown-group", 100, 1, openTime)
+	spreadID := spreadTracker.OpenFull([]SpreadLeg{{
+		Contract: OptionContract{
+			Symbol:      "BTC-OPT-C-100",
+			Type:        Call,
+			StrikePrice: 100,
+			Expiration:  openTime.Add(7 * 24 * time.Hour),
+			MarkPrice:   10,
+		},
+		Side:       Buy,
+		Qty:        1,
+		EntryPrice: 10,
+		EntryTime:  openTime,
+	}}, openTime, 0, "首仓开仓", "", groupID)
+	groupTracker.AddSpread(groupID, spreadID)
+
+	accumulator := newSpreadGroupEquityAccumulator()
+	pricing := DefaultSpreadPricingConfig()
+
+	accumulator.Observe(groupTracker, spreadTracker, map[string]OptionContract{
+		"BTC-OPT-C-100": {Symbol: "BTC-OPT-C-100", MarkPrice: 10},
+	}, pricing, openTime)
+	accumulator.Observe(groupTracker, spreadTracker, map[string]OptionContract{
+		"BTC-OPT-C-100": {Symbol: "BTC-OPT-C-100", MarkPrice: 15},
+	}, pricing, openTime.Add(time.Hour))
+	accumulator.Observe(groupTracker, spreadTracker, map[string]OptionContract{
+		"BTC-OPT-C-100": {Symbol: "BTC-OPT-C-100", MarkPrice: 8},
+	}, pricing, openTime.Add(2*time.Hour))
+
+	snapshots := accumulator.Snapshot()
+	snapshot, ok := snapshots[groupID]
+	if !ok {
+		t.Fatalf("Snapshot() missing group %d", groupID)
+	}
+	if snapshot.HighestEquity != 105 {
+		t.Fatalf("snapshot.HighestEquity = %v, want 105", snapshot.HighestEquity)
+	}
+	if snapshot.LowestEquity != 98 {
+		t.Fatalf("snapshot.LowestEquity = %v, want 98", snapshot.LowestEquity)
+	}
+	wantDrawdown := (105.0 - 98.0) / 105.0
+	if math.Abs(snapshot.MaxDrawdown-wantDrawdown) > 1e-9 {
+		t.Fatalf("snapshot.MaxDrawdown = %.12f, want %.12f", snapshot.MaxDrawdown, wantDrawdown)
+	}
+
+	reports := applySpreadGroupEquityStats([]SpreadGroupReport{{ID: groupID}}, snapshots)
+	if reports[0].HighestEquity != 105 || reports[0].LowestEquity != 98 {
+		t.Fatalf("applySpreadGroupEquityStats() = %#v", reports[0])
+	}
+}
+
 func TestBuildSpreadPositionReportsIncludesCloseDelta(t *testing.T) {
 	tracker := NewSpreadTracker()
 	openTime := time.Date(2024, time.January, 3, 9, 0, 0, 0, time.UTC)

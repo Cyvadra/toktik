@@ -26,6 +26,11 @@ type CryptoOptionsChainProvider struct {
 const cryptoDailyChainInterval = "1d"
 const cryptoOptionsBarChunkWindow = 31 * 24 * time.Hour
 
+type timeWindow struct {
+	start time.Time
+	end   time.Time
+}
+
 // symbolMetaRecord holds the immutable metadata fields for a single option contract.
 type symbolMetaRecord struct {
 	symbol     string
@@ -287,21 +292,58 @@ WHERE c.base_asset = {base_asset:String}
 		joinClause,
 	)
 
-	rows, err := conn.Query(ctx, query,
-		clickhouse.Named("base_asset", baseAsset),
-		clickhouse.Named("symbol", baseAsset),
-		clickhouse.Named("from", fromParam),
-		clickhouse.Named("to", toParam),
-	)
-	if err != nil {
-		return nil, 0, 0, fmt.Errorf("load options chain cache for %s: %w", baseAsset, err)
-	}
-	defer rows.Close()
-
 	byTimestamp := make(map[int64][]backtest.OptionContract, numTimestamps)
 	var rowCount uint64
 	var missingMetaCount uint64
 
+	for _, window := range splitTimeWindows(from.UTC(), to.UTC(), cryptoOptionsBarChunkWindow) {
+		chunkRows, chunkMissing, err := loadOptionsChainCacheChunk(
+			ctx,
+			conn,
+			query,
+			baseAsset,
+			window.start,
+			window.end,
+			resolution,
+			cacheResolution,
+			metaMap,
+			byTimestamp,
+			from,
+			to,
+		)
+		rowCount += chunkRows
+		missingMetaCount += chunkMissing
+		if err != nil {
+			return nil, 0, 0, err
+		}
+	}
+
+	return byTimestamp, rowCount, missingMetaCount, nil
+}
+
+func loadOptionsChainCacheChunk(
+	ctx context.Context,
+	conn driver.Conn,
+	query, baseAsset string,
+	chunkStart, chunkEnd time.Time,
+	resolution, cacheResolution time.Duration,
+	metaMap map[uint64]symbolMetaRecord,
+	byTimestamp map[int64][]backtest.OptionContract,
+	from, to time.Time,
+) (uint64, uint64, error) {
+	rows, err := conn.Query(ctx, query,
+		clickhouse.Named("base_asset", baseAsset),
+		clickhouse.Named("symbol", baseAsset),
+		clickhouse.Named("from", backtestTimeParam(chunkStart)),
+		clickhouse.Named("to", backtestTimeParam(chunkEnd)),
+	)
+	if err != nil {
+		return 0, 0, fmt.Errorf("load options chain cache for %s [%s,%s): %w", baseAsset, backtestTimeParam(chunkStart), backtestTimeParam(chunkEnd), err)
+	}
+	defer rows.Close()
+
+	var rowCount uint64
+	var missingMetaCount uint64
 	for rows.Next() {
 		var (
 			ts              time.Time
@@ -336,14 +378,14 @@ WHERE c.base_asset = {base_asset:String}
 			&openInterests,
 			&underlyingClose,
 		); err != nil {
-			return nil, 0, 0, fmt.Errorf("scan cached chain row: %w", err)
+			return 0, 0, fmt.Errorf("scan cached chain row: %w", err)
 		}
 
 		seriesLen := len(symbolIDs)
 		if seriesLen == 0 || len(deltas) != seriesLen || len(gammas) != seriesLen || len(vegas) != seriesLen ||
 			len(thetas) != seriesLen || len(rhos) != seriesLen || len(bidPrices) != seriesLen || len(askPrices) != seriesLen ||
 			len(markPrices) != seriesLen || len(markIVs) != seriesLen || len(volumes) != seriesLen || len(openInterests) != seriesLen {
-			return nil, 0, 0, fmt.Errorf("invalid cached chain row at %s: array lengths mismatch", ts.UTC().Format(time.RFC3339))
+			return 0, 0, fmt.Errorf("invalid cached chain row at %s: array lengths mismatch", ts.UTC().Format(time.RFC3339))
 		}
 
 		contracts := make([]backtest.OptionContract, 0, seriesLen)
@@ -360,10 +402,10 @@ WHERE c.base_asset = {base_asset:String}
 	}
 
 	if err := rows.Err(); err != nil {
-		return nil, 0, 0, fmt.Errorf("iterate cached chain rows for %s: %w", baseAsset, err)
+		return 0, 0, fmt.Errorf("iterate cached chain rows for %s [%s,%s): %w", baseAsset, backtestTimeParam(chunkStart), backtestTimeParam(chunkEnd), err)
 	}
 
-	return byTimestamp, rowCount, missingMetaCount, nil
+	return rowCount, missingMetaCount, nil
 }
 
 func resolveCryptoChainCacheInterval(requestedInterval string) string {
@@ -547,6 +589,23 @@ func minTime(left, right time.Time) time.Time {
 		return left
 	}
 	return right
+}
+
+func splitTimeWindows(from, to time.Time, window time.Duration) []timeWindow {
+	if !from.Before(to) {
+		return nil
+	}
+	if window <= 0 {
+		return []timeWindow{{start: from, end: to}}
+	}
+
+	windows := make([]timeWindow, 0, int(to.Sub(from)/window)+1)
+	for start := from; start.Before(to); {
+		end := minTime(start.Add(window), to)
+		windows = append(windows, timeWindow{start: start, end: end})
+		start = end
+	}
+	return windows
 }
 
 func buildOptionContract(meta symbolMetaRecord, delta, gamma, vega, theta, rho, bidClose, askClose, markClose, markIVClose, underlyingClose float32, volume float64, openInterest float32) backtest.OptionContract {

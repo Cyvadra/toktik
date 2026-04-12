@@ -151,7 +151,7 @@ Toktik DSL documentation: [docs/dsl.md](docs/dsl.md)
 - **GroupMixin** — position group lifecycle tracking
 - **PendingRefCounter** — scheduled spread open resolution
 
-Built-in strategies: `golden-cross`, `delta-filter`, `bull-put-spread`, `bear-call-spread`, `forum-short-put`, `lvol-scalper`, `ema-atr-spot`, `turtle-trend-simp`, `buy-flash-low`, `covered-call`, `retracement-ratio-protective-spread`.
+Built-in strategies: `golden-cross`, `delta-filter`, `bull-put-spread`, `bear-call-spread`, `forum-short-put`, `lvol-scalper`, `ema-atr-spot`, `turtle-trend-simp`, `buy-flash-low`, `covered-call`, `retracement-ratio-protective-spread-long`, `retracement-ratio-protective-spread-short`.
 
 ## Infra Progress
 
@@ -693,7 +693,7 @@ curl -X POST http://localhost:9010/api/v1/backtests/runs \
     "asset": "BTC",
     "from": "2023-01-01",
     "to": "2025-12-31",
-    "strategy": "retracement-ratio-protective-spread",
+    "strategy": "retracement-ratio-protective-spread-long",
     "interval": "2h",
     "capital": 100,
     "signal_source": "12h",
@@ -717,11 +717,11 @@ Sample response:
 
 This request is equivalent to the CLI command:
 ```bash
-SIGNAL_LEVEL=12h RRPS_DIRECTION=long go run ./cmd/backtest-portfolio/main.go \
+SIGNAL_LEVEL=12h go run ./cmd/backtest-portfolio/main.go \
   --asset BTC \
   --from 2023-01-01 \
   --to 2025-12-31 \
-  --strategy retracement-ratio-protective-spread \
+  --strategy retracement-ratio-protective-spread-long \
   --interval 2h \
   --capital 100 \
   --spread-entry-price-mode mark_close \
@@ -733,7 +733,8 @@ SIGNAL_LEVEL=12h RRPS_DIRECTION=long go run ./cmd/backtest-portfolio/main.go \
 
 策略运行方式：
 - `SIGNAL_LEVEL` 控制读取哪组信号文件，支持 `12h` 和 `1d`。
-- `RRPS_DIRECTION` 控制方向，`long` 读取 `12h_long.csv` / `1d_long.csv`，`short` 读取 `12h_short.csv` / `1d_short.csv`。
+- `retracement-ratio-protective-spread-long` 固定读取 `12h_long.csv` / `1d_long.csv`。
+- `retracement-ratio-protective-spread-short` 固定读取 `12h_short.csv` / `1d_short.csv`。
 - 策略会在信号出现时先关闭所有已存在的 order group，再按初始逻辑重新开仓。
 - 30% 盈利时会部分平掉卖方腿，并在同一个 order group 中重建买方腿，方便回测结果在 HTML 中按组展示。
 - 50% 盈利时会全部平仓，然后进入第二阶段趋势追击逻辑。
@@ -741,11 +742,11 @@ SIGNAL_LEVEL=12h RRPS_DIRECTION=long go run ./cmd/backtest-portfolio/main.go \
 如果你只想先跑多头版本，推荐先用下面这组参数：
 
 ```bash
-SIGNAL_LEVEL=12h RRPS_DIRECTION=long go run ./cmd/backtest-portfolio/main.go \
+SIGNAL_LEVEL=12h go run ./cmd/backtest-portfolio/main.go \
   --asset BTC \
   --from 2023-01-01 \
   --to 2025-12-31 \
-  --strategy retracement-ratio-protective-spread \
+  --strategy retracement-ratio-protective-spread-long \
   --interval 2h \
   --capital 100 \
   --spread-entry-price-mode mark_close \
@@ -777,8 +778,8 @@ Sample terminal result excerpt:
   "result": {
     "summaries": [
       {
-        "strategy_name": "RetracementRatioProtectiveSpread",
-        "html_path": "reports/backtests/api/c40505f1a16f02f33380b4ccbe4f74db/retracement-ratio-protective-spread_btc_2h_20230101_20251231.html"
+        "strategy_name": "RetracementRatioProtectiveSpreadLong",
+        "html_path": "reports/backtests/api/c40505f1a16f02f33380b4ccbe4f74db/retracement-ratio-protective-spread-long_btc_2h_20230101_20251231.html"
       }
     ]
   }

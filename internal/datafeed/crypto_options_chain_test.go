@@ -63,3 +63,26 @@ func TestExpandCachedChainContractsReplicatesDailyCacheAcrossIntradayBuckets(t *
 		t.Fatalf("expected contracts at last hourly bucket, got %d", got)
 	}
 }
+
+func TestSplitTimeWindowsCoversWholeRangeWithoutGaps(t *testing.T) {
+	t.Parallel()
+
+	from := time.Date(2023, 1, 11, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2023, 3, 1, 12, 0, 0, 0, time.UTC)
+	windows := splitTimeWindows(from, to, 31*24*time.Hour)
+
+	if len(windows) != 2 {
+		t.Fatalf("expected 2 windows, got %d", len(windows))
+	}
+	if !windows[0].start.Equal(from) {
+		t.Fatalf("first window start = %s, want %s", windows[0].start, from)
+	}
+	if !windows[len(windows)-1].end.Equal(to) {
+		t.Fatalf("last window end = %s, want %s", windows[len(windows)-1].end, to)
+	}
+	for i := 1; i < len(windows); i++ {
+		if !windows[i-1].end.Equal(windows[i].start) {
+			t.Fatalf("window %d ends at %s, next starts at %s", i-1, windows[i-1].end, windows[i].start)
+		}
+	}
+}

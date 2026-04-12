@@ -103,16 +103,19 @@ type SpreadPositionReport struct {
 
 // SpreadGroupReport is a report-friendly snapshot of a spread group (roll chain).
 type SpreadGroupReport struct {
-	ID          int        `json:"id"`
-	Tag         string     `json:"tag"`
-	SpreadIDs   []int      `json:"spread_ids"`
-	InitAmount  float64    `json:"init_amount"`
-	DecayFactor float64    `json:"decay_factor"`
-	RollCount   int        `json:"roll_count"`
-	TotalPnL    float64    `json:"total_pnl"`
-	Status      string     `json:"status"`
-	OpenTime    time.Time  `json:"open_time"`
-	CloseTime   *time.Time `json:"close_time,omitempty"`
+	ID            int        `json:"id"`
+	Tag           string     `json:"tag"`
+	SpreadIDs     []int      `json:"spread_ids"`
+	InitAmount    float64    `json:"init_amount"`
+	HighestEquity float64    `json:"highest_equity"`
+	LowestEquity  float64    `json:"lowest_equity"`
+	MaxDrawdown   float64    `json:"max_drawdown"`
+	DecayFactor   float64    `json:"decay_factor"`
+	RollCount     int        `json:"roll_count"`
+	TotalPnL      float64    `json:"total_pnl"`
+	Status        string     `json:"status"`
+	OpenTime      time.Time  `json:"open_time"`
+	CloseTime     *time.Time `json:"close_time,omitempty"`
 }
 
 // SpreadLegReport is a report-friendly snapshot of an individual spread leg.

@@ -1,0 +1,1 @@
+- Crypto options chain cache queries can time out when a multi-year range is fetched in one result stream; keep cached-chain reads chunked, similar to bar-table scans.

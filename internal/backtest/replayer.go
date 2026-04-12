@@ -168,6 +168,7 @@ func (r *Replayer) Replay(prepared *PreparedData, strategy Strategy, params map[
 
 	spreadTracker := NewSpreadTracker()
 	spreadGroupTracker := NewSpreadGroupTracker()
+	spreadGroupEquity := newSpreadGroupEquityAccumulator()
 	var scheduledActions []ScheduledAction
 	spreadPricing := DefaultSpreadPricingConfig()
 	if provider, ok := strategy.(SpreadPricingProvider); ok {
@@ -352,6 +353,7 @@ func (r *Replayer) Replay(prepared *PreparedData, strategy Strategy, params map[
 			}
 		}
 		equityCurve[i] = broker.Equity() + spreadMarketValue
+		spreadGroupEquity.Observe(spreadGroupTracker, spreadTracker, contractMap, spreadPricing, prepared.PrimaryDS.Timestamps[i])
 
 		current := i + 1
 		if r.progress != nil && (current == nBars || current%progressStep == 0) {
@@ -397,6 +399,7 @@ func (r *Replayer) Replay(prepared *PreparedData, strategy Strategy, params map[
 	result.SpreadSummary = computeSpreadSummary(spreadTracker)
 	result.SpreadPositions = buildSpreadPositionReports(spreadTracker, result.EndTime)
 	result.SpreadGroups = buildSpreadGroupReports(spreadGroupTracker, spreadTracker, result.EndTime)
+	result.SpreadGroups = applySpreadGroupEquityStats(result.SpreadGroups, spreadGroupEquity.Snapshot())
 
 	return result, nil
 }
