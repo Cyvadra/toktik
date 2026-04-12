@@ -28,6 +28,7 @@ type overviewReportView struct {
 	StrategyCount  int
 	BestReturn     string
 	BestSharpe     string
+	BestCalmar     string
 	LowestDrawdown string
 	TotalSpreads   string
 	ComparisonPath string
@@ -44,6 +45,7 @@ type overviewStrategyView struct {
 	TotalReturn    string
 	Annualized     string
 	Sharpe         string
+	Calmar         string
 	Drawdown       string
 	Trades         string
 	Spreads        string
@@ -96,6 +98,7 @@ func buildOverviewView(outputPath string, items []OverviewItem, meta HTMLMeta) o
 	periodEnd := items[0].Result.EndTime
 	bestReturn := items[0].Result
 	bestSharpe := items[0].Result
+	bestCalmar := items[0].Result
 	lowestDrawdown := items[0].Result
 	totalSpreads := 0
 
@@ -117,6 +120,9 @@ func buildOverviewView(outputPath string, items []OverviewItem, meta HTMLMeta) o
 		}
 		if result.SharpeRatio > bestSharpe.SharpeRatio {
 			bestSharpe = result
+		}
+		if result.CalmarRatio > bestCalmar.CalmarRatio {
+			bestCalmar = result
 		}
 		if result.MaxDrawdown < lowestDrawdown.MaxDrawdown {
 			lowestDrawdown = result
@@ -149,6 +155,7 @@ func buildOverviewView(outputPath string, items []OverviewItem, meta HTMLMeta) o
 			TotalReturn:    pct(result.TotalReturn),
 			Annualized:     pct(result.AnnualizedReturn),
 			Sharpe:         decimal(result.SharpeRatio),
+			Calmar:         ratio(result.CalmarRatio),
 			Drawdown:       pct(result.MaxDrawdown),
 			Trades:         integer(len(result.Trades)),
 			Spreads:        spreads,
@@ -164,6 +171,7 @@ func buildOverviewView(outputPath string, items []OverviewItem, meta HTMLMeta) o
 	view.Period = fmt.Sprintf("%s to %s", formatDate(periodStart), formatDate(periodEnd))
 	view.BestReturn = fmt.Sprintf("%s · %s", bestReturn.StrategyName, pct(bestReturn.TotalReturn))
 	view.BestSharpe = fmt.Sprintf("%s · %s", bestSharpe.StrategyName, decimal(bestSharpe.SharpeRatio))
+	view.BestCalmar = fmt.Sprintf("%s · %s", bestCalmar.StrategyName, ratio(bestCalmar.CalmarRatio))
 	view.LowestDrawdown = fmt.Sprintf("%s · %s", lowestDrawdown.StrategyName, pct(lowestDrawdown.MaxDrawdown))
 	view.TotalSpreads = integer(totalSpreads)
 	return view
@@ -285,7 +293,7 @@ const overviewHTMLTemplate = `<!DOCTYPE html>
         </div>
       </div>
 
-      <div class="grid gap-4 px-6 py-6 md:grid-cols-2 xl:grid-cols-4 sm:px-10">
+			<div class="grid gap-4 px-6 py-6 md:grid-cols-2 xl:grid-cols-5 sm:px-10">
         <article class="rounded-3xl border border-white/10 bg-panel/70 p-5">
           <div class="font-mono text-[11px] uppercase tracking-[0.24em] text-slate-400">Best Return</div>
           <div class="mt-3 text-lg font-bold text-white">{{ .BestReturn }}</div>
@@ -294,6 +302,10 @@ const overviewHTMLTemplate = `<!DOCTYPE html>
           <div class="font-mono text-[11px] uppercase tracking-[0.24em] text-slate-400">Best Sharpe</div>
           <div class="mt-3 text-lg font-bold text-white">{{ .BestSharpe }}</div>
         </article>
+				<article class="rounded-3xl border border-white/10 bg-panel/70 p-5">
+					<div class="font-mono text-[11px] uppercase tracking-[0.24em] text-slate-400">Best Calmar</div>
+					<div class="mt-3 text-lg font-bold text-white">{{ .BestCalmar }}</div>
+				</article>
         <article class="rounded-3xl border border-white/10 bg-panel/70 p-5">
           <div class="font-mono text-[11px] uppercase tracking-[0.24em] text-slate-400">Lowest Drawdown</div>
           <div class="mt-3 text-lg font-bold text-white">{{ .LowestDrawdown }}</div>
@@ -346,6 +358,7 @@ const overviewHTMLTemplate = `<!DOCTYPE html>
                   <th class="px-4 py-3 font-medium">Return</th>
                   <th class="px-4 py-3 font-medium">Annualized</th>
                   <th class="px-4 py-3 font-medium">Sharpe</th>
+				  <th class="px-4 py-3 font-medium">Calmar</th>
                   <th class="px-4 py-3 font-medium">Drawdown</th>
                   <th class="px-4 py-3 font-medium">Fills</th>
                   <th class="px-4 py-3 font-medium">Spreads</th>
@@ -365,6 +378,7 @@ const overviewHTMLTemplate = `<!DOCTYPE html>
                   <td class="px-4 py-3 font-mono {{ .ReturnClass }}">{{ .TotalReturn }}</td>
                   <td class="px-4 py-3 font-mono text-slate-200">{{ .Annualized }}</td>
                   <td class="px-4 py-3 font-mono text-slate-200">{{ .Sharpe }}</td>
+				  <td class="px-4 py-3 font-mono text-slate-200">{{ .Calmar }}</td>
                   <td class="px-4 py-3 font-mono {{ .DrawdownClass }}">{{ .Drawdown }}</td>
                   <td class="px-4 py-3 font-mono text-slate-200">{{ .Trades }}</td>
                   <td class="px-4 py-3 font-mono text-slate-200">{{ .Spreads }}</td>

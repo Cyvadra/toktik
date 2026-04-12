@@ -7,6 +7,11 @@ import (
 	"time"
 )
 
+const (
+	annualizationDaysPerYear  = 365.0
+	annualizationHoursPerYear = annualizationDaysPerYear * 24.0
+)
+
 func computeResult(
 	strategyName string,
 	trades []Trade,
@@ -36,24 +41,7 @@ func computeResult(
 		r.FinalEquity = equityCurve[n-1]
 	}
 
-	// Total return
-	if initialCapital > 0 {
-		r.TotalReturn = (r.FinalEquity - initialCapital) / initialCapital
-	}
-
-	// Annualized return
-	if n > 1 {
-		years := r.EndTime.Sub(r.StartTime).Hours() / (365.25 * 24)
-		if years > 0 && r.FinalEquity > 0 && initialCapital > 0 {
-			r.AnnualizedReturn = math.Pow(r.FinalEquity/initialCapital, 1.0/years) - 1
-		}
-	}
-
-	// Max drawdown
-	r.MaxDrawdown, r.MaxDrawdownStart, r.MaxDrawdownEnd = ComputeMaxDrawdown(equityCurve, initialCapital)
-
-	// Sharpe ratio – annualised using the actual bar interval inferred from timestamps
-	r.SharpeRatio = ComputeSharpe(equityCurve, timestamps)
+	ApplyDerivedPerformance(r)
 
 	// Trade statistics
 	r.TotalTrades = len(trades)
@@ -69,6 +57,241 @@ func computeResult(
 	r.EquityAnalysis = ComputeEquityAnalysis(equityCurve, timestamps)
 
 	return r
+}
+
+// ApplyDerivedPerformance recomputes the account, asset, quote, and benchmark
+// performance snapshots from the raw equity curve and close series.
+func ApplyDerivedPerformance(r *Result) {
+	if r == nil {
+		return
+	}
+	r.AccountPerformance = ComputePerformanceSnapshot(r.EquityCurve, r.Timestamps, r.InitialCapital)
+	applyPrimaryPerformance(r, r.AccountPerformance)
+
+	closeSeries := []float64(nil)
+	if r.Series != nil {
+		closeSeries = r.Series["close"]
+	}
+	r.AssetPerformance = nil
+	r.QuotePerformance = nil
+	r.BuyHoldPerformance = nil
+	if len(closeSeries) == 0 {
+		return
+	}
+
+	assetCurve, assetTimes, assetInitial := buildAssetBasisCurve(r.EquityCurve, r.Timestamps, closeSeries, r.InitialCapital, r.AccountUnit)
+	if len(assetCurve) > 0 {
+		r.AssetPerformance = ComputePerformanceSnapshot(assetCurve, assetTimes, assetInitial)
+	}
+
+	quoteCurve, quoteTimes, quoteInitial := buildQuoteBasisCurve(r.EquityCurve, r.Timestamps, closeSeries, r.InitialCapital, r.AccountUnit)
+	if len(quoteCurve) > 0 {
+		r.QuotePerformance = ComputePerformanceSnapshot(quoteCurve, quoteTimes, quoteInitial)
+	}
+
+	buyHoldCurve, buyHoldTimes, buyHoldInitial := buildBuyHoldQuoteCurve(r.Timestamps, closeSeries, r.InitialCapital, r.AccountUnit)
+	if len(buyHoldCurve) > 0 {
+		r.BuyHoldPerformance = ComputePerformanceSnapshot(buyHoldCurve, buyHoldTimes, buyHoldInitial)
+	}
+}
+
+func applyPrimaryPerformance(r *Result, snapshot *PerformanceSnapshot) {
+	if r == nil || snapshot == nil {
+		return
+	}
+	r.FinalEquity = snapshot.FinalValue
+	r.TotalReturn = snapshot.TotalReturn
+	r.AnnualizedReturn = snapshot.AnnualizedReturn
+	r.AnnualizedVolatility = snapshot.AnnualizedVolatility
+	r.SharpeRatio = snapshot.SharpeRatio
+	r.CalmarRatio = snapshot.CalmarRatio
+	r.MaxDrawdown = snapshot.MaxDrawdown
+	r.MaxDrawdownStart = snapshot.MaxDrawdownStart
+	r.MaxDrawdownEnd = snapshot.MaxDrawdownEnd
+}
+
+// ComputePerformanceSnapshot computes the requested five risk/return metrics on
+// a sanitized curve: annual return, annualized volatility, max drawdown,
+// Sharpe ratio, and Calmar ratio. Risk-free rate is fixed at 0%.
+func ComputePerformanceSnapshot(curve []float64, timestamps []time.Time, initialValue float64) *PerformanceSnapshot {
+	values, times := sanitizePerformanceSeries(curve, timestamps)
+	if len(values) == 0 {
+		return nil
+	}
+	if !performanceValueValid(initialValue) || initialValue == 0 {
+		initialValue = values[0]
+	}
+	snapshot := &PerformanceSnapshot{
+		InitialValue: initialValue,
+		FinalValue:   values[len(values)-1],
+	}
+	if initialValue != 0 {
+		snapshot.TotalReturn = (snapshot.FinalValue - initialValue) / initialValue
+	}
+	if len(times) > 1 {
+		years := times[len(times)-1].Sub(times[0]).Hours() / annualizationHoursPerYear
+		if years > 0 && snapshot.FinalValue > 0 && initialValue > 0 {
+			snapshot.AnnualizedReturn = math.Pow(snapshot.FinalValue/initialValue, 1.0/years) - 1
+		}
+	}
+	snapshot.MaxDrawdown, snapshot.MaxDrawdownStart, snapshot.MaxDrawdownEnd = ComputeMaxDrawdown(values, initialValue)
+	snapshot.AnnualizedVolatility = ComputeAnnualizedVolatility(values, times)
+	snapshot.SharpeRatio = ComputeSharpe(values, times)
+	snapshot.CalmarRatio = ComputeCalmar(snapshot.AnnualizedReturn, snapshot.MaxDrawdown)
+	return snapshot
+}
+
+func sanitizePerformanceSeries(curve []float64, timestamps []time.Time) ([]float64, []time.Time) {
+	n := performanceMinInt(len(curve), len(timestamps))
+	if n == 0 {
+		return nil, nil
+	}
+	values := make([]float64, 0, n)
+	times := make([]time.Time, 0, n)
+	for i := 0; i < n; i++ {
+		value := curve[i]
+		if !performanceValueValid(value) {
+			continue
+		}
+		values = append(values, value)
+		times = append(times, timestamps[i])
+	}
+	return values, times
+}
+
+func buildAssetBasisCurve(equity []float64, timestamps []time.Time, closeSeries []float64, initialCapital float64, accountUnit string) ([]float64, []time.Time, float64) {
+	n := performanceMinInt(len(equity), performanceMinInt(len(timestamps), len(closeSeries)))
+	if n == 0 {
+		return nil, nil, 0
+	}
+	curve := make([]float64, 0, n)
+	times := make([]time.Time, 0, n)
+	initial := 0.0
+	for i := 0; i < n; i++ {
+		closeValue := closeSeries[i]
+		equityValue := equity[i]
+		if !performanceValueValid(closeValue) || closeValue <= 0 || !performanceValueValid(equityValue) {
+			continue
+		}
+		value := equityValue
+		if isUSDLikeUnit(accountUnit) || strings.TrimSpace(accountUnit) == "" {
+			value = equityValue / closeValue
+		}
+		if initial == 0 {
+			initial = initialCapital
+			if isUSDLikeUnit(accountUnit) || strings.TrimSpace(accountUnit) == "" {
+				initial = initialCapital / closeValue
+			}
+		}
+		curve = append(curve, value)
+		times = append(times, timestamps[i])
+	}
+	return curve, times, initial
+}
+
+func buildQuoteBasisCurve(equity []float64, timestamps []time.Time, closeSeries []float64, initialCapital float64, accountUnit string) ([]float64, []time.Time, float64) {
+	n := performanceMinInt(len(equity), performanceMinInt(len(timestamps), len(closeSeries)))
+	if n == 0 {
+		return nil, nil, 0
+	}
+	curve := make([]float64, 0, n)
+	times := make([]time.Time, 0, n)
+	initial := initialCapital
+	for i := 0; i < n; i++ {
+		closeValue := closeSeries[i]
+		equityValue := equity[i]
+		if !performanceValueValid(equityValue) {
+			continue
+		}
+		value := equityValue
+		if !isUSDLikeUnit(accountUnit) && strings.TrimSpace(accountUnit) != "" {
+			if !performanceValueValid(closeValue) || closeValue <= 0 {
+				continue
+			}
+			value = equityValue * closeValue
+			if len(curve) == 0 {
+				initial = initialCapital * closeValue
+			}
+		}
+		curve = append(curve, value)
+		times = append(times, timestamps[i])
+	}
+	return curve, times, initial
+}
+
+func buildBuyHoldQuoteCurve(timestamps []time.Time, closeSeries []float64, initialCapital float64, accountUnit string) ([]float64, []time.Time, float64) {
+	n := performanceMinInt(len(timestamps), len(closeSeries))
+	if n == 0 {
+		return nil, nil, 0
+	}
+	entryIndex := -1
+	entryClose := 0.0
+	for i := 0; i < n; i++ {
+		if performanceValueValid(closeSeries[i]) && closeSeries[i] > 0 {
+			entryIndex = i
+			entryClose = closeSeries[i]
+			break
+		}
+	}
+	if entryIndex < 0 {
+		return nil, nil, 0
+	}
+	initialQuote := initialCapital
+	if !isUSDLikeUnit(accountUnit) && strings.TrimSpace(accountUnit) != "" {
+		initialQuote = initialCapital * entryClose
+	}
+	if !performanceValueValid(initialQuote) || initialQuote <= 0 {
+		return nil, nil, 0
+	}
+	curve := make([]float64, 0, n-entryIndex)
+	times := make([]time.Time, 0, n-entryIndex)
+	for i := entryIndex; i < n; i++ {
+		closeValue := closeSeries[i]
+		if !performanceValueValid(closeValue) || closeValue <= 0 {
+			continue
+		}
+		curve = append(curve, initialQuote*(closeValue/entryClose))
+		times = append(times, timestamps[i])
+	}
+	return curve, times, initialQuote
+}
+
+func performanceValueValid(value float64) bool {
+	return !math.IsNaN(value) && !math.IsInf(value, 0)
+}
+
+func performanceMinInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func isUSDLikeUnit(unit string) bool {
+	trimmed := strings.ToUpper(strings.TrimSpace(unit))
+	switch trimmed {
+	case "", "USD", "USDT", "USDC", "BUSD", "FDUSD":
+		return true
+	default:
+		return false
+	}
+}
+
+// ComputeCalmar computes Calmar ratio from annualized return and max drawdown.
+func ComputeCalmar(annualizedReturn, maxDrawdown float64) float64 {
+	if math.IsNaN(annualizedReturn) || math.IsNaN(maxDrawdown) {
+		return math.NaN()
+	}
+	if maxDrawdown == 0 {
+		if annualizedReturn > 0 {
+			return math.Inf(1)
+		}
+		if annualizedReturn < 0 {
+			return math.Inf(-1)
+		}
+		return 0
+	}
+	return annualizedReturn / maxDrawdown
 }
 
 func normalizeReportColumns(columns []ReportColumn, series map[string][]float64) []ReportColumn {
@@ -346,10 +569,10 @@ func meanStd(data []float64) (float64, float64) {
 
 // inferBarsPerYear estimates how many bars occur in one calendar year by
 // computing the median inter-bar duration from the timestamp series.
-// Falls back to 252 (daily bars) when the series is too short to measure.
+// Falls back to 365 (daily bars) when the series is too short to measure.
 func inferBarsPerYear(timestamps []time.Time) float64 {
 	if len(timestamps) < 2 {
-		return 252
+		return annualizationDaysPerYear
 	}
 	durs := make([]float64, 0, len(timestamps)-1)
 	for i := 1; i < len(timestamps); i++ {
@@ -359,7 +582,7 @@ func inferBarsPerYear(timestamps []time.Time) float64 {
 		}
 	}
 	if len(durs) == 0 {
-		return 252
+		return annualizationDaysPerYear
 	}
 	sort.Float64s(durs)
 	mid := len(durs) / 2
@@ -369,8 +592,7 @@ func inferBarsPerYear(timestamps []time.Time) float64 {
 	} else {
 		medianHours = durs[mid]
 	}
-	const hoursPerYear = 365.25 * 24.0
-	return hoursPerYear / medianHours
+	return annualizationHoursPerYear / medianHours
 }
 
 // ComputeMaxDrawdown computes max drawdown, start index, and end index from an
@@ -408,18 +630,25 @@ func ComputeMaxDrawdown(equity []float64, initialCapital float64) (float64, int,
 // ComputeSharpe computes the annualized Sharpe ratio from an equity curve.
 // The bar interval is inferred from timestamps for accurate annualisation.
 func ComputeSharpe(equity []float64, timestamps []time.Time) float64 {
-	n := len(equity)
-	if n <= 1 {
+	returns := computeReturnSeries(equity)
+	return computeSharpeFromReturns(returns, timestamps)
+}
+
+// ComputeAnnualizedVolatility computes annualized return volatility from an
+// equity curve using the actual bar interval inferred from timestamps.
+func ComputeAnnualizedVolatility(equity []float64, timestamps []time.Time) float64 {
+	returns := computeReturnSeries(equity)
+	if len(returns) == 0 {
 		return 0
 	}
-	returns := make([]float64, 0, n-1)
-	for i := 1; i < n; i++ {
-		prev := equity[i-1]
-		if prev == 0 {
-			continue
-		}
-		returns = append(returns, (equity[i]-prev)/prev)
+	_, stddev := meanStd(returns)
+	if stddev == 0 {
+		return 0
 	}
+	return stddev * math.Sqrt(inferBarsPerYear(timestamps))
+}
+
+func computeSharpeFromReturns(returns []float64, timestamps []time.Time) float64 {
 	if len(returns) == 0 {
 		return 0
 	}
@@ -429,6 +658,22 @@ func ComputeSharpe(equity []float64, timestamps []time.Time) float64 {
 	}
 	barsPerYear := inferBarsPerYear(timestamps)
 	return (mean / stddev) * math.Sqrt(barsPerYear)
+}
+
+func computeReturnSeries(equity []float64) []float64 {
+	n := len(equity)
+	if n <= 1 {
+		return nil
+	}
+	returns := make([]float64, 0, n-1)
+	for i := 1; i < n; i++ {
+		prev := equity[i-1]
+		if prev == 0 {
+			continue
+		}
+		returns = append(returns, (equity[i]-prev)/prev)
+	}
+	return returns
 }
 
 // ApplyTradeSummary recomputes win/loss trade statistics on a Result from its

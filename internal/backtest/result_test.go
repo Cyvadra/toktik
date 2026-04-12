@@ -20,6 +20,7 @@ func TestResultExportJSONSanitizesNaNAndInf(t *testing.T) {
 		InitialCapital: 100,
 		FinalEquity:    101,
 		TotalReturn:    math.NaN(),
+		CalmarRatio:    math.Inf(1),
 		SharpeRatio:    math.Inf(1),
 		EquityCurve:    []float64{100, math.NaN()},
 		Timestamps: []time.Time{
@@ -59,6 +60,9 @@ func TestResultExportJSONSanitizesNaNAndInf(t *testing.T) {
 	if !strings.Contains(text, "\"total_return\": null") {
 		t.Fatalf("expected total_return NaN to be exported as null, got: %s", text)
 	}
+	if !strings.Contains(text, "\"calmar_ratio\": null") {
+		t.Fatalf("expected calmar_ratio Inf to be exported as null, got: %s", text)
+	}
 
 	var decoded map[string]interface{}
 	if err := json.Unmarshal(data, &decoded); err != nil {
@@ -85,6 +89,40 @@ func TestResultExportJSONSanitizesNaNAndInf(t *testing.T) {
 	tradeOverview, ok := decoded["trade_overview"].(map[string]interface{})
 	if !ok || tradeOverview["net_pnl"] != nil {
 		t.Fatalf("decoded trade_overview.net_pnl = %#v, want nil", tradeOverview)
+	}
+}
+
+func TestComputeCalmar(t *testing.T) {
+	tests := []struct {
+		name             string
+		annualizedReturn float64
+		maxDrawdown      float64
+		want             float64
+	}{
+		{name: "normal", annualizedReturn: 0.30, maxDrawdown: 0.10, want: 3},
+		{name: "zero drawdown positive return", annualizedReturn: 0.15, maxDrawdown: 0, want: math.Inf(1)},
+		{name: "zero drawdown flat return", annualizedReturn: 0, maxDrawdown: 0, want: 0},
+		{name: "zero drawdown negative return", annualizedReturn: -0.10, maxDrawdown: 0, want: math.Inf(-1)},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ComputeCalmar(tt.annualizedReturn, tt.maxDrawdown)
+			switch {
+			case math.IsInf(tt.want, 1):
+				if !math.IsInf(got, 1) {
+					t.Fatalf("ComputeCalmar() = %v, want +Inf", got)
+				}
+			case math.IsInf(tt.want, -1):
+				if !math.IsInf(got, -1) {
+					t.Fatalf("ComputeCalmar() = %v, want -Inf", got)
+				}
+			default:
+				if math.Abs(got-tt.want) > 1e-9 {
+					t.Fatalf("ComputeCalmar() = %.12f, want %.12f", got, tt.want)
+				}
+			}
+		})
 	}
 }
 

@@ -3,7 +3,6 @@ package optimization
 import (
 	"context"
 	"fmt"
-	"math"
 	"sort"
 	"time"
 
@@ -188,14 +187,7 @@ func extractMetric(r *backtest.Result, metric string) float64 {
 	case MetricProfitFactor:
 		return r.ProfitFactor
 	case MetricCalmar:
-		if r.MaxDrawdown == 0 {
-			// No drawdown: rank by return sign; positive return = theoretically infinite Calmar
-			if r.AnnualizedReturn > 0 {
-				return math.Inf(1)
-			}
-			return 0
-		}
-		return r.AnnualizedReturn / r.MaxDrawdown
+		return backtest.ComputeCalmar(r.AnnualizedReturn, r.MaxDrawdown)
 	default:
 		return r.SharpeRatio
 	}

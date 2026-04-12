@@ -79,6 +79,7 @@ type StrategyBacktestSummary struct {
 	TotalReturn      float64                        `json:"total_return"`
 	AnnualizedReturn float64                        `json:"annualized_return"`
 	SharpeRatio      float64                        `json:"sharpe_ratio"`
+	CalmarRatio      float64                        `json:"calmar_ratio"`
 	MaxDrawdown      float64                        `json:"max_drawdown"`
 	TotalTrades      int                            `json:"total_trades"`
 	WinningTrades    int                            `json:"winning_trades"`

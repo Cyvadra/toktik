@@ -297,6 +297,7 @@ func main() {
 		result.CapitalMode = strings.ToUpper(capitalProfile.unit)
 		result.CapitalProfile = item.Runtime.ProfileLabel
 		result.CapitalNote = capitalProfile.note
+		result.UnderlyingUnit = underlyingSymbol
 		results = append(results, result)
 
 		fmt.Println()

@@ -15,18 +15,21 @@ type Result struct {
 	BarsCount    int       `json:"bars_count"`
 
 	// Performance
-	InitialCapital   float64 `json:"initial_capital"`
-	FinalEquity      float64 `json:"final_equity"`
-	AccountUnit      string  `json:"account_unit,omitempty"`
-	CapitalMode      string  `json:"capital_mode,omitempty"`
-	CapitalProfile   string  `json:"capital_profile,omitempty"`
-	CapitalNote      string  `json:"capital_note,omitempty"`
-	TotalReturn      float64 `json:"total_return"` // as fraction, e.g. 0.15 = 15%
-	AnnualizedReturn float64 `json:"annualized_return"`
-	SharpeRatio      float64 `json:"sharpe_ratio"`
-	MaxDrawdown      float64 `json:"max_drawdown"`       // as fraction of peak
-	MaxDrawdownStart int     `json:"max_drawdown_start"` // bar index
-	MaxDrawdownEnd   int     `json:"max_drawdown_end"`   // bar index
+	InitialCapital       float64 `json:"initial_capital"`
+	FinalEquity          float64 `json:"final_equity"`
+	AccountUnit          string  `json:"account_unit,omitempty"`
+	UnderlyingUnit       string  `json:"underlying_unit,omitempty"`
+	CapitalMode          string  `json:"capital_mode,omitempty"`
+	CapitalProfile       string  `json:"capital_profile,omitempty"`
+	CapitalNote          string  `json:"capital_note,omitempty"`
+	TotalReturn          float64 `json:"total_return"` // as fraction, e.g. 0.15 = 15%
+	AnnualizedReturn     float64 `json:"annualized_return"`
+	AnnualizedVolatility float64 `json:"annualized_volatility"`
+	SharpeRatio          float64 `json:"sharpe_ratio"`
+	CalmarRatio          float64 `json:"calmar_ratio"`
+	MaxDrawdown          float64 `json:"max_drawdown"`       // as fraction of peak
+	MaxDrawdownStart     int     `json:"max_drawdown_start"` // bar index
+	MaxDrawdownEnd       int     `json:"max_drawdown_end"`   // bar index
 
 	// Trade statistics
 	TotalTrades   int     `json:"total_trades"`
@@ -39,14 +42,18 @@ type Result struct {
 	TotalFees     float64 `json:"total_fees"`
 
 	// Series data (for visualization / further analysis)
-	Trades          []Trade                `json:"trades"`
-	EquityCurve     []float64              `json:"equity_curve"`
-	Timestamps      []time.Time            `json:"timestamps"`
-	Series          map[string][]float64   `json:"series,omitempty"` // indicator series
-	ReportColumns   []ReportColumn         `json:"report_columns,omitempty"`
-	TradeOverview   *TradeOverview         `json:"trade_overview,omitempty"`
-	EquityAnalysis  *EquityAnalysis        `json:"equity_analysis,omitempty"`
-	SpreadPositions []SpreadPositionReport `json:"spread_positions,omitempty"`
+	Trades             []Trade                `json:"trades"`
+	EquityCurve        []float64              `json:"equity_curve"`
+	Timestamps         []time.Time            `json:"timestamps"`
+	Series             map[string][]float64   `json:"series,omitempty"` // indicator series
+	ReportColumns      []ReportColumn         `json:"report_columns,omitempty"`
+	TradeOverview      *TradeOverview         `json:"trade_overview,omitempty"`
+	EquityAnalysis     *EquityAnalysis        `json:"equity_analysis,omitempty"`
+	AccountPerformance *PerformanceSnapshot   `json:"account_performance,omitempty"`
+	AssetPerformance   *PerformanceSnapshot   `json:"asset_performance,omitempty"`
+	QuotePerformance   *PerformanceSnapshot   `json:"quote_performance,omitempty"`
+	BuyHoldPerformance *PerformanceSnapshot   `json:"buy_hold_performance,omitempty"`
+	SpreadPositions    []SpreadPositionReport `json:"spread_positions,omitempty"`
 
 	// Options spread group tracking
 	SpreadGroups []SpreadGroupReport `json:"spread_groups,omitempty"`
@@ -83,6 +90,21 @@ type EquityAnalysis struct {
 	FlatBars                int       `json:"flat_bars"`
 	MaxDrawdownDurationBars int       `json:"max_drawdown_duration_bars"`
 	MaxDrawdownDuration     float64   `json:"max_drawdown_duration_hours"`
+}
+
+// PerformanceSnapshot captures a self-consistent set of risk/return metrics
+// for one valuation basis.
+type PerformanceSnapshot struct {
+	InitialValue         float64 `json:"initial_value"`
+	FinalValue           float64 `json:"final_value"`
+	TotalReturn          float64 `json:"total_return"`
+	AnnualizedReturn     float64 `json:"annualized_return"`
+	AnnualizedVolatility float64 `json:"annualized_volatility"`
+	SharpeRatio          float64 `json:"sharpe_ratio"`
+	CalmarRatio          float64 `json:"calmar_ratio"`
+	MaxDrawdown          float64 `json:"max_drawdown"`
+	MaxDrawdownStart     int     `json:"max_drawdown_start"`
+	MaxDrawdownEnd       int     `json:"max_drawdown_end"`
 }
 
 // SpreadPositionReport is a report-friendly snapshot of a multi-leg options spread.
@@ -199,8 +221,12 @@ func (r *Result) Summary() string {
 	b.WriteString(FormatPercent(r.TotalReturn))
 	b.WriteString("\nAnnualized Return: ")
 	b.WriteString(FormatPercent(r.AnnualizedReturn))
+	b.WriteString("\nAnnualized Vol:    ")
+	b.WriteString(FormatPercent(r.AnnualizedVolatility))
 	b.WriteString("\nSharpe Ratio:      ")
 	b.WriteString(ftoa(r.SharpeRatio))
+	b.WriteString("\nCalmar Ratio:      ")
+	b.WriteString(ftoa(r.CalmarRatio))
 	b.WriteString("\nMax Drawdown:      ")
 	b.WriteString(FormatPercent(r.MaxDrawdown))
 	b.WriteString("\nTotal Trades:      ")
@@ -215,5 +241,31 @@ func (r *Result) Summary() string {
 	b.WriteString(formatSummaryAmount(r.AvgLoss, unit))
 	b.WriteString("\nTotal Fees:        ")
 	b.WriteString(formatSummaryAmount(r.TotalFees, unit))
+	if r.AssetPerformance != nil {
+		basis := strings.TrimSpace(r.UnderlyingUnit)
+		if basis == "" {
+			basis = "ASSET"
+		}
+		b.WriteString("\nAsset Annualized Return (")
+		b.WriteString(basis)
+		b.WriteString("): ")
+		b.WriteString(FormatPercent(r.AssetPerformance.AnnualizedReturn))
+		b.WriteString("\nAsset Annualized Vol (")
+		b.WriteString(basis)
+		b.WriteString("): ")
+		b.WriteString(FormatPercent(r.AssetPerformance.AnnualizedVolatility))
+		b.WriteString("\nAsset Max Drawdown (")
+		b.WriteString(basis)
+		b.WriteString("): ")
+		b.WriteString(FormatPercent(r.AssetPerformance.MaxDrawdown))
+		b.WriteString("\nAsset Sharpe Ratio (")
+		b.WriteString(basis)
+		b.WriteString("): ")
+		b.WriteString(ftoa(r.AssetPerformance.SharpeRatio))
+		b.WriteString("\nAsset Calmar Ratio (")
+		b.WriteString(basis)
+		b.WriteString("): ")
+		b.WriteString(ftoa(r.AssetPerformance.CalmarRatio))
+	}
 	return b.String()
 }

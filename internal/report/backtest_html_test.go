@@ -160,6 +160,139 @@ func TestBuildHTMLViewIncludesOverlayColumns(t *testing.T) {
 	}
 }
 
+func TestBuildHTMLViewIncludesCalmarRatio(t *testing.T) {
+	result := &backtest.Result{
+		StrategyName:         "calmar-view",
+		StartTime:            time.Date(2024, time.January, 1, 0, 0, 0, 0, time.UTC),
+		EndTime:              time.Date(2024, time.January, 2, 0, 0, 0, 0, time.UTC),
+		InitialCapital:       100,
+		FinalEquity:          110,
+		AnnualizedReturn:     0.30,
+		AnnualizedVolatility: 0.18,
+		CalmarRatio:          2.5,
+		SharpeRatio:          1.67,
+		MaxDrawdown:          0.12,
+		EquityCurve:          []float64{100, 105, 110},
+		Timestamps: []time.Time{
+			time.Date(2024, time.January, 1, 0, 0, 0, 0, time.UTC),
+			time.Date(2024, time.January, 1, 12, 0, 0, 0, time.UTC),
+			time.Date(2024, time.January, 2, 0, 0, 0, 0, time.UTC),
+		},
+	}
+	view := buildHTMLView(result, HTMLMeta{Asset: "BTC", Interval: "1h"})
+	if view.CalmarRatio != "2.50" {
+		t.Fatalf("view.CalmarRatio = %q, want 2.50", view.CalmarRatio)
+	}
+	if view.AnnualizedVolatility == "" {
+		t.Fatal("view.AnnualizedVolatility is empty, want populated")
+	}
+
+	infinite := buildHTMLView(&backtest.Result{StrategyName: "inf", CalmarRatio: math.Inf(1)}, HTMLMeta{})
+	if infinite.CalmarRatio != "∞" {
+		t.Fatalf("infinite.CalmarRatio = %q, want ∞", infinite.CalmarRatio)
+	}
+}
+
+func TestBuildHTMLViewIncludesQuoteAndBuyHoldPerformance(t *testing.T) {
+	result := &backtest.Result{
+		StrategyName:   "quote-view",
+		StartTime:      time.Date(2024, time.January, 1, 0, 0, 0, 0, time.UTC),
+		EndTime:        time.Date(2024, time.January, 1, 2, 0, 0, 0, time.UTC),
+		InitialCapital: 1,
+		FinalEquity:    1.08,
+		AccountUnit:    "BTC",
+		UnderlyingUnit: "BTC",
+		EquityCurve:    []float64{1, 1.04, 1.08},
+		Timestamps: []time.Time{
+			time.Date(2024, time.January, 1, 0, 0, 0, 0, time.UTC),
+			time.Date(2024, time.January, 1, 1, 0, 0, 0, time.UTC),
+			time.Date(2024, time.January, 1, 2, 0, 0, 0, time.UTC),
+		},
+		Series: map[string][]float64{
+			"close": {40000, 41000, 42000},
+		},
+	}
+	backtest.ApplyDerivedPerformance(result)
+
+	view := buildHTMLView(result, HTMLMeta{Asset: "BTC", Interval: "1h"})
+	if !view.HasQuoteNetValue {
+		t.Fatal("view.HasQuoteNetValue = false, want true")
+	}
+	if !view.HasBuyHoldPerformance {
+		t.Fatal("view.HasBuyHoldPerformance = false, want true")
+	}
+	if !view.HasDailyQuoteNetValue {
+		t.Fatal("view.HasDailyQuoteNetValue = false, want true for sub-daily result")
+	}
+	if view.QuotePerformance.SharpeRatio == "" || view.BuyHoldPerformance.CalmarRatio == "" {
+		t.Fatalf("quote/buyhold metric cards not populated: %#v %#v", view.QuotePerformance, view.BuyHoldPerformance)
+	}
+	if string(view.DailyQuoteNetValueSeriesData) == "[]" {
+		t.Fatal("DailyQuoteNetValueSeriesData = [], want populated series")
+	}
+	if string(view.QuoteNetValueSeriesData) == "[]" {
+		t.Fatal("QuoteNetValueSeriesData = [], want populated series")
+	}
+	if view.HasAssetPerformance != true {
+		t.Fatal("view.HasAssetPerformance = false, want true")
+	}
+}
+
+func TestBuildOverviewViewIncludesCalmarRatio(t *testing.T) {
+	items := []OverviewItem{
+		{
+			Result: &backtest.Result{
+				StrategyName:     "alpha",
+				StartTime:        time.Date(2024, time.January, 1, 0, 0, 0, 0, time.UTC),
+				EndTime:          time.Date(2024, time.January, 2, 0, 0, 0, 0, time.UTC),
+				InitialCapital:   100,
+				FinalEquity:      112,
+				TotalReturn:      0.12,
+				AnnualizedReturn: 0.30,
+				SharpeRatio:      1.8,
+				CalmarRatio:      3.0,
+				MaxDrawdown:      0.10,
+				EquityCurve:      []float64{100, 104, 112},
+				Timestamps: []time.Time{
+					time.Date(2024, time.January, 1, 0, 0, 0, 0, time.UTC),
+					time.Date(2024, time.January, 1, 12, 0, 0, 0, time.UTC),
+					time.Date(2024, time.January, 2, 0, 0, 0, 0, time.UTC),
+				},
+			},
+			HTMLPath: "/tmp/alpha.html",
+		},
+		{
+			Result: &backtest.Result{
+				StrategyName:     "beta",
+				StartTime:        time.Date(2024, time.January, 1, 0, 0, 0, 0, time.UTC),
+				EndTime:          time.Date(2024, time.January, 2, 0, 0, 0, 0, time.UTC),
+				InitialCapital:   100,
+				FinalEquity:      108,
+				TotalReturn:      0.08,
+				AnnualizedReturn: 0.20,
+				SharpeRatio:      1.2,
+				CalmarRatio:      4.0,
+				MaxDrawdown:      0.05,
+				EquityCurve:      []float64{100, 103, 108},
+				Timestamps: []time.Time{
+					time.Date(2024, time.January, 1, 0, 0, 0, 0, time.UTC),
+					time.Date(2024, time.January, 1, 12, 0, 0, 0, time.UTC),
+					time.Date(2024, time.January, 2, 0, 0, 0, 0, time.UTC),
+				},
+			},
+			HTMLPath: "/tmp/beta.html",
+		},
+	}
+
+	view := buildOverviewView("/tmp/overview.html", items, HTMLMeta{Asset: "BTC", Interval: "1h"})
+	if view.BestCalmar != "beta · 4.00" {
+		t.Fatalf("view.BestCalmar = %q, want beta · 4.00", view.BestCalmar)
+	}
+	if len(view.Strategies) != 2 || view.Strategies[0].Calmar == "" {
+		t.Fatalf("overview strategies missing calmar values: %#v", view.Strategies)
+	}
+}
+
 func TestBuildHTMLViewIncludesSettledEquitySeries(t *testing.T) {
 	result := &backtest.Result{
 		StrategyName:   "settled-series",

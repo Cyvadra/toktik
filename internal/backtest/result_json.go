@@ -20,6 +20,7 @@ type resultJSONExport struct {
 	TotalReturn      *float64 `json:"total_return"`
 	AnnualizedReturn *float64 `json:"annualized_return"`
 	SharpeRatio      *float64 `json:"sharpe_ratio"`
+	CalmarRatio      *float64 `json:"calmar_ratio"`
 	MaxDrawdown      *float64 `json:"max_drawdown"`
 	MaxDrawdownStart int      `json:"max_drawdown_start"`
 	MaxDrawdownEnd   int      `json:"max_drawdown_end"`
@@ -148,6 +149,7 @@ func (r *Result) jsonExport() resultJSONExport {
 		TotalReturn:      jsonFloat(r.TotalReturn),
 		AnnualizedReturn: jsonFloat(r.AnnualizedReturn),
 		SharpeRatio:      jsonFloat(r.SharpeRatio),
+		CalmarRatio:      jsonFloat(r.CalmarRatio),
 		MaxDrawdown:      jsonFloat(r.MaxDrawdown),
 		MaxDrawdownStart: r.MaxDrawdownStart,
 		MaxDrawdownEnd:   r.MaxDrawdownEnd,

@@ -406,6 +406,7 @@ func buildStrategyBacktestSummary(result *backtest.Result, htmlPath string) dto.
 		TotalReturn:      result.TotalReturn,
 		AnnualizedReturn: result.AnnualizedReturn,
 		SharpeRatio:      result.SharpeRatio,
+		CalmarRatio:      result.CalmarRatio,
 		MaxDrawdown:      result.MaxDrawdown,
 		TotalTrades:      result.TotalTrades,
 		WinningTrades:    result.WinningTrades,

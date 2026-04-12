@@ -105,7 +105,7 @@ func TestComputeTradePnLReversalSplitsExitCommission(t *testing.T) {
 // Fix 3: Sharpe ratio annualization factor
 // ---------------------------------------------------------------------------
 
-// TestInferBarsPerYearHourly verifies that hourly bars yield ~8766 bars/year.
+// TestInferBarsPerYearHourly verifies that hourly bars yield ~8760 bars/year.
 func TestInferBarsPerYearHourly(t *testing.T) {
 	timestamps := make([]time.Time, 100)
 	base := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -113,14 +113,14 @@ func TestInferBarsPerYearHourly(t *testing.T) {
 		timestamps[i] = base.Add(time.Duration(i) * time.Hour)
 	}
 	bpy := inferBarsPerYear(timestamps)
-	// 365.25 * 24 ≈ 8766 bars/year
-	expected := 365.25 * 24.0
+	// 365 * 24 = 8760 bars/year
+	expected := 365.0 * 24.0
 	if math.Abs(bpy-expected)/expected > 0.01 {
 		t.Fatalf("expected ~%.1f bars/year for hourly data, got %.1f", expected, bpy)
 	}
 }
 
-// TestInferBarsPerYearDaily verifies that daily bars yield ~365.25 bars/year.
+// TestInferBarsPerYearDaily verifies that daily bars yield ~365 bars/year.
 func TestInferBarsPerYearDaily(t *testing.T) {
 	timestamps := make([]time.Time, 100)
 	base := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -128,7 +128,7 @@ func TestInferBarsPerYearDaily(t *testing.T) {
 		timestamps[i] = base.Add(time.Duration(i) * 24 * time.Hour)
 	}
 	bpy := inferBarsPerYear(timestamps)
-	expected := 365.25
+	expected := 365.0
 	if math.Abs(bpy-expected)/expected > 0.01 {
 		t.Fatalf("expected ~%.2f bars/year for daily data, got %.2f", expected, bpy)
 	}
@@ -136,11 +136,11 @@ func TestInferBarsPerYearDaily(t *testing.T) {
 
 // TestInferBarsPerYearFallback checks the fallback for < 2 timestamps.
 func TestInferBarsPerYearFallback(t *testing.T) {
-	if got := inferBarsPerYear(nil); got != 252 {
-		t.Fatalf("expected fallback 252 for empty slice, got %v", got)
+	if got := inferBarsPerYear(nil); got != 365 {
+		t.Fatalf("expected fallback 365 for empty slice, got %v", got)
 	}
-	if got := inferBarsPerYear([]time.Time{time.Now()}); got != 252 {
-		t.Fatalf("expected fallback 252 for single-element slice, got %v", got)
+	if got := inferBarsPerYear([]time.Time{time.Now()}); got != 365 {
+		t.Fatalf("expected fallback 365 for single-element slice, got %v", got)
 	}
 }
 

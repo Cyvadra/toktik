@@ -23,71 +23,83 @@ type HTMLMeta struct {
 }
 
 type htmlReportView struct {
-	Title                     string
-	StrategyName              string
-	Asset                     string
-	Interval                  string
-	Period                    string
-	GeneratedAt               string
-	CapitalMode               string
-	CapitalProfile            string
-	CapitalNote               string
-	InitialCapital            string
-	FinalEquity               string
-	NetPnL                    string
-	TotalReturn               string
-	AnnualizedReturn          string
-	SharpeRatio               string
-	MaxDrawdown               string
-	TotalFees                 string
-	BarsCount                 int
-	TradesCount               int
-	SpreadsCount              int
-	TradeMarkerCount          int
-	SpreadEventCount          int
-	EquityMin                 string
-	EquityMax                 string
-	DrawdownMax               string
-	HasUnderlyingChart        bool
-	HasUnderlyingVolume       bool
-	UnderlyingPriceMin        string
-	UnderlyingPriceMax        string
-	UnderlyingChartNote       string
-	UnderlyingVolumeLabel     string
-	UnderlyingCandleData      template.JS
-	UnderlyingVolumeData      template.JS
-	UnderlyingMarkerData      template.JS
-	HoverColumnsData          template.JS
-	HasHoverColumns           bool
-	HasFeatureColumns         bool
-	EquitySeriesData          template.JS
-	SettledEquitySeriesData   template.JS
-	SettledFloatingProfitData template.JS
-	SettledFloatingLossData   template.JS
-	SettledExposureData       template.JS
-	BuyHoldSeriesData         template.JS
-	HasBuyHoldBenchmark       bool
-	BuyHoldMin                string
-	BuyHoldMax                string
-	BuyHoldNote               string
-	DrawdownSeriesData        template.JS
-	PnLUSDSeriesData          template.JS
-	ActiveTimeData            template.JS
-	HasPnLUSD                 bool
-	PnLUSDMin                 string
-	PnLUSDMax                 string
-	PnLUSDNote                string
-	EquityAnalysis            equityAnalysisView
-	TradeOverview             tradeOverviewView
-	SpreadSummary             *spreadSummaryView
-	SpreadGroups              []spreadGroupView
-	TopDrawdownGroups         []spreadGroupDrawdownView
-	UngroupedSpreads          []spreadRowView
-	Trades                    []tradeRowView
-	Spreads                   []spreadRowView
-	NoTradeRows               bool
-	NoSpreadRows              bool
-	Notes                     []string
+	Title                        string
+	StrategyName                 string
+	Asset                        string
+	Interval                     string
+	Period                       string
+	GeneratedAt                  string
+	CapitalMode                  string
+	CapitalProfile               string
+	CapitalNote                  string
+	InitialCapital               string
+	FinalEquity                  string
+	NetPnL                       string
+	TotalReturn                  string
+	AnnualizedReturn             string
+	AnnualizedVolatility         string
+	SharpeRatio                  string
+	CalmarRatio                  string
+	MaxDrawdown                  string
+	StrategyPerformance          performanceMetricCardView
+	AssetPerformance             performanceMetricCardView
+	HasAssetPerformance          bool
+	TotalFees                    string
+	BarsCount                    int
+	TradesCount                  int
+	SpreadsCount                 int
+	TradeMarkerCount             int
+	SpreadEventCount             int
+	EquityMin                    string
+	EquityMax                    string
+	DrawdownMax                  string
+	HasUnderlyingChart           bool
+	HasUnderlyingVolume          bool
+	UnderlyingPriceMin           string
+	UnderlyingPriceMax           string
+	UnderlyingChartNote          string
+	UnderlyingVolumeLabel        string
+	UnderlyingCandleData         template.JS
+	UnderlyingVolumeData         template.JS
+	UnderlyingMarkerData         template.JS
+	HoverColumnsData             template.JS
+	HasHoverColumns              bool
+	HasFeatureColumns            bool
+	EquitySeriesData             template.JS
+	SettledEquitySeriesData      template.JS
+	SettledFloatingProfitData    template.JS
+	SettledFloatingLossData      template.JS
+	SettledExposureData          template.JS
+	QuoteNetValueSeriesData      template.JS
+	HasQuoteNetValue             bool
+	QuoteNetValueMin             string
+	QuoteNetValueMax             string
+	QuoteNetValueNote            string
+	QuotePerformance             performanceMetricCardView
+	BuyHoldPerformance           performanceMetricCardView
+	HasBuyHoldPerformance        bool
+	DailyQuoteNetValueSeriesData template.JS
+	DailyBuyHoldSeriesData       template.JS
+	HasDailyQuoteNetValue        bool
+	DailyQuoteNetValueNote       string
+	BuyHoldSeriesData            template.JS
+	HasBuyHoldBenchmark          bool
+	BuyHoldMin                   string
+	BuyHoldMax                   string
+	BuyHoldNote                  string
+	DrawdownSeriesData           template.JS
+	ActiveTimeData               template.JS
+	EquityAnalysis               equityAnalysisView
+	TradeOverview                tradeOverviewView
+	SpreadSummary                *spreadSummaryView
+	SpreadGroups                 []spreadGroupView
+	TopDrawdownGroups            []spreadGroupDrawdownView
+	UngroupedSpreads             []spreadRowView
+	Trades                       []tradeRowView
+	Spreads                      []spreadRowView
+	NoTradeRows                  bool
+	NoSpreadRows                 bool
+	Notes                        []string
 }
 
 type combinedHTMLReportView struct {
@@ -130,6 +142,16 @@ type equityAnalysisView struct {
 	FlatBars                string
 	MaxDrawdownDurationBars string
 	MaxDrawdownDuration     string
+}
+
+type performanceMetricCardView struct {
+	Name                 string
+	ValueUnit            string
+	AnnualizedReturn     string
+	AnnualizedVolatility string
+	MaxDrawdown          string
+	SharpeRatio          string
+	CalmarRatio          string
 }
 
 type spreadSummaryView struct {
@@ -444,14 +466,13 @@ func mergeBacktestResults(results []*backtest.Result) *backtest.Result {
 
 	if merged.InitialCapital > 0 {
 		merged.TotalReturn = (merged.FinalEquity - merged.InitialCapital) / merged.InitialCapital
-		years := merged.EndTime.Sub(merged.StartTime).Hours() / (365.25 * 24)
+		years := merged.EndTime.Sub(merged.StartTime).Hours() / (365 * 24)
 		if years > 0 && merged.FinalEquity > 0 {
 			merged.AnnualizedReturn = math.Pow(merged.FinalEquity/merged.InitialCapital, 1.0/years) - 1
 		}
 	}
 
-	merged.MaxDrawdown, merged.MaxDrawdownStart, merged.MaxDrawdownEnd = backtest.ComputeMaxDrawdown(merged.EquityCurve, merged.InitialCapital)
-	merged.SharpeRatio = backtest.ComputeSharpe(merged.EquityCurve, merged.Timestamps)
+	backtest.ApplyDerivedPerformance(merged)
 
 	merged.TradeOverview = backtest.ComputeTradeOverview(merged.Trades)
 	merged.EquityAnalysis = backtest.ComputeEquityAnalysis(merged.EquityCurve, merged.Timestamps)
@@ -559,41 +580,50 @@ func buildHTMLView(result *backtest.Result, meta HTMLMeta) htmlReportView {
 
 	drawdown := drawdownSeries(result.EquityCurve)
 	view := htmlReportView{
-		Title:                     fmt.Sprintf("%s 回测报告", result.StrategyName),
-		StrategyName:              result.StrategyName,
-		Asset:                     meta.Asset,
-		Interval:                  meta.Interval,
-		Period:                    fmt.Sprintf("%s 至 %s", formatDate(result.StartTime), formatDate(result.EndTime)),
-		GeneratedAt:               meta.GeneratedAt.UTC().Format("2006-01-02 15:04:05 UTC"),
-		CapitalMode:               fallbackText(strings.TrimSpace(result.CapitalMode), strings.TrimSpace(result.AccountUnit)),
-		CapitalProfile:            fallbackText(strings.TrimSpace(result.CapitalProfile), "未标注"),
-		CapitalNote:               fallbackText(strings.TrimSpace(result.CapitalNote), "-capital 按账户单位解释。"),
-		InitialCapital:            amount(result.InitialCapital, result.AccountUnit),
-		FinalEquity:               amount(result.FinalEquity, result.AccountUnit),
-		NetPnL:                    signedAmount(result.FinalEquity-result.InitialCapital, result.AccountUnit),
-		TotalReturn:               pct(result.TotalReturn),
-		AnnualizedReturn:          pct(result.AnnualizedReturn),
-		SharpeRatio:               decimal(result.SharpeRatio),
-		MaxDrawdown:               pct(result.MaxDrawdown),
-		TotalFees:                 amount(result.TotalFees, result.AccountUnit),
-		BarsCount:                 result.BarsCount,
-		TradesCount:               len(result.Trades),
-		SpreadsCount:              len(result.SpreadPositions),
-		NoTradeRows:               len(result.Trades) == 0,
-		NoSpreadRows:              len(result.SpreadPositions) == 0,
-		UnderlyingCandleData:      template.JS("[]"),
-		UnderlyingVolumeData:      template.JS("[]"),
-		UnderlyingMarkerData:      template.JS("[]"),
-		HoverColumnsData:          template.JS("[]"),
-		PnLUSDSeriesData:          template.JS("[]"),
-		ActiveTimeData:            template.JS("[]"),
-		EquitySeriesData:          marshalJS(buildLineSeries(result.Timestamps, result.EquityCurve)),
-		SettledEquitySeriesData:   template.JS("[]"),
-		SettledFloatingProfitData: template.JS("[]"),
-		SettledFloatingLossData:   template.JS("[]"),
-		SettledExposureData:       template.JS("[]"),
-		BuyHoldSeriesData:         template.JS("[]"),
-		DrawdownSeriesData:        marshalJS(buildLineSeries(result.Timestamps, drawdown)),
+		Title:                        fmt.Sprintf("%s 回测报告", result.StrategyName),
+		StrategyName:                 result.StrategyName,
+		Asset:                        meta.Asset,
+		Interval:                     meta.Interval,
+		Period:                       fmt.Sprintf("%s 至 %s", formatDate(result.StartTime), formatDate(result.EndTime)),
+		GeneratedAt:                  meta.GeneratedAt.UTC().Format("2006-01-02 15:04:05 UTC"),
+		CapitalMode:                  fallbackText(strings.TrimSpace(result.CapitalMode), strings.TrimSpace(result.AccountUnit)),
+		CapitalProfile:               fallbackText(strings.TrimSpace(result.CapitalProfile), "未标注"),
+		CapitalNote:                  fallbackText(strings.TrimSpace(result.CapitalNote), "-capital 按账户单位解释。"),
+		InitialCapital:               amount(result.InitialCapital, result.AccountUnit),
+		FinalEquity:                  amount(result.FinalEquity, result.AccountUnit),
+		NetPnL:                       signedAmount(result.FinalEquity-result.InitialCapital, result.AccountUnit),
+		TotalReturn:                  pct(result.TotalReturn),
+		AnnualizedReturn:             pct(result.AnnualizedReturn),
+		AnnualizedVolatility:         pct(result.AnnualizedVolatility),
+		SharpeRatio:                  decimal(result.SharpeRatio),
+		CalmarRatio:                  ratio(result.CalmarRatio),
+		MaxDrawdown:                  pct(result.MaxDrawdown),
+		StrategyPerformance:          buildPerformanceMetricCard("策略本位", strings.TrimSpace(result.AccountUnit), result.AccountPerformance),
+		TotalFees:                    amount(result.TotalFees, result.AccountUnit),
+		BarsCount:                    result.BarsCount,
+		TradesCount:                  len(result.Trades),
+		SpreadsCount:                 len(result.SpreadPositions),
+		NoTradeRows:                  len(result.Trades) == 0,
+		NoSpreadRows:                 len(result.SpreadPositions) == 0,
+		UnderlyingCandleData:         template.JS("[]"),
+		UnderlyingVolumeData:         template.JS("[]"),
+		UnderlyingMarkerData:         template.JS("[]"),
+		HoverColumnsData:             template.JS("[]"),
+		ActiveTimeData:               template.JS("[]"),
+		EquitySeriesData:             marshalJS(buildLineSeries(result.Timestamps, result.EquityCurve)),
+		SettledEquitySeriesData:      template.JS("[]"),
+		SettledFloatingProfitData:    template.JS("[]"),
+		SettledFloatingLossData:      template.JS("[]"),
+		SettledExposureData:          template.JS("[]"),
+		QuoteNetValueSeriesData:      template.JS("[]"),
+		DailyQuoteNetValueSeriesData: template.JS("[]"),
+		DailyBuyHoldSeriesData:       template.JS("[]"),
+		BuyHoldSeriesData:            template.JS("[]"),
+		DrawdownSeriesData:           marshalJS(buildLineSeries(result.Timestamps, drawdown)),
+	}
+	if result.AssetPerformance != nil {
+		view.HasAssetPerformance = true
+		view.AssetPerformance = buildPerformanceMetricCard("标的本位", fallbackText(strings.TrimSpace(result.UnderlyingUnit), strings.TrimSpace(view.Asset)), result.AssetPerformance)
 	}
 
 	settledData := buildSettledEquityData(result)
@@ -606,6 +636,22 @@ func buildHTMLView(result *backtest.Result, meta HTMLMeta) htmlReportView {
 	view.EquityMin = amount(minEq, result.AccountUnit)
 	view.EquityMax = amount(maxEq, result.AccountUnit)
 	view.DrawdownMax = pct(maxValue(drawdown))
+
+	quoteNetValueSeries := buildQuoteNetValueSeries(result)
+	if len(quoteNetValueSeries) > 0 {
+		view.HasQuoteNetValue = true
+		view.QuoteNetValueSeriesData = marshalJS(quoteNetValueSeries)
+		quoteValues := linePointValues(quoteNetValueSeries)
+		minQuote, maxQuote := minMax(quoteValues)
+		view.QuoteNetValueMin = currency(minQuote)
+		view.QuoteNetValueMax = currency(maxQuote)
+		view.QuotePerformance = buildPerformanceMetricCard("策略 U 本位", quoteMetricUnitLabel(result), result.QuotePerformance)
+		if strings.EqualFold(strings.TrimSpace(result.AccountUnit), "USD") || strings.TrimSpace(result.AccountUnit) == "" {
+			view.QuoteNetValueNote = "该曲线以 U / USD 报价货币计价；账户本身已经是美元口径。无风险利率按 0%，年化按 365 天。"
+		} else {
+			view.QuoteNetValueNote = "该曲线将账户净值按标的收盘价换算为 U / USD 报价货币。无风险利率按 0%，年化按 365 天。"
+		}
+	}
 
 	buyHoldSeries, buyHoldInitialUSD := buildBuyHoldSeries(result)
 	if len(buyHoldSeries) > 0 {
@@ -625,27 +671,18 @@ func buildHTMLView(result *backtest.Result, meta HTMLMeta) htmlReportView {
 		} else {
 			view.BuyHoldNote = fmt.Sprintf("Buy&Hold 参考线始终按 USD 计价；此处先将初始资金 %s 按首个有效收盘价换算为 %s，再一次性买入并持有。", amount(result.InitialCapital, result.AccountUnit), currency(buyHoldInitialUSD))
 		}
+		view.HasBuyHoldPerformance = result.BuyHoldPerformance != nil
+		view.BuyHoldPerformance = buildPerformanceMetricCard("Buy & Hold", quoteMetricUnitLabel(result), result.BuyHoldPerformance)
 	}
 
-	if closeSeries, ok := result.Series["close"]; ok && len(closeSeries) > 0 {
-		n := minInt(len(result.Timestamps), minInt(len(result.EquityCurve), len(closeSeries)))
-		pnlUSD := make([]float64, n)
-		if strings.EqualFold(strings.TrimSpace(result.AccountUnit), "USD") {
-			for i := 0; i < n; i++ {
-				pnlUSD[i] = result.EquityCurve[i] - result.InitialCapital
-			}
-			view.PnLUSDNote = "账户本身按 USD 计价，因此该曲线直接展示权益减去初始资金。"
-		} else {
-			for i := 0; i < n; i++ {
-				pnlUSD[i] = (result.EquityCurve[i] - result.InitialCapital) * closeSeries[i]
-			}
-			view.PnLUSDNote = "该曲线按（权益 − 初始资金）× BTC 价格换算为 USD。"
+	if hasSubDailyInterval(result.Timestamps) && len(quoteNetValueSeries) > 0 {
+		dailyQuoteSeries := compressLineSeriesDailyEOD(quoteNetValueSeries)
+		if len(dailyQuoteSeries) > 0 {
+			view.HasDailyQuoteNetValue = true
+			view.DailyQuoteNetValueSeriesData = marshalJS(dailyQuoteSeries)
+			view.DailyBuyHoldSeriesData = marshalJS(compressLineSeriesDailyEOD(buyHoldSeries))
+			view.DailyQuoteNetValueNote = "该图保留每个 UTC 日的最后一个净值点，便于查看全周期收益演化。"
 		}
-		view.HasPnLUSD = true
-		view.PnLUSDSeriesData = marshalJS(buildLineSeries(result.Timestamps[:n], pnlUSD))
-		minPnL, maxPnL := minMax(pnlUSD)
-		view.PnLUSDMin = currency(minPnL)
-		view.PnLUSDMax = currency(maxPnL)
 	}
 
 	view.TradeOverview = buildTradeOverviewView(result.TradeOverview, result.AccountUnit)
@@ -777,6 +814,22 @@ func buildEquityAnalysisView(analysis *backtest.EquityAnalysis, unit string) equ
 		MaxDrawdownDurationBars: integer(analysis.MaxDrawdownDurationBars),
 		MaxDrawdownDuration:     fmt.Sprintf("%.1f 小时", analysis.MaxDrawdownDuration),
 	}
+}
+
+func buildPerformanceMetricCard(name, unit string, snapshot *backtest.PerformanceSnapshot) performanceMetricCardView {
+	view := performanceMetricCardView{
+		Name:      name,
+		ValueUnit: fallbackText(strings.TrimSpace(unit), "-"),
+	}
+	if snapshot == nil {
+		return view
+	}
+	view.AnnualizedReturn = pct(snapshot.AnnualizedReturn)
+	view.AnnualizedVolatility = pct(snapshot.AnnualizedVolatility)
+	view.MaxDrawdown = pct(snapshot.MaxDrawdown)
+	view.SharpeRatio = decimal(snapshot.SharpeRatio)
+	view.CalmarRatio = ratio(snapshot.CalmarRatio)
+	return view
 }
 
 func buildTradeRows(trades []backtest.Trade, unit string) []tradeRowView {
@@ -1518,6 +1571,45 @@ func buildLineSeries(times []time.Time, values []float64) []chartLinePoint {
 	return points
 }
 
+func buildQuoteNetValueSeries(result *backtest.Result) []chartLinePoint {
+	if result == nil || len(result.Timestamps) == 0 {
+		return nil
+	}
+	closeSeries := []float64(nil)
+	if result.Series != nil {
+		closeSeries = result.Series["close"]
+	}
+	if len(closeSeries) == 0 {
+		if strings.EqualFold(strings.TrimSpace(result.AccountUnit), "USD") || strings.TrimSpace(result.AccountUnit) == "" {
+			return buildLineSeries(result.Timestamps, result.EquityCurve)
+		}
+		return nil
+	}
+	n := minInt(len(result.Timestamps), minInt(len(result.EquityCurve), len(closeSeries)))
+	if n == 0 {
+		return nil
+	}
+	values := make([]float64, 0, n)
+	times := make([]time.Time, 0, n)
+	for i := 0; i < n; i++ {
+		equityValue := result.EquityCurve[i]
+		if !chartValueValid(equityValue) {
+			continue
+		}
+		value := equityValue
+		if !strings.EqualFold(strings.TrimSpace(result.AccountUnit), "USD") && strings.TrimSpace(result.AccountUnit) != "" {
+			closeValue := closeSeries[i]
+			if !chartValueValid(closeValue) || closeValue <= 0 {
+				continue
+			}
+			value = equityValue * closeValue
+		}
+		values = append(values, value)
+		times = append(times, result.Timestamps[i])
+	}
+	return buildLineSeries(times, values)
+}
+
 func buildBuyHoldSeries(result *backtest.Result) ([]chartLinePoint, float64) {
 	if result == nil || len(result.Timestamps) == 0 || result.Series == nil {
 		return nil, 0
@@ -1566,6 +1658,71 @@ func buildBuyHoldSeries(result *backtest.Result) ([]chartLinePoint, float64) {
 		return nil, 0
 	}
 	return points, initialUSD
+}
+
+func compressLineSeriesDailyEOD(series []chartLinePoint) []chartLinePoint {
+	if len(series) == 0 {
+		return nil
+	}
+	compressed := make([]chartLinePoint, 0, len(series))
+	currentDay := ""
+	var current chartLinePoint
+	for _, point := range series {
+		if point.Value == nil {
+			continue
+		}
+		day := time.Unix(point.Time, 0).UTC().Format("2006-01-02")
+		if day != currentDay {
+			if currentDay != "" {
+				compressed = append(compressed, current)
+			}
+			currentDay = day
+			current = point
+			continue
+		}
+		current = point
+	}
+	if currentDay != "" {
+		compressed = append(compressed, current)
+	}
+	return compressed
+}
+
+func linePointValues(series []chartLinePoint) []float64 {
+	values := make([]float64, 0, len(series))
+	for _, point := range series {
+		if point.Value != nil {
+			values = append(values, *point.Value)
+		}
+	}
+	return values
+}
+
+func hasSubDailyInterval(timestamps []time.Time) bool {
+	if len(timestamps) < 2 {
+		return false
+	}
+	minGap := time.Duration(1<<63 - 1)
+	for i := 1; i < len(timestamps); i++ {
+		gap := timestamps[i].Sub(timestamps[i-1])
+		if gap > 0 && gap < minGap {
+			minGap = gap
+		}
+	}
+	if minGap == time.Duration(1<<63-1) {
+		return false
+	}
+	return minGap < 24*time.Hour
+}
+
+func quoteMetricUnitLabel(result *backtest.Result) string {
+	if result == nil {
+		return "U"
+	}
+	if strings.EqualFold(strings.TrimSpace(result.AccountUnit), "USD") || strings.TrimSpace(result.AccountUnit) == "" {
+		return "USD"
+	}
+	return "U"
 }
 
 func buildTimeAlignedLineSeries(times []time.Time, values []float64) []chartLinePoint {
@@ -2160,6 +2317,19 @@ func decimal(value float64) string {
 	return fmt.Sprintf("%.2f", value)
 }
 
+func ratio(value float64) string {
+	if math.IsNaN(value) {
+		return "-"
+	}
+	if math.IsInf(value, 1) {
+		return "∞"
+	}
+	if math.IsInf(value, -1) {
+		return "-∞"
+	}
+	return fmt.Sprintf("%.2f", value)
+}
+
 func expiryOpenDelta(expiryOpenDays, delta float64) string {
 	if math.IsNaN(expiryOpenDays) || math.IsInf(expiryOpenDays, 0) || math.IsNaN(delta) || math.IsInf(delta, 0) {
 		return "-"
@@ -2463,7 +2633,33 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
 	  </div>
 	</div>
 
-    <div class="section">
+	<div class="section">
+	  <div class="grid gap-3 lg:grid-cols-2 mb-4">
+		<div class="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+		  <div class="text-[11px] mono uppercase tracking-[0.22em] text-teal-400">{{ .StrategyPerformance.Name }}</div>
+		  <p class="mt-1 text-xs text-slate-400">单位 {{ .StrategyPerformance.ValueUnit }} · 无风险利率 0% · 年化 365 天</p>
+		  <div class="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-5 text-sm">
+			<div><div class="text-slate-500">年化收益</div><div class="mt-1 font-mono text-white">{{ .StrategyPerformance.AnnualizedReturn }}</div></div>
+			<div><div class="text-slate-500">年化波动</div><div class="mt-1 font-mono text-white">{{ .StrategyPerformance.AnnualizedVolatility }}</div></div>
+			<div><div class="text-slate-500">最大回撤</div><div class="mt-1 font-mono text-white">{{ .StrategyPerformance.MaxDrawdown }}</div></div>
+			<div><div class="text-slate-500">夏普比率</div><div class="mt-1 font-mono text-white">{{ .StrategyPerformance.SharpeRatio }}</div></div>
+			<div><div class="text-slate-500">卡玛比</div><div class="mt-1 font-mono text-white">{{ .StrategyPerformance.CalmarRatio }}</div></div>
+		  </div>
+		</div>
+		{{ if .HasAssetPerformance }}
+		<div class="rounded-2xl border border-sky-400/20 bg-sky-400/[0.06] p-4">
+		  <div class="text-[11px] mono uppercase tracking-[0.22em] text-sky-300">{{ .AssetPerformance.Name }}</div>
+		  <p class="mt-1 text-xs text-slate-400">单位 {{ .AssetPerformance.ValueUnit }} · 用于与 Buy&amp;Hold 做同一标的口径比较</p>
+		  <div class="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-5 text-sm">
+			<div><div class="text-slate-500">年化收益</div><div class="mt-1 font-mono text-white">{{ .AssetPerformance.AnnualizedReturn }}</div></div>
+			<div><div class="text-slate-500">年化波动</div><div class="mt-1 font-mono text-white">{{ .AssetPerformance.AnnualizedVolatility }}</div></div>
+			<div><div class="text-slate-500">最大回撤</div><div class="mt-1 font-mono text-white">{{ .AssetPerformance.MaxDrawdown }}</div></div>
+			<div><div class="text-slate-500">夏普比率</div><div class="mt-1 font-mono text-white">{{ .AssetPerformance.SharpeRatio }}</div></div>
+			<div><div class="text-slate-500">卡玛比</div><div class="mt-1 font-mono text-white">{{ .AssetPerformance.CalmarRatio }}</div></div>
+		  </div>
+		</div>
+		{{ end }}
+	  </div>
 			<h2>策略表现</h2>
       <div class="overflow-x-auto">
         <table class="perf w-full">
@@ -2493,48 +2689,46 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
             </tr>
             <tr>
 							<td class="text-slate-400 !font-sans">净盈亏</td><td>{{ .NetPnL }}</td>
-							<td class="text-slate-400 !font-sans">Bar 波动率</td><td>{{ .EquityAnalysis.BarReturnVolatility }}</td>
+						<td class="text-slate-400 !font-sans">卡玛比</td><td>{{ .CalmarRatio }}</td>
 							{{ if not .NoTradeRows }}<td class="text-slate-400 !font-sans">多头 / 空头</td><td>{{ .TradeOverview.LongFills }} / {{ .TradeOverview.ShortFills }}</td>{{ end }}
 							<td class="text-slate-400 !font-sans">峰值时间</td><td>{{ .EquityAnalysis.PeakTime }}</td>
 							{{ if .SpreadSummary }}<td class="text-slate-400 !font-sans">未平仓</td><td>{{ .SpreadSummary.OpenSpreads }}</td>{{ end }}
             </tr>
             <tr>
 							<td class="text-slate-400 !font-sans">总收益率</td><td>{{ .TotalReturn }}</td>
-							<td class="text-slate-400 !font-sans">最佳 Bar</td><td>{{ .EquityAnalysis.BestBarReturn }}</td>
+						<td class="text-slate-400 !font-sans">年化波动率</td><td>{{ .AnnualizedVolatility }}</td>
 							{{ if not .NoTradeRows }}<td class="text-slate-400 !font-sans">毛利润</td><td>{{ .TradeOverview.GrossProfit }}</td>{{ end }}
 							<td class="text-slate-400 !font-sans">最低点时间</td><td>{{ .EquityAnalysis.LowestTime }}</td>
 							{{ if .SpreadSummary }}<td class="text-slate-400 !font-sans">盈利</td><td>{{ .SpreadSummary.WinningSpreads }}</td>{{ end }}
             </tr>
             <tr>
 							<td class="text-slate-400 !font-sans">年化收益</td><td>{{ .AnnualizedReturn }}</td>
-							<td class="text-slate-400 !font-sans">最差 Bar</td><td>{{ .EquityAnalysis.WorstBarReturn }}</td>
+						<td class="text-slate-400 !font-sans">Bar 波动率</td><td>{{ .EquityAnalysis.BarReturnVolatility }}</td>
 							{{ if not .NoTradeRows }}<td class="text-slate-400 !font-sans">毛亏损</td><td>{{ .TradeOverview.GrossLoss }}</td>{{ end }}
 							<td class="text-slate-400 !font-sans">上涨 Bars</td><td>{{ .EquityAnalysis.PositiveBars }}</td>
 							{{ if .SpreadSummary }}<td class="text-slate-400 !font-sans">亏损</td><td>{{ .SpreadSummary.LosingSpreads }}</td>{{ end }}
             </tr>
             <tr>
 							<td class="text-slate-400 !font-sans">总手续费</td><td>{{ .TotalFees }}</td>
-							<td class="text-slate-400 !font-sans">回撤时长</td><td>{{ .EquityAnalysis.MaxDrawdownDuration }}</td>
+						<td class="text-slate-400 !font-sans">最差 Bar</td><td>{{ .EquityAnalysis.WorstBarReturn }}</td>
 							{{ if not .NoTradeRows }}<td class="text-slate-400 !font-sans">交易净盈亏</td><td>{{ .TradeOverview.NetPnL }}</td>{{ end }}
 							<td class="text-slate-400 !font-sans">下跌 Bars</td><td>{{ .EquityAnalysis.NegativeBars }}</td>
 							{{ if .SpreadSummary }}<td class="text-slate-400 !font-sans">胜率</td><td>{{ .SpreadSummary.WinRate }}</td>{{ end }}
             </tr>
             <tr>
 							<td class="text-slate-400 !font-sans">Bars 数</td><td>{{ .BarsCount }}</td>
-							<td class="text-slate-400 !font-sans">回撤持续 Bars</td><td>{{ .EquityAnalysis.MaxDrawdownDurationBars }}</td>
+						<td class="text-slate-400 !font-sans">回撤时长</td><td>{{ .EquityAnalysis.MaxDrawdownDuration }}</td>
 							{{ if not .NoTradeRows }}<td class="text-slate-400 !font-sans">平均往返盈亏</td><td>{{ .TradeOverview.AvgPnLPerRoundTrip }}</td>{{ end }}
 							<td class="text-slate-400 !font-sans">平盘 Bars</td><td>{{ .EquityAnalysis.FlatBars }}</td>
 							{{ if .SpreadSummary }}<td class="text-slate-400 !font-sans">价差盈亏</td><td>{{ .SpreadSummary.TotalPnL }}</td>{{ end }}
             </tr>
-            {{ if not .NoTradeRows }}
             <tr>
               <td></td><td></td>
-              <td></td><td></td>
-							<td class="text-slate-400 !font-sans">平均手续费</td><td>{{ .TradeOverview.AvgCommissionPerFill }}</td>
+              <td class="text-slate-400 !font-sans">回撤持续 Bars</td><td>{{ .EquityAnalysis.MaxDrawdownDurationBars }}</td>
+						{{ if not .NoTradeRows }}<td class="text-slate-400 !font-sans">平均手续费</td><td>{{ .TradeOverview.AvgCommissionPerFill }}</td>{{ else }}<td></td><td></td>{{ end }}
               <td></td><td></td>
               {{ if .SpreadSummary }}<td></td><td></td>{{ end }}
             </tr>
-            {{ end }}
           </tbody>
         </table>
       </div>
@@ -2587,7 +2781,6 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
 		<div>
 			<h2 class="!mb-1">权益曲线</h2>
 			<p class="text-xs text-slate-400">范围 {{ .EquityMin }} 至 {{ .EquityMax }} · 手续费 {{ .TotalFees }}</p>
-			{{ if .HasBuyHoldBenchmark }}<p class="text-xs text-slate-400">Buy&amp;Hold（USD）范围 {{ .BuyHoldMin }} 至 {{ .BuyHoldMax }} · {{ .BuyHoldNote }}</p>{{ end }}
 			<p id="equity-mode-note" class="text-xs text-slate-500">默认展示逐 bar 净值；切换后仅保留已结算收益点，并在下方显示区间浮盈浮亏与持仓暴露。</p>
 		</div>
 		<label class="inline-flex items-center gap-2 rounded-md border border-white/10 px-3 py-2 text-sm text-slate-200 cursor-pointer select-none" data-equity-mode="settled">
@@ -2611,15 +2804,50 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
 	  </div>
     </div>
 
-    {{ if .HasPnLUSD }}
+	{{ if .HasQuoteNetValue }}
     <div class="section">
-	<h2>盈亏曲线（USD）</h2>
-	<p class="text-xs text-slate-400 mb-3">范围 {{ .PnLUSDMin }} 至 {{ .PnLUSDMax }} · {{ .PnLUSDNote }}</p>
+	<h2>U 本位净值</h2>
+	<p class="text-xs text-slate-400 mb-3">范围 {{ .QuoteNetValueMin }} 至 {{ .QuoteNetValueMax }} · {{ .QuoteNetValueNote }}</p>
       <div class="chart-box p-1">
-        <div id="pnl-usd-chart" style="width:100%;height:300px;"></div>
+		<div id="quote-net-value-chart" style="width:100%;height:300px;"></div>
       </div>
+	  {{ if .HasBuyHoldBenchmark }}<p class="mt-3 text-xs text-slate-400">Buy&amp;Hold 范围 {{ .BuyHoldMin }} 至 {{ .BuyHoldMax }} · {{ .BuyHoldNote }}</p>{{ end }}
+	  <div class="mt-4 grid gap-3 lg:grid-cols-2">
+		<div class="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+		  <div class="text-[11px] mono uppercase tracking-[0.22em] text-teal-400">{{ .QuotePerformance.Name }}</div>
+		  <div class="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-5 text-sm">
+			<div><div class="text-slate-500">年化收益</div><div class="mt-1 font-mono text-white">{{ .QuotePerformance.AnnualizedReturn }}</div></div>
+			<div><div class="text-slate-500">年化波动</div><div class="mt-1 font-mono text-white">{{ .QuotePerformance.AnnualizedVolatility }}</div></div>
+			<div><div class="text-slate-500">最大回撤</div><div class="mt-1 font-mono text-white">{{ .QuotePerformance.MaxDrawdown }}</div></div>
+			<div><div class="text-slate-500">夏普比率</div><div class="mt-1 font-mono text-white">{{ .QuotePerformance.SharpeRatio }}</div></div>
+			<div><div class="text-slate-500">卡玛比</div><div class="mt-1 font-mono text-white">{{ .QuotePerformance.CalmarRatio }}</div></div>
+		  </div>
+		</div>
+		{{ if .HasBuyHoldPerformance }}
+		<div class="rounded-2xl border border-sky-400/20 bg-sky-400/[0.06] p-4">
+		  <div class="text-[11px] mono uppercase tracking-[0.22em] text-sky-300">{{ .BuyHoldPerformance.Name }}</div>
+		  <div class="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-5 text-sm">
+			<div><div class="text-slate-500">年化收益</div><div class="mt-1 font-mono text-white">{{ .BuyHoldPerformance.AnnualizedReturn }}</div></div>
+			<div><div class="text-slate-500">年化波动</div><div class="mt-1 font-mono text-white">{{ .BuyHoldPerformance.AnnualizedVolatility }}</div></div>
+			<div><div class="text-slate-500">最大回撤</div><div class="mt-1 font-mono text-white">{{ .BuyHoldPerformance.MaxDrawdown }}</div></div>
+			<div><div class="text-slate-500">夏普比率</div><div class="mt-1 font-mono text-white">{{ .BuyHoldPerformance.SharpeRatio }}</div></div>
+			<div><div class="text-slate-500">卡玛比</div><div class="mt-1 font-mono text-white">{{ .BuyHoldPerformance.CalmarRatio }}</div></div>
+		  </div>
+		</div>
+		{{ end }}
+	  </div>
     </div>
     {{ end }}
+
+	{{ if .HasDailyQuoteNetValue }}
+	<div class="section">
+	  <h2>1 Day 日终净值</h2>
+	  <p class="text-xs text-slate-400 mb-3">{{ .DailyQuoteNetValueNote }}</p>
+	  <div class="chart-box p-1">
+		<div id="quote-daily-chart" style="width:100%;height:280px;"></div>
+	  </div>
+	</div>
+	{{ end }}
 
     <div class="section">
 	<h2>回撤</h2>
@@ -2791,9 +3019,11 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
 	const settledFloatingProfitSeries = {{ .SettledFloatingProfitData }};
 	const settledFloatingLossSeries = {{ .SettledFloatingLossData }};
 	const settledExposureSeries = {{ .SettledExposureData }};
+	const quoteNetValueSeries = {{ .QuoteNetValueSeriesData }};
+	const dailyQuoteNetValueSeries = {{ .DailyQuoteNetValueSeriesData }};
+	const dailyBuyHoldSeries = {{ .DailyBuyHoldSeriesData }};
 	const buyHoldSeries = {{ .BuyHoldSeriesData }};
     const drawdownSeries = {{ .DrawdownSeriesData }};
-    const pnlUSDSeries = {{ .PnLUSDSeriesData }};
 	const activeTimes = {{ .ActiveTimeData }};
 
 	// Timezone mode utilities
@@ -3001,7 +3231,7 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
 			appendTimes(underlyingCandles);
 			appendTimes(equitySeries);
 			appendTimes(drawdownSeries);
-			appendTimes(pnlUSDSeries);
+			appendTimes(quoteNetValueSeries);
 			times.sort(function(a, b) { return a - b; });
 			return times;
 		}
@@ -3100,11 +3330,14 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
 		var settledExposurePlot = null;
 		var settledModeEnabled = false;
 		var equityModeNote = document.getElementById('equity-mode-note');
-		var pnlChart = null;
-		var pnlPlot = null;
+		var quoteNetValueChart = null;
+		var quoteNetValuePlot = null;
+		var quoteBuyHoldPlot = null;
+		var quoteDailyChart = null;
+		var quoteDailyPlot = null;
+		var quoteDailyBuyHoldPlot = null;
 		var drawdownChart = null;
 		var drawdownPlot = null;
-		var buyHoldPlot = null;
 		var dataWindowGrid = document.getElementById('underlying-data-window-grid');
 		var dataWindowTime = document.getElementById('underlying-data-window-time');
 		var candleByTime = new Map();
@@ -3265,9 +3498,6 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
 			var shouldRefit = !options || options.refit !== false;
 			equityPlot.setData(settledModeEnabled ? [] : filterLineSeriesByTimes(equitySeries, activeSet, currentIdleFilterEnabled));
 			settledEquityPlot.setData(settledModeEnabled ? filterLineSeriesByTimes(settledEquitySeries, activeSet, currentIdleFilterEnabled) : []);
-			if (buyHoldPlot) {
-				buyHoldPlot.setData(settledModeEnabled ? [] : filterLineSeriesByTimes(buyHoldSeries, activeSet, currentIdleFilterEnabled));
-			}
 			if (equityModeNote) {
 				equityModeNote.textContent = settledModeEnabled
 					? '当前仅展示已结算权益点；下方面板会给出每次结算之间的最大浮盈 / 浮亏与持仓暴露。'
@@ -3583,29 +3813,6 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
         lineColor: '#2dd4bf', topColor: 'rgba(45,212,191,0.28)',
         bottomColor: 'rgba(45,212,191,0.02)', lineWidth: 2
       });
-			if (buyHoldSeries.length > 0) {
-				ec.applyOptions({
-					leftPriceScale: {
-						visible: true,
-						borderColor: 'rgba(255,255,255,0.06)'
-					},
-					rightPriceScale: {
-						visible: true,
-						borderColor: 'rgba(255,255,255,0.06)'
-					}
-				});
-				buyHoldPlot = ec.addLineSeries({
-					priceScaleId: 'left',
-					color: '#60a5fa',
-					lineWidth: 2,
-					priceLineVisible: true,
-					lastValueVisible: true,
-					crosshairMarkerRadius: 4,
-					crosshairMarkerBorderColor: '#60a5fa',
-					crosshairMarkerBackgroundColor: '#60a5fa'
-				});
-				buyHoldPlot.setData(buyHoldSeries);
-			}
 			settledEquityPlot = ec.addLineSeries({
 				color: '#f8fafc',
 				lineWidth: 2,
@@ -3623,21 +3830,73 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
 			registerSyncedChart(ec);
     }
 
-    if (pnlUSDSeries.length > 0) {
-      var puc = createChart('pnl-usd-chart', 300);
+		if (quoteNetValueSeries.length > 0) {
+		  var puc = createChart('quote-net-value-chart', 300);
       if (puc) {
+			if (buyHoldSeries.length > 0) {
+				puc.applyOptions({
+					leftPriceScale: {
+						visible: true,
+						borderColor: 'rgba(255,255,255,0.06)'
+					},
+					rightPriceScale: {
+						visible: true,
+						borderColor: 'rgba(255,255,255,0.06)'
+					}
+				});
+			}
         var pul = puc.addAreaSeries({
           lineColor: '#a78bfa', topColor: 'rgba(167,139,250,0.25)',
           bottomColor: 'rgba(167,139,250,0.02)', lineWidth: 2
         });
-        pul.setData(pnlUSDSeries);
+			pul.setData(quoteNetValueSeries);
+			if (buyHoldSeries.length > 0) {
+				quoteBuyHoldPlot = puc.addLineSeries({
+					priceScaleId: 'left',
+					color: '#60a5fa',
+					lineWidth: 2,
+					priceLineVisible: true,
+					lastValueVisible: true,
+					crosshairMarkerRadius: 4,
+					crosshairMarkerBorderColor: '#60a5fa',
+					crosshairMarkerBackgroundColor: '#60a5fa'
+				});
+				quoteBuyHoldPlot.setData(buyHoldSeries);
+			}
         puc.timeScale().fitContent();
-				pnlChart = puc;
-				pnlPlot = pul;
+				quoteNetValueChart = puc;
+				quoteNetValuePlot = pul;
         charts.push(puc);
 				registerSyncedChart(puc);
       }
     }
+
+		if (dailyQuoteNetValueSeries.length > 0) {
+		  var qdc = createChart('quote-daily-chart', 280);
+		  if (qdc) {
+			quoteDailyPlot = qdc.addAreaSeries({
+			  lineColor: '#22d3ee', topColor: 'rgba(34,211,238,0.22)',
+			  bottomColor: 'rgba(34,211,238,0.03)', lineWidth: 2
+			});
+			quoteDailyPlot.setData(dailyQuoteNetValueSeries);
+			if (dailyBuyHoldSeries.length > 0) {
+				quoteDailyBuyHoldPlot = qdc.addLineSeries({
+					color: '#60a5fa',
+					lineWidth: 2,
+					priceLineVisible: true,
+					lastValueVisible: true,
+					crosshairMarkerRadius: 4,
+					crosshairMarkerBorderColor: '#60a5fa',
+					crosshairMarkerBackgroundColor: '#60a5fa'
+				});
+				quoteDailyBuyHoldPlot.setData(dailyBuyHoldSeries);
+			}
+			qdc.timeScale().fitContent();
+			quoteDailyChart = qdc;
+			charts.push(qdc);
+			registerSyncedChart(qdc);
+		  }
+		}
 
     var dc = createChart('drawdown-chart', 220);
     if (dc) {
@@ -3666,8 +3925,11 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
 			}
 			renderOverlayPlots();
 			renderEquitySeriesMode(settledModeEnabled, { refit: false });
-			if (pnlPlot) {
-				pnlPlot.setData(filterLineSeriesByTimes(pnlUSDSeries, activeSet, useFilter));
+			if (quoteNetValuePlot) {
+				quoteNetValuePlot.setData(filterLineSeriesByTimes(quoteNetValueSeries, activeSet, useFilter));
+			}
+			if (quoteBuyHoldPlot) {
+				quoteBuyHoldPlot.setData(filterLineSeriesByTimes(buyHoldSeries, activeSet, useFilter));
 			}
 			if (drawdownPlot) {
 				drawdownPlot.setData(filterLineSeriesByTimes(drawdownSeries, activeSet, useFilter));
@@ -3955,7 +4217,7 @@ const combinedHTMLTemplate = `{{ define "combinedSpreadEventCard" }}
 						<article class="glass-panel rounded-3xl border border-white/10 p-5">
 							<div class="font-mono text-[11px] uppercase tracking-[0.24em] text-slate-400">年化收益</div>
 							<div class="mt-3 text-3xl font-bold text-white">{{ .Report.AnnualizedReturn }}</div>
-							<div class="mt-2 text-sm text-slate-300">夏普 {{ .Report.SharpeRatio }}</div>
+							<div class="mt-2 text-sm text-slate-300">夏普 {{ .Report.SharpeRatio }} · 卡玛 {{ .Report.CalmarRatio }}</div>
 						</article>
 						<article class="glass-panel rounded-3xl border border-white/10 p-5">
 							<div class="font-mono text-[11px] uppercase tracking-[0.24em] text-slate-400">Bars 数</div>
