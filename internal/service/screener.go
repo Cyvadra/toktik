@@ -278,9 +278,9 @@ WHERE chain.timestamp = latest.ts
 	if req.OptionType != "" {
 		optType := strings.ToLower(req.OptionType)
 		if isCrypto {
-			query += fmt.Sprintf(` AND m.option_type = {opt_type:String}`)
+			query += ` AND m.option_type = {opt_type:String}`
 		} else {
-			query += fmt.Sprintf(` AND chain.option_type = {opt_type:String}`)
+			query += ` AND chain.option_type = {opt_type:String}`
 		}
 		args = append(args, clickhouse.Named("opt_type", optType))
 	}

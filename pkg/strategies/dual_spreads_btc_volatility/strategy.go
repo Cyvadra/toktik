@@ -20,24 +20,29 @@ const (
 	strategyName  = "dual-spreads-btc-volatility"
 	strategyAlias = "dual_spreads_btc_volatility"
 
-	amountBase             = 2.0
-	minDTE                 = 20
-	targetDTE              = 40
-	maxDTE                 = 40
-	hvPercentileLookback   = 100
-	ivPercentileLookback   = 200
-	defaultVolPercentile   = 66.0
-	tvAnnualizationDays    = 365.0
-	initDVOLFallbackMax    = 60.0
-	rollProfitPct          = 0.50
-	rollDeltaIncrease      = 0.20
-	decayFactor            = 0.90
-	minLongDelta           = 0.20
-	maxLongDelta           = 0.80
-	minShortDelta          = 0.10
-	maxShortDelta          = 0.80
-	shortStrikeMinMultiple = 1.20
-	interval12h            = "12h"
+	amountBase                    = 2.0
+	highIVMinDTE                  = 20
+	highIVTargetDTE               = 35
+	highIVMaxDTE                  = 35
+	lowIVMinDTE                   = 30
+	lowIVTargetDTE                = 45
+	lowIVMaxDTE                   = 45
+	shortDTEIVPercentileCutoff    = 55.0
+	hvPercentileLookback          = 150
+	ivPercentileLookback          = 150
+	minDVOLBarsForThreshold       = 200
+	defaultVolThresholdPercentile = 66.0
+	defaultMetricPercentile       = 60.0
+	tvAnnualizationDays           = 365.0
+	initDVOLFallbackMax           = 96.0
+	rollProfitPct                 = 0.50
+	rollDeltaIncrease             = 0.20
+	decayFactor                   = 0.90
+	minLongDelta                  = 0.20
+	maxLongDelta                  = 0.80
+	minShortDelta                 = 0.05
+	maxShortDelta                 = 0.70
+	interval12h                   = "12h"
 
 	signalCSVPath       = "pkg/strategies/dual_spreads_btc_volatility/another_format_utc8.csv"
 	entryAddCountColumn = "entry_add_count"
@@ -116,15 +121,21 @@ type spreadSelection struct {
 	dte        float64
 }
 
+type dteWindow struct {
+	min    int
+	target int
+	max    int
+}
+
 func (s *strategy) Name() string { return "DualSpreadsBTCVolatility" }
 
 func (s *strategy) ReportColumns() []backtest.ReportColumn {
 	return []backtest.ReportColumn{
 		{Source: "entry_signal", Label: "Entry Signal", Decimals: 0},
-		{Source: hvValueColumn, Label: "HV 100 12H", Decimals: 2},
+		{Source: hvValueColumn, Label: "HV 150 12H", Decimals: 2},
 		{Source: dvolValueColumn, Label: "DVOL 12H", Decimals: 2},
-		{Source: hvPercentileColumn, Label: "HV PR100 12H", Decimals: 1},
-		{Source: ivPercentileColumn, Label: "DVOL PR200 12H", Decimals: 1},
+		{Source: hvPercentileColumn, Label: "HV PR150 12H", Decimals: 1},
+		{Source: ivPercentileColumn, Label: "DVOL PR150 12H", Decimals: 1},
 		{Source: hvThresholdColumn, Label: "HV Q66 12H", Decimals: 2},
 		{Source: ivThresholdColumn, Label: "IV Q66 12H", Decimals: 2},
 	}
@@ -171,10 +182,10 @@ func (s *strategy) Preload(ctx *backtest.PreloadContext) error {
 		return err
 	}
 
-	if err := htf.Quantile(hvThresholdColumn, hvValueColumn, hvPercentileLookback, defaultVolPercentile/100); err != nil {
+	if err := htf.Quantile(hvThresholdColumn, hvValueColumn, hvPercentileLookback, defaultVolThresholdPercentile/100); err != nil {
 		return err
 	}
-	if err := dvol.Quantile(ivThresholdColumn, "close", ivPercentileLookback, defaultVolPercentile/100); err != nil {
+	if err := dvol.Quantile(ivThresholdColumn, "close", ivPercentileLookback, defaultVolThresholdPercentile/100); err != nil {
 		return err
 	}
 
@@ -237,7 +248,7 @@ func (s *strategy) OnBar(ctx *backtest.BarContext) {
 		return
 	}
 
-	s.openNewGroup(ctx, chain, amountBase*signalEntryCoefficient(s.currentSignalAddCount(ctx)))
+	s.openNewGroup(ctx, chain, amountBase)
 }
 
 func signalTypeFromIndicator(value float64) (signalType, bool) {
@@ -270,7 +281,7 @@ func initEntryAllowedByMetrics(hv, dvol, hvThreshold, ivThreshold float64, dvolB
 	if !math.IsNaN(hvThreshold) && hv <= hvThreshold {
 		return true
 	}
-	if dvolBarCount < ivPercentileLookback {
+	if dvolBarCount < minDVOLBarsForThreshold {
 		return dvol/hv <= initDVOLFallbackMax
 	}
 	if !math.IsNaN(ivThreshold) && dvol <= ivThreshold {
@@ -293,14 +304,15 @@ func (s *strategy) selectSpread(now time.Time, chain *backtest.OptionsChain, amo
 		return nil, false
 	}
 
-	eligibleCalls := chain.Calls().ExpiryRange(minDTE, maxDTE)
+	window := selectDTEWindow(ivPercentile)
+	eligibleCalls := chain.Calls().ExpiryRange(window.min, window.max)
 	if eligibleCalls.Len() == 0 {
-		s.logSelection("[%s] %s: skip selection, no call contracts with dte in [%d,%d]\n", now.Format(time.RFC3339), scope, minDTE, maxDTE)
+		s.logSelection("[%s] %s: skip selection, no call contracts with dte in [%d,%d]\n", now.Format(time.RFC3339), scope, window.min, window.max)
 		return nil, false
 	}
 
 	contracts := eligibleCalls.Contracts()
-	expiries := candidateExpiries(contracts, now)
+	expiries := candidateExpiries(contracts, now, window.target)
 	if len(expiries) == 0 {
 		s.logSelection("[%s] %s: skip selection, no candidate expiries after filtering\n", now.Format(time.RFC3339), scope)
 		return nil, false
@@ -359,7 +371,7 @@ func (s *strategy) selectSpread(now time.Time, chain *backtest.OptionsChain, amo
 		}, true
 	}
 
-	s.logSelection("[%s] %s: no usable expiry found within dte in [%d,%d]\n", now.Format(time.RFC3339), scope, minDTE, maxDTE)
+	s.logSelection("[%s] %s: no usable expiry found within dte in [%d,%d]\n", now.Format(time.RFC3339), scope, window.min, window.max)
 	return nil, false
 }
 
@@ -392,7 +404,8 @@ func (s *strategy) pickOption(now time.Time, scope, leg string, side backtest.Si
 }
 
 func (s *strategy) pickShortOption(now time.Time, scope string, longOpt backtest.OptionContract, candidates []backtest.OptionContract) (*backtest.OptionContract, float64, string) {
-	targetStrike := longOpt.StrikePrice * shortStrikeMinMultiple
+	targetStrikeMultiple := shortStrikeMinMultipleForLongDelta(longOpt.Delta)
+	targetStrike := longOpt.StrikePrice * targetStrikeMultiple
 	filtered := make([]backtest.OptionContract, 0, len(candidates))
 	for _, candidate := range candidates {
 		if candidate.Symbol == longOpt.Symbol {
@@ -404,7 +417,7 @@ func (s *strategy) pickShortOption(now time.Time, scope string, longOpt backtest
 		filtered = append(filtered, candidate)
 	}
 	if len(filtered) == 0 {
-		return nil, 0, fmt.Sprintf("no short candidates with strike >= %.2f (buy strike %.2f)", targetStrike, longOpt.StrikePrice)
+		return nil, 0, fmt.Sprintf("no short candidates with strike >= %.2f (buy strike %.2f, multiple %.2f)", targetStrike, longOpt.StrikePrice, targetStrikeMultiple)
 	}
 
 	sort.Slice(filtered, func(i, j int) bool {
@@ -450,7 +463,7 @@ func (s *strategy) pickShortOption(now time.Time, scope string, longOpt backtest
 	return nil, 0, fmt.Sprintf("no valid short contract with strike >= %.2f", targetStrike)
 }
 
-func candidateExpiries(contracts []backtest.OptionContract, now time.Time) []time.Time {
+func candidateExpiries(contracts []backtest.OptionContract, now time.Time, targetDTE int) []time.Time {
 	seen := make(map[time.Time]struct{}, len(contracts))
 	expiries := make([]time.Time, 0, len(contracts))
 	for _, contract := range contracts {
@@ -471,6 +484,23 @@ func candidateExpiries(contracts []backtest.OptionContract, now time.Time) []tim
 	})
 
 	return expiries
+}
+
+func selectDTEWindow(ivPercentile float64) dteWindow {
+	if ivPercentile > shortDTEIVPercentileCutoff {
+		return dteWindow{min: highIVMinDTE, target: highIVTargetDTE, max: highIVMaxDTE}
+	}
+	return dteWindow{min: lowIVMinDTE, target: lowIVTargetDTE, max: lowIVMaxDTE}
+}
+
+func shortStrikeMinMultipleForLongDelta(longDelta float64) float64 {
+	if longDelta < 0.4 {
+		return 1.20
+	}
+	if longDelta <= 0.6 {
+		return 1.15
+	}
+	return 1.10
 }
 
 func contractsForExpiry(contracts []backtest.OptionContract, expiry time.Time) []backtest.OptionContract {
@@ -739,7 +769,7 @@ func extractTrailingInt(value string, fallback int) int {
 func (s *strategy) currentHVPercentile(ctx *backtest.BarContext) float64 {
 	value := ctx.Ind(hvPercentileColumn)
 	if math.IsNaN(value) {
-		return defaultVolPercentile
+		return defaultMetricPercentile
 	}
 	return value
 }
@@ -747,7 +777,7 @@ func (s *strategy) currentHVPercentile(ctx *backtest.BarContext) float64 {
 func (s *strategy) currentIVPercentile(ctx *backtest.BarContext) float64 {
 	value := ctx.Ind(ivPercentileColumn)
 	if math.IsNaN(value) {
-		return defaultVolPercentile
+		return defaultMetricPercentile
 	}
 	return value
 }
@@ -768,24 +798,9 @@ func (s *strategy) currentDVOLBarCount(ctx *backtest.BarContext) int {
 	return int(value) + 1
 }
 
-func (s *strategy) currentSignalAddCount(ctx *backtest.BarContext) int {
-	value := ctx.Ind(entryAddCountColumn)
-	if math.IsNaN(value) || value <= 0 {
-		return 0
-	}
-	return int(value)
-}
-
-func signalEntryCoefficient(addCount int) float64 {
-	if addCount <= 0 {
-		return 1
-	}
-	return math.Pow(decayFactor, float64(addCount))
-}
-
 func dynamicLongDelta(hvPercentile, ivPercentile float64) float64 {
 	value := ((2 * hvPercentile) + ivPercentile) / 300.0
-	value -= 0.1
+	value -= 0.05
 	if value < minLongDelta {
 		return minLongDelta
 	}
@@ -973,72 +988,4 @@ func alignSeriesValues(targetTimes, sourceTimes []time.Time, sourceValues []floa
 		out[i] = sourceValues[idx]
 	}
 	return out, nil
-}
-
-// DSLHooks returns an InitHook and PreloadHook pair for use by the DSL strategy
-// version (dual-spreads-btc-volatility-dsl). Both hooks share state via closure
-// so the 12h security ref and dvol factor ref from Init are available in Preload.
-func DSLHooks() (initHook func(*backtest.SetupContext) error, preloadHook func(*backtest.PreloadContext) error) {
-	var ref12h backtest.SecurityRef
-	var dvolRef backtest.FactorRef
-	initHook = func(ctx *backtest.SetupContext) error {
-		primary := ctx.PrimaryRef()
-		ref12h = ctx.AddSecurity(primary.Market, primary.Symbol, interval12h)
-		ctx.RegisterOn(ref12h, hvReturnColumn, logReturnIndicator("close"))
-		ctx.RegisterOn(ref12h, hvValueColumn, tradingViewHVIndicator(hvReturnColumn, 10))
-		ctx.RegisterOn(ref12h, hvPercentileColumn, optutil.PercentileRank(hvValueColumn, hvPercentileLookback))
-		dvolRef = ctx.AddFactor("dvol", interval12h)
-		ctx.RegisterFactor(dvolRef, ivPercentileColumn, optutil.PercentileRank("close", ivPercentileLookback))
-		ctx.SetWarmup(120 * 24 * time.Hour)
-		return nil
-	}
-	preloadHook = func(ctx *backtest.PreloadContext) error {
-		primary := ctx.Primary()
-		if primary == nil || primary.Len() == 0 {
-			return nil
-		}
-		htf := ctx.Security(ref12h)
-		if htf == nil || htf.Len() == 0 {
-			return fmt.Errorf("12h security unavailable for DSL dual-spreads")
-		}
-		dvol := ctx.Factor(dvolRef)
-		if dvol == nil || dvol.Len() == 0 {
-			return fmt.Errorf("12h dvol factor unavailable for DSL dual-spreads")
-		}
-		if err := htf.Quantile(hvThresholdColumn, hvValueColumn, hvPercentileLookback, defaultVolPercentile/100); err != nil {
-			return err
-		}
-		if err := dvol.Quantile(ivThresholdColumn, "close", ivPercentileLookback, defaultVolPercentile/100); err != nil {
-			return err
-		}
-		ivPercentile12h, err := alignSeriesValues(htf.Timestamps(), dvol.Timestamps(), dvol.Column(ivPercentileColumn))
-		if err != nil {
-			return err
-		}
-		if err := htf.SetColumn(ivPercentileColumn, ivPercentile12h); err != nil {
-			return err
-		}
-		ivThreshold12h, err := alignSeriesValues(htf.Timestamps(), dvol.Timestamps(), dvol.Column(ivThresholdColumn))
-		if err != nil {
-			return err
-		}
-		if err := htf.SetColumn(ivThresholdColumn, ivThreshold12h); err != nil {
-			return err
-		}
-		for _, name := range []string{hvValueColumn, hvPercentileColumn, hvThresholdColumn, ivPercentileColumn, ivThresholdColumn} {
-			aligned, err := ctx.ColumnAlignedToPrimary(ref12h, name)
-			if err != nil {
-				return err
-			}
-			if err := primary.SetColumn(name, aligned); err != nil {
-				return err
-			}
-		}
-		dvolValue, err := ctx.ColumnAlignedFactorToPrimary(dvolRef, "close")
-		if err != nil {
-			return err
-		}
-		return primary.SetColumn(dvolValueColumn, dvolValue)
-	}
-	return initHook, preloadHook
 }
