@@ -3232,7 +3232,7 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
 			return padUTC(date.getUTCHours()) + ':' + padUTC(date.getUTCMinutes());
 		}
 
-    function createChart(id, height) {
+		function createChart(id, height, extraOptions) {
       var el = document.getElementById(id);
       if (!el || typeof LightweightCharts === 'undefined') return null;
       var chart = LightweightCharts.createChart(el, Object.assign({
@@ -3243,7 +3243,7 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
 					timeFormatter: function(timeValue) { return formatUTCDateTime(timeValue, true); },
 					tickMarkFormatter: function(timeValue) { return formatUTCTickLabel(timeValue); }
 				}
-      }, chartTheme));
+			}, chartTheme, extraOptions || {}));
       if (typeof ResizeObserver !== 'undefined') {
         new ResizeObserver(function() { chart.applyOptions({ width: el.clientWidth }); }).observe(el);
       }
@@ -3258,7 +3258,7 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
 			chart.timeScale().subscribeVisibleTimeRangeChange(function(range) {
 				if (!range || chartSyncState.syncing) return;
 				chartSyncState.syncing = true;
-				charts.forEach(function(otherChart) {
+				syncedCharts.forEach(function(otherChart) {
 					if (otherChart !== chart) otherChart.timeScale().setVisibleRange(range);
 				});
 				chartSyncState.syncing = false;
@@ -3328,9 +3328,30 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
 
 		function applyVisibleTimeRange(range) {
 			if (!range || range.from === undefined || range.to === undefined) return;
-			charts.forEach(function(chart) {
+			syncedCharts.forEach(function(chart) {
 				if (chart) chart.timeScale().setVisibleRange(range);
 			});
+		}
+
+		function resolveSeriesTimeRange(seriesCollections) {
+			var collections = Array.isArray(seriesCollections) ? seriesCollections : [seriesCollections];
+			var minTime = null;
+			var maxTime = null;
+			collections.forEach(function(series) {
+				(series || []).forEach(function(point) {
+					if (!point || typeof point.time !== 'number' || !isFinite(point.time)) return;
+					if (minTime === null || point.time < minTime) minTime = point.time;
+					if (maxTime === null || point.time > maxTime) maxTime = point.time;
+				});
+			});
+			if (minTime === null || maxTime === null) return null;
+			return { from: minTime, to: maxTime };
+		}
+
+		function applyChartFullRange(chart, seriesCollections) {
+			if (!chart) return;
+			var range = resolveSeriesTimeRange(seriesCollections);
+			if (range) chart.timeScale().setVisibleRange(range);
 		}
 
 		function fitChartsToVisibleData() {
@@ -3385,7 +3406,8 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
 			charts.forEach(registerSyncedChart);
     }
 
-    var charts = [];
+		var charts = [];
+		var syncedCharts = [];
 		var activeSet = buildActiveTimeSet();
 		var baseTimeline = buildBaseTimeline();
 		var hasActiveFilter = activeSet.size > 1;
@@ -3431,6 +3453,14 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
 		var selectedHoverColumnSources = new Set();
 		var currentDataWindowTime = null;
 		var currentIdleFilterEnabled = false;
+
+		function addChart(chart, options) {
+			if (!chart) return;
+			charts.push(chart);
+			if (options && options.sync === false) return;
+			syncedCharts.push(chart);
+			registerSyncedChart(chart);
+		}
 
 		underlyingCandles.forEach(function(point) {
 			candleByTime.set(point.time, point);
@@ -3865,8 +3895,7 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
         pc.timeScale().fitContent();
 				underlyingChart = pc;
 				underlyingSeries = cs;
-        charts.push(pc);
-				registerSyncedChart(pc);
+				addChart(pc);
 				renderOverlayPlots();
       }
     }
@@ -3911,8 +3940,7 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
       el.setData(equitySeries);
 			equityChart = ec;
 			equityPlot = el;
-      charts.push(ec);
-			registerSyncedChart(ec);
+				addChart(ec);
     }
 
 		if (quoteNetValueSeries.length > 0) {
@@ -3951,8 +3979,7 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
         puc.timeScale().fitContent();
 				quoteNetValueChart = puc;
 				quoteNetValuePlot = pul;
-        charts.push(puc);
-				registerSyncedChart(puc);
+				addChart(puc);
       }
     }
 
@@ -3978,13 +4005,12 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
 			}
 			qdc.timeScale().fitContent();
 			quoteDailyChart = qdc;
-			charts.push(qdc);
-			registerSyncedChart(qdc);
+				addChart(qdc);
 		  }
 		}
 
 		if (dailyAssetPnLSeries.length > 0) {
-		  var apc = createChart('asset-daily-pnl-chart', 280);
+		  var apc = createChart('asset-daily-pnl-chart', 280, { handleScroll: false, handleScale: false });
 		  if (apc) {
 			assetDailyPnLPlot = apc.addLineSeries({
 			  color: '#f59e0b',
@@ -3996,10 +4022,9 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
 			  crosshairMarkerBackgroundColor: '#f59e0b'
 			});
 			assetDailyPnLPlot.setData(dailyAssetPnLSeries);
-			apc.timeScale().fitContent();
 			assetDailyPnLChart = apc;
-			charts.push(apc);
-			registerSyncedChart(apc);
+			addChart(apc, { sync: false });
+			applyChartFullRange(assetDailyPnLChart, [dailyAssetPnLSeries]);
 		  }
 		}
 
@@ -4013,8 +4038,7 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
       dc.timeScale().fitContent();
 			drawdownChart = dc;
 			drawdownPlot = dl;
-      charts.push(dc);
-			registerSyncedChart(dc);
+			addChart(dc);
     }
 
 		function applyIdleFilter(enabled) {
@@ -4042,11 +4066,13 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
 			renderFeatureChart();
 			renderDataWindow(currentDataWindowTime);
 			fitChartsToVisibleData();
+			applyChartFullRange(assetDailyPnLChart, [dailyAssetPnLSeries]);
 		}
 
-    if (charts.length > 1) syncCharts(charts);
+		if (syncedCharts.length > 1) syncCharts(syncedCharts);
 		renderEquitySeriesMode(false, { refit: false });
 		fitChartsToVisibleData();
+		applyChartFullRange(assetDailyPnLChart, [dailyAssetPnLSeries]);
 
 		if (dataWindowGrid) {
 			dataWindowGrid.addEventListener('click', function(event) {

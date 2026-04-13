@@ -41,15 +41,6 @@ func TestVolStdRatioRequiresForty12hBars(t *testing.T) {
 	}
 }
 
-func TestInitEntryAllowedByMetricsUsesVolStdFallbackRatio(t *testing.T) {
-	if !initEntryAllowedByMetrics(1.0, 90.0, math.NaN(), math.NaN(), minDVOLBarsForThreshold-1) {
-		t.Fatal("expected fallback DVOL/vol_std filter to allow entry when ratio <= 96")
-	}
-	if initEntryAllowedByMetrics(0.9, 90.0, math.NaN(), math.NaN(), minDVOLBarsForThreshold-1) {
-		t.Fatal("expected fallback DVOL/vol_std filter to reject entry when ratio > 96")
-	}
-}
-
 func TestSelectEligibleCallsPrefersPrimaryWindow(t *testing.T) {
 	now := time.Date(2023, 6, 21, 0, 0, 0, 0, time.UTC)
 	chain := backtest.NewOptionsChain([]backtest.OptionContract{

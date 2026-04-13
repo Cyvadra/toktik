@@ -656,6 +656,58 @@ func TestWriteBacktestHTMLIncludesDailyAssetPnLChart(t *testing.T) {
 	}
 }
 
+func TestWriteBacktestHTMLKeepsDailyAssetPnLChartIndependent(t *testing.T) {
+	result := &backtest.Result{
+		StrategyName:   "asset-pnl-independent",
+		StartTime:      time.Date(2024, time.January, 1, 0, 0, 0, 0, time.UTC),
+		EndTime:        time.Date(2024, time.January, 3, 12, 0, 0, 0, time.UTC),
+		InitialCapital: 100,
+		FinalEquity:    182,
+		AccountUnit:    "USD",
+		UnderlyingUnit: "BTC",
+		EquityCurve:    []float64{100, 110, 156, 182},
+		Timestamps: []time.Time{
+			time.Date(2024, time.January, 1, 0, 0, 0, 0, time.UTC),
+			time.Date(2024, time.January, 1, 12, 0, 0, 0, time.UTC),
+			time.Date(2024, time.January, 2, 12, 0, 0, 0, time.UTC),
+			time.Date(2024, time.January, 3, 12, 0, 0, 0, time.UTC),
+		},
+		Series: map[string][]float64{
+			"open":  {10, 10.5, 11.5, 13},
+			"high":  {10.2, 11.1, 12.2, 14.2},
+			"low":   {9.8, 10.2, 11.2, 12.8},
+			"close": {10, 11, 12, 14},
+		},
+	}
+
+	outputPath := filepath.Join(t.TempDir(), "report.html")
+	if err := WriteBacktestHTML(outputPath, result, HTMLMeta{Asset: "BTC", Interval: "1h"}); err != nil {
+		t.Fatalf("WriteBacktestHTML() error = %v", err)
+	}
+
+	htmlBytes, err := os.ReadFile(outputPath)
+	if err != nil {
+		t.Fatalf("os.ReadFile() error = %v", err)
+	}
+	html := string(htmlBytes)
+
+	if !strings.Contains(html, "var syncedCharts = [];") {
+		t.Fatalf("expected generated html to separate synced charts from standalone charts")
+	}
+	if !strings.Contains(html, "createChart('asset-daily-pnl-chart', 280, { handleScroll: false, handleScale: false })") {
+		t.Fatalf("expected generated html to disable manual zoom for daily asset pnl chart")
+	}
+	if !strings.Contains(html, "addChart(apc, { sync: false });") {
+		t.Fatalf("expected generated html to exclude daily asset pnl chart from linked chart sync")
+	}
+	if !strings.Contains(html, "applyChartFullRange(assetDailyPnLChart, [dailyAssetPnLSeries]);") {
+		t.Fatalf("expected generated html to pin daily asset pnl chart to the full report range")
+	}
+	if !strings.Contains(html, "syncCharts(syncedCharts);") {
+		t.Fatalf("expected generated html to synchronize only the linked chart set")
+	}
+}
+
 func TestWriteBacktestHTMLIncludesSettledEquityToggle(t *testing.T) {
 	result := &backtest.Result{
 		StrategyName:   "test",

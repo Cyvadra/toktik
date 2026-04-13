@@ -120,13 +120,15 @@ $$
 
 - `condition_rebound_1 = featHeight >= percentile(featHeight, 100, 90) && featHeight >= 0.01`
 - `condition_rebound_2 = low < lowest(close, 8) + atr(14) && close > open`
-- `conditionReductionExtra = condition_rebound_1 && condition_rebound_2`
+- `condition_rebound_3 = (highest(close, 288) - close) / close > 0.10`
+- `conditionReductionExtra = condition_rebound_1 && condition_rebound_2 && condition_rebound_3`
 
 解释：
 
 - `condition_rebound_1` 表示当前 15m bar 的振幅相对收盘价足够大，且不低于最近 100 根 15m `featHeight` 的 90 分位，同时绝对幅度不低于 1%。
 - `condition_rebound_2` 表示价格在短期极低位附近出现向上反弹，且当前 bar 收阳。
-- 两个条件同时成立时，认为出现了需要额外落袋的短周期反弹环境。
+- `condition_rebound_3` 表示当前价格相对最近 3 天高点已回落超过 10%，确认仍处于明显下跌状态。
+- 三个条件同时成立时，认为出现了需要额外落袋的短周期反弹环境。
 
 ### 2.4 每次减仓动作
 
@@ -143,7 +145,7 @@ $$
 ### 2.5 减仓次数说明
 
 - 四个盈利档位各自最多触发一次。
-- `conditionReductionExtra` 每次新触发时可执行一次额外减仓，但前提是仍有足够剩余仓位可减。
+- `conditionReductionExtra` 在每轮订单组中最多触发一次；首次触发并执行额外减仓后，本轮不再因该条件重复减仓。
 - 当累计减仓已覆盖全部初始仓位后，组合视为已自然退出，不再继续触发后续减仓动作。
 
 ---
@@ -192,12 +194,13 @@ $$
 
 ### 4.4 ATR 回撤平仓
 
-- 当 underlying 价格相对本轮开仓时价格上涨超过 8 个 12h ATR(14) 时，全部平仓离场。
-- 该条件触发时，平仓备注中必须明确记录触发平仓时使用的 12h ATR 值。
+- 当 underlying 价格相对本轮开仓时价格上涨超过 5 个 12h ATR(14) 时，全部平仓离场。
+- 这里使用的是本轮开仓时记录下来的 12h ATR(14)，不是平仓时的动态 ATR。
+- 该条件触发时，平仓备注中必须明确记录本轮开仓时使用的该 12h ATR 值。
 
 建议备注格式示例：
 
-- `close_reason=atr_stop_8x, atr12h=xxx`
+- `close_reason=atr_stop_4_5x, atr12h_entry=xxx`
 
 ### 4.5 无可交易仓位的终止
 
@@ -219,6 +222,7 @@ $$
 - `featHeight = (high - low) / close`
 - `featHeight_p90_100`：最近 100 根 15m `featHeight` 的 90 分位。
 - `lowest_close_8`：最近 8 根 15m K 线的最低 close。
+- `highest_close_3d`：最近 3 天，即 288 根 15m K 线的最高 close。
 - `ATR_15m_14`：15m 周期 ATR(14)。
 
 ### 5.3 15m 条件表达式
@@ -232,7 +236,11 @@ $$
 $$
 
 $$
-	ext{conditionReductionExtra} = \text{condition\_rebound\_1} \land \text{condition\_rebound\_2}
+	ext{condition\_rebound\_3} = \frac{\text{highest}(close, 288) - close}{close} > 0.10
+$$
+
+$$
+	ext{conditionReductionExtra} = \text{condition\_rebound\_1} \land \text{condition\_rebound\_2} \land \text{condition\_rebound\_3}
 $$
 
 ---
@@ -250,6 +258,7 @@ $$
 - 卖出腿和买入腿的合约标识、strike、expiration、delta、price
 - `n_sell`、`n_buy`
 - 卖出腿期初规模 11 BTC、买入腿期初规模 10 BTC；若缩仓则同步记录缩放后规模
+- 本轮开仓时冻结用于 ATR 回撤平仓的 `atr12h_entry`
 
 ### 6.2 减仓日志
 
@@ -265,9 +274,9 @@ $$
 
 每次全平建议至少记录：
 
-- 平仓原因：`new_signal_reset`、`dte_le_20`、`atr_stop_8x`、`position_exhausted` 等
+- 平仓原因：`new_signal_reset`、`dte_le_20`、`atr_stop_4_5x`、`position_exhausted` 等
 - 平仓时组合累计盈亏
-- 若为 ATR 回撤平仓，必须额外记录 `atr12h`
+- 若为 ATR 回撤平仓，必须额外记录 `atr12h_entry`
 
 ### 6.4 信号忽略日志
 

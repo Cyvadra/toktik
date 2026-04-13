@@ -29,7 +29,7 @@ const (
 	forceCloseDTE          = 20.0
 	sellDeltaTarget        = 0.50
 	buyDeltaTarget         = 0.30
-	atrStopMultiple        = 8.0
+	atrStopMultiple        = 5
 	trancheCount           = 5
 	dteReduceTrancheCount  = 3
 
@@ -50,16 +50,19 @@ const (
 	featHeightQuantileQ      = 0.90
 	reboundFloor             = 0.01
 	lowestClosePeriod        = 8
+	highestClose3DPeriod     = 3 * 24 * 4
+	reboundDropThreshold     = 0.10
 
-	colEntrySignal   = "entry_signal"
-	colATR14         = "atr14"
-	colDvolQ95       = "dvol_q95"
-	colDvolQ60       = "dvol_q60"
-	colDvolValue     = "dvol_value"
-	colFeatHeight    = "feat_height"
-	colFeatHeightQ90 = "feat_height_q90"
-	colATR15m        = "atr15m"
-	colLowestClose8  = "lowest_close_8"
+	colEntrySignal    = "entry_signal"
+	colATR14          = "atr14"
+	colDvolQ95        = "dvol_q95"
+	colDvolQ60        = "dvol_q60"
+	colDvolValue      = "dvol_value"
+	colFeatHeight     = "feat_height"
+	colFeatHeightQ90  = "feat_height_q90"
+	colATR15m         = "atr15m"
+	colLowestClose8   = "lowest_close_8"
+	colHighestClose3D = "highest_close_3d"
 )
 
 var takeProfitThresholds = []float64{0.30, 0.50, 0.80, 1.20}
@@ -92,15 +95,16 @@ type signalEvent struct {
 // ---------------------------------------------------------------------------
 
 type groupState struct {
-	groupID               int
-	spreadIDs             []int
-	entryTime             time.Time
-	entryUnderlyingPrice  float64
-	profitBaseAmount      float64
-	tpTriggered           []bool
-	extraReductionLatched bool
-	dteReductionTriggered bool
-	reductionCount        int
+	groupID                 int
+	spreadIDs               []int
+	entryTime               time.Time
+	entryUnderlyingPrice    float64
+	entryATR12h             float64
+	profitBaseAmount        float64
+	tpTriggered             []bool
+	extraReductionTriggered bool
+	dteReductionTriggered   bool
+	reductionCount          int
 }
 
 // ---------------------------------------------------------------------------
@@ -119,6 +123,19 @@ type strategy struct {
 }
 
 func (s *strategy) Name() string { return "RetracementRatioProtectiveSpreadShort" }
+
+func (s *strategy) ReportColumns() []backtest.ReportColumn {
+	return []backtest.ReportColumn{
+		{Source: colATR14, Label: "ATR 12H 14", Decimals: 4},
+		{Source: colDvolQ95, Label: "DVOL 12H P95", Decimals: 4},
+		{Source: colDvolQ60, Label: "DVOL 12H P60", Decimals: 4},
+		{Source: colFeatHeight, Label: "Feat Height 15M", Decimals: 4},
+		{Source: colFeatHeightQ90, Label: "Feat Height P90 15M", Decimals: 4},
+		{Source: colATR15m, Label: "ATR 15M 14", Decimals: 4},
+		{Source: colLowestClose8, Label: "Lowest Close 8", Decimals: 4},
+		{Source: colHighestClose3D, Label: "Highest Close 3D", Decimals: 4},
+	}
+}
 
 // ---------------------------------------------------------------------------
 // init & catalog registration
@@ -172,6 +189,7 @@ func (s *strategy) Init(ctx *backtest.SetupContext) error {
 	s.dvolRef = ctx.AddFactor("dvol", interval12h)
 	ctx.RegisterOn(s.ref15m, colATR15m, backtest.ATR(14))
 	ctx.RegisterOn(s.ref15m, colLowestClose8, backtest.Lowest("close", lowestClosePeriod))
+	ctx.RegisterOn(s.ref15m, colHighestClose3D, backtest.Highest("close", highestClose3DPeriod))
 	ctx.RegisterOn(s.ref15m, colFeatHeight, backtest.Custom(
 		[]string{"high", "low", "close"},
 		func(inputs map[string][]float64) []float64 {
@@ -258,6 +276,16 @@ func (s *strategy) Preload(ctx *backtest.PreloadContext) error {
 	}
 	if err := primary.SetColumn(colDvolValue, dvolValue); err != nil {
 		return err
+	}
+
+	for _, name := range []string{colATR15m, colFeatHeight, colFeatHeightQ90, colLowestClose8, colHighestClose3D} {
+		aligned, err := ctx.ColumnAlignedToPrimary(s.ref15m, name)
+		if err != nil {
+			return err
+		}
+		if err := primary.SetColumn(name, aligned); err != nil {
+			return err
+		}
 	}
 
 	return nil
@@ -380,11 +408,13 @@ func (s *strategy) openAmbushPhase(ctx *backtest.BarContext, chain *backtest.Opt
 			sellContract.Symbol, sellPrice, buy1.Symbol, buy1Price, buy2.Symbol, buy2Price,
 			totalSellQty, totalBuyQty, profitBaseAmount, trancheCount)
 
+		entryATR12h := ctx.Ind(colATR14)
 		s.groups = append(s.groups, &groupState{
 			groupID:              groupID,
 			spreadIDs:            spreadIDs,
 			entryTime:            ctx.Time(),
 			entryUnderlyingPrice: ctx.Close(),
+			entryATR12h:          entryATR12h,
 			profitBaseAmount:     profitBaseAmount,
 			tpTriggered:          make([]bool, len(takeProfitThresholds)),
 		})
@@ -470,9 +500,8 @@ func (s *strategy) manageGroup(ctx *backtest.BarContext, gs *groupState, contrac
 		return true
 	}
 
-	atr12h := ctx.Ind(colATR14)
-	if s.priceBreachedStop(ctx.Close(), gs.entryUnderlyingPrice, atr12h) {
-		s.closeTrackedGroup(ctx, gs, contractMap, s.atrStopReason(atr12h))
+	if s.priceBreachedStop(ctx.Close(), gs.entryUnderlyingPrice, gs.entryATR12h) {
+		s.closeTrackedGroup(ctx, gs, contractMap, s.atrStopReason(gs.entryATR12h))
 		return false
 	}
 
@@ -508,12 +537,9 @@ func (s *strategy) pendingReductionReasons(ctx *backtest.BarContext, gs *groupSt
 	}
 
 	extraNow := s.conditionReductionExtra(ctx)
-	if extraNow && !gs.extraReductionLatched {
-		gs.extraReductionLatched = true
+	if extraNow && !gs.extraReductionTriggered {
+		gs.extraReductionTriggered = true
 		reasons = append(reasons, "conditionReductionExtra")
-	}
-	if !extraNow {
-		gs.extraReductionLatched = false
 	}
 
 	return reasons
@@ -529,17 +555,19 @@ func (s *strategy) conditionReductionExtra(ctx *backtest.BarContext) bool {
 	featHeightQ90 := sec15m.Ind(colFeatHeightQ90)
 	atr15m := sec15m.Ind(colATR15m)
 	lowestClose8 := sec15m.Ind(colLowestClose8)
+	highestClose3D := sec15m.Ind(colHighestClose3D)
 	low := sec15m.Field("low")
 	open := sec15m.Field("open")
 	close := sec15m.Field("close")
 
-	if math.IsNaN(featHeight) || math.IsNaN(featHeightQ90) || math.IsNaN(atr15m) || math.IsNaN(lowestClose8) || math.IsNaN(low) || math.IsNaN(open) || math.IsNaN(close) {
+	if math.IsNaN(featHeight) || math.IsNaN(featHeightQ90) || math.IsNaN(atr15m) || math.IsNaN(lowestClose8) || math.IsNaN(highestClose3D) || math.IsNaN(low) || math.IsNaN(open) || math.IsNaN(close) || close <= 0 {
 		return false
 	}
 
 	conditionRebound1 := featHeight >= featHeightQ90 && featHeight >= reboundFloor
 	conditionRebound2 := low < lowestClose8+atr15m && close > open
-	return conditionRebound1 && conditionRebound2
+	conditionRebound3 := (highestClose3D-close)/close > reboundDropThreshold
+	return conditionRebound1 && conditionRebound2 && conditionRebound3
 }
 
 func (s *strategy) closeOneActiveTranche(ctx *backtest.BarContext, gs *groupState, contractMap optutil.ContractMap, reason string, pnl float64) bool {
@@ -705,9 +733,9 @@ func (s *strategy) signedDelta(absDelta float64) float64 {
 
 func (s *strategy) atrStopReason(atr float64) string {
 	if math.IsNaN(atr) || atr <= 0 {
-		return "atr_stop_8x, atr12h=NaN"
+		return "atr_stop_4_5x, atr12h_entry=NaN"
 	}
-	return fmt.Sprintf("atr_stop_8x, atr12h=%.6f", atr)
+	return fmt.Sprintf("atr_stop_4_5x, atr12h_entry=%.6f", atr)
 }
 
 func (s *strategy) priceBreachedStop(close, entryPrice, atr float64) bool {

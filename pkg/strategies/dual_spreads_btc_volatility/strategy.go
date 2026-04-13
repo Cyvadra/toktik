@@ -20,7 +20,7 @@ const (
 	strategyName  = "dual-spreads-btc-volatility"
 	strategyAlias = "dual_spreads_btc_volatility"
 
-	amountBase                    = 2.0
+	amountBase                    = 3.0
 	highIVMinDTE                  = 20
 	highIVTargetDTE               = 35
 	highIVMaxDTE                  = 35
@@ -28,10 +28,10 @@ const (
 	lowIVTargetDTE                = 45
 	lowIVMaxDTE                   = 45
 	shortDTEIVPercentileCutoff    = 55.0
-	volStdLookback                = 150
+	volStdLookback                = 200
 	volStdPeriod                  = 20
 	volStdSMAPeriod               = 20
-	ivPercentileLookback          = 150
+	ivPercentileLookback          = 200
 	minDVOLBarsForThreshold       = 200
 	defaultVolThresholdPercentile = 66.0
 	defaultMetricPercentile       = 60.0
@@ -50,11 +50,11 @@ const (
 	volStdBaseColumn       = "std_20_12h"
 	volStdSMAColumn        = "sma_std_20_12h"
 	volStdValueColumn      = "vol_std_12h"
-	volStdPercentileColumn = "vol_std_pr_150_12h"
-	volStdThresholdColumn  = "vol_std_q66_150_12h"
+	volStdPercentileColumn = "vol_std_pr_200_12h"
+	volStdThresholdColumn  = "vol_std_q66_200_12h"
 	dvolValueColumn        = "dvol_12h"
-	ivPercentileColumn     = "iv_pr_150_12h"
-	ivThresholdColumn      = "iv_q66_150_12h"
+	ivPercentileColumn     = "iv_pr_200_12h"
+	ivThresholdColumn      = "iv_q66_200_12h"
 	dvolBarIndexColumn     = "dvol_12h_bar_index"
 )
 
@@ -138,8 +138,8 @@ func (s *strategy) ReportColumns() []backtest.ReportColumn {
 		{Source: "entry_signal", Label: "Entry Signal", Decimals: 0},
 		{Source: volStdValueColumn, Label: "VolStd 12H", Decimals: 4},
 		{Source: dvolValueColumn, Label: "DVOL 12H", Decimals: 2},
-		{Source: volStdPercentileColumn, Label: "VolStd PR150 12H", Decimals: 1},
-		{Source: ivPercentileColumn, Label: "DVOL PR150 12H", Decimals: 1},
+		{Source: volStdPercentileColumn, Label: "VolStd PR200 12H", Decimals: 1},
+		{Source: ivPercentileColumn, Label: "DVOL PR200 12H", Decimals: 1},
 		{Source: volStdThresholdColumn, Label: "VolStd Q66 12H", Decimals: 4},
 		{Source: ivThresholdColumn, Label: "IV Q66 12H", Decimals: 2},
 	}
@@ -272,27 +272,8 @@ func signalTypeFromIndicator(value float64) (signalType, bool) {
 }
 
 func (s *strategy) initEntryAllowed(ctx *backtest.BarContext) bool {
-	volStd := s.currentVolStd(ctx)
-	dvol := s.currentDVOL(ctx)
-	volStdThreshold := ctx.Ind(volStdThresholdColumn)
-	ivThreshold := ctx.Ind(ivThresholdColumn)
-	return initEntryAllowedByMetrics(volStd, dvol, volStdThreshold, ivThreshold, s.currentDVOLBarCount(ctx))
-}
-
-func initEntryAllowedByMetrics(volStd, dvol, volStdThreshold, ivThreshold float64, dvolBarCount int) bool {
-	if math.IsNaN(volStd) || volStd <= 0 || math.IsNaN(dvol) || dvol <= 0 {
-		return false
-	}
-	if !math.IsNaN(volStdThreshold) && volStd <= volStdThreshold {
-		return true
-	}
-	if dvolBarCount < minDVOLBarsForThreshold {
-		return dvol/volStd <= initDVOLFallbackMax
-	}
-	if !math.IsNaN(ivThreshold) && dvol <= ivThreshold {
-		return true
-	}
-	return false
+	ivPercentile := s.currentIVPercentile(ctx)
+	return ivPercentile <= initDVOLFallbackMax
 }
 
 func (s *strategy) logSelection(format string, args ...any) {
@@ -526,7 +507,7 @@ func shortStrikeMinMultipleForLongDelta(longDelta float64) float64 {
 	if longDelta <= 0.6 {
 		return 1.15
 	}
-	return 1.10
+	return 1.00
 }
 
 func contractsForExpiry(contracts []backtest.OptionContract, expiry time.Time) []backtest.OptionContract {
@@ -669,14 +650,14 @@ func (s *strategy) checkRollConditions(sp *backtest.SpreadPosition, contractMap 
 
 	initialSpreadCost := longLeg.EntryPrice - shortLeg.EntryPrice
 	currentSpreadValue := longMark - shortMark
-	if initialSpreadCost > 0 {
+	if initialSpreadCost > 0 && longContract.Delta >= 0.45 {
 		pnlPct := (currentSpreadValue - initialSpreadCost) / initialSpreadCost
 		if pnlPct >= rollProfitPct {
 			return true, fmt.Sprintf("换仓|spread涨%.0f%%", pnlPct*100)
 		}
 	}
 
-	if longContract.Delta-longLeg.Contract.Delta >= rollDeltaIncrease {
+	if longContract.Delta-longLeg.Contract.Delta >= rollDeltaIncrease && longContract.Delta >= 0.45 {
 		return true, fmt.Sprintf("换仓|多头D增加%.4f", longContract.Delta-longLeg.Contract.Delta)
 	}
 
