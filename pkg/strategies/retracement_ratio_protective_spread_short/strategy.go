@@ -19,42 +19,47 @@ const (
 	positionGroupTag   = strategyName
 	positionGroupDecay = 1.0
 
-	ambushSellAmount       = 5.5
-	ambushBuyAmount        = 5.0
-	ambushProfitBaseAmount = 5.0
+	ambushSellAmount       = 11.0
+	ambushBuyAmount        = 10.0
+	ambushProfitBaseAmount = 10.0
 	ambushMinDTE           = 55
 	ambushMaxDTE           = 85
 	ambushTargetDTE        = 70
-	forceCloseDTE          = 25.0
+	dteReductionTrigger    = 29.0
+	forceCloseDTE          = 20.0
 	sellDeltaTarget        = 0.50
 	buyDeltaTarget         = 0.30
 	atrStopMultiple        = 8.0
 	trancheCount           = 5
+	dteReduceTrancheCount  = 3
 
 	interval12h = "12h"
 	interval15m = "15m"
+
+	signalResetIgnoreWindow = 15 * 24 * time.Hour
 
 	stdPeriod          = 20
 	stdMAPeriod        = 20
 	dvolQuantilePeriod = 100
 	dvolQuantileQ      = 0.95
+	dvolReducePeriod   = 200
+	dvolReduceQ        = 0.60
+	dvolReduceScale    = 0.60
 
 	featHeightQuantilePeriod = 100
 	featHeightQuantileQ      = 0.90
 	reboundFloor             = 0.01
 	lowestClosePeriod        = 8
-	high3DayPeriod           = 280
-	high3DayPullbackFloor    = 0.10
 
 	colEntrySignal   = "entry_signal"
 	colATR14         = "atr14"
 	colDvolQ95       = "dvol_q95"
+	colDvolQ60       = "dvol_q60"
 	colDvolValue     = "dvol_value"
 	colFeatHeight    = "feat_height"
 	colFeatHeightQ90 = "feat_height_q90"
 	colATR15m        = "atr15m"
 	colLowestClose8  = "lowest_close_8"
-	colHigh3Day      = "high_3day"
 )
 
 var takeProfitThresholds = []float64{0.30, 0.50, 0.80, 1.20}
@@ -89,9 +94,12 @@ type signalEvent struct {
 type groupState struct {
 	groupID               int
 	spreadIDs             []int
+	entryTime             time.Time
 	entryUnderlyingPrice  float64
+	profitBaseAmount      float64
 	tpTriggered           []bool
 	extraReductionLatched bool
+	dteReductionTriggered bool
 	reductionCount        int
 }
 
@@ -102,13 +110,12 @@ type groupState struct {
 type strategy struct {
 	optutil.PricingMixin
 
-	signals     []signalEvent
-	signalLevel string
-	ref12h      backtest.SecurityRef
-	ref15m      backtest.SecurityRef
-	dvolRef     backtest.FactorRef
-	direction   tradeDirection
-	groups      []*groupState
+	signals   []signalEvent
+	ref12h    backtest.SecurityRef
+	ref15m    backtest.SecurityRef
+	dvolRef   backtest.FactorRef
+	direction tradeDirection
+	groups    []*groupState
 }
 
 func (s *strategy) Name() string { return "RetracementRatioProtectiveSpreadShort" }
@@ -124,12 +131,7 @@ func init() {
 		Groups:  []string{"options", "spread", "timed"},
 		Profile: catalog.StrategyProfile{UsesOptions: true, RegularTrade: catalog.RegularTradeNone},
 		Factory: func(cfg catalog.Config) (backtest.Strategy, error) {
-			level := os.Getenv("SIGNAL_LEVEL")
-			if level == "" {
-				level = "12h"
-			}
-			csvPath := fmt.Sprintf("pkg/strategies/retracement_ratio_protective_spread_short/%s_short.csv", level)
-			signals, err := loadSignals(csvPath)
+			signals, err := loadSignals("pkg/strategies/retracement_ratio_protective_spread_short/signals_short.csv")
 			if err != nil {
 				return nil, fmt.Errorf("load signals: %w", err)
 			}
@@ -140,9 +142,8 @@ func init() {
 					ExitPriceMode:      cfg.ExitPriceMode,
 					ValuationPriceMode: cfg.ValuationPriceMode,
 				},
-				signals:     signals,
-				signalLevel: level,
-				direction:   directionShort,
+				signals:   signals,
+				direction: directionShort,
 			}, nil
 		},
 	})
@@ -171,7 +172,6 @@ func (s *strategy) Init(ctx *backtest.SetupContext) error {
 	s.dvolRef = ctx.AddFactor("dvol", interval12h)
 	ctx.RegisterOn(s.ref15m, colATR15m, backtest.ATR(14))
 	ctx.RegisterOn(s.ref15m, colLowestClose8, backtest.Lowest("close", lowestClosePeriod))
-	ctx.RegisterOn(s.ref15m, colHigh3Day, backtest.Highest("high", high3DayPeriod))
 	ctx.RegisterOn(s.ref15m, colFeatHeight, backtest.Custom(
 		[]string{"high", "low", "close"},
 		func(inputs map[string][]float64) []float64 {
@@ -222,6 +222,9 @@ func (s *strategy) Preload(ctx *backtest.PreloadContext) error {
 	if err := dvol.Quantile(colDvolQ95, "close", dvolQuantilePeriod, dvolQuantileQ); err != nil {
 		return err
 	}
+	if err := dvol.Quantile(colDvolQ60, "close", dvolReducePeriod, dvolReduceQ); err != nil {
+		return err
+	}
 
 	dvolQ9512h, err := alignSeriesValues(htf.Timestamps(), dvol.Timestamps(), dvol.Column(colDvolQ95))
 	if err != nil {
@@ -231,7 +234,15 @@ func (s *strategy) Preload(ctx *backtest.PreloadContext) error {
 		return err
 	}
 
-	for _, name := range []string{colATR14, colDvolQ95} {
+	dvolQ6012h, err := alignSeriesValues(htf.Timestamps(), dvol.Timestamps(), dvol.Column(colDvolQ60))
+	if err != nil {
+		return err
+	}
+	if err := htf.SetColumn(colDvolQ60, dvolQ6012h); err != nil {
+		return err
+	}
+
+	for _, name := range []string{colATR14, colDvolQ95, colDvolQ60} {
 		aligned, err := ctx.ColumnAlignedToPrimary(s.ref12h, name)
 		if err != nil {
 			return err
@@ -269,6 +280,14 @@ func (s *strategy) OnBar(ctx *backtest.BarContext) {
 
 	sigVal := ctx.Ind(colEntrySignal)
 	if !math.IsNaN(sigVal) && sigVal == 1 {
+		if active := s.latestActiveGroup(ctx); active != nil {
+			age := ctx.Time().Sub(active.entryTime)
+			if age <= signalResetIgnoreWindow {
+				fmt.Printf("[%s] ambush signal ignored: age_days=%.2f entry=%s reason=new_signal_ignored_within_15d\n",
+					ctx.Time().Format(time.RFC3339), age.Hours()/24, active.entryTime.Format(time.RFC3339))
+				return
+			}
+		}
 		s.closeAllGroups(ctx, contractMap, "new_signal_reset")
 		s.openAmbushPhase(ctx, chain)
 	}
@@ -285,8 +304,14 @@ func (s *strategy) openAmbushPhase(ctx *backtest.BarContext, chain *backtest.Opt
 
 	dvolVal := ctx.Ind(colDvolValue)
 	dvolQ95 := ctx.Ind(colDvolQ95)
+	dvolQ60 := ctx.Ind(colDvolQ60)
 	if math.IsNaN(dvolVal) || math.IsNaN(dvolQ95) || dvolVal >= dvolQ95 {
 		return
+	}
+
+	positionScale := 1.0
+	if !math.IsNaN(dvolQ60) && dvolVal >= dvolQ60 {
+		positionScale = dvolReduceScale
 	}
 
 	now := ctx.Time()
@@ -332,13 +357,14 @@ func (s *strategy) openAmbushPhase(ctx *backtest.BarContext, chain *backtest.Opt
 			continue
 		}
 
-		totalSellQty := ambushSellAmount / sellPrice
-		totalBuyQty := ambushBuyAmount / totalBuyPrice
+		profitBaseAmount := ambushProfitBaseAmount * positionScale
+		totalSellQty := ambushSellAmount * positionScale / sellPrice
+		totalBuyQty := ambushBuyAmount * positionScale / totalBuyPrice
 		if totalSellQty <= 0 || totalBuyQty <= 0 {
 			continue
 		}
 
-		groupID := s.openPositionGroup(ctx)
+		groupID := s.openPositionGroup(ctx, profitBaseAmount)
 		if groupID <= 0 {
 			return
 		}
@@ -349,15 +375,17 @@ func (s *strategy) openAmbushPhase(ctx *backtest.BarContext, chain *backtest.Opt
 			return
 		}
 
-		fmt.Printf("[%s] ambush open: signal=%s dvol=%.4f q95=%.4f sell=%s@%.6f buy1=%s@%.6f buy2=%s@%.6f n_sell=%.4f n_buy=%.4f tranches=%d\n",
-			ctx.Time().Format(time.RFC3339), s.signalLevel, dvolVal, dvolQ95,
+		fmt.Printf("[%s] ambush open: dvol=%.4f q95=%.4f q60=%.4f scale=%.2f sell=%s@%.6f buy1=%s@%.6f buy2=%s@%.6f n_sell=%.4f n_buy=%.4f buy_base=%.4f tranches=%d\n",
+			ctx.Time().Format(time.RFC3339), dvolVal, dvolQ95, dvolQ60, positionScale,
 			sellContract.Symbol, sellPrice, buy1.Symbol, buy1Price, buy2.Symbol, buy2Price,
-			totalSellQty, totalBuyQty, trancheCount)
+			totalSellQty, totalBuyQty, profitBaseAmount, trancheCount)
 
 		s.groups = append(s.groups, &groupState{
 			groupID:              groupID,
 			spreadIDs:            spreadIDs,
+			entryTime:            ctx.Time(),
 			entryUnderlyingPrice: ctx.Close(),
+			profitBaseAmount:     profitBaseAmount,
 			tpTriggered:          make([]bool, len(takeProfitThresholds)),
 		})
 		return
@@ -423,9 +451,23 @@ func (s *strategy) manageGroup(ctx *backtest.BarContext, gs *groupState, contrac
 	}
 
 	now := ctx.Time()
-	if s.shouldForceCloseForDTE(ctx, gs, contractMap, now) {
-		s.closeTrackedGroup(ctx, gs, contractMap, "dte_lt_25")
+	if s.shouldForceCloseForDTE(ctx, gs, contractMap, now, forceCloseDTE) {
+		s.closeTrackedGroup(ctx, gs, contractMap, "dte_le_20")
 		return false
+	}
+
+	if !gs.dteReductionTriggered && s.shouldForceCloseForDTE(ctx, gs, contractMap, now, dteReductionTrigger) {
+		gs.dteReductionTriggered = true
+		if !s.closeActiveTranches(ctx, gs, contractMap, dteReduceTrancheCount, "dte_le_29_reduce_60", math.NaN()) {
+			s.closePositionGroup(ctx, gs.groupID)
+			return false
+		}
+		if len(s.activeSpreadIDs(ctx, gs)) == 0 {
+			fmt.Printf("[%s] ambush close: reason=position_exhausted active_tranches=0\n", ctx.Time().Format(time.RFC3339))
+			s.closePositionGroup(ctx, gs.groupID)
+			return false
+		}
+		return true
 	}
 
 	atr12h := ctx.Ind(colATR14)
@@ -443,6 +485,7 @@ func (s *strategy) manageGroup(ctx *backtest.BarContext, gs *groupState, contrac
 	}
 
 	if len(s.activeSpreadIDs(ctx, gs)) == 0 {
+		fmt.Printf("[%s] ambush close: reason=position_exhausted active_tranches=0\n", ctx.Time().Format(time.RFC3339))
 		s.closePositionGroup(ctx, gs.groupID)
 		return false
 	}
@@ -458,7 +501,7 @@ func (s *strategy) pendingReductionReasons(ctx *backtest.BarContext, gs *groupSt
 		if gs.tpTriggered[i] {
 			continue
 		}
-		if pnl >= ambushProfitBaseAmount*threshold {
+		if pnl >= gs.profitBaseAmount*threshold {
 			gs.tpTriggered[i] = true
 			reasons = append(reasons, takeProfitReason(threshold))
 		}
@@ -486,22 +529,25 @@ func (s *strategy) conditionReductionExtra(ctx *backtest.BarContext) bool {
 	featHeightQ90 := sec15m.Ind(colFeatHeightQ90)
 	atr15m := sec15m.Ind(colATR15m)
 	lowestClose8 := sec15m.Ind(colLowestClose8)
-	high3Day := sec15m.Ind(colHigh3Day)
 	low := sec15m.Field("low")
 	open := sec15m.Field("open")
 	close := sec15m.Field("close")
 
-	if math.IsNaN(featHeight) || math.IsNaN(featHeightQ90) || math.IsNaN(atr15m) || math.IsNaN(lowestClose8) || math.IsNaN(high3Day) || math.IsNaN(low) || math.IsNaN(open) || math.IsNaN(close) || high3Day <= 0 {
+	if math.IsNaN(featHeight) || math.IsNaN(featHeightQ90) || math.IsNaN(atr15m) || math.IsNaN(lowestClose8) || math.IsNaN(low) || math.IsNaN(open) || math.IsNaN(close) {
 		return false
 	}
 
 	conditionRebound1 := featHeight >= featHeightQ90 && featHeight >= reboundFloor
 	conditionRebound2 := low < lowestClose8+atr15m && close > open
-	conditionRebound3 := (high3Day-close)/high3Day > high3DayPullbackFloor
-	return conditionRebound1 && conditionRebound2 && conditionRebound3
+	return conditionRebound1 && conditionRebound2
 }
 
 func (s *strategy) closeOneActiveTranche(ctx *backtest.BarContext, gs *groupState, contractMap optutil.ContractMap, reason string, pnl float64) bool {
+	return s.closeActiveTranches(ctx, gs, contractMap, 1, reason, pnl)
+}
+
+func (s *strategy) closeActiveTranches(ctx *backtest.BarContext, gs *groupState, contractMap optutil.ContractMap, count int, reason string, pnl float64) bool {
+	closed := 0
 	for _, spreadID := range gs.spreadIDs {
 		sp := ctx.Spreads().Get(spreadID)
 		if sp == nil || sp.IsFullyClosed() {
@@ -509,15 +555,21 @@ func (s *strategy) closeOneActiveTranche(ctx *backtest.BarContext, gs *groupStat
 		}
 		s.closeSpreadLegs(ctx, spreadID, contractMap, reason)
 		gs.reductionCount++
-		remaining := len(s.activeSpreadIDs(ctx, gs))
-		fmt.Printf("[%s] ambush reduce: reason=%s pnl=%.4f reduction=%d remaining_tranches=%d\n",
-			ctx.Time().Format(time.RFC3339), reason, pnl, gs.reductionCount, remaining)
-		return true
+		closed++
+		if closed >= count {
+			break
+		}
 	}
-	return false
+	if closed == 0 {
+		return false
+	}
+	remaining := len(s.activeSpreadIDs(ctx, gs))
+	fmt.Printf("[%s] ambush reduce: reason=%s pnl=%.4f closed_tranches=%d reduction=%d remaining_tranches=%d\n",
+		ctx.Time().Format(time.RFC3339), reason, pnl, closed, gs.reductionCount, remaining)
+	return true
 }
 
-func (s *strategy) shouldForceCloseForDTE(ctx *backtest.BarContext, gs *groupState, contractMap optutil.ContractMap, now time.Time) bool {
+func (s *strategy) shouldForceCloseForDTE(ctx *backtest.BarContext, gs *groupState, contractMap optutil.ContractMap, now time.Time, threshold float64) bool {
 	for _, spreadID := range gs.spreadIDs {
 		sp := ctx.Spreads().Get(spreadID)
 		if sp == nil {
@@ -528,7 +580,7 @@ func (s *strategy) shouldForceCloseForDTE(ctx *backtest.BarContext, gs *groupSta
 				continue
 			}
 			contract := optutil.ResolveContract(leg.Contract, contractMap)
-			if contract.DaysToExpiry(now) < forceCloseDTE {
+			if contract.DaysToExpiry(now) <= threshold {
 				return true
 			}
 		}
@@ -606,11 +658,11 @@ func (s *strategy) groupCombinedPnL(ctx *backtest.BarContext, gs *groupState, co
 	return total
 }
 
-func (s *strategy) openPositionGroup(ctx *backtest.BarContext) int {
+func (s *strategy) openPositionGroup(ctx *backtest.BarContext, initAmount float64) int {
 	if ctx.SpreadGroups() == nil {
 		return 0
 	}
-	return ctx.SpreadGroups().Open(positionGroupTag, ambushProfitBaseAmount, positionGroupDecay, ctx.Time())
+	return ctx.SpreadGroups().Open(positionGroupTag, initAmount, positionGroupDecay, ctx.Time())
 }
 
 func (s *strategy) closePositionGroup(ctx *backtest.BarContext, groupID int) {
@@ -618,6 +670,19 @@ func (s *strategy) closePositionGroup(ctx *backtest.BarContext, groupID int) {
 		return
 	}
 	ctx.SpreadGroups().Close(groupID)
+}
+
+func (s *strategy) latestActiveGroup(ctx *backtest.BarContext) *groupState {
+	for i := len(s.groups) - 1; i >= 0; i-- {
+		gs := s.groups[i]
+		if gs == nil {
+			continue
+		}
+		if len(s.activeSpreadIDs(ctx, gs)) > 0 {
+			return gs
+		}
+	}
+	return nil
 }
 
 // ---------------------------------------------------------------------------

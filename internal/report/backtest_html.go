@@ -82,6 +82,9 @@ type htmlReportView struct {
 	DailyBuyHoldSeriesData       template.JS
 	HasDailyQuoteNetValue        bool
 	DailyQuoteNetValueNote       string
+	DailyAssetPnLSeriesData      template.JS
+	HasDailyAssetPnL             bool
+	DailyAssetPnLNote            string
 	BuyHoldSeriesData            template.JS
 	HasBuyHoldBenchmark          bool
 	BuyHoldMin                   string
@@ -618,6 +621,7 @@ func buildHTMLView(result *backtest.Result, meta HTMLMeta) htmlReportView {
 		QuoteNetValueSeriesData:      template.JS("[]"),
 		DailyQuoteNetValueSeriesData: template.JS("[]"),
 		DailyBuyHoldSeriesData:       template.JS("[]"),
+		DailyAssetPnLSeriesData:      template.JS("[]"),
 		BuyHoldSeriesData:            template.JS("[]"),
 		DrawdownSeriesData:           marshalJS(buildLineSeries(result.Timestamps, drawdown)),
 	}
@@ -682,6 +686,17 @@ func buildHTMLView(result *backtest.Result, meta HTMLMeta) htmlReportView {
 			view.DailyQuoteNetValueSeriesData = marshalJS(dailyQuoteSeries)
 			view.DailyBuyHoldSeriesData = marshalJS(compressLineSeriesDailyEOD(buyHoldSeries))
 			view.DailyQuoteNetValueNote = "该图保留每个 UTC 日的最后一个净值点，便于查看全周期收益演化。"
+		}
+	}
+
+	if dailyAssetPnLSeries := compressLineSeriesDailyEOD(buildAssetPnLSeries(result)); len(dailyAssetPnLSeries) > 0 {
+		assetUnit := fallbackText(strings.TrimSpace(result.UnderlyingUnit), fallbackText(strings.TrimSpace(meta.Asset), "asset"))
+		view.HasDailyAssetPnL = true
+		view.DailyAssetPnLSeriesData = marshalJS(dailyAssetPnLSeries)
+		if isUSDLikeUnit(result.AccountUnit) || strings.TrimSpace(result.AccountUnit) == "" {
+			view.DailyAssetPnLNote = fmt.Sprintf("该图先将账户净值按标的收盘价换算为 %s 本位，再减去初始 %s 资本；每个 UTC 日仅保留最后一个点，展示的是 PnL 而非 equity。", assetUnit, assetUnit)
+		} else {
+			view.DailyAssetPnLNote = fmt.Sprintf("该图直接以 %s 本位净值减去初始 %s 资本；每个 UTC 日仅保留最后一个点，展示的是 PnL 而非 equity。", assetUnit, assetUnit)
 		}
 	}
 
@@ -1660,6 +1675,53 @@ func buildBuyHoldSeries(result *backtest.Result) ([]chartLinePoint, float64) {
 	return points, initialUSD
 }
 
+func buildAssetPnLSeries(result *backtest.Result) []chartLinePoint {
+	if result == nil || len(result.Timestamps) == 0 || len(result.EquityCurve) == 0 {
+		return nil
+	}
+
+	n := minInt(len(result.Timestamps), len(result.EquityCurve))
+	closeSeries := []float64(nil)
+	if result.Series != nil {
+		closeSeries = result.Series["close"]
+	}
+
+	trimmedUnit := strings.TrimSpace(result.AccountUnit)
+	assetInitial := 0.0
+	points := make([]chartLinePoint, 0, n)
+	for i := 0; i < n; i++ {
+		equityValue := result.EquityCurve[i]
+		if !chartValueValid(equityValue) {
+			continue
+		}
+
+		assetEquity := equityValue
+		if isUSDLikeUnit(trimmedUnit) || trimmedUnit == "" {
+			if i >= len(closeSeries) {
+				continue
+			}
+			closeValue := closeSeries[i]
+			if !chartValueValid(closeValue) || closeValue <= 0 {
+				continue
+			}
+			assetEquity = equityValue / closeValue
+			if assetInitial == 0 {
+				assetInitial = result.InitialCapital / closeValue
+			}
+		} else if assetInitial == 0 {
+			assetInitial = result.InitialCapital
+		}
+
+		pnlValue := assetEquity - assetInitial
+		points = append(points, chartLinePoint{Time: result.Timestamps[i].Unix(), Value: floatPtr(pnlValue)})
+	}
+
+	if len(points) == 0 {
+		return nil
+	}
+	return points
+}
+
 func compressLineSeriesDailyEOD(series []chartLinePoint) []chartLinePoint {
 	if len(series) == 0 {
 		return nil
@@ -1713,6 +1775,16 @@ func hasSubDailyInterval(timestamps []time.Time) bool {
 		return false
 	}
 	return minGap < 24*time.Hour
+}
+
+func isUSDLikeUnit(unit string) bool {
+	trimmed := strings.ToUpper(strings.TrimSpace(unit))
+	switch trimmed {
+	case "", "USD", "USDT", "USDC", "BUSD", "FDUSD":
+		return true
+	default:
+		return false
+	}
 }
 
 func quoteMetricUnitLabel(result *backtest.Result) string {
@@ -2849,6 +2921,16 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
 	</div>
 	{{ end }}
 
+	{{ if .HasDailyAssetPnL }}
+	<div class="section">
+	  <h2>1 Day Asset 本位 PnL</h2>
+	  <p class="text-xs text-slate-400 mb-3">{{ .DailyAssetPnLNote }}</p>
+	  <div class="chart-box p-1">
+		<div id="asset-daily-pnl-chart" style="width:100%;height:280px;"></div>
+	  </div>
+	</div>
+	{{ end }}
+
     <div class="section">
 	<h2>回撤</h2>
 	<p class="text-xs text-slate-400 mb-3">最大回撤 {{ .DrawdownMax }}</p>
@@ -3022,6 +3104,7 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
 	const quoteNetValueSeries = {{ .QuoteNetValueSeriesData }};
 	const dailyQuoteNetValueSeries = {{ .DailyQuoteNetValueSeriesData }};
 	const dailyBuyHoldSeries = {{ .DailyBuyHoldSeriesData }};
+	const dailyAssetPnLSeries = {{ .DailyAssetPnLSeriesData }};
 	const buyHoldSeries = {{ .BuyHoldSeriesData }};
     const drawdownSeries = {{ .DrawdownSeriesData }};
 	const activeTimes = {{ .ActiveTimeData }};
@@ -3336,6 +3419,8 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
 		var quoteDailyChart = null;
 		var quoteDailyPlot = null;
 		var quoteDailyBuyHoldPlot = null;
+		var assetDailyPnLChart = null;
+		var assetDailyPnLPlot = null;
 		var drawdownChart = null;
 		var drawdownPlot = null;
 		var dataWindowGrid = document.getElementById('underlying-data-window-grid');
@@ -3895,6 +3980,26 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
 			quoteDailyChart = qdc;
 			charts.push(qdc);
 			registerSyncedChart(qdc);
+		  }
+		}
+
+		if (dailyAssetPnLSeries.length > 0) {
+		  var apc = createChart('asset-daily-pnl-chart', 280);
+		  if (apc) {
+			assetDailyPnLPlot = apc.addLineSeries({
+			  color: '#f59e0b',
+			  lineWidth: 2,
+			  priceLineVisible: true,
+			  lastValueVisible: true,
+			  crosshairMarkerRadius: 4,
+			  crosshairMarkerBorderColor: '#f59e0b',
+			  crosshairMarkerBackgroundColor: '#f59e0b'
+			});
+			assetDailyPnLPlot.setData(dailyAssetPnLSeries);
+			apc.timeScale().fitContent();
+			assetDailyPnLChart = apc;
+			charts.push(apc);
+			registerSyncedChart(apc);
 		  }
 		}
 

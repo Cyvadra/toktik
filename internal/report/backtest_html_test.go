@@ -224,17 +224,67 @@ func TestBuildHTMLViewIncludesQuoteAndBuyHoldPerformance(t *testing.T) {
 	if !view.HasDailyQuoteNetValue {
 		t.Fatal("view.HasDailyQuoteNetValue = false, want true for sub-daily result")
 	}
+	if !view.HasDailyAssetPnL {
+		t.Fatal("view.HasDailyAssetPnL = false, want true")
+	}
 	if view.QuotePerformance.SharpeRatio == "" || view.BuyHoldPerformance.CalmarRatio == "" {
 		t.Fatalf("quote/buyhold metric cards not populated: %#v %#v", view.QuotePerformance, view.BuyHoldPerformance)
 	}
 	if string(view.DailyQuoteNetValueSeriesData) == "[]" {
 		t.Fatal("DailyQuoteNetValueSeriesData = [], want populated series")
 	}
+	if string(view.DailyAssetPnLSeriesData) == "[]" {
+		t.Fatal("DailyAssetPnLSeriesData = [], want populated series")
+	}
 	if string(view.QuoteNetValueSeriesData) == "[]" {
 		t.Fatal("QuoteNetValueSeriesData = [], want populated series")
 	}
 	if view.HasAssetPerformance != true {
 		t.Fatal("view.HasAssetPerformance = false, want true")
+	}
+}
+
+func TestBuildHTMLViewIncludesDailyAssetPnLSeries(t *testing.T) {
+	result := &backtest.Result{
+		StrategyName:   "asset-pnl-view",
+		StartTime:      time.Date(2024, time.January, 1, 0, 0, 0, 0, time.UTC),
+		EndTime:        time.Date(2024, time.January, 2, 12, 0, 0, 0, time.UTC),
+		InitialCapital: 100,
+		FinalEquity:    182,
+		AccountUnit:    "USD",
+		UnderlyingUnit: "BTC",
+		EquityCurve:    []float64{100, 110, 156, 182},
+		Timestamps: []time.Time{
+			time.Date(2024, time.January, 1, 0, 0, 0, 0, time.UTC),
+			time.Date(2024, time.January, 1, 12, 0, 0, 0, time.UTC),
+			time.Date(2024, time.January, 2, 0, 0, 0, 0, time.UTC),
+			time.Date(2024, time.January, 2, 12, 0, 0, 0, time.UTC),
+		},
+		Series: map[string][]float64{
+			"close": {10, 11, 12, 14},
+		},
+	}
+
+	view := buildHTMLView(result, HTMLMeta{Asset: "BTC", Interval: "1h"})
+	if !view.HasDailyAssetPnL {
+		t.Fatal("view.HasDailyAssetPnL = false, want true")
+	}
+
+	var series []chartLinePoint
+	if err := json.Unmarshal([]byte(view.DailyAssetPnLSeriesData), &series); err != nil {
+		t.Fatalf("json.Unmarshal(DailyAssetPnLSeriesData) error = %v", err)
+	}
+	if len(series) != 2 {
+		t.Fatalf("len(series) = %d, want 2", len(series))
+	}
+	if series[0].Time != time.Date(2024, time.January, 1, 12, 0, 0, 0, time.UTC).Unix() || series[0].Value == nil || math.Abs(*series[0].Value-0) > 1e-9 {
+		t.Fatalf("series[0] = %#v, want day-1 EOD asset pnl of 0", series[0])
+	}
+	if series[1].Time != time.Date(2024, time.January, 2, 12, 0, 0, 0, time.UTC).Unix() || series[1].Value == nil || math.Abs(*series[1].Value-3) > 1e-9 {
+		t.Fatalf("series[1] = %#v, want day-2 EOD asset pnl of 3", series[1])
+	}
+	if !strings.Contains(view.DailyAssetPnLNote, "PnL 而非 equity") {
+		t.Fatalf("DailyAssetPnLNote = %q, want note clarifying pnl vs equity", view.DailyAssetPnLNote)
 	}
 }
 
@@ -557,6 +607,52 @@ func TestWriteBacktestHTMLIncludesTimezoneControls(t *testing.T) {
 	}
 	if !strings.Contains(html, "applyTimeZoneMode(detectDefaultTimeZoneMode());") {
 		t.Fatalf("expected generated html to align timezone display to the browser by default")
+	}
+}
+
+func TestWriteBacktestHTMLIncludesDailyAssetPnLChart(t *testing.T) {
+	result := &backtest.Result{
+		StrategyName:   "asset-pnl-html",
+		StartTime:      time.Date(2024, time.January, 1, 0, 0, 0, 0, time.UTC),
+		EndTime:        time.Date(2024, time.January, 2, 12, 0, 0, 0, time.UTC),
+		InitialCapital: 100,
+		FinalEquity:    182,
+		AccountUnit:    "USD",
+		UnderlyingUnit: "BTC",
+		EquityCurve:    []float64{100, 110, 156, 182},
+		Timestamps: []time.Time{
+			time.Date(2024, time.January, 1, 0, 0, 0, 0, time.UTC),
+			time.Date(2024, time.January, 1, 12, 0, 0, 0, time.UTC),
+			time.Date(2024, time.January, 2, 0, 0, 0, 0, time.UTC),
+			time.Date(2024, time.January, 2, 12, 0, 0, 0, time.UTC),
+		},
+		Series: map[string][]float64{
+			"open":  {10, 10.5, 11.5, 13},
+			"high":  {10.2, 11.1, 12.2, 14.2},
+			"low":   {9.8, 10.2, 11.2, 12.8},
+			"close": {10, 11, 12, 14},
+		},
+	}
+
+	outputPath := filepath.Join(t.TempDir(), "report.html")
+	if err := WriteBacktestHTML(outputPath, result, HTMLMeta{Asset: "BTC", Interval: "1h"}); err != nil {
+		t.Fatalf("WriteBacktestHTML() error = %v", err)
+	}
+
+	htmlBytes, err := os.ReadFile(outputPath)
+	if err != nil {
+		t.Fatalf("os.ReadFile() error = %v", err)
+	}
+	html := string(htmlBytes)
+
+	if !strings.Contains(html, "asset-daily-pnl-chart") {
+		t.Fatalf("expected generated html to include daily asset pnl chart container")
+	}
+	if !strings.Contains(html, "dailyAssetPnLSeries") {
+		t.Fatalf("expected generated html to include daily asset pnl series payload")
+	}
+	if !strings.Contains(html, "1 Day Asset 本位 PnL") {
+		t.Fatalf("expected generated html to include daily asset pnl section title")
 	}
 }
 
