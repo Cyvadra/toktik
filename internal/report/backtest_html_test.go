@@ -230,6 +230,18 @@ func TestBuildHTMLViewIncludesQuoteAndBuyHoldPerformance(t *testing.T) {
 	if view.QuotePerformance.SharpeRatio == "" || view.BuyHoldPerformance.CalmarRatio == "" {
 		t.Fatalf("quote/buyhold metric cards not populated: %#v %#v", view.QuotePerformance, view.BuyHoldPerformance)
 	}
+	if view.StrategyPerformance.Name != "策略 U 本位" {
+		t.Fatalf("view.StrategyPerformance.Name = %q, want 策略 U 本位", view.StrategyPerformance.Name)
+	}
+	if view.StrategyPerformance.ValueUnit != "U" {
+		t.Fatalf("view.StrategyPerformance.ValueUnit = %q, want U", view.StrategyPerformance.ValueUnit)
+	}
+	if view.AssetPerformance.Name != "Buy & Hold" {
+		t.Fatalf("view.AssetPerformance.Name = %q, want Buy & Hold", view.AssetPerformance.Name)
+	}
+	if view.AssetPerformance.ValueUnit != "U" {
+		t.Fatalf("view.AssetPerformance.ValueUnit = %q, want U", view.AssetPerformance.ValueUnit)
+	}
 	if string(view.DailyQuoteNetValueSeriesData) == "[]" {
 		t.Fatal("DailyQuoteNetValueSeriesData = [], want populated series")
 	}

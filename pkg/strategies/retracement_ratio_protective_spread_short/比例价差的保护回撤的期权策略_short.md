@@ -202,7 +202,20 @@ $$
 
 - `close_reason=atr_stop_4_5x, atr12h_entry=xxx`
 
-### 4.5 无可交易仓位的终止
+### 4.5 低点反弹 80% 平仓
+
+- 订单组开仓后，需要持续记录 underlying 自开仓以来的 K 线最低点 `lowest_since_entry`。
+- 同时冻结并记录本轮开仓时的 `ATR_12h_14`，记为 `atr12h_entry`。
+- 当满足 `close - lowest_since_entry > 3 * atr12h_entry` 时，执行一次 80% 平仓。
+- 若触发时组合仍为完整初始仓位，则连续平掉 4 个 tranche，仅保留最后 1 个 tranche。
+- 若触发时组合已先前减仓过至少 20%，则直接平掉当时剩余全部仓位，视为本轮结束。
+- 该条件每轮最多触发一次。
+
+建议备注格式示例：
+
+- `close_reason=rebound_close_80, lowest_since_entry=xxx, atr12h_entry=xxx`
+
+### 4.6 无可交易仓位的终止
 
 - 若因多次减仓导致剩余仓位不足以继续有效交易，可直接将剩余仓位一次性平掉并结束本轮。
 - 结束后等待下一次开仓信号。
@@ -259,15 +272,16 @@ $$
 - `n_sell`、`n_buy`
 - 卖出腿期初规模 11 BTC、买入腿期初规模 10 BTC；若缩仓则同步记录缩放后规模
 - 本轮开仓时冻结用于 ATR 回撤平仓的 `atr12h_entry`
+- 本轮开仓时初始化的 `lowest_since_entry`
 
 ### 6.2 减仓日志
 
 每次减仓建议至少记录：
 
 - 当前属于本轮第几次减仓
-- 触发原因：`tp_30`、`tp_50`、`tp_80`、`tp_120`、`conditionReductionExtra` 或 `dte_le_29_reduce_60`
+- 触发原因：`tp_30`、`tp_50`、`tp_80`、`tp_120`、`conditionReductionExtra`、`dte_le_29_reduce_60` 或 `rebound_close_80`
 - 触发时本轮累计盈利
-- 本次减掉的期初仓位比例；普通减仓固定为 20%，DTE 减仓固定为 60%
+- 本次减掉的期初仓位比例；普通减仓固定为 20%，DTE 减仓固定为 60%，低点反弹保护平仓固定为 80% 或剩余全部仓位
 - 减仓后剩余仓位占期初仓位的比例
 
 ### 6.3 平仓日志

@@ -150,6 +150,12 @@ $$
 ### 3.2 15m 指标定义
 
 - `featHeight_p65_100`：即最近 100 根 15m 振幅的 65 百分位，对应高波动区间过滤。
+- `leftCloseDrop_p80_100`：即最近 100 根 15m 的 `(open-low)/open` 的 80 分位，用于左侧平仓触发。
+
+### 3.3 6h / 24h 指标定义
+
+- `stdmaRatio_6h = std20 / ma(std20, 20)`，并计算最近 100 根 6h 的 60 分位。
+- `stdmaRatio_24h = std20 / ma(std20, 20)`，并计算最近 100 根 24h 的 60 分位。
 - 所有分位数、ATR 默认仅使用已完成 K 线。
 
 ------
@@ -179,6 +185,13 @@ $$
 - 当 underlying 价格相对开仓价 **下跌** 超过 8 个 12h ATR(14) 时，全部平仓。
 - 备注格式：`close_reason=atr_stop_8x, atr12h=xxx`
 
+### 4.5 左侧平仓
+
+- 当 **6h** 与 **24h** 的 `std20 / ma(std20, 20)` 同时高于各自最近 100 根的 **60 分位**，且
+- 当前 **15m** 的 `(open-low)/open` 高于最近 100 根的 **80 分位**，同时该 15m bar 满足 `close < open`，
+- 则立即对当前订单组执行**全平**。
+- 平仓原因统一记录为：`左侧平仓`。
+
 ------
 
 ## 五、关键日志与技术监控
@@ -201,7 +214,7 @@ $$
 ### 5.3 平仓日志
 
 - 必须明确区分 `DTE_29_Close_60` 和 `DTE_20_Close_All`。
-- 记录平仓原因：`new_signal_reset`、`dte_le_20`、`atr_stop_8x`、`position_exhausted` 等。
+- 记录平仓原因：`new_signal_reset`、`dte_le_20`、`atr_stop_8x`、`左侧平仓`、`position_exhausted` 等。
 - 若为 ATR 回撤平仓，必须额外记录 `atr12h`。
 
 ------

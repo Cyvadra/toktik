@@ -601,7 +601,7 @@ func buildHTMLView(result *backtest.Result, meta HTMLMeta) htmlReportView {
 		SharpeRatio:                  decimal(result.SharpeRatio),
 		CalmarRatio:                  ratio(result.CalmarRatio),
 		MaxDrawdown:                  pct(result.MaxDrawdown),
-		StrategyPerformance:          buildPerformanceMetricCard("策略本位", strings.TrimSpace(result.AccountUnit), result.AccountPerformance),
+		StrategyPerformance:          buildPerformanceMetricCard("策略 U 本位", quoteMetricUnitLabel(result), result.QuotePerformance),
 		TotalFees:                    amount(result.TotalFees, result.AccountUnit),
 		BarsCount:                    result.BarsCount,
 		TradesCount:                  len(result.Trades),
@@ -625,9 +625,12 @@ func buildHTMLView(result *backtest.Result, meta HTMLMeta) htmlReportView {
 		BuyHoldSeriesData:            template.JS("[]"),
 		DrawdownSeriesData:           marshalJS(buildLineSeries(result.Timestamps, drawdown)),
 	}
-	if result.AssetPerformance != nil {
+	if result.QuotePerformance == nil {
+		view.StrategyPerformance = buildPerformanceMetricCard("策略账户本位", strings.TrimSpace(result.AccountUnit), result.AccountPerformance)
+	}
+	if result.BuyHoldPerformance != nil {
 		view.HasAssetPerformance = true
-		view.AssetPerformance = buildPerformanceMetricCard("标的本位", fallbackText(strings.TrimSpace(result.UnderlyingUnit), strings.TrimSpace(view.Asset)), result.AssetPerformance)
+		view.AssetPerformance = buildPerformanceMetricCard("Buy & Hold", quoteMetricUnitLabel(result), result.BuyHoldPerformance)
 	}
 
 	settledData := buildSettledEquityData(result)
@@ -2709,7 +2712,7 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
 	  <div class="grid gap-3 lg:grid-cols-2 mb-4">
 		<div class="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
 		  <div class="text-[11px] mono uppercase tracking-[0.22em] text-teal-400">{{ .StrategyPerformance.Name }}</div>
-		  <p class="mt-1 text-xs text-slate-400">单位 {{ .StrategyPerformance.ValueUnit }} · 无风险利率 0% · 年化 365 天</p>
+		  <p class="mt-1 text-xs text-slate-400">单位 {{ .StrategyPerformance.ValueUnit }} · 与下方 U 本位净值图口径一致 · 无风险利率 0% · 年化 365 天</p>
 		  <div class="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-5 text-sm">
 			<div><div class="text-slate-500">年化收益</div><div class="mt-1 font-mono text-white">{{ .StrategyPerformance.AnnualizedReturn }}</div></div>
 			<div><div class="text-slate-500">年化波动</div><div class="mt-1 font-mono text-white">{{ .StrategyPerformance.AnnualizedVolatility }}</div></div>
@@ -2721,7 +2724,7 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
 		{{ if .HasAssetPerformance }}
 		<div class="rounded-2xl border border-sky-400/20 bg-sky-400/[0.06] p-4">
 		  <div class="text-[11px] mono uppercase tracking-[0.22em] text-sky-300">{{ .AssetPerformance.Name }}</div>
-		  <p class="mt-1 text-xs text-slate-400">单位 {{ .AssetPerformance.ValueUnit }} · 用于与 Buy&amp;Hold 做同一标的口径比较</p>
+		  <p class="mt-1 text-xs text-slate-400">单位 {{ .AssetPerformance.ValueUnit }} · 与下方 Buy&amp;Hold 基准曲线口径一致</p>
 		  <div class="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-5 text-sm">
 			<div><div class="text-slate-500">年化收益</div><div class="mt-1 font-mono text-white">{{ .AssetPerformance.AnnualizedReturn }}</div></div>
 			<div><div class="text-slate-500">年化波动</div><div class="mt-1 font-mono text-white">{{ .AssetPerformance.AnnualizedVolatility }}</div></div>

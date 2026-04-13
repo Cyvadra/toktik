@@ -33,9 +33,13 @@ const (
 	trancheCount           = 5
 	dteReduceTrancheCount  = 3
 
+	interval24h = "1d"
+	interval6h  = "6h"
 	interval12h = "12h"
 	interval15m = "15m"
 
+	stdPeriod          = 20
+	stdMAPeriod        = 20
 	dvolQuantilePeriod = 100
 	dvolQuantileQ      = 0.95
 	dvolReducePeriod   = 100
@@ -44,14 +48,24 @@ const (
 
 	featHeightQuantilePeriod = 100
 	featHeightQuantileQ      = 0.65
+	leftCloseQuantilePeriod  = 100
+	leftCloseVolQuantileQ    = 0.60
+	leftCloseDropQuantileQ   = 0.80
 
-	colEntrySignal   = "entry_signal"
-	colATR14         = "atr14"
-	colDvolQ95       = "dvol_q95"
-	colDvolQ60       = "dvol_q60"
-	colDvolValue     = "dvol_value"
-	colFeatHeight    = "feat_height"
-	colFeatHeightQ65 = "feat_height_q65"
+	colEntrySignal      = "entry_signal"
+	colATR14            = "atr14"
+	colDvolQ95          = "dvol_q95"
+	colDvolQ60          = "dvol_q60"
+	colDvolValue        = "dvol_value"
+	colFeatHeight       = "feat_height"
+	colFeatHeightQ65    = "feat_height_q65"
+	colStd20            = "std20"
+	colMAStd20          = "ma_std20"
+	colStdMARatio       = "stdma_ratio"
+	colStdMARatioQ60    = "stdma_ratio_q60"
+	colOpenLowDrop      = "open_low_drop"
+	colOpenLowDropQ80   = "open_low_drop_q80"
+	leftCloseReasonText = "左侧平仓"
 )
 
 var takeProfitThresholds = []float64{0.30, 0.50, 0.80, 1.20}
@@ -91,6 +105,8 @@ type strategy struct {
 	optutil.PricingMixin
 
 	signals   []signalEvent
+	ref24h    backtest.SecurityRef
+	ref6h     backtest.SecurityRef
 	ref12h    backtest.SecurityRef
 	ref15m    backtest.SecurityRef
 	dvolRef   backtest.FactorRef
@@ -133,12 +149,33 @@ func init() {
 func (s *strategy) Init(ctx *backtest.SetupContext) error {
 	primary := ctx.PrimaryRef()
 
+	s.ref24h = ctx.AddSecurity(primary.Market, primary.Symbol, interval24h)
+	s.ref6h = ctx.AddSecurity(primary.Market, primary.Symbol, interval6h)
 	s.ref12h = ctx.AddSecurity(primary.Market, primary.Symbol, interval12h)
 	s.ref15m = ctx.AddSecurity(primary.Market, primary.Symbol, interval15m)
 
+	s.registerVolRatioColumns(ctx, s.ref24h)
+	s.registerVolRatioColumns(ctx, s.ref6h)
 	ctx.RegisterOn(s.ref12h, colATR14, backtest.ATR(14))
 
 	s.dvolRef = ctx.AddFactor("dvol", interval12h)
+	ctx.RegisterOn(s.ref15m, colOpenLowDrop, backtest.Custom(
+		[]string{"open", "low"},
+		func(inputs map[string][]float64) []float64 {
+			opens := inputs["open"]
+			lows := inputs["low"]
+			out := make([]float64, len(opens))
+			for i := range out {
+				if i >= len(lows) || math.IsNaN(opens[i]) || math.IsNaN(lows[i]) || opens[i] == 0 {
+					out[i] = math.NaN()
+					continue
+				}
+				out[i] = (opens[i] - lows[i]) / opens[i]
+			}
+			return out
+		},
+	))
+	ctx.RegisterOn(s.ref15m, colOpenLowDropQ80, backtest.Quantile(colOpenLowDrop, leftCloseQuantilePeriod, leftCloseDropQuantileQ))
 	ctx.RegisterOn(s.ref15m, colFeatHeight, backtest.Custom(
 		[]string{"high", "low", "close"},
 		func(inputs map[string][]float64) []float64 {
@@ -160,6 +197,33 @@ func (s *strategy) Init(ctx *backtest.SetupContext) error {
 
 	ctx.SetWarmup(120 * 24 * time.Hour)
 	return nil
+}
+
+func (s *strategy) registerVolRatioColumns(ctx *backtest.SetupContext, ref backtest.SecurityRef) {
+	ctx.RegisterOn(ref, colStd20, backtest.Custom(
+		[]string{"close"},
+		func(inputs map[string][]float64) []float64 {
+			return optutil.RollingStdDev(inputs["close"], stdPeriod)
+		},
+	))
+	ctx.RegisterOn(ref, colMAStd20, backtest.SMA(colStd20, stdMAPeriod))
+	ctx.RegisterOn(ref, colStdMARatio, backtest.Custom(
+		[]string{colStd20, colMAStd20},
+		func(inputs map[string][]float64) []float64 {
+			std := inputs[colStd20]
+			maStd := inputs[colMAStd20]
+			out := make([]float64, len(std))
+			for i := range out {
+				if i >= len(maStd) || math.IsNaN(std[i]) || math.IsNaN(maStd[i]) || maStd[i] == 0 {
+					out[i] = math.NaN()
+					continue
+				}
+				out[i] = std[i] / maStd[i]
+			}
+			return out
+		},
+	))
+	ctx.RegisterOn(ref, colStdMARatioQ60, backtest.Quantile(colStdMARatio, leftCloseQuantilePeriod, leftCloseVolQuantileQ))
 }
 
 func (s *strategy) Preload(ctx *backtest.PreloadContext) error {
@@ -402,6 +466,12 @@ func (s *strategy) manageGroup(ctx *backtest.BarContext, gs *groupState, contrac
 		return false
 	}
 
+	if s.shouldLeftClose(ctx) {
+		s.logLeftClose(ctx)
+		s.closeTrackedGroup(ctx, gs, contractMap, leftCloseReasonText)
+		return false
+	}
+
 	if !gs.dteReductionTriggered && s.shouldForceCloseForDTE(ctx, gs, contractMap, now, dteReductionTrigger) {
 		gs.dteReductionTriggered = true
 		if !s.closeActiveTranches(ctx, gs, contractMap, dteReduceTrancheCount, "dte_le_29_reduce_60", math.NaN()) {
@@ -471,6 +541,47 @@ func (s *strategy) conditionFallExtra(ctx *backtest.BarContext) bool {
 	}
 
 	return close < open && featHeight >= featHeightQ65
+}
+
+func (s *strategy) shouldLeftClose(ctx *backtest.BarContext) bool {
+	sec6h := ctx.Security(s.ref6h)
+	sec24h := ctx.Security(s.ref24h)
+	sec15m := ctx.Security(s.ref15m)
+	if sec6h == nil || sec24h == nil || sec15m == nil {
+		return false
+	}
+
+	ratio6h := sec6h.Ind(colStdMARatio)
+	ratio6hQ60 := sec6h.Ind(colStdMARatioQ60)
+	ratio24h := sec24h.Ind(colStdMARatio)
+	ratio24hQ60 := sec24h.Ind(colStdMARatioQ60)
+	drop15m := sec15m.Ind(colOpenLowDrop)
+	drop15mQ80 := sec15m.Ind(colOpenLowDropQ80)
+	open15m := sec15m.Field("open")
+	close15m := sec15m.Field("close")
+
+	if math.IsNaN(ratio6h) || math.IsNaN(ratio6hQ60) || math.IsNaN(ratio24h) || math.IsNaN(ratio24hQ60) || math.IsNaN(drop15m) || math.IsNaN(drop15mQ80) || math.IsNaN(open15m) || math.IsNaN(close15m) {
+		return false
+	}
+
+	return ratio6h > ratio6hQ60 && ratio24h > ratio24hQ60 && drop15m > drop15mQ80 && close15m < open15m
+}
+
+func (s *strategy) logLeftClose(ctx *backtest.BarContext) {
+	sec6h := ctx.Security(s.ref6h)
+	sec24h := ctx.Security(s.ref24h)
+	sec15m := ctx.Security(s.ref15m)
+	if sec6h == nil || sec24h == nil || sec15m == nil {
+		return
+	}
+
+	fmt.Printf("[%s] ambush left-close trigger: ratio6h=%.4f q60_6h=%.4f ratio24h=%.4f q60_24h=%.4f open_low_drop_15m=%.4f q80_15m=%.4f open15m=%.4f close15m=%.4f\n",
+		ctx.Time().Format(time.RFC3339),
+		sec6h.Ind(colStdMARatio), sec6h.Ind(colStdMARatioQ60),
+		sec24h.Ind(colStdMARatio), sec24h.Ind(colStdMARatioQ60),
+		sec15m.Ind(colOpenLowDrop), sec15m.Ind(colOpenLowDropQ80),
+		sec15m.Field("open"), sec15m.Field("close"),
+	)
 }
 
 func (s *strategy) closeOneActiveTranche(ctx *backtest.BarContext, gs *groupState, contractMap optutil.ContractMap, reason string, pnl float64) bool {

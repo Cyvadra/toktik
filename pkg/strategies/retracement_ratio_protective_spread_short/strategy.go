@@ -30,8 +30,10 @@ const (
 	sellDeltaTarget        = 0.50
 	buyDeltaTarget         = 0.30
 	atrStopMultiple        = 5
+	reboundCloseMultiple   = 3
 	trancheCount           = 5
 	dteReduceTrancheCount  = 3
+	reboundCloseTranches   = 4
 
 	interval12h = "12h"
 	interval15m = "15m"
@@ -99,10 +101,12 @@ type groupState struct {
 	spreadIDs               []int
 	entryTime               time.Time
 	entryUnderlyingPrice    float64
+	lowestUnderlyingPrice   float64
 	entryATR12h             float64
 	profitBaseAmount        float64
 	tpTriggered             []bool
 	extraReductionTriggered bool
+	reboundCloseTriggered   bool
 	dteReductionTriggered   bool
 	reductionCount          int
 }
@@ -403,20 +407,26 @@ func (s *strategy) openAmbushPhase(ctx *backtest.BarContext, chain *backtest.Opt
 			return
 		}
 
-		fmt.Printf("[%s] ambush open: dvol=%.4f q95=%.4f q60=%.4f scale=%.2f sell=%s@%.6f buy1=%s@%.6f buy2=%s@%.6f n_sell=%.4f n_buy=%.4f buy_base=%.4f tranches=%d\n",
+		entryATR12h := ctx.Ind(colATR14)
+		entryLow := ctx.Low()
+		if math.IsNaN(entryLow) {
+			entryLow = ctx.Close()
+		}
+
+		fmt.Printf("[%s] ambush open: dvol=%.4f q95=%.4f q60=%.4f scale=%.2f sell=%s@%.6f buy1=%s@%.6f buy2=%s@%.6f n_sell=%.4f n_buy=%.4f buy_base=%.4f tranches=%d entry_low=%.4f atr12h_entry=%.6f\n",
 			ctx.Time().Format(time.RFC3339), dvolVal, dvolQ95, dvolQ60, positionScale,
 			sellContract.Symbol, sellPrice, buy1.Symbol, buy1Price, buy2.Symbol, buy2Price,
-			totalSellQty, totalBuyQty, profitBaseAmount, trancheCount)
+			totalSellQty, totalBuyQty, profitBaseAmount, trancheCount, entryLow, entryATR12h)
 
-		entryATR12h := ctx.Ind(colATR14)
 		s.groups = append(s.groups, &groupState{
-			groupID:              groupID,
-			spreadIDs:            spreadIDs,
-			entryTime:            ctx.Time(),
-			entryUnderlyingPrice: ctx.Close(),
-			entryATR12h:          entryATR12h,
-			profitBaseAmount:     profitBaseAmount,
-			tpTriggered:          make([]bool, len(takeProfitThresholds)),
+			groupID:               groupID,
+			spreadIDs:             spreadIDs,
+			entryTime:             ctx.Time(),
+			entryUnderlyingPrice:  ctx.Close(),
+			lowestUnderlyingPrice: entryLow,
+			entryATR12h:           entryATR12h,
+			profitBaseAmount:      profitBaseAmount,
+			tpTriggered:           make([]bool, len(takeProfitThresholds)),
 		})
 		return
 	}
@@ -479,11 +489,39 @@ func (s *strategy) manageGroup(ctx *backtest.BarContext, gs *groupState, contrac
 		s.closePositionGroup(ctx, gs.groupID)
 		return false
 	}
+	s.updateLowestUnderlyingPrice(ctx, gs)
 
 	now := ctx.Time()
 	if s.shouldForceCloseForDTE(ctx, gs, contractMap, now, forceCloseDTE) {
 		s.closeTrackedGroup(ctx, gs, contractMap, "dte_le_20")
 		return false
+	}
+
+	if s.priceBreachedStop(ctx.Close(), gs.entryUnderlyingPrice, gs.entryATR12h) {
+		s.closeTrackedGroup(ctx, gs, contractMap, s.atrStopReason(gs.entryATR12h))
+		return false
+	}
+
+	if !gs.reboundCloseTriggered && s.shouldTriggerReboundClose(ctx.Close(), gs) {
+		activeCount := len(s.activeSpreadIDs(ctx, gs))
+		closeCount := reboundCloseTranches
+		if activeCount < closeCount {
+			closeCount = activeCount
+		}
+		if closeCount > 0 {
+			pnl := s.groupCombinedPnL(ctx, gs, contractMap)
+			if !s.closeActiveTranches(ctx, gs, contractMap, closeCount, s.reboundCloseReason(gs), pnl) {
+				s.closePositionGroup(ctx, gs.groupID)
+				return false
+			}
+			gs.reboundCloseTriggered = true
+			if len(s.activeSpreadIDs(ctx, gs)) == 0 {
+				fmt.Printf("[%s] ambush close: reason=position_exhausted active_tranches=0\n", ctx.Time().Format(time.RFC3339))
+				s.closePositionGroup(ctx, gs.groupID)
+				return false
+			}
+			return true
+		}
 	}
 
 	if !gs.dteReductionTriggered && s.shouldForceCloseForDTE(ctx, gs, contractMap, now, dteReductionTrigger) {
@@ -498,11 +536,6 @@ func (s *strategy) manageGroup(ctx *backtest.BarContext, gs *groupState, contrac
 			return false
 		}
 		return true
-	}
-
-	if s.priceBreachedStop(ctx.Close(), gs.entryUnderlyingPrice, gs.entryATR12h) {
-		s.closeTrackedGroup(ctx, gs, contractMap, s.atrStopReason(gs.entryATR12h))
-		return false
 	}
 
 	pnl := s.groupCombinedPnL(ctx, gs, contractMap)
@@ -627,6 +660,19 @@ func (s *strategy) activeSpreadIDs(ctx *backtest.BarContext, gs *groupState) []i
 	return active
 }
 
+func (s *strategy) updateLowestUnderlyingPrice(ctx *backtest.BarContext, gs *groupState) {
+	if gs == nil {
+		return
+	}
+	low := ctx.Low()
+	if math.IsNaN(low) {
+		return
+	}
+	if math.IsNaN(gs.lowestUnderlyingPrice) || low < gs.lowestUnderlyingPrice {
+		gs.lowestUnderlyingPrice = low
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Group close helpers
 // ---------------------------------------------------------------------------
@@ -736,6 +782,28 @@ func (s *strategy) atrStopReason(atr float64) string {
 		return "atr_stop_4_5x, atr12h_entry=NaN"
 	}
 	return fmt.Sprintf("atr_stop_4_5x, atr12h_entry=%.6f", atr)
+}
+
+func (s *strategy) reboundCloseReason(gs *groupState) string {
+	if gs == nil {
+		return "rebound_close_80, lowest_since_entry=NaN, atr12h_entry=NaN"
+	}
+	lowest := "NaN"
+	if !math.IsNaN(gs.lowestUnderlyingPrice) {
+		lowest = fmt.Sprintf("%.4f", gs.lowestUnderlyingPrice)
+	}
+	atr := "NaN"
+	if !math.IsNaN(gs.entryATR12h) {
+		atr = fmt.Sprintf("%.6f", gs.entryATR12h)
+	}
+	return fmt.Sprintf("rebound_close_80, lowest_since_entry=%s, atr12h_entry=%s", lowest, atr)
+}
+
+func (s *strategy) shouldTriggerReboundClose(close float64, gs *groupState) bool {
+	if gs == nil || math.IsNaN(close) || math.IsNaN(gs.lowestUnderlyingPrice) || math.IsNaN(gs.entryATR12h) || gs.entryATR12h <= 0 {
+		return false
+	}
+	return close-gs.lowestUnderlyingPrice > reboundCloseMultiple*gs.entryATR12h
 }
 
 func (s *strategy) priceBreachedStop(close, entryPrice, atr float64) bool {
