@@ -991,6 +991,8 @@ definitions:
         type: string
       events_url:
         type: string
+      report_url:
+        type: string
       run_id:
         type: string
       status:
@@ -1066,6 +1068,10 @@ definitions:
     properties:
       overview_html_path:
         type: string
+      overview_report_url:
+        type: string
+      report_url:
+        type: string
       summaries:
         items:
           $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.StrategyBacktestSummary'
@@ -1081,6 +1087,8 @@ definitions:
         type: string
       progress:
         $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.StrategyBacktestProgress'
+      report_url:
+        type: string
       request:
         $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.StrategyBacktestRunRequest'
       result:
@@ -1123,6 +1131,8 @@ definitions:
         type: number
       bars_count:
         type: integer
+      calmar_ratio:
+        type: number
       capital_mode:
         type: string
       capital_note:
@@ -1143,6 +1153,8 @@ definitions:
         type: number
       profit_factor:
         type: number
+      report_url:
+        type: string
       sharpe_ratio:
         type: number
       spread_summary:
@@ -1764,6 +1776,85 @@ paths:
           schema:
             $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
       summary: Stream backtest run events (SSE)
+      tags:
+      - Backtests
+  /backtests/runs/{runID}/report:
+    get:
+      description: Returns the reserved HTML report for a backtest run. Before completion,
+        it returns 202 with the current run status.
+      parameters:
+      - description: Backtest run ID
+        in: path
+        name: runID
+        required: true
+        type: string
+      produces:
+      - application/json
+      - text/html
+      responses:
+        "200":
+          description: HTML report
+          schema:
+            type: string
+        "202":
+          description: Run status while report is not ready
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.StrategyBacktestRunStatus'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+      summary: Get primary backtest report
+      tags:
+      - Backtests
+  /backtests/runs/{runID}/reports/{reportID}:
+    get:
+      description: Returns an HTML report variant for a backtest run. Use reportID=overview
+        for the overview page or 1..N for per-strategy detail pages.
+      parameters:
+      - description: Backtest run ID
+        in: path
+        name: runID
+        required: true
+        type: string
+      - description: 'Report selector: overview or 1..N'
+        in: path
+        name: reportID
+        required: true
+        type: string
+      produces:
+      - application/json
+      - text/html
+      responses:
+        "200":
+          description: HTML report
+          schema:
+            type: string
+        "202":
+          description: Run status while report is not ready
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.StrategyBacktestRunStatus'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+      summary: Get a named backtest report
       tags:
       - Backtests
   /crypto-options/backtest:

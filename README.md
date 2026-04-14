@@ -671,7 +671,7 @@ Sample response:
 
 ### 4. Run Strategy Backtests via API
 
-The strategy backtest API is asynchronous. Submit a run first, then poll the run status or subscribe to its SSE event stream.
+The strategy backtest API is asynchronous. Submit a run first, then poll the run status, subscribe to its SSE event stream, or open the reserved HTML report URL.
 
 Supported request fields mirror the `backtest-portfolio` CLI where practical, including:
 - `market`: `crypto` or `us`
@@ -682,6 +682,8 @@ Supported request fields mirror the `backtest-portfolio` CLI where practical, in
 - `signal_source`: per-request external signal source override for strategies that support it
 
 Completed runs return HTML report file paths only, not inline HTML content.
+
+The initial `POST /api/v1/backtests/runs` response also includes `report_url`, which points to a stable browser-ready endpoint. Before the run finishes, that URL returns `202` with the current run status. After completion, the same URL returns the generated HTML report directly. For multi-strategy runs, the API also exposes `/api/v1/backtests/runs/{run_id}/reports/overview` and `/api/v1/backtests/runs/{run_id}/reports/{n}` for the overview page and per-strategy detail pages.
 
 **Start an async backtest run:**
 ```bash
@@ -711,9 +713,12 @@ Sample response:
   "status": "queued",
   "created_at": "2026-04-07T09:45:08.974090366Z",
   "status_url": "/api/v1/backtests/runs/c40505f1a16f02f33380b4ccbe4f74db",
-  "events_url": "/api/v1/backtests/runs/c40505f1a16f02f33380b4ccbe4f74db/events"
+  "events_url": "/api/v1/backtests/runs/c40505f1a16f02f33380b4ccbe4f74db/events",
+  "report_url": "/api/v1/backtests/runs/c40505f1a16f02f33380b4ccbe4f74db/report"
 }
 ```
+
+Open the `report_url` in a browser once the run reaches `completed`; the endpoint will serve the generated HTML directly.
 
 This request is equivalent to the CLI command:
 ```bash

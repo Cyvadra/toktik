@@ -150,6 +150,121 @@ const docTemplate = `{
                 }
             }
         },
+        "/backtests/runs/{runID}/report": {
+            "get": {
+                "description": "Returns the reserved HTML report for a backtest run. Before completion, it returns 202 with the current run status.",
+                "produces": [
+                    "application/json",
+                    "text/html"
+                ],
+                "tags": [
+                    "Backtests"
+                ],
+                "summary": "Get primary backtest report",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Backtest run ID",
+                        "name": "runID",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "HTML report",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "202": {
+                        "description": "Run status while report is not ready",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.StrategyBacktestRunStatus"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/backtests/runs/{runID}/reports/{reportID}": {
+            "get": {
+                "description": "Returns an HTML report variant for a backtest run. Use reportID=overview for the overview page or 1..N for per-strategy detail pages.",
+                "produces": [
+                    "application/json",
+                    "text/html"
+                ],
+                "tags": [
+                    "Backtests"
+                ],
+                "summary": "Get a named backtest report",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Backtest run ID",
+                        "name": "runID",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Report selector: overview or 1..N",
+                        "name": "reportID",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "HTML report",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "202": {
+                        "description": "Run status while report is not ready",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.StrategyBacktestRunStatus"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/crypto-options/backtest": {
             "post": {
                 "description": "Runs a synchronous backtest on a crypto options strategy. Deprecated: use POST /backtests/runs instead.",
@@ -4415,6 +4530,9 @@ const docTemplate = `{
                 "events_url": {
                     "type": "string"
                 },
+                "report_url": {
+                    "type": "string"
+                },
                 "run_id": {
                     "type": "string"
                 },
@@ -4527,6 +4645,12 @@ const docTemplate = `{
                 "overview_html_path": {
                     "type": "string"
                 },
+                "overview_report_url": {
+                    "type": "string"
+                },
+                "report_url": {
+                    "type": "string"
+                },
                 "summaries": {
                     "type": "array",
                     "items": {
@@ -4549,6 +4673,9 @@ const docTemplate = `{
                 },
                 "progress": {
                     "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.StrategyBacktestProgress"
+                },
+                "report_url": {
+                    "type": "string"
                 },
                 "request": {
                     "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.StrategyBacktestRunRequest"
@@ -4614,6 +4741,9 @@ const docTemplate = `{
                 "bars_count": {
                     "type": "integer"
                 },
+                "calmar_ratio": {
+                    "type": "number"
+                },
                 "capital_mode": {
                     "type": "string"
                 },
@@ -4643,6 +4773,9 @@ const docTemplate = `{
                 },
                 "profit_factor": {
                     "type": "number"
+                },
+                "report_url": {
+                    "type": "string"
                 },
                 "sharpe_ratio": {
                     "type": "number"

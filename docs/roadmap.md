@@ -55,6 +55,7 @@ Pine Script-comparable backtest engine with preflight indicator computation and 
 - **No persistence dependency**: Results stay in-memory with optional JSON export. No ClickHouse or MySQL required for backtest output
 - **DataFeed adapters**: `CryptoOptionsDataFeed` reads from ClickHouse bar tables with interval routing (precomputed views, ad-hoc aggregation)
 - **CLI example**: `cmd/backtest-example/` — golden-cross and delta-filter strategies with configurable parameters
+- **API backtest reporting**: async strategy runs expose a reserved `report_url`; before completion it returns run status, and after completion it returns the generated HTML report directly. Multi-strategy runs also expose overview and per-strategy report URLs.
 
 ---
 
