@@ -2,6 +2,8 @@ package report
 
 import (
 	"bytes"
+	"compress/gzip"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"html/template"
@@ -27,6 +29,7 @@ type htmlReportView struct {
 	StrategyName                 string
 	Asset                        string
 	Interval                     string
+	DisplayIsDaily               bool
 	Period                       string
 	GeneratedAt                  string
 	CapitalMode                  string
@@ -90,6 +93,7 @@ type htmlReportView struct {
 	BuyHoldMin                   string
 	BuyHoldMax                   string
 	BuyHoldNote                  string
+	CompressedChartPayload       template.JS
 	DrawdownSeriesData           template.JS
 	ActiveTimeData               template.JS
 	EquityAnalysis               equityAnalysisView
@@ -100,6 +104,8 @@ type htmlReportView struct {
 	UngroupedSpreads             []spreadRowView
 	Trades                       []tradeRowView
 	Spreads                      []spreadRowView
+	CompressedTradeRowsHTML      template.JS
+	CompressedSpreadSectionsHTML template.JS
 	NoTradeRows                  bool
 	NoSpreadRows                 bool
 	Notes                        []string
@@ -292,6 +298,49 @@ type chartMarker struct {
 	Color    string `json:"color"`
 	Shape    string `json:"shape"`
 	Text     string `json:"text"`
+}
+
+func (p chartCandlePoint) MarshalJSON() ([]byte, error) {
+	type payload struct {
+		Time  int64   `json:"time"`
+		Open  float64 `json:"open"`
+		High  float64 `json:"high"`
+		Low   float64 `json:"low"`
+		Close float64 `json:"close"`
+	}
+	return json.Marshal(payload{
+		Time:  p.Time,
+		Open:  roundChartFloat(p.Open),
+		High:  roundChartFloat(p.High),
+		Low:   roundChartFloat(p.Low),
+		Close: roundChartFloat(p.Close),
+	})
+}
+
+func (p chartLinePoint) MarshalJSON() ([]byte, error) {
+	type payload struct {
+		Time  int64    `json:"time"`
+		Value *float64 `json:"value,omitempty"`
+	}
+	var value *float64
+	if p.Value != nil {
+		rounded := roundChartFloat(*p.Value)
+		value = &rounded
+	}
+	return json.Marshal(payload{Time: p.Time, Value: value})
+}
+
+func (p chartHistogramPoint) MarshalJSON() ([]byte, error) {
+	type payload struct {
+		Time  int64   `json:"time"`
+		Value float64 `json:"value"`
+		Color string  `json:"color,omitempty"`
+	}
+	return json.Marshal(payload{
+		Time:  p.Time,
+		Value: roundChartFloat(p.Value),
+		Color: p.Color,
+	})
 }
 
 type hoverColumnPayload struct {
@@ -582,11 +631,19 @@ func buildHTMLView(result *backtest.Result, meta HTMLMeta) htmlReportView {
 	}
 
 	drawdown := drawdownSeries(result.EquityCurve)
+	displayIsDaily := hasSubDailyInterval(result.Timestamps)
+	equitySeries := buildLineSeries(result.Timestamps, result.EquityCurve)
+	drawdownLine := buildLineSeries(result.Timestamps, drawdown)
+	if displayIsDaily {
+		equitySeries = compressLineSeriesDailyEOD(equitySeries)
+		drawdownLine = compressLineSeriesDailyEOD(drawdownLine)
+	}
 	view := htmlReportView{
 		Title:                        fmt.Sprintf("%s 回测报告", result.StrategyName),
 		StrategyName:                 result.StrategyName,
 		Asset:                        meta.Asset,
 		Interval:                     meta.Interval,
+		DisplayIsDaily:               displayIsDaily,
 		Period:                       fmt.Sprintf("%s 至 %s", formatDate(result.StartTime), formatDate(result.EndTime)),
 		GeneratedAt:                  meta.GeneratedAt.UTC().Format("2006-01-02 15:04:05 UTC"),
 		CapitalMode:                  fallbackText(strings.TrimSpace(result.CapitalMode), strings.TrimSpace(result.AccountUnit)),
@@ -613,7 +670,7 @@ func buildHTMLView(result *backtest.Result, meta HTMLMeta) htmlReportView {
 		UnderlyingMarkerData:         template.JS("[]"),
 		HoverColumnsData:             template.JS("[]"),
 		ActiveTimeData:               template.JS("[]"),
-		EquitySeriesData:             marshalJS(buildLineSeries(result.Timestamps, result.EquityCurve)),
+		EquitySeriesData:             marshalJS(equitySeries),
 		SettledEquitySeriesData:      template.JS("[]"),
 		SettledFloatingProfitData:    template.JS("[]"),
 		SettledFloatingLossData:      template.JS("[]"),
@@ -623,7 +680,10 @@ func buildHTMLView(result *backtest.Result, meta HTMLMeta) htmlReportView {
 		DailyBuyHoldSeriesData:       template.JS("[]"),
 		DailyAssetPnLSeriesData:      template.JS("[]"),
 		BuyHoldSeriesData:            template.JS("[]"),
-		DrawdownSeriesData:           marshalJS(buildLineSeries(result.Timestamps, drawdown)),
+		CompressedChartPayload:       template.JS("{}"),
+		CompressedTradeRowsHTML:      template.JS(`""`),
+		CompressedSpreadSectionsHTML: template.JS(`""`),
+		DrawdownSeriesData:           marshalJS(drawdownLine),
 	}
 	if result.QuotePerformance == nil {
 		view.StrategyPerformance = buildPerformanceMetricCard("策略账户本位", strings.TrimSpace(result.AccountUnit), result.AccountPerformance)
@@ -634,6 +694,9 @@ func buildHTMLView(result *backtest.Result, meta HTMLMeta) htmlReportView {
 	}
 
 	settledData := buildSettledEquityData(result)
+	if displayIsDaily {
+		settledData = buildSettledEquityDataDailyEOD(result)
+	}
 	view.SettledEquitySeriesData = marshalJS(settledData.Series)
 	view.SettledFloatingProfitData = marshalJS(settledData.FloatingProfit)
 	view.SettledFloatingLossData = marshalJS(settledData.FloatingLoss)
@@ -645,6 +708,9 @@ func buildHTMLView(result *backtest.Result, meta HTMLMeta) htmlReportView {
 	view.DrawdownMax = pct(maxValue(drawdown))
 
 	quoteNetValueSeries := buildQuoteNetValueSeries(result)
+	if displayIsDaily {
+		quoteNetValueSeries = compressLineSeriesDailyEOD(quoteNetValueSeries)
+	}
 	if len(quoteNetValueSeries) > 0 {
 		view.HasQuoteNetValue = true
 		view.QuoteNetValueSeriesData = marshalJS(quoteNetValueSeries)
@@ -661,6 +727,9 @@ func buildHTMLView(result *backtest.Result, meta HTMLMeta) htmlReportView {
 	}
 
 	buyHoldSeries, buyHoldInitialUSD := buildBuyHoldSeries(result)
+	if displayIsDaily {
+		buyHoldSeries = compressLineSeriesDailyEOD(buyHoldSeries)
+	}
 	if len(buyHoldSeries) > 0 {
 		view.HasBuyHoldBenchmark = true
 		view.BuyHoldSeriesData = marshalJS(buyHoldSeries)
@@ -682,12 +751,12 @@ func buildHTMLView(result *backtest.Result, meta HTMLMeta) htmlReportView {
 		view.BuyHoldPerformance = buildPerformanceMetricCard("Buy & Hold", quoteMetricUnitLabel(result), result.BuyHoldPerformance)
 	}
 
-	if hasSubDailyInterval(result.Timestamps) && len(quoteNetValueSeries) > 0 {
-		dailyQuoteSeries := compressLineSeriesDailyEOD(quoteNetValueSeries)
+	if displayIsDaily && len(quoteNetValueSeries) > 0 {
+		dailyQuoteSeries := quoteNetValueSeries
 		if len(dailyQuoteSeries) > 0 {
 			view.HasDailyQuoteNetValue = true
 			view.DailyQuoteNetValueSeriesData = marshalJS(dailyQuoteSeries)
-			view.DailyBuyHoldSeriesData = marshalJS(compressLineSeriesDailyEOD(buyHoldSeries))
+			view.DailyBuyHoldSeriesData = marshalJS(buyHoldSeries)
 			view.DailyQuoteNetValueNote = "该图保留每个 UTC 日的最后一个净值点，便于查看全周期收益演化。"
 		}
 	}
@@ -726,6 +795,9 @@ func buildHTMLView(result *backtest.Result, meta HTMLMeta) htmlReportView {
 	}
 
 	candles, candleFallback := buildUnderlyingCandles(result)
+	if displayIsDaily {
+		candles = compressCandlesDailyEOD(candles)
+	}
 	if len(candles) > 0 {
 		view.HasUnderlyingChart = true
 		view.UnderlyingCandleData = marshalJS(candles)
@@ -738,6 +810,9 @@ func buildHTMLView(result *backtest.Result, meta HTMLMeta) htmlReportView {
 	}
 
 	volumePoints, volumeLabel := buildUnderlyingVolume(result)
+	if displayIsDaily {
+		volumePoints = compressHistogramSeriesDaily(volumePoints, histogramAggregateSum)
+	}
 	if len(volumePoints) > 0 {
 		view.HasUnderlyingVolume = true
 		view.UnderlyingVolumeLabel = volumeLabel
@@ -745,15 +820,31 @@ func buildHTMLView(result *backtest.Result, meta HTMLMeta) htmlReportView {
 	}
 
 	markers, tradeMarkerCount, spreadEventCount := buildUnderlyingMarkers(result)
+	if displayIsDaily {
+		markers = compressMarkersDaily(markers)
+	}
 	view.UnderlyingMarkerData = marshalJS(markers)
 	hoverColumns := buildHoverColumns(result)
+	if displayIsDaily {
+		hoverColumns = compressHoverColumnsDailyEOD(hoverColumns)
+	}
 	view.HoverColumnsData = marshalJS(hoverColumns)
 	view.HasHoverColumns = len(hoverColumns) > 0
 	view.HasFeatureColumns = hasFeatureColumns(hoverColumns)
-	view.ActiveTimeData = marshalJS(buildActiveTimes(result))
+	activeTimes := buildActiveTimes(result)
+	if displayIsDaily {
+		activeTimes = compressActiveTimesDaily(activeTimes, result.Timestamps)
+	}
+	view.ActiveTimeData = marshalJS(activeTimes)
 	view.TradeMarkerCount = tradeMarkerCount
 	view.SpreadEventCount = spreadEventCount
 	view.Notes = buildNotes(result, candleFallback)
+	if displayIsDaily {
+		view.Notes = append(view.Notes, "为保持所有图表的缩放与交互一致，日内周期结果在 HTML 中统一按每个 UTC 日的最后一个可用点展示。")
+	}
+	view.CompressedChartPayload = buildCompressedChartPayload(view)
+	view.CompressedTradeRowsHTML = marshalJS(compressTextLiteral(renderTradeRowsHTML(view.Trades)))
+	view.CompressedSpreadSectionsHTML = marshalJS(compressTextLiteral(renderSpreadSectionsHTML(view.SpreadGroups, view.UngroupedSpreads)))
 
 	return view
 }
@@ -1753,6 +1844,266 @@ func compressLineSeriesDailyEOD(series []chartLinePoint) []chartLinePoint {
 	return compressed
 }
 
+func compressTimeAlignedLineSeriesDailyEOD(series []chartLinePoint) []chartLinePoint {
+	if len(series) == 0 {
+		return nil
+	}
+	compressed := make([]chartLinePoint, 0, len(series))
+	currentDay := ""
+	var current chartLinePoint
+	for _, point := range series {
+		day := time.Unix(point.Time, 0).UTC().Format("2006-01-02")
+		if day != currentDay {
+			if currentDay != "" {
+				compressed = append(compressed, current)
+			}
+			currentDay = day
+			current = point
+			continue
+		}
+		current = point
+	}
+	if currentDay != "" {
+		compressed = append(compressed, current)
+	}
+	return compressed
+}
+
+func compressCandlesDailyEOD(candles []chartCandlePoint) []chartCandlePoint {
+	if len(candles) == 0 {
+		return nil
+	}
+	compressed := make([]chartCandlePoint, 0, len(candles))
+	currentDay := ""
+	var current chartCandlePoint
+	for _, candle := range candles {
+		day := time.Unix(candle.Time, 0).UTC().Format("2006-01-02")
+		if day != currentDay {
+			if currentDay != "" {
+				compressed = append(compressed, current)
+			}
+			currentDay = day
+			current = candle
+			continue
+		}
+		current.High = math.Max(current.High, candle.High)
+		current.Low = math.Min(current.Low, candle.Low)
+		current.Close = candle.Close
+		current.Time = candle.Time
+	}
+	if currentDay != "" {
+		compressed = append(compressed, current)
+	}
+	return compressed
+}
+
+type histogramAggregateMode int
+
+const (
+	histogramAggregateLast histogramAggregateMode = iota
+	histogramAggregateSum
+)
+
+func compressHistogramSeriesDaily(series []chartHistogramPoint, mode histogramAggregateMode) []chartHistogramPoint {
+	if len(series) == 0 {
+		return nil
+	}
+	compressed := make([]chartHistogramPoint, 0, len(series))
+	currentDay := ""
+	var current chartHistogramPoint
+	for _, point := range series {
+		day := time.Unix(point.Time, 0).UTC().Format("2006-01-02")
+		if day != currentDay {
+			if currentDay != "" {
+				compressed = append(compressed, current)
+			}
+			currentDay = day
+			current = point
+			continue
+		}
+		if mode == histogramAggregateSum {
+			current.Value += point.Value
+		} else {
+			current.Value = point.Value
+		}
+		current.Time = point.Time
+		if strings.TrimSpace(point.Color) != "" {
+			current.Color = point.Color
+		}
+	}
+	if currentDay != "" {
+		compressed = append(compressed, current)
+	}
+	return compressed
+}
+
+func compressHoverColumnsDailyEOD(columns []hoverColumnPayload) []hoverColumnPayload {
+	if len(columns) == 0 {
+		return nil
+	}
+	compressed := make([]hoverColumnPayload, 0, len(columns))
+	for _, column := range columns {
+		column.Values = compressTimeAlignedLineSeriesDailyEOD(column.Values)
+		compressed = append(compressed, column)
+	}
+	return compressed
+}
+
+func compressActiveTimesDaily(activeTimes []int64, timeline []time.Time) []int64 {
+	if len(activeTimes) == 0 || len(timeline) == 0 {
+		return nil
+	}
+	activeSet := make(map[int64]struct{}, len(activeTimes))
+	for _, ts := range activeTimes {
+		activeSet[ts] = struct{}{}
+	}
+	lastByDay := make(map[string]int64)
+	hasActiveByDay := make(map[string]bool)
+	orderedDays := make([]string, 0, len(timeline))
+	seenDay := make(map[string]struct{}, len(timeline))
+	for _, ts := range timeline {
+		day := ts.UTC().Format("2006-01-02")
+		if _, ok := seenDay[day]; !ok {
+			seenDay[day] = struct{}{}
+			orderedDays = append(orderedDays, day)
+		}
+		unix := ts.Unix()
+		lastByDay[day] = unix
+		if _, ok := activeSet[unix]; ok {
+			hasActiveByDay[day] = true
+		}
+	}
+	compressed := make([]int64, 0, len(orderedDays))
+	for _, day := range orderedDays {
+		if hasActiveByDay[day] {
+			compressed = append(compressed, lastByDay[day])
+		}
+	}
+	return compressed
+}
+
+func buildSettledEquityDataDailyEOD(result *backtest.Result) settledEquityData {
+	if result == nil || len(result.Timestamps) == 0 || len(result.EquityCurve) == 0 {
+		return settledEquityData{}
+	}
+
+	eventDeltas := buildSettlementEventDeltas(result)
+	currentSettled := result.InitialCapital
+	series := make([]chartLinePoint, 0, len(result.Timestamps))
+	profitBars := make([]chartHistogramPoint, 0, len(result.Timestamps))
+	lossBars := make([]chartHistogramPoint, 0, len(result.Timestamps))
+
+	currentDay := ""
+	dayLastTime := int64(0)
+	daySettled := currentSettled
+	dayMaxFloat := 0.0
+	dayMinFloat := 0.0
+	flushDay := func() {
+		if currentDay == "" {
+			return
+		}
+		series = append(series, chartLinePoint{Time: dayLastTime, Value: floatPtr(daySettled)})
+		if dayMaxFloat > 1e-9 {
+			profitBars = append(profitBars, chartHistogramPoint{Time: dayLastTime, Value: dayMaxFloat, Color: "rgba(45, 212, 191, 0.35)"})
+		}
+		if dayMinFloat < -1e-9 {
+			lossBars = append(lossBars, chartHistogramPoint{Time: dayLastTime, Value: dayMinFloat, Color: "rgba(248, 113, 113, 0.28)"})
+		}
+	}
+
+	for index, ts := range result.Timestamps {
+		day := ts.UTC().Format("2006-01-02")
+		if day != currentDay {
+			flushDay()
+			currentDay = day
+			dayMaxFloat = 0
+			dayMinFloat = 0
+		}
+		unix := ts.Unix()
+		if delta, ok := eventDeltas[unix]; ok && math.Abs(delta) > 1e-9 {
+			currentSettled += delta
+		}
+		if index >= len(result.EquityCurve) {
+			continue
+		}
+		floating := result.EquityCurve[index] - currentSettled
+		if floating > dayMaxFloat {
+			dayMaxFloat = floating
+		}
+		if floating < dayMinFloat {
+			dayMinFloat = floating
+		}
+		daySettled = currentSettled
+		dayLastTime = unix
+	}
+	flushDay()
+
+	return settledEquityData{
+		Series:         series,
+		FloatingProfit: profitBars,
+		FloatingLoss:   lossBars,
+		Exposure:       compressLineSeriesDailyEOD(buildExposureSeries(result)),
+	}
+}
+
+func compressMarkersDaily(markers []chartMarker) []chartMarker {
+	if len(markers) == 0 {
+		return nil
+	}
+	type groupedMarker struct {
+		marker chartMarker
+		texts  []string
+		seen   map[string]struct{}
+	}
+	grouped := make(map[string]*groupedMarker)
+	for _, marker := range markers {
+		day := time.Unix(marker.Time, 0).UTC().Format("2006-01-02")
+		groupKey := strings.Join([]string{day, marker.Position, marker.Color, marker.Shape}, "|")
+		group, ok := grouped[groupKey]
+		if !ok {
+			group = &groupedMarker{
+				marker: chartMarker{
+					Time:     marker.Time,
+					Position: marker.Position,
+					Color:    marker.Color,
+					Shape:    marker.Shape,
+				},
+				seen: make(map[string]struct{}),
+			}
+			grouped[groupKey] = group
+		}
+		group.marker.Time = marker.Time
+		text := strings.TrimSpace(marker.Text)
+		if text == "" {
+			continue
+		}
+		if _, exists := group.seen[text]; exists {
+			continue
+		}
+		group.seen[text] = struct{}{}
+		group.texts = append(group.texts, text)
+	}
+	compressed := make([]chartMarker, 0, len(grouped))
+	for _, group := range grouped {
+		text := strings.Join(group.texts, " · ")
+		if len(group.texts) > 3 {
+			text = strings.Join(group.texts[:3], " · ") + fmt.Sprintf(" · +%d", len(group.texts)-3)
+		}
+		group.marker.Text = text
+		compressed = append(compressed, group.marker)
+	}
+	sort.Slice(compressed, func(i, j int) bool {
+		if compressed[i].Time != compressed[j].Time {
+			return compressed[i].Time < compressed[j].Time
+		}
+		if compressed[i].Position != compressed[j].Position {
+			return compressed[i].Position < compressed[j].Position
+		}
+		return compressed[i].Text < compressed[j].Text
+	})
+	return compressed
+}
+
 func linePointValues(series []chartLinePoint) []float64 {
 	values := make([]float64, 0, len(series))
 	for _, point := range series {
@@ -2258,6 +2609,187 @@ func marshalJS(value any) template.JS {
 	return template.JS(encoded)
 }
 
+func roundChartFloat(value float64) float64 {
+	if !chartValueValid(value) {
+		return value
+	}
+	const precision = 10000
+	return math.Round(value*precision) / precision
+}
+
+func buildCompressedChartPayload(view htmlReportView) template.JS {
+	payload := map[string]string{
+		"underlyingCandles":      compressJSONLiteral(string(view.UnderlyingCandleData)),
+		"underlyingVolumeSeries": compressJSONLiteral(string(view.UnderlyingVolumeData)),
+		"underlyingMarkers":      compressJSONLiteral(string(view.UnderlyingMarkerData)),
+		"hoverColumns":           compressJSONLiteral(string(view.HoverColumnsData)),
+		"equitySeries":           compressJSONLiteral(string(view.EquitySeriesData)),
+		"settledEquitySeries":    compressJSONLiteral(string(view.SettledEquitySeriesData)),
+		"settledFloatingProfit":  compressJSONLiteral(string(view.SettledFloatingProfitData)),
+		"settledFloatingLoss":    compressJSONLiteral(string(view.SettledFloatingLossData)),
+		"settledExposure":        compressJSONLiteral(string(view.SettledExposureData)),
+		"quoteNetValueSeries":    compressJSONLiteral(string(view.QuoteNetValueSeriesData)),
+		"dailyQuoteNetValue":     compressJSONLiteral(string(view.DailyQuoteNetValueSeriesData)),
+		"dailyBuyHold":           compressJSONLiteral(string(view.DailyBuyHoldSeriesData)),
+		"dailyAssetPnL":          compressJSONLiteral(string(view.DailyAssetPnLSeriesData)),
+		"buyHoldSeries":          compressJSONLiteral(string(view.BuyHoldSeriesData)),
+		"drawdownSeries":         compressJSONLiteral(string(view.DrawdownSeriesData)),
+		"activeTimes":            compressJSONLiteral(string(view.ActiveTimeData)),
+	}
+	return marshalJS(payload)
+}
+
+func compressTextLiteral(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return ""
+	}
+	var buf bytes.Buffer
+	writer := gzip.NewWriter(&buf)
+	if _, err := writer.Write([]byte(trimmed)); err != nil {
+		return ""
+	}
+	if err := writer.Close(); err != nil {
+		return ""
+	}
+	return base64.StdEncoding.EncodeToString(buf.Bytes())
+}
+
+func compressJSONLiteral(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		trimmed = "[]"
+	}
+	return compressTextLiteral(trimmed)
+}
+
+func renderTradeRowsHTML(rows []tradeRowView) string {
+	if len(rows) == 0 {
+		return ""
+	}
+	var builder strings.Builder
+	for _, row := range rows {
+		fmt.Fprintf(&builder, "<tr class=\"border-b border-white/5\"><td class=\"px-4 py-2 mono text-slate-300\">%s</td><td class=\"px-4 py-2 text-slate-200\">%s</td><td class=\"px-4 py-2 font-semibold %s\">%s</td><td class=\"px-4 py-2 text-slate-300\">%s</td><td class=\"px-4 py-2 mono text-slate-200\">%s</td><td class=\"px-4 py-2 mono text-slate-200\">%s</td><td class=\"px-4 py-2 mono text-slate-300\">%s</td><td class=\"px-4 py-2 mono text-slate-300\">%s</td><td class=\"px-4 py-2 mono text-white\">%s</td></tr>",
+			template.HTMLEscapeString(row.Timestamp),
+			template.HTMLEscapeString(row.Security),
+			row.SideClass,
+			template.HTMLEscapeString(row.Side),
+			template.HTMLEscapeString(row.Reason),
+			template.HTMLEscapeString(row.Qty),
+			template.HTMLEscapeString(row.FillPrice),
+			template.HTMLEscapeString(row.Commission),
+			template.HTMLEscapeString(row.Slippage),
+			template.HTMLEscapeString(row.NetAmount),
+		)
+	}
+	return builder.String()
+}
+
+func renderSpreadSectionsHTML(groups []spreadGroupView, ungrouped []spreadRowView) string {
+	if len(groups) == 0 && len(ungrouped) == 0 {
+		return ""
+	}
+	var builder strings.Builder
+	if len(groups) > 0 {
+		builder.WriteString("<div class=\"space-y-5 mb-5\">")
+		for _, group := range groups {
+			fmt.Fprintf(&builder, "<details id=\"%s\" class=\"border border-white/5 rounded-xl overflow-hidden bg-white/[0.02]\" data-spread-group open><summary class=\"spread-group-summary cursor-pointer px-4 py-3 bg-white/[0.03] transition hover:bg-white/[0.045] focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-400/60\"><div class=\"flex flex-wrap items-center justify-between gap-3\"><div class=\"flex flex-wrap items-center gap-3\"><span class=\"mono text-xs text-slate-400 inline-flex items-center gap-2\"><span class=\"spread-group-chevron text-sm text-teal-300\">▸</span><span class=\"spread-group-state-open\">展开</span><span class=\"spread-group-state-closed\">收起</span></span><span class=\"font-medium text-slate-100\">组 #%d %s</span><span class=\"mono text-xs px-2 py-0.5 rounded %s\">%s</span><span class=\"mono text-xs text-slate-400\">开组 %s</span>",
+				template.HTMLEscapeString(group.AnchorID), group.ID, template.HTMLEscapeString(group.Tag), group.StatusClass, template.HTMLEscapeString(group.Status), template.HTMLEscapeString(group.OpenTime))
+			if group.CloseTime != "-" {
+				fmt.Fprintf(&builder, "<span class=\"mono text-xs text-slate-400\">闭组 %s</span>", template.HTMLEscapeString(group.CloseTime))
+			}
+			fmt.Fprintf(&builder, "</div><div class=\"flex flex-wrap gap-5 text-xs text-slate-400\"><span>%d 个持仓</span><span>%d 个事件</span><span>滚仓 %s 次</span><span>初始资金 <span class=\"mono text-slate-300\">%s</span></span><span>Highest Equity <span class=\"mono text-slate-300\">%s</span></span><span>Lowest Equity <span class=\"mono text-slate-300\">%s</span></span><span>Max Drawdown <span class=\"mono text-rose-200\">%s</span></span><span>衰减 <span class=\"mono text-slate-300\">%s</span></span><span>组盈亏 <span class=\"mono text-slate-200\">%s</span></span></div></div></summary><div class=\"border-t border-white/5 p-4 space-y-4\">",
+				group.SpreadCount,
+				group.EventCount,
+				template.HTMLEscapeString(group.RollCount),
+				template.HTMLEscapeString(group.InitAmount),
+				template.HTMLEscapeString(group.HighestEquity),
+				template.HTMLEscapeString(group.LowestEquity),
+				template.HTMLEscapeString(group.MaxDrawdown),
+				template.HTMLEscapeString(group.DecayFactor),
+				template.HTMLEscapeString(group.TotalPnL),
+			)
+			for _, spread := range group.Spreads {
+				builder.WriteString(renderSpreadEventCardHTML(spread))
+			}
+			builder.WriteString("</div></details>")
+		}
+		builder.WriteString("</div>")
+	}
+	if len(ungrouped) > 0 {
+		fmt.Fprintf(&builder, "<div><div class=\"flex items-center justify-between mb-3\"><h3 class=\"text-sm font-medium text-slate-200\">未分组持仓</h3><span class=\"mono text-xs text-slate-400\">%d 个事件</span></div>", len(ungrouped))
+		for _, spread := range ungrouped {
+			builder.WriteString(renderSpreadEventCardHTML(spread))
+		}
+		builder.WriteString("</div>")
+	}
+	return builder.String()
+}
+
+func renderSpreadEventCardHTML(row spreadRowView) string {
+	var builder strings.Builder
+	fmt.Fprintf(&builder, "<div id=\"%s\" class=\"mb-4 border border-white/5 rounded-lg overflow-hidden\"><div class=\"flex flex-wrap items-center justify-between gap-2 px-4 py-2.5 bg-white/[0.02] border-b border-white/5\"><div class=\"flex items-center gap-3\"><span class=\"font-medium text-slate-200\">#%d %s</span>", template.HTMLEscapeString(row.AnchorID), row.ID, template.HTMLEscapeString(row.Tag))
+	if row.GroupID > 0 {
+		fmt.Fprintf(&builder, "<span class=\"mono text-xs px-2 py-0.5 rounded bg-violet-500/15 text-violet-300 ring-1 ring-violet-400/30\">组 #%d</span>", row.GroupID)
+	}
+	fmt.Fprintf(&builder, "<span class=\"mono text-xs px-2 py-0.5 rounded %s\">%s</span><span class=\"mono text-xs text-slate-400\">%s %s</span>", row.StatusClass, template.HTMLEscapeString(row.Status), template.HTMLEscapeString(row.HeaderTimeLabel), template.HTMLEscapeString(row.HeaderTime))
+	if row.UnderlyingPrice != "" {
+		fmt.Fprintf(&builder, "<span class=\"mono text-xs text-slate-400\">标的 %s</span>", template.HTMLEscapeString(row.UnderlyingPrice))
+	}
+	builder.WriteString("</div><div class=\"flex gap-5 text-xs text-slate-400\">")
+	if row.EventUnix > 0 {
+		fmt.Fprintf(&builder, "<button type=\"button\" class=\"rounded-md border border-white/10 px-2.5 py-1 text-[11px] text-slate-300 transition hover:border-sky-400/40 hover:text-sky-200\" data-chart-jump-time=\"%d\" data-chart-window-start=\"%d\" data-chart-window-end=\"%d\">定位到图表</button>", row.EventUnix, row.WindowStartUnix, row.WindowEndUnix)
+	}
+	if row.EventTime != row.HeaderTime {
+		label := "平仓"
+		if row.EventType == "OPEN" {
+			label = "开仓"
+		}
+		fmt.Fprintf(&builder, "<span>%s %s</span>", label, template.HTMLEscapeString(row.EventTime))
+	}
+	fmt.Fprintf(&builder, "<span>盈亏 <span class=\"mono text-slate-300\">%s</span></span>", template.HTMLEscapeString(row.RealizedPnL))
+	if row.RelatedLink != "" {
+		fmt.Fprintf(&builder, "<a class=\"text-sky-300 hover:text-sky-200 underline underline-offset-2\" href=\"#%s\">%s</a>", template.HTMLEscapeString(row.RelatedLink), template.HTMLEscapeString(row.RelatedText))
+	}
+	builder.WriteString("</div></div><div class=\"px-4 py-3 space-y-3\">")
+	if len(row.ReportMetrics) > 0 {
+		builder.WriteString("<div class=\"grid gap-2 md:grid-cols-2 xl:grid-cols-4\">")
+		for _, metric := range row.ReportMetrics {
+			fmt.Fprintf(&builder, "<div class=\"spread-metric-card\"><div class=\"flex items-center justify-between gap-2\"><div class=\"text-xs text-slate-400\">%s</div><span class=\"mono text-[10px] px-2 py-0.5 rounded %s\">%s</span></div><div class=\"mt-2 mono text-sm text-slate-200\">%s</div><div class=\"mt-1 mono text-[11px] text-slate-500\">%s</div></div>", template.HTMLEscapeString(metric.Label), metric.KindClass, template.HTMLEscapeString(metric.KindLabel), template.HTMLEscapeString(metric.Value), template.HTMLEscapeString(metric.Source))
+		}
+		builder.WriteString("</div>")
+	}
+	fmt.Fprintf(&builder, "<div class=\"grid gap-3 md:grid-cols-2 xl:grid-cols-5 text-sm\"><div><div class=\"text-slate-400\">状态</div><div class=\"mt-1 mono text-slate-200\">%s</div></div><div><div class=\"text-slate-400\">开仓时间</div><div class=\"mt-1 mono text-slate-200\">%s</div></div><div><div class=\"text-slate-400\">平仓时间</div><div class=\"mt-1 mono text-slate-200\">%s</div></div><div><div class=\"text-slate-400\">持有天数</div><div class=\"mt-1 mono text-slate-200\">%s</div></div><div><div class=\"text-slate-400\">实现盈亏</div><div class=\"mt-1 mono text-slate-200\">%s</div></div></div>", template.HTMLEscapeString(row.Status), template.HTMLEscapeString(row.OpenTime), template.HTMLEscapeString(row.CloseTime), template.HTMLEscapeString(row.DaysHeld), template.HTMLEscapeString(row.RealizedPnL))
+	builder.WriteString(renderSpreadLegsTableHTML(row))
+	builder.WriteString("</div></div>")
+	return builder.String()
+}
+
+func renderSpreadLegsTableHTML(row spreadRowView) string {
+	if len(row.Legs) == 0 {
+		return ""
+	}
+	var builder strings.Builder
+	if row.EventType == "OPEN" {
+		builder.WriteString("<div class=\"overflow-x-auto border border-white/8 rounded-lg\"><table class=\"min-w-full text-sm\"><thead class=\"bg-white/[0.02] border-b border-white/8\"><tr class=\"text-left text-slate-400\"><th class=\"px-4 py-2\">合约</th><th class=\"px-4 py-2\">事件</th><th class=\"px-4 py-2\">方向</th><th class=\"px-4 py-2\">类型</th><th class=\"px-4 py-2\">行权价</th><th class=\"px-4 py-2\">到期日</th><th class=\"px-4 py-2\">筛选</th><th class=\"px-4 py-2\">数量</th><th class=\"px-4 py-2\">入场价</th><th class=\"px-4 py-2\">入场额</th></tr></thead><tbody class=\"divide-y divide-white/5\">")
+		for _, leg := range row.Legs {
+			fmt.Fprintf(&builder, "<tr class=\"border-b border-white/[0.03]\"><td class=\"px-4 py-1.5 mono text-slate-300\">%s</td><td class=\"px-4 py-1.5\"><span class=\"mono text-xs px-2 py-0.5 rounded ring-1 %s\">开仓</span></td><td class=\"px-4 py-1.5 text-slate-300\">%s</td><td class=\"px-4 py-1.5 text-slate-400\">%s</td><td class=\"px-4 py-1.5 mono text-slate-300\">%s</td><td class=\"px-4 py-1.5 mono text-slate-400\">%s</td><td class=\"px-4 py-1.5 mono text-slate-300\">%s</td><td class=\"px-4 py-1.5 mono text-slate-300\">%s</td><td class=\"px-4 py-1.5 mono text-slate-300\">%s</td><td class=\"px-4 py-1.5 mono text-slate-300\">%s</td></tr>", template.HTMLEscapeString(leg.Symbol), row.EventClass, template.HTMLEscapeString(leg.Side), template.HTMLEscapeString(leg.Type), template.HTMLEscapeString(leg.StrikePrice), template.HTMLEscapeString(leg.Expiration), template.HTMLEscapeString(leg.OpenSelect), template.HTMLEscapeString(leg.Qty), template.HTMLEscapeString(leg.EntryPrice), template.HTMLEscapeString(leg.EntryAmount))
+		}
+		builder.WriteString("</tbody></table></div>")
+		return builder.String()
+	}
+	closeTimeLabel := "平仓时间"
+	if label := strings.TrimSpace(row.Legs[0].CloseTimeLabel); label != "" {
+		closeTimeLabel = label
+	}
+	fmt.Fprintf(&builder, "<div class=\"overflow-x-auto border border-white/8 rounded-lg\"><table class=\"min-w-full text-sm\"><thead class=\"bg-white/[0.02] border-b border-white/8\"><tr class=\"text-left text-slate-400\"><th class=\"px-4 py-2\">合约</th><th class=\"px-4 py-2\">事件</th><th class=\"px-4 py-2\">方向</th><th class=\"px-4 py-2\">类型</th><th class=\"px-4 py-2\">行权价</th><th class=\"px-4 py-2\">到期日</th><th class=\"px-4 py-2\">数量</th><th class=\"px-4 py-2\">平仓价</th><th class=\"px-4 py-2\">%s</th><th class=\"px-4 py-2\">原因</th><th class=\"px-4 py-2\">实现盈亏</th></tr></thead><tbody class=\"divide-y divide-white/5\">", template.HTMLEscapeString(closeTimeLabel))
+	for _, leg := range row.Legs {
+		fmt.Fprintf(&builder, "<tr class=\"border-b border-white/[0.03]\"><td class=\"px-4 py-1.5 mono text-slate-300\">%s</td><td class=\"px-4 py-1.5\"><span class=\"mono text-xs px-2 py-0.5 rounded ring-1 %s\">平仓</span></td><td class=\"px-4 py-1.5 text-slate-300\">%s</td><td class=\"px-4 py-1.5 text-slate-400\">%s</td><td class=\"px-4 py-1.5 mono text-slate-300\">%s</td><td class=\"px-4 py-1.5 mono text-slate-400\">%s</td><td class=\"px-4 py-1.5 mono text-slate-300\">%s</td><td class=\"px-4 py-1.5 mono text-slate-400\">%s</td><td class=\"px-4 py-1.5 mono text-slate-400\">%s</td><td class=\"px-4 py-1.5 text-slate-300\">%s</td><td class=\"px-4 py-1.5 mono text-slate-300\">%s</td></tr>", template.HTMLEscapeString(leg.Symbol), row.EventClass, template.HTMLEscapeString(leg.Side), template.HTMLEscapeString(leg.Type), template.HTMLEscapeString(leg.StrikePrice), template.HTMLEscapeString(leg.Expiration), template.HTMLEscapeString(leg.Qty), template.HTMLEscapeString(leg.ClosePrice), template.HTMLEscapeString(leg.CloseTime), template.HTMLEscapeString(leg.CloseReason), template.HTMLEscapeString(leg.RealizedPnL))
+	}
+	builder.WriteString("</tbody></table></div>")
+	return builder.String()
+}
+
 func minInt(a, b int) int {
 	if a < b {
 		return a
@@ -2630,30 +3162,123 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>{{ .Title }}</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script src="https://unpkg.com/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js"></script>
-  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+	<script>
+		(function() {
+			var theme = 'light';
+			try {
+				var stored = localStorage.getItem('toktik-report-theme');
+				if (stored === 'light' || stored === 'dark') {
+					theme = stored;
+				} else if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+					theme = 'dark';
+				}
+			} catch (error) {
+				if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+					theme = 'dark';
+				}
+			}
+			document.documentElement.setAttribute('data-theme', theme);
+		})();
+	</script>
+	<script src="https://cdn.tailwindcss.com"></script>
+	<script src="https://unpkg.com/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js"></script>
+	<script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
+	<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
   <style>
-    :root { color-scheme: dark; }
-    body { background: #0b1117; font-family: 'Inter', system-ui, sans-serif; }
-    .mono { font-family: 'IBM Plex Mono', monospace; }
-    .chart-box { background: #0f1923; border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; }
-    table.perf td, table.perf th { padding: 6px 12px; white-space: nowrap; }
-    table.perf th { color: #64748b; font-weight: 500; text-align: left; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; }
-    table.perf td { font-family: 'IBM Plex Mono', monospace; color: #e2e8f0; font-size: 13px; }
-    table.perf tr { border-bottom: 1px solid rgba(255,255,255,0.06); }
-    .section { background: #111922; border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; padding: 20px; margin-bottom: 16px; }
-    .section h2 { color: #f1f5f9; font-size: 16px; font-weight: 600; margin-bottom: 12px; }
-    .text-up { color: #34d399; }
-    .text-down { color: #fbbf24; }
-		.data-window-card { background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.06); border-radius: 10px; padding: 10px 12px; }
+		:root {
+			--paper: #f3f6fb;
+			--panel: #ffffff;
+			--panel-alt: #f8fafc;
+			--ink: #0f172a;
+			--ink-soft: #334155;
+			--muted: #64748b;
+			--line: #d7dee8;
+			--line-strong: #c5d0dd;
+			--accent: #0f6c7b;
+			--accent-soft: #e7f3f5;
+			--gain: #107c10;
+			--loss: #bc4b09;
+			--alert: #b42318;
+			--shadow: 0 14px 36px rgba(15, 23, 42, 0.08);
+			--page-bg: linear-gradient(180deg, #f7f9fc 0%, #eef3f8 100%);
+		}
+		html[data-theme="light"] {
+			color-scheme: light;
+		}
+		html[data-theme="dark"] {
+			color-scheme: dark;
+			--paper: #071019;
+			--panel: #0f1a24;
+			--panel-alt: #132230;
+			--ink: #f8fafc;
+			--ink-soft: #cbd5e1;
+			--muted: #94a3b8;
+			--line: rgba(255,255,255,0.08);
+			--line-strong: rgba(255,255,255,0.18);
+			--accent: #3dd6c6;
+			--accent-soft: rgba(61,214,198,0.12);
+			--gain: #4ade80;
+			--loss: #f59e0b;
+			--alert: #fb7185;
+			--shadow: 0 24px 64px rgba(0, 0, 0, 0.34);
+			--page-bg:
+				radial-gradient(circle at top left, rgba(61,214,198,.18), transparent 26%),
+				radial-gradient(circle at top right, rgba(240,164,58,.14), transparent 22%),
+				linear-gradient(180deg, #050d14 0%, #09131b 34%, #0d1823 100%);
+		}
+		body {
+			background: var(--page-bg);
+			font-family: 'IBM Plex Sans', system-ui, sans-serif;
+			color: var(--ink-soft);
+		}
+		.mono { font-family: 'IBM Plex Mono', monospace; }
+		.chart-box {
+			background: var(--panel);
+			border: 1px solid var(--line);
+			border-radius: 4px;
+			box-shadow: inset 0 1px 0 rgba(255,255,255,0.65);
+		}
+		table.perf td, table.perf th { padding: 7px 12px; white-space: nowrap; }
+		table.perf th {
+			color: var(--muted);
+			font-weight: 600;
+			text-align: left;
+			font-size: 11px;
+			text-transform: uppercase;
+			letter-spacing: 0.08em;
+		}
+		table.perf td { font-family: 'IBM Plex Mono', monospace; color: var(--ink); font-size: 13px; }
+		table.perf tr { border-bottom: 1px solid var(--line); }
+		.section {
+			background: var(--panel);
+			border: 1px solid var(--line);
+			border-radius: 4px;
+			padding: 20px;
+			margin-bottom: 14px;
+			box-shadow: var(--shadow);
+		}
+		.section h2 {
+			color: var(--ink);
+			font-size: 16px;
+			font-weight: 700;
+			margin-bottom: 12px;
+			letter-spacing: 0.01em;
+		}
+		.text-up { color: var(--gain); }
+		.text-down { color: var(--loss); }
+		.data-window-card {
+			background: var(--panel-alt);
+			border: 1px solid var(--line);
+			border-radius: 4px;
+			padding: 10px 12px;
+		}
 		.data-window-card-button { width: 100%; text-align: left; transition: border-color 120ms ease, background 120ms ease, transform 120ms ease; }
-		.data-window-card-button:hover { border-color: rgba(45,212,191,0.32); background: rgba(45,212,191,0.06); }
-		.data-window-card-button.active { border-color: rgba(45,212,191,0.56); background: rgba(20,184,166,0.12); box-shadow: inset 0 0 0 1px rgba(45,212,191,0.24); }
-		.feature-empty-state { border: 1px dashed rgba(255,255,255,0.1); border-radius: 10px; padding: 18px; text-align: center; color: #94a3b8; font-size: 12px; }
+		.data-window-card-button:hover { border-color: #8bbbc4; background: var(--accent-soft); }
+		.data-window-card-button.active { border-color: #77a9b4; background: var(--accent-soft); box-shadow: inset 0 0 0 1px rgba(15,108,123,0.12); }
+		.feature-empty-state { border: 1px dashed var(--line-strong); border-radius: 4px; padding: 18px; text-align: center; color: var(--muted); font-size: 12px; background: var(--panel-alt); }
 		.feature-legend-swatch { display: inline-block; width: 10px; height: 10px; border-radius: 999px; }
-		.feature-legend-value { color: #f8fafc; }
-		.spread-metric-card { background: linear-gradient(180deg, rgba(255,255,255,0.045), rgba(255,255,255,0.02)); border: 1px solid rgba(255,255,255,0.07); border-radius: 12px; padding: 12px 14px; min-height: 84px; }
+		.feature-legend-value { color: var(--ink); }
+		.spread-metric-card { background: var(--panel-alt); border: 1px solid var(--line); border-radius: 4px; padding: 12px 14px; min-height: 84px; }
 		.spread-group-summary { list-style: none; }
 		.spread-group-summary::-webkit-details-marker { display: none; }
 		.spread-group-chevron { transition: transform 140ms ease; }
@@ -2662,6 +3287,22 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
 		.spread-group-state-closed { display: none; }
 		details[open] > .spread-group-summary .spread-group-state-open { display: none; }
 		details[open] > .spread-group-summary .spread-group-state-closed { display: inline; }
+		.section:last-child { margin-bottom: 0; }
+		.text-white, .text-slate-100, .text-slate-200 { color: var(--ink) !important; }
+		.text-slate-300 { color: var(--ink-soft) !important; }
+		.text-slate-400, .text-slate-500 { color: var(--muted) !important; }
+		.text-teal-400, .text-teal-300 { color: var(--accent) !important; }
+		.text-sky-300, .text-blue-400 { color: #185abd !important; }
+		.text-amber-300 { color: var(--loss) !important; }
+		.text-rose-200, .text-rose-400 { color: var(--alert) !important; }
+		.border-white\/10, .border-white\/8, .border-white\/5 { border-color: var(--line) !important; }
+		.bg-white, .bg-white\/\[0\.03\], .bg-white\/\[0\.02\], .bg-white\/\[0\.05\], .bg-white\/\[0\.045\] { background: var(--panel-alt) !important; }
+		.bg-\[\#111922\] { background: var(--panel) !important; }
+		.bg-transparent { background: transparent !important; }
+		.rounded-2xl, .rounded-xl, .rounded-lg, .rounded-md, .rounded-\[2rem\], .rounded-\[1\.75rem\], .rounded-\[1\.5rem\] { border-radius: 4px !important; }
+		.max-h-\[32rem\], .max-h-\[34rem\] { content-visibility: auto; contain-intrinsic-size: 1200px; }
+		thead.sticky { box-shadow: 0 1px 0 var(--line); }
+		select, input[type="checkbox"] { color: var(--ink); }
   </style>
 </head>
 <body class="text-slate-300 min-h-screen p-4 lg:p-6">
@@ -2694,12 +3335,17 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
 		<div>
 		  <h2 class="!mb-1">图表时间轴</h2>
 		  <p class="text-xs text-slate-400">忽略空闲时段以压缩无变化的平坦区间（应用于下方所有图表）。</p>
+		  {{ if .DisplayIsDaily }}<p class="mt-1 text-xs text-slate-500">当前报告已统一聚合到 1 Day 日终粒度，便于全部图表同步缩放与浏览。</p>{{ end }}
 		</div>
 		<div class="flex flex-wrap items-center gap-3">
 		  <label class="inline-flex items-center gap-2 rounded-md border border-white/10 px-3 py-2 text-sm text-slate-200 cursor-pointer select-none">
 			<input id="toggle-ignore-idle" type="checkbox" class="accent-teal-400" />
 			<span>忽略空闲时段</span>
 		  </label>
+		  <select id="theme-select" class="rounded-md border border-white/10 bg-transparent px-3 py-2 text-sm text-slate-200 cursor-pointer">
+			<option value="light">亮色</option>
+			<option value="dark">暗色</option>
+		  </select>
 		  <select id="timezone-select" class="rounded-md border border-white/10 bg-transparent px-3 py-2 text-sm text-slate-200 cursor-pointer">
 			<option value="utc">UTC</option>
 			<option value="local">本地时间</option>
@@ -2856,7 +3502,7 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
 		<div>
 			<h2 class="!mb-1">权益曲线</h2>
 			<p class="text-xs text-slate-400">范围 {{ .EquityMin }} 至 {{ .EquityMax }} · 手续费 {{ .TotalFees }}</p>
-			<p id="equity-mode-note" class="text-xs text-slate-500">默认展示逐 bar 净值；切换后仅保留已结算收益点，并在下方显示区间浮盈浮亏与持仓暴露。</p>
+			<p id="equity-mode-note" class="text-xs text-slate-500">{{ if .DisplayIsDaily }}当前图表已按 1 Day 聚合，展示每个 UTC 日的最后一个权益点；切换后仅保留已结算权益。{{ else }}默认展示逐 bar 净值；切换后仅保留已结算收益点，并在下方显示区间浮盈浮亏与持仓暴露。{{ end }}</p>
 		</div>
 		<label class="inline-flex items-center gap-2 rounded-md border border-white/10 px-3 py-2 text-sm text-slate-200 cursor-pointer select-none" data-equity-mode="settled">
 			<input id="toggle-settled-equity" type="checkbox" class="accent-teal-400" />
@@ -2987,56 +3633,7 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
 				</div>
 				{{ end }}
 			</div>
-			{{ if .SpreadGroups }}
-			<div class="space-y-5 mb-5">
-				{{ range .SpreadGroups }}
-				<details id="{{ .AnchorID }}" class="border border-white/5 rounded-xl overflow-hidden bg-white/[0.02]" data-spread-group open>
-					<summary class="spread-group-summary cursor-pointer px-4 py-3 bg-white/[0.03] transition hover:bg-white/[0.045] focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-400/60">
-						<div class="flex flex-wrap items-center justify-between gap-3">
-							<div class="flex flex-wrap items-center gap-3">
-								<span class="mono text-xs text-slate-400 inline-flex items-center gap-2">
-									<span class="spread-group-chevron text-sm text-teal-300">▸</span>
-									<span class="spread-group-state-open">展开</span>
-									<span class="spread-group-state-closed">收起</span>
-								</span>
-								<span class="font-medium text-slate-100">组 #{{ .ID }} {{ .Tag }}</span>
-								<span class="mono text-xs px-2 py-0.5 rounded {{ .StatusClass }}">{{ .Status }}</span>
-								<span class="mono text-xs text-slate-400">开组 {{ .OpenTime }}</span>
-								{{ if ne .CloseTime "-" }}<span class="mono text-xs text-slate-400">闭组 {{ .CloseTime }}</span>{{ end }}
-							</div>
-							<div class="flex flex-wrap gap-5 text-xs text-slate-400">
-								<span>{{ .SpreadCount }} 个持仓</span>
-								<span>{{ .EventCount }} 个事件</span>
-								<span>滚仓 {{ .RollCount }} 次</span>
-								<span>初始资金 <span class="mono text-slate-300">{{ .InitAmount }}</span></span>
-								<span>Highest Equity <span class="mono text-slate-300">{{ .HighestEquity }}</span></span>
-								<span>Lowest Equity <span class="mono text-slate-300">{{ .LowestEquity }}</span></span>
-								<span>Max Drawdown <span class="mono text-rose-200">{{ .MaxDrawdown }}</span></span>
-								<span>衰减 <span class="mono text-slate-300">{{ .DecayFactor }}</span></span>
-								<span>组盈亏 <span class="mono text-slate-200">{{ .TotalPnL }}</span></span>
-							</div>
-						</div>
-					</summary>
-					<div class="border-t border-white/5 p-4 space-y-4">
-						{{ range .Spreads }}
-						{{ template "classicSpreadEventCard" . }}
-						{{ end }}
-					</div>
-				</details>
-				{{ end }}
-			</div>
-			{{ end }}
-			{{ if .UngroupedSpreads }}
-			<div>
-				<div class="flex items-center justify-between mb-3">
-					<h3 class="text-sm font-medium text-slate-200">未分组持仓</h3>
-					<span class="mono text-xs text-slate-400">{{ len .UngroupedSpreads }} 个事件</span>
-				</div>
-				{{ range .UngroupedSpreads }}
-				{{ template "classicSpreadEventCard" . }}
-				{{ end }}
-			</div>
-			{{ end }}
+			<div id="spread-sections-container"></div>
     </div>
     {{ end }}
 
@@ -3062,21 +3659,7 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
 								<th class="px-4 py-2">净额</th>
               </tr>
             </thead>
-            <tbody>
-              {{ range .Trades }}
-              <tr class="border-b border-white/5">
-                <td class="px-4 py-2 mono text-slate-300">{{ .Timestamp }}</td>
-                <td class="px-4 py-2 text-slate-200">{{ .Security }}</td>
-                <td class="px-4 py-2 font-semibold {{ .SideClass }}">{{ .Side }}</td>
-								<td class="px-4 py-2 text-slate-300">{{ .Reason }}</td>
-                <td class="px-4 py-2 mono text-slate-200">{{ .Qty }}</td>
-                <td class="px-4 py-2 mono text-slate-200">{{ .FillPrice }}</td>
-                <td class="px-4 py-2 mono text-slate-300">{{ .Commission }}</td>
-                <td class="px-4 py-2 mono text-slate-300">{{ .Slippage }}</td>
-                <td class="px-4 py-2 mono text-white">{{ .NetAmount }}</td>
-              </tr>
-              {{ end }}
-            </tbody>
+				<tbody id="trades-rows-container"></tbody>
           </table>
         </div>
       </div>
@@ -3094,23 +3677,80 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
   </div>
 
   <script>
-    const underlyingCandles = {{ .UnderlyingCandleData }};
-		const underlyingVolumeSeries = {{ .UnderlyingVolumeData }};
+    const compressedChartPayload = {{ .CompressedChartPayload }};
+		const compressedTradeRowsHTML = {{ .CompressedTradeRowsHTML }};
+		const compressedSpreadSectionsHTML = {{ .CompressedSpreadSectionsHTML }};
 		const underlyingVolumeLabel = {{ printf "%q" .UnderlyingVolumeLabel }};
-    const underlyingMarkers = {{ .UnderlyingMarkerData }};
-	const hoverColumns = {{ .HoverColumnsData }};
-    const equitySeries = {{ .EquitySeriesData }};
-	const settledEquitySeries = {{ .SettledEquitySeriesData }};
-	const settledFloatingProfitSeries = {{ .SettledFloatingProfitData }};
-	const settledFloatingLossSeries = {{ .SettledFloatingLossData }};
-	const settledExposureSeries = {{ .SettledExposureData }};
-	const quoteNetValueSeries = {{ .QuoteNetValueSeriesData }};
-	const dailyQuoteNetValueSeries = {{ .DailyQuoteNetValueSeriesData }};
-	const dailyBuyHoldSeries = {{ .DailyBuyHoldSeriesData }};
-	const dailyAssetPnLSeries = {{ .DailyAssetPnLSeriesData }};
-	const buyHoldSeries = {{ .BuyHoldSeriesData }};
-    const drawdownSeries = {{ .DrawdownSeriesData }};
-	const activeTimes = {{ .ActiveTimeData }};
+
+		function decodeCompressedJSON(key, fallbackValue) {
+			const encoded = compressedChartPayload[key];
+			if (!encoded) {
+				return fallbackValue;
+			}
+			if (!window.pako) {
+				console.warn('pako unavailable; chart payload skipped for', key);
+				return fallbackValue;
+			}
+			try {
+				const binary = atob(encoded);
+				const bytes = new Uint8Array(binary.length);
+				for (let index = 0; index < binary.length; index++) {
+					bytes[index] = binary.charCodeAt(index);
+				}
+				const decoded = window.pako.ungzip(bytes, { to: 'string' });
+				return JSON.parse(decoded);
+			} catch (error) {
+				console.warn('failed to decode chart payload', key, error);
+				return fallbackValue;
+			}
+		}
+
+		function decodeCompressedText(encoded) {
+			if (!encoded || !window.pako) {
+				return '';
+			}
+			try {
+				const binary = atob(encoded);
+				const bytes = new Uint8Array(binary.length);
+				for (let index = 0; index < binary.length; index++) {
+					bytes[index] = binary.charCodeAt(index);
+				}
+				return window.pako.ungzip(bytes, { to: 'string' });
+			} catch (error) {
+				console.warn('failed to decode html payload', error);
+				return '';
+			}
+		}
+
+		function hydrateDeferredHTML() {
+			const tradeRowsContainer = document.getElementById('trades-rows-container');
+			if (tradeRowsContainer && compressedTradeRowsHTML) {
+				tradeRowsContainer.innerHTML = decodeCompressedText(compressedTradeRowsHTML);
+			}
+			const spreadSectionsContainer = document.getElementById('spread-sections-container');
+			if (spreadSectionsContainer && compressedSpreadSectionsHTML) {
+				spreadSectionsContainer.innerHTML = decodeCompressedText(compressedSpreadSectionsHTML);
+			}
+		}
+
+		const underlyingCandles = decodeCompressedJSON('underlyingCandles', []);
+		const underlyingVolumeSeries = decodeCompressedJSON('underlyingVolumeSeries', []);
+		const underlyingMarkers = decodeCompressedJSON('underlyingMarkers', []);
+		const hoverColumns = decodeCompressedJSON('hoverColumns', []);
+		const equitySeries = decodeCompressedJSON('equitySeries', []);
+		const settledEquitySeries = decodeCompressedJSON('settledEquitySeries', []);
+		const settledFloatingProfitSeries = decodeCompressedJSON('settledFloatingProfit', []);
+		const settledFloatingLossSeries = decodeCompressedJSON('settledFloatingLoss', []);
+		const settledExposureSeries = decodeCompressedJSON('settledExposure', []);
+		const quoteNetValueSeries = decodeCompressedJSON('quoteNetValueSeries', []);
+		const dailyQuoteNetValueSeries = decodeCompressedJSON('dailyQuoteNetValue', []);
+		const dailyBuyHoldSeries = decodeCompressedJSON('dailyBuyHold', []);
+		const dailyAssetPnLSeries = decodeCompressedJSON('dailyAssetPnL', []);
+		const buyHoldSeries = decodeCompressedJSON('buyHoldSeries', []);
+		const drawdownSeries = decodeCompressedJSON('drawdownSeries', []);
+		const activeTimes = decodeCompressedJSON('activeTimes', []);
+		const displayIsDaily = {{ if .DisplayIsDaily }}true{{ else }}false{{ end }};
+		hydrateDeferredHTML();
 
 	// Timezone mode utilities
 	function detectDefaultTimeZoneMode() {
@@ -3156,30 +3796,73 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
 		rewriteVisibleDateText(mode);
 	}
 
-    const chartTheme = {
-      layout: {
-        background: { color: '#0f1923' },
-        textColor: '#94a3b8',
-        fontFamily: 'IBM Plex Mono, monospace'
-      },
-      grid: {
-        vertLines: { color: 'rgba(255,255,255,0.04)' },
-        horzLines: { color: 'rgba(255,255,255,0.04)' }
-      },
-      timeScale: {
-        borderColor: 'rgba(255,255,255,0.06)',
-        timeVisible: true,
-        secondsVisible: false,
-        minBarSpacing: 0.1
-      },
-      rightPriceScale: {
-        borderColor: 'rgba(255,255,255,0.06)'
-      },
-      crosshair: {
-        vertLine: { color: 'rgba(94,234,212,0.3)', labelBackgroundColor: '#115e59' },
-        horzLine: { color: 'rgba(251,191,36,0.3)', labelBackgroundColor: '#92400e' }
-      }
-    };
+		const themePalettes = {
+			light: {
+				background: '#ffffff',
+				text: '#475569',
+				grid: '#edf2f7',
+				border: '#d7dee8',
+				crosshairV: 'rgba(15,108,123,0.22)',
+				crosshairVLabel: '#0f6c7b',
+				crosshairH: 'rgba(188,75,9,0.18)',
+				crosshairHLabel: '#bc4b09',
+				settledLine: '#0f172a',
+				settledMarker: '#0f172a',
+				settledMarkerBg: '#ffffff',
+				exposureLine: 'rgba(51,65,85,0.92)'
+			},
+			dark: {
+				background: '#0f1a24',
+				text: '#cbd5e1',
+				grid: 'rgba(255,255,255,0.05)',
+				border: 'rgba(255,255,255,0.08)',
+				crosshairV: 'rgba(61,214,198,0.28)',
+				crosshairVLabel: '#0f766e',
+				crosshairH: 'rgba(240,164,58,0.24)',
+				crosshairHLabel: '#a16207',
+				settledLine: '#f8fafc',
+				settledMarker: '#f8fafc',
+				settledMarkerBg: '#0f1a24',
+				exposureLine: 'rgba(226,232,240,0.9)'
+			}
+		};
+
+		function currentThemeName() {
+			var theme = document.documentElement.getAttribute('data-theme');
+			return theme === 'dark' ? 'dark' : 'light';
+		}
+
+		function currentThemePalette() {
+			return themePalettes[currentThemeName()] || themePalettes.light;
+		}
+
+		function buildChartTheme(palette) {
+			return {
+				layout: {
+					background: { color: palette.background },
+					textColor: palette.text,
+					fontFamily: 'IBM Plex Mono, monospace'
+				},
+				grid: {
+					vertLines: { color: palette.grid },
+					horzLines: { color: palette.grid }
+				},
+				timeScale: {
+					borderColor: palette.border,
+					timeVisible: true,
+					secondsVisible: false,
+					minBarSpacing: 0.1,
+					rightOffset: 0
+				},
+				rightPriceScale: {
+					borderColor: palette.border
+				},
+				crosshair: {
+					vertLine: { color: palette.crosshairV, labelBackgroundColor: palette.crosshairVLabel },
+					horzLine: { color: palette.crosshairH, labelBackgroundColor: palette.crosshairHLabel }
+				}
+			};
+		}
 
 		const utcMonthNames = ['1月', '2月', '3月', '4月', '5月', '6月', '7月', '8月', '9月', '10月', '11月', '12月'];
 
@@ -3246,7 +3929,7 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
 					timeFormatter: function(timeValue) { return formatUTCDateTime(timeValue, true); },
 					tickMarkFormatter: function(timeValue) { return formatUTCTickLabel(timeValue); }
 				}
-			}, chartTheme, extraOptions || {}));
+			}, buildChartTheme(currentThemePalette()), extraOptions || {}));
       if (typeof ResizeObserver !== 'undefined') {
         new ResizeObserver(function() { chart.applyOptions({ width: el.clientWidth }); }).observe(el);
       }
@@ -3316,8 +3999,15 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
 			}
 			appendTimes(underlyingCandles);
 			appendTimes(equitySeries);
+			appendTimes(settledEquitySeries);
+			appendTimes(settledFloatingProfitSeries);
+			appendTimes(settledFloatingLossSeries);
+			appendTimes(settledExposureSeries);
 			appendTimes(drawdownSeries);
 			appendTimes(quoteNetValueSeries);
+			appendTimes(buyHoldSeries);
+			appendTimes(dailyQuoteNetValueSeries);
+			appendTimes(dailyBuyHoldSeries);
 			times.sort(function(a, b) { return a - b; });
 			return times;
 		}
@@ -3557,14 +4247,15 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
 			if (!settledContextPanel || settledContextChart) return;
 			settledContextChart = createChart('settled-context-chart', 180);
 			if (!settledContextChart) return;
+			var palette = currentThemePalette();
 			settledContextChart.applyOptions({
 				leftPriceScale: {
 					visible: true,
-					borderColor: 'rgba(255,255,255,0.06)'
+					borderColor: palette.border
 				},
 				rightPriceScale: {
 					visible: true,
-					borderColor: 'rgba(255,255,255,0.06)'
+					borderColor: palette.border
 				}
 			});
 			settledFloatingProfitPlot = settledContextChart.addHistogramSeries({
@@ -3581,13 +4272,13 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
 			});
 			settledExposurePlot = settledContextChart.addLineSeries({
 				priceScaleId: 'left',
-				color: 'rgba(226,232,240,0.9)',
+				color: palette.exposureLine,
 				lineWidth: 2,
 				priceLineVisible: false,
 				lastValueVisible: true,
 				crosshairMarkerRadius: 3,
-				crosshairMarkerBorderColor: '#e2e8f0',
-				crosshairMarkerBackgroundColor: '#e2e8f0',
+				crosshairMarkerBorderColor: palette.exposureLine,
+				crosshairMarkerBackgroundColor: palette.exposureLine,
 			});
 			charts.push(settledContextChart);
 			registerSyncedChart(settledContextChart);
@@ -3618,8 +4309,8 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
 			settledEquityPlot.setData(settledModeEnabled ? filterLineSeriesByTimes(settledEquitySeries, activeSet, currentIdleFilterEnabled) : []);
 			if (equityModeNote) {
 				equityModeNote.textContent = settledModeEnabled
-					? '当前仅展示已结算权益点；下方面板会给出每次结算之间的最大浮盈 / 浮亏与持仓暴露。'
-					: '默认展示逐 bar 净值；切换后仅保留已结算收益点，并在下方显示区间浮盈浮亏与持仓暴露。';
+					? (displayIsDaily ? '当前仅展示按 1 Day 聚合后的已结算权益；下方面板给出每个 UTC 日内的最大浮盈 / 浮亏与日终持仓暴露。' : '当前仅展示已结算权益点；下方面板会给出每次结算之间的最大浮盈 / 浮亏与持仓暴露。')
+					: (displayIsDaily ? '当前图表已按 1 Day 聚合，展示每个 UTC 日的最后一个权益点；切换后仅保留已结算权益。' : '默认展示逐 bar 净值；切换后仅保留已结算收益点，并在下方显示区间浮盈浮亏与持仓暴露。');
 			}
 			renderSettledContext(settledModeEnabled);
 			if (shouldRefit) fitChartsToVisibleData();
@@ -3926,18 +4617,19 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
 
     var ec = createChart('equity-chart', 300);
     if (ec) {
+			var palette = currentThemePalette();
       var el = ec.addAreaSeries({
         lineColor: '#2dd4bf', topColor: 'rgba(45,212,191,0.28)',
         bottomColor: 'rgba(45,212,191,0.02)', lineWidth: 2
       });
 			settledEquityPlot = ec.addLineSeries({
-				color: '#f8fafc',
+				color: palette.settledLine,
 				lineWidth: 2,
 				priceLineVisible: true,
 				lastValueVisible: true,
 				crosshairMarkerRadius: 5,
-				crosshairMarkerBorderColor: '#f8fafc',
-				crosshairMarkerBackgroundColor: '#0f1923'
+				crosshairMarkerBorderColor: palette.settledMarker,
+				crosshairMarkerBackgroundColor: palette.settledMarkerBg
 			});
       settledEquityPlot.setData([]);
       el.setData(equitySeries);
@@ -3949,15 +4641,16 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
 		if (quoteNetValueSeries.length > 0) {
 		  var puc = createChart('quote-net-value-chart', 300);
       if (puc) {
+			var palette = currentThemePalette();
 			if (buyHoldSeries.length > 0) {
 				puc.applyOptions({
 					leftPriceScale: {
 						visible: true,
-						borderColor: 'rgba(255,255,255,0.06)'
+						borderColor: palette.border
 					},
 					rightPriceScale: {
 						visible: true,
-						borderColor: 'rgba(255,255,255,0.06)'
+						borderColor: palette.border
 					}
 				});
 			}
@@ -4075,6 +4768,11 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
 		if (syncedCharts.length > 1) syncCharts(syncedCharts);
 		renderEquitySeriesMode(false, { refit: false });
 		fitChartsToVisibleData();
+		if (window.requestAnimationFrame) {
+			window.requestAnimationFrame(function() {
+				fitChartsToVisibleData();
+			});
+		}
 		applyChartFullRange(assetDailyPnLChart, [dailyAssetPnLSeries]);
 
 		if (dataWindowGrid) {
@@ -4143,6 +4841,20 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
 		if (timezoneSelect) {
 			timezoneSelect.addEventListener('change', function(e) {
 				applyTimeZoneMode(e.target.value);
+			});
+		}
+		var themeSelect = document.getElementById('theme-select');
+		if (themeSelect) {
+			themeSelect.value = currentThemeName();
+			themeSelect.addEventListener('change', function(e) {
+				var nextTheme = e.target.value === 'dark' ? 'dark' : 'light';
+				try {
+					localStorage.setItem('toktik-report-theme', nextTheme);
+				} catch (error) {
+					console.warn('failed to persist report theme', error);
+				}
+				document.documentElement.setAttribute('data-theme', nextTheme);
+				window.location.reload();
 			});
 		}
 		applyTimeZoneMode(detectDefaultTimeZoneMode());

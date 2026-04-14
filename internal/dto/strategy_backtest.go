@@ -42,6 +42,7 @@ type StrategyBacktestRunAccepted struct {
 	CreatedAt time.Time `json:"created_at"`
 	StatusURL string    `json:"status_url"`
 	EventsURL string    `json:"events_url"`
+	ReportURL string    `json:"report_url,omitempty"`
 }
 
 type StrategyBacktestProgress struct {
@@ -90,12 +91,15 @@ type StrategyBacktestSummary struct {
 	AvgLoss          float64                        `json:"avg_loss"`
 	TotalFees        float64                        `json:"total_fees"`
 	HTMLPath         string                         `json:"html_path,omitempty"`
+	ReportURL        string                         `json:"report_url,omitempty"`
 	SpreadSummary    *StrategyBacktestSpreadSummary `json:"spread_summary,omitempty"`
 }
 
 type StrategyBacktestRunResult struct {
-	Summaries        []StrategyBacktestSummary `json:"summaries"`
-	OverviewHTMLPath string                    `json:"overview_html_path,omitempty"`
+	Summaries         []StrategyBacktestSummary `json:"summaries"`
+	OverviewHTMLPath  string                    `json:"overview_html_path,omitempty"`
+	ReportURL         string                    `json:"report_url,omitempty"`
+	OverviewReportURL string                    `json:"overview_report_url,omitempty"`
 }
 
 type StrategyBacktestRunStatus struct {
@@ -109,6 +113,7 @@ type StrategyBacktestRunStatus struct {
 	Progress    *StrategyBacktestProgress  `json:"progress,omitempty"`
 	Result      *StrategyBacktestRunResult `json:"result,omitempty"`
 	Error       string                     `json:"error,omitempty"`
+	ReportURL   string                     `json:"report_url,omitempty"`
 }
 
 type StrategyBacktestSSEvent struct {

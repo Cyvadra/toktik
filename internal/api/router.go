@@ -34,6 +34,8 @@ func NewRouter(cos CryptoOptionsQuerier, usStocks USStocksQuerier, usOptions USO
 		backtestsGroup.POST("/runs", h.StartStrategyBacktest)
 		backtestsGroup.GET("/runs/:runID", h.GetStrategyBacktestRun)
 		backtestsGroup.GET("/runs/:runID/events", h.StreamStrategyBacktestEvents)
+		backtestsGroup.GET("/runs/:runID/report", h.GetStrategyBacktestReport)
+		backtestsGroup.GET("/runs/:runID/reports/:reportID", h.GetStrategyBacktestNamedReport)
 
 		infraGroup := v1.Group("/infra")
 		infraGroup.GET("/markets", h.GetMarkets)

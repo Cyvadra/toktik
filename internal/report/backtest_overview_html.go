@@ -197,32 +197,32 @@ func normalizedCurve(equity []float64, initial float64) []float64 {
 
 func overviewBadgeClass(totalReturn float64) string {
 	if totalReturn > 0 {
-		return "bg-emerald-500/15 text-emerald-200 ring-emerald-400/40"
+		return "bg-emerald-50 text-emerald-700 ring-emerald-200"
 	}
 	if totalReturn < 0 {
-		return "bg-rose-500/15 text-rose-200 ring-rose-400/40"
+		return "bg-rose-50 text-rose-700 ring-rose-200"
 	}
-	return "bg-slate-500/15 text-slate-200 ring-slate-400/40"
+	return "bg-slate-100 text-slate-700 ring-slate-200"
 }
 
 func returnClass(totalReturn float64) string {
 	if totalReturn > 0 {
-		return "text-emerald-300"
+		return "text-emerald-700"
 	}
 	if totalReturn < 0 {
-		return "text-rose-300"
+		return "text-rose-700"
 	}
-	return "text-slate-200"
+	return "text-slate-700"
 }
 
 func drawdownClass(drawdown float64) string {
 	if drawdown < 0.02 {
-		return "text-emerald-300"
+		return "text-emerald-700"
 	}
 	if drawdown < 0.05 {
-		return "text-amber-300"
+		return "text-amber-700"
 	}
-	return "text-rose-300"
+	return "text-rose-700"
 }
 
 func nowLocal() time.Time {
@@ -235,39 +235,63 @@ const overviewHTMLTemplate = `<!DOCTYPE html>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>{{ .Title }}</title>
-  <script>
-    tailwind = window.tailwind || {};
-    tailwind.config = {
-      theme: {
-        extend: {
-          colors: {
-            canvas: '#0a1117',
-            panel: '#101a22',
-            tide: '#56d8cb',
-            ember: '#f2a63a'
-          },
-          fontFamily: {
-            sans: ['Manrope', 'system-ui', 'sans-serif'],
-            mono: ['IBM Plex Mono', 'monospace']
-          },
-          boxShadow: {
-            report: '0 28px 90px rgba(0,0,0,.34)'
-          }
-        }
-      }
-    }
-  </script>
+	<script>
+		tailwind = window.tailwind || {};
+		tailwind.config = {
+			theme: {
+				extend: {
+					colors: {
+						canvas: '#f4f7fb',
+						panel: '#ffffff',
+						tide: '#0f6c7b',
+						ember: '#bc4b09'
+					},
+					fontFamily: {
+						sans: ['IBM Plex Sans', 'system-ui', 'sans-serif'],
+						mono: ['IBM Plex Mono', 'monospace']
+					},
+					boxShadow: {
+						report: '0 16px 42px rgba(15,23,42,.08)'
+					}
+				}
+			}
+		}
+	</script>
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Manrope:wght@500;700;800&display=swap" rel="stylesheet">
+	<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
   <style>
-    body {
-      background:
-        radial-gradient(circle at top left, rgba(86,216,203,.18), transparent 28%),
-        radial-gradient(circle at top right, rgba(242,166,58,.14), transparent 24%),
-        linear-gradient(180deg, #070d12 0%, #0b1319 40%, #111c24 100%);
-    }
+		:root {
+			color-scheme: light;
+			--paper: #f4f7fb;
+			--panel: #ffffff;
+			--panel-alt: #f8fafc;
+			--ink: #0f172a;
+			--ink-soft: #334155;
+			--muted: #64748b;
+			--line: #d7dee8;
+			--line-strong: #c5d0dd;
+			--accent: #0f6c7b;
+			--accent-soft: #e7f3f5;
+			--gain: #107c10;
+			--loss: #b42318;
+		}
+		body {
+			background: linear-gradient(180deg, #f7f9fc 0%, #eef3f8 100%);
+			color: var(--ink-soft);
+			font-family: 'IBM Plex Sans', system-ui, sans-serif;
+		}
+		.text-white, .text-slate-100, .text-slate-200 { color: var(--ink) !important; }
+		.text-slate-300 { color: var(--ink-soft) !important; }
+		.text-slate-400, .text-slate-500 { color: var(--muted) !important; }
+		.text-emerald-300 { color: var(--gain) !important; }
+		.text-rose-300 { color: var(--loss) !important; }
+		.text-amber-300 { color: #b54708 !important; }
+		.rounded-3xl, .rounded-2xl, .rounded-\[2rem\] { border-radius: 4px !important; }
+		.border-white\/10, .divide-white\/10, .divide-white\/5 { border-color: var(--line) !important; }
+		.bg-white, .bg-white\/5, .bg-white\/\[0\.03\], .bg-white\/\[0\.02\], .bg-white\/\[0\.04\] { background: var(--panel-alt) !important; }
+		svg path { stroke: var(--accent); }
   </style>
 </head>
 <body class="min-h-screen bg-canvas text-slate-100 font-sans">

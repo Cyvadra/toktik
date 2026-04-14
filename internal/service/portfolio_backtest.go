@@ -32,6 +32,8 @@ const (
 	marketUS                = "us"
 	cryptoUnderlyingFeed    = "crypto-underlying"
 	usUnderlyingFeed        = "us-underlying"
+	defaultChainProviderTTL = 55 * time.Minute
+	maxChainProviderEntries = 8
 )
 
 type marketSpec struct {
@@ -58,9 +60,32 @@ type PortfolioBacktestService struct {
 	conn        driver.Conn
 	factorStore *feeds.Store
 	now         func() time.Time
+	chainLoader func(context.Context, string, string, string, time.Time, time.Time) (backtest.OptionsChainProvider, error)
+	chainCache  *optionsChainProviderCache
 
 	mu   sync.RWMutex
 	runs map[string]*portfolioBacktestRun
+}
+
+type optionsChainProviderCache struct {
+	mu      sync.Mutex
+	now     func() time.Time
+	ttl     time.Duration
+	maxSize int
+	entries map[string]*optionsChainProviderCacheEntry
+	loads   map[string]*optionsChainProviderLoad
+}
+
+type optionsChainProviderCacheEntry struct {
+	provider  backtest.OptionsChainProvider
+	expiresAt time.Time
+	lastUsed  time.Time
+}
+
+type optionsChainProviderLoad struct {
+	done     chan struct{}
+	provider backtest.OptionsChainProvider
+	err      error
 }
 
 type portfolioBacktestRun struct {
@@ -84,11 +109,130 @@ type portfolioBacktestRun struct {
 }
 
 func NewPortfolioBacktestService(conn driver.Conn, factorStore *feeds.Store) *PortfolioBacktestService {
-	return &PortfolioBacktestService{
+	svc := &PortfolioBacktestService{
 		conn:        conn,
 		factorStore: factorStore,
 		now:         time.Now,
 		runs:        make(map[string]*portfolioBacktestRun),
+	}
+	svc.chainLoader = svc.defaultChainLoader
+	svc.chainCache = newOptionsChainProviderCache(svc.now, defaultChainProviderTTL, maxChainProviderEntries)
+	return svc
+}
+
+func newOptionsChainProviderCache(now func() time.Time, ttl time.Duration, maxSize int) *optionsChainProviderCache {
+	if now == nil {
+		now = time.Now
+	}
+	if ttl <= 0 {
+		ttl = defaultChainProviderTTL
+	}
+	if maxSize <= 0 {
+		maxSize = maxChainProviderEntries
+	}
+	return &optionsChainProviderCache{
+		now:     now,
+		ttl:     ttl,
+		maxSize: maxSize,
+		entries: make(map[string]*optionsChainProviderCacheEntry),
+		loads:   make(map[string]*optionsChainProviderLoad),
+	}
+}
+
+func (s *PortfolioBacktestService) defaultChainLoader(ctx context.Context, marketName, asset, interval string, from, to time.Time) (backtest.OptionsChainProvider, error) {
+	if marketName == marketUS {
+		return datafeed.NewUSOptionsChainProvider(ctx, s.conn, asset, interval, from, to)
+	}
+	return datafeed.NewCryptoOptionsChainProvider(ctx, s.conn, asset, interval, from, to)
+}
+
+func (s *PortfolioBacktestService) loadOptionsChainProvider(ctx context.Context, marketName, asset, interval string, from, to time.Time) (backtest.OptionsChainProvider, error) {
+	if s.chainCache == nil {
+		return s.chainLoader(ctx, marketName, asset, interval, from, to)
+	}
+	key := fmt.Sprintf("%s|%s|%s|%s|%s",
+		strings.ToLower(strings.TrimSpace(marketName)),
+		strings.ToUpper(strings.TrimSpace(asset)),
+		strings.TrimSpace(interval),
+		from.UTC().Format(time.RFC3339),
+		to.UTC().Format(time.RFC3339),
+	)
+	return s.chainCache.GetOrLoad(ctx, key, func(ctx context.Context) (backtest.OptionsChainProvider, error) {
+		return s.chainLoader(ctx, marketName, asset, interval, from, to)
+	})
+}
+
+func (c *optionsChainProviderCache) GetOrLoad(ctx context.Context, key string, loader func(context.Context) (backtest.OptionsChainProvider, error)) (backtest.OptionsChainProvider, error) {
+	now := c.now()
+
+	c.mu.Lock()
+	if entry, ok := c.entries[key]; ok {
+		if entry.expiresAt.IsZero() || now.Before(entry.expiresAt) {
+			entry.lastUsed = now
+			provider := entry.provider
+			c.mu.Unlock()
+			return provider, nil
+		}
+		delete(c.entries, key)
+	}
+	if load, ok := c.loads[key]; ok {
+		c.mu.Unlock()
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-load.done:
+			if load.err != nil {
+				return nil, load.err
+			}
+			return load.provider, nil
+		}
+	}
+	load := &optionsChainProviderLoad{done: make(chan struct{})}
+	c.loads[key] = load
+	c.mu.Unlock()
+
+	provider, err := loader(ctx)
+
+	c.mu.Lock()
+	delete(c.loads, key)
+	if err == nil && provider != nil {
+		c.pruneExpiredLocked(now)
+		if len(c.entries) >= c.maxSize {
+			c.evictOldestLocked()
+		}
+		c.entries[key] = &optionsChainProviderCacheEntry{
+			provider:  provider,
+			expiresAt: now.Add(c.ttl),
+			lastUsed:  now,
+		}
+	}
+	load.provider = provider
+	load.err = err
+	close(load.done)
+	c.mu.Unlock()
+
+	return provider, err
+}
+
+func (c *optionsChainProviderCache) pruneExpiredLocked(now time.Time) {
+	for key, entry := range c.entries {
+		if !entry.expiresAt.IsZero() && !now.Before(entry.expiresAt) {
+			delete(c.entries, key)
+		}
+	}
+}
+
+func (c *optionsChainProviderCache) evictOldestLocked() {
+	var oldestKey string
+	var oldestTime time.Time
+	for key, entry := range c.entries {
+		if oldestKey == "" || entry.lastUsed.Before(oldestTime) {
+			oldestKey = key
+			oldestTime = entry.lastUsed
+		}
+	}
+	if oldestKey != "" {
+		delete(c.entries, oldestKey)
 	}
 }
 
@@ -258,11 +402,7 @@ func (s *PortfolioBacktestService) runBacktest(ctx context.Context, run *portfol
 			StartedAt: derefTime(run.startedAt),
 			Timestamp: s.now().UTC(),
 		})
-		if primaryMarket.name == marketUS {
-			chainProvider, err = datafeed.NewUSOptionsChainProvider(ctx, s.conn, asset, interval, from, to)
-		} else {
-			chainProvider, err = datafeed.NewCryptoOptionsChainProvider(ctx, s.conn, asset, interval, from, to)
-		}
+		chainProvider, err = s.loadOptionsChainProvider(ctx, primaryMarket.name, asset, interval, from, to)
 		if err != nil {
 			return nil, fmt.Errorf("load options chain: %w", err)
 		}

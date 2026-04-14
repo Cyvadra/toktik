@@ -1,0 +1,10 @@
+- Strategy: retracement_ratio_protective_spread_long
+- Root cause found in Apr 2026 optimization: conditionFallExtra was firing almost immediately after entry on nearly every group, consuming one tranche for near-zero PnL before the trade developed.
+- Effective fix pattern: gate fast extra reduction with a minimum holding period. Tested 48h, 7d, 14d; 7d and 14d materially improved PnL and drawdown versus immediate trigger.
+- Effective fix pattern: add trailing_profit_lock after any TP tier has fired. Track peakGroupPnL and close remaining tranches when CurrentPnL falls below trailingLockRatio * peakGroupPnL.
+- Important safeguard: do not arm trailing_profit_lock until peakGroupPnL exceeds 20% of profitBaseAmount, otherwise tiny early profits cause noisy exits.
+- Tested trailingLockRatio values showed a stable improvement plateau around 0.70-0.74 and a sharp degradation at 0.75; keep production setting away from that cliff.
+- In-sample best tested combo: 14d min hold + 0.72 trailingLockRatio, about +54.48 BTC / Sharpe 1.66 / Calmar 1.27 / max DD 12.41%.
+- Chosen implementation after tuning: 7d min hold + 0.70 trailingLockRatio as a more conservative robust point inside the stable plateau.
+- Biggest gains came from preventing profitable groups from round-tripping back to flat or loss; group-level comparisons showed multiple prior losers flipped positive once trailing_profit_lock was added.
+- Reusable workflow: compare total metrics first, then aggregate spread_positions by group_id and close_reason, then inspect trade CSV timing for event triggers such as conditionFallExtra.

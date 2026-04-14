@@ -1,12 +1,17 @@
 package report
 
 import (
+	"bytes"
+	"compress/gzip"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -18,14 +23,14 @@ func TestBuildHTMLViewIncludesHoverColumns(t *testing.T) {
 	result := &backtest.Result{
 		StrategyName:   "test",
 		StartTime:      time.Date(2024, time.January, 1, 0, 0, 0, 0, time.UTC),
-		EndTime:        time.Date(2024, time.January, 1, 1, 0, 0, 0, time.UTC),
+		EndTime:        time.Date(2024, time.January, 2, 0, 0, 0, 0, time.UTC),
 		BarsCount:      2,
 		InitialCapital: 100,
 		FinalEquity:    101,
 		EquityCurve:    []float64{100, 101},
 		Timestamps: []time.Time{
 			time.Date(2024, time.January, 1, 0, 0, 0, 0, time.UTC),
-			time.Date(2024, time.January, 1, 1, 0, 0, 0, time.UTC),
+			time.Date(2024, time.January, 2, 0, 0, 0, 0, time.UTC),
 		},
 		Series: map[string][]float64{
 			"open":                {60000, 60100},
@@ -68,15 +73,15 @@ func TestBuildHTMLViewPreservesLeadingWhitespaceForFeatureSeries(t *testing.T) {
 	result := &backtest.Result{
 		StrategyName:   "test",
 		StartTime:      time.Date(2024, time.January, 1, 0, 0, 0, 0, time.UTC),
-		EndTime:        time.Date(2024, time.January, 1, 2, 0, 0, 0, time.UTC),
+		EndTime:        time.Date(2024, time.January, 3, 0, 0, 0, 0, time.UTC),
 		BarsCount:      3,
 		InitialCapital: 100,
 		FinalEquity:    101,
 		EquityCurve:    []float64{100, 100.5, 101},
 		Timestamps: []time.Time{
 			time.Date(2024, time.January, 1, 0, 0, 0, 0, time.UTC),
-			time.Date(2024, time.January, 1, 1, 0, 0, 0, time.UTC),
-			time.Date(2024, time.January, 1, 2, 0, 0, 0, time.UTC),
+			time.Date(2024, time.January, 2, 0, 0, 0, 0, time.UTC),
+			time.Date(2024, time.January, 3, 0, 0, 0, 0, time.UTC),
 		},
 		Series: map[string][]float64{
 			"open":    {60000, 60100, 60200},
@@ -256,6 +261,136 @@ func TestBuildHTMLViewIncludesQuoteAndBuyHoldPerformance(t *testing.T) {
 	}
 }
 
+func TestBuildHTMLViewAggregatesSubDailyChartData(t *testing.T) {
+	result := &backtest.Result{
+		StrategyName:   "daily-display",
+		StartTime:      time.Date(2024, time.January, 1, 0, 0, 0, 0, time.UTC),
+		EndTime:        time.Date(2024, time.January, 2, 22, 0, 0, 0, time.UTC),
+		BarsCount:      5,
+		InitialCapital: 100,
+		FinalEquity:    110,
+		EquityCurve:    []float64{100, 103, 105, 104, 110},
+		Timestamps: []time.Time{
+			time.Date(2024, time.January, 1, 0, 0, 0, 0, time.UTC),
+			time.Date(2024, time.January, 1, 12, 0, 0, 0, time.UTC),
+			time.Date(2024, time.January, 1, 23, 0, 0, 0, time.UTC),
+			time.Date(2024, time.January, 2, 1, 0, 0, 0, time.UTC),
+			time.Date(2024, time.January, 2, 22, 0, 0, 0, time.UTC),
+		},
+		Series: map[string][]float64{
+			"open":    {10, 11, 12, 13, 14},
+			"high":    {12, 15, 14, 15, 17},
+			"low":     {9, 10, 11, 12, 13},
+			"close":   {11, 14, 13, 14, 16},
+			"volume":  {100, 200, 50, 75, 125},
+			"feature": {1.1, 1.2, 1.3, 2.4, 2.5},
+		},
+		ReportColumns: []backtest.ReportColumn{{
+			Source:   "feature",
+			Label:    "Feature",
+			Decimals: 1,
+		}},
+	}
+
+	view := buildHTMLView(result, HTMLMeta{Asset: "BTC", Interval: "1h"})
+	if !view.DisplayIsDaily {
+		t.Fatal("view.DisplayIsDaily = false, want true")
+	}
+
+	var candles []chartCandlePoint
+	if err := json.Unmarshal([]byte(view.UnderlyingCandleData), &candles); err != nil {
+		t.Fatalf("json.Unmarshal(UnderlyingCandleData) error = %v", err)
+	}
+	if len(candles) != 2 {
+		t.Fatalf("len(candles) = %d, want 2", len(candles))
+	}
+	if candles[0].Open != 10 || candles[0].High != 15 || candles[0].Low != 9 || candles[0].Close != 13 {
+		t.Fatalf("unexpected first aggregated candle: %#v", candles[0])
+	}
+	if candles[0].Time != result.Timestamps[2].Unix() || candles[1].Time != result.Timestamps[4].Unix() {
+		t.Fatalf("unexpected aggregated candle times: %#v", candles)
+	}
+
+	var equity []chartLinePoint
+	if err := json.Unmarshal([]byte(view.EquitySeriesData), &equity); err != nil {
+		t.Fatalf("json.Unmarshal(EquitySeriesData) error = %v", err)
+	}
+	if len(equity) != 2 || equity[0].Value == nil || equity[1].Value == nil {
+		t.Fatalf("unexpected aggregated equity series: %#v", equity)
+	}
+	if *equity[0].Value != 105 || *equity[1].Value != 110 {
+		t.Fatalf("unexpected aggregated equity values: %#v", equity)
+	}
+
+	var hover []hoverColumnPayload
+	if err := json.Unmarshal([]byte(view.HoverColumnsData), &hover); err != nil {
+		t.Fatalf("json.Unmarshal(HoverColumnsData) error = %v", err)
+	}
+	if len(hover) != 1 || len(hover[0].Values) != 2 {
+		t.Fatalf("unexpected aggregated hover payload: %#v", hover)
+	}
+	if hover[0].Values[0].Value == nil || hover[0].Values[1].Value == nil || *hover[0].Values[0].Value != 1.3 || *hover[0].Values[1].Value != 2.5 {
+		t.Fatalf("unexpected aggregated hover values: %#v", hover[0].Values)
+	}
+
+	var volume []chartHistogramPoint
+	if err := json.Unmarshal([]byte(view.UnderlyingVolumeData), &volume); err != nil {
+		t.Fatalf("json.Unmarshal(UnderlyingVolumeData) error = %v", err)
+	}
+	if len(volume) != 2 || volume[0].Value != 350 || volume[1].Value != 200 {
+		t.Fatalf("unexpected aggregated volume: %#v", volume)
+	}
+}
+
+func TestBuildSettledEquityDataDailyEOD(t *testing.T) {
+	result := &backtest.Result{
+		InitialCapital: 100,
+		EquityCurve:    []float64{100, 110, 105, 120},
+		Timestamps: []time.Time{
+			time.Date(2024, time.January, 1, 0, 0, 0, 0, time.UTC),
+			time.Date(2024, time.January, 1, 12, 0, 0, 0, time.UTC),
+			time.Date(2024, time.January, 2, 0, 0, 0, 0, time.UTC),
+			time.Date(2024, time.January, 2, 12, 0, 0, 0, time.UTC),
+		},
+	}
+
+	data := buildSettledEquityDataDailyEOD(result)
+	if len(data.Series) != 2 {
+		t.Fatalf("len(data.Series) = %d, want 2", len(data.Series))
+	}
+	if data.Series[0].Value == nil || data.Series[1].Value == nil || *data.Series[0].Value != 100 || *data.Series[1].Value != 100 {
+		t.Fatalf("unexpected settled equity series: %#v", data.Series)
+	}
+	if len(data.FloatingProfit) != 2 || data.FloatingProfit[0].Value != 10 || data.FloatingProfit[1].Value != 20 {
+		t.Fatalf("unexpected floating profit bars: %#v", data.FloatingProfit)
+	}
+	if len(data.FloatingLoss) != 0 {
+		t.Fatalf("len(data.FloatingLoss) = %d, want 0", len(data.FloatingLoss))
+	}
+	if len(data.Exposure) != 2 {
+		t.Fatalf("len(data.Exposure) = %d, want 2", len(data.Exposure))
+	}
+}
+
+func TestCompressMarkersDailyMergesSameDayMarkers(t *testing.T) {
+	markers := []chartMarker{
+		{Time: time.Date(2024, time.January, 1, 10, 0, 0, 0, time.UTC).Unix(), Position: "belowBar", Color: "#2dd4bf", Shape: "arrowUp", Text: "买入 1"},
+		{Time: time.Date(2024, time.January, 1, 22, 0, 0, 0, time.UTC).Unix(), Position: "belowBar", Color: "#2dd4bf", Shape: "arrowUp", Text: "买入 2"},
+		{Time: time.Date(2024, time.January, 2, 9, 0, 0, 0, time.UTC).Unix(), Position: "aboveBar", Color: "#f59e0b", Shape: "arrowDown", Text: "卖出 1"},
+	}
+
+	compressed := compressMarkersDaily(markers)
+	if len(compressed) != 2 {
+		t.Fatalf("len(compressed) = %d, want 2", len(compressed))
+	}
+	if compressed[0].Time != markers[1].Time {
+		t.Fatalf("compressed[0].Time = %d, want %d", compressed[0].Time, markers[1].Time)
+	}
+	if !strings.Contains(compressed[0].Text, "买入 1") || !strings.Contains(compressed[0].Text, "买入 2") {
+		t.Fatalf("unexpected merged marker text: %q", compressed[0].Text)
+	}
+}
+
 func TestBuildHTMLViewIncludesDailyAssetPnLSeries(t *testing.T) {
 	result := &backtest.Result{
 		StrategyName:   "asset-pnl-view",
@@ -297,6 +432,47 @@ func TestBuildHTMLViewIncludesDailyAssetPnLSeries(t *testing.T) {
 	}
 	if !strings.Contains(view.DailyAssetPnLNote, "PnL 而非 equity") {
 		t.Fatalf("DailyAssetPnLNote = %q, want note clarifying pnl vs equity", view.DailyAssetPnLNote)
+	}
+}
+
+func TestBuildHTMLViewIncludesCompressedChartPayload(t *testing.T) {
+	result := &backtest.Result{
+		StrategyName:   "compressed-payload",
+		StartTime:      time.Date(2024, time.January, 1, 0, 0, 0, 0, time.UTC),
+		EndTime:        time.Date(2024, time.January, 2, 0, 0, 0, 0, time.UTC),
+		BarsCount:      2,
+		InitialCapital: 100,
+		FinalEquity:    101.123456,
+		EquityCurve:    []float64{100.123456, 101.123456},
+		Timestamps: []time.Time{
+			time.Date(2024, time.January, 1, 0, 0, 0, 0, time.UTC),
+			time.Date(2024, time.January, 2, 0, 0, 0, 0, time.UTC),
+		},
+		Series: map[string][]float64{
+			"open":  {60000.123456, 60100.123456},
+			"high":  {60200.123456, 60300.123456},
+			"low":   {59900.123456, 60050.123456},
+			"close": {60150.123456, 60250.123456},
+		},
+	}
+
+	view := buildHTMLView(result, HTMLMeta{Asset: "BTC", Interval: "1h"})
+
+	var payload map[string]string
+	if err := json.Unmarshal([]byte(view.CompressedChartPayload), &payload); err != nil {
+		t.Fatalf("json.Unmarshal(CompressedChartPayload) error = %v", err)
+	}
+	if payload["equitySeries"] == "" {
+		t.Fatal("payload[equitySeries] is empty, want gzip+base64 content")
+	}
+
+	var decoded []chartLinePoint
+	decodeCompressedPayloadField(t, payload["equitySeries"], &decoded)
+	if len(decoded) != 2 {
+		t.Fatalf("len(decoded) = %d, want 2", len(decoded))
+	}
+	if decoded[0].Value == nil || math.Abs(*decoded[0].Value-100.1235) > 1e-9 {
+		t.Fatalf("decoded[0] = %#v, want rounded chart value 100.1235", decoded[0])
 	}
 }
 
@@ -359,17 +535,17 @@ func TestBuildHTMLViewIncludesSettledEquitySeries(t *testing.T) {
 	result := &backtest.Result{
 		StrategyName:   "settled-series",
 		StartTime:      time.Date(2024, time.January, 1, 0, 0, 0, 0, time.UTC),
-		EndTime:        time.Date(2024, time.January, 1, 4, 0, 0, 0, time.UTC),
+		EndTime:        time.Date(2024, time.January, 5, 0, 0, 0, 0, time.UTC),
 		BarsCount:      5,
 		InitialCapital: 100,
 		FinalEquity:    110,
 		EquityCurve:    []float64{100, 106, 109, 105, 110},
 		Timestamps: []time.Time{
 			time.Date(2024, time.January, 1, 0, 0, 0, 0, time.UTC),
-			time.Date(2024, time.January, 1, 1, 0, 0, 0, time.UTC),
-			time.Date(2024, time.January, 1, 2, 0, 0, 0, time.UTC),
-			time.Date(2024, time.January, 1, 3, 0, 0, 0, time.UTC),
-			time.Date(2024, time.January, 1, 4, 0, 0, 0, time.UTC),
+			time.Date(2024, time.January, 2, 0, 0, 0, 0, time.UTC),
+			time.Date(2024, time.January, 3, 0, 0, 0, 0, time.UTC),
+			time.Date(2024, time.January, 4, 0, 0, 0, 0, time.UTC),
+			time.Date(2024, time.January, 5, 0, 0, 0, 0, time.UTC),
 		},
 		Series: map[string][]float64{
 			"open":  {60000, 60100, 60200, 60300, 60400},
@@ -394,14 +570,14 @@ func TestBuildHTMLViewIncludesSettledEquitySeries(t *testing.T) {
 				Qty:        1,
 				FillPrice:  15,
 				Commission: 1,
-				Timestamp:  time.Date(2024, time.January, 1, 4, 0, 0, 0, time.UTC),
+				Timestamp:  time.Date(2024, time.January, 5, 0, 0, 0, 0, time.UTC),
 			},
 		},
 		SpreadPositions: []backtest.SpreadPositionReport{{
 			ID:          1,
 			Status:      "closed",
 			OpenTime:    time.Date(2024, time.January, 1, 0, 0, 0, 0, time.UTC),
-			CloseTime:   ptrTime(time.Date(2024, time.January, 1, 1, 0, 0, 0, time.UTC)),
+			CloseTime:   ptrTime(time.Date(2024, time.January, 2, 0, 0, 0, 0, time.UTC)),
 			RealizedPnL: 7,
 		}},
 	}
@@ -418,10 +594,10 @@ func TestBuildHTMLViewIncludesSettledEquitySeries(t *testing.T) {
 	if settledSeries[0].Value == nil || *settledSeries[0].Value != 100 {
 		t.Fatalf("settledSeries[0] = %#v, want initial capital point", settledSeries[0])
 	}
-	if settledSeries[1].Time != time.Date(2024, time.January, 1, 1, 0, 0, 0, time.UTC).Unix() || settledSeries[1].Value == nil || *settledSeries[1].Value != 107 {
+	if settledSeries[1].Time != time.Date(2024, time.January, 2, 0, 0, 0, 0, time.UTC).Unix() || settledSeries[1].Value == nil || *settledSeries[1].Value != 107 {
 		t.Fatalf("settledSeries[1] = %#v, want spread-settled point", settledSeries[1])
 	}
-	if settledSeries[2].Time != time.Date(2024, time.January, 1, 4, 0, 0, 0, time.UTC).Unix() || settledSeries[2].Value == nil || *settledSeries[2].Value != 110 {
+	if settledSeries[2].Time != time.Date(2024, time.January, 5, 0, 0, 0, 0, time.UTC).Unix() || settledSeries[2].Value == nil || *settledSeries[2].Value != 110 {
 		t.Fatalf("settledSeries[2] = %#v, want trade-settled point", settledSeries[2])
 	}
 
@@ -432,7 +608,7 @@ func TestBuildHTMLViewIncludesSettledEquitySeries(t *testing.T) {
 	if len(floatingProfit) != 1 {
 		t.Fatalf("len(floatingProfit) = %d, want 1", len(floatingProfit))
 	}
-	if floatingProfit[0].Time != time.Date(2024, time.January, 1, 4, 0, 0, 0, time.UTC).Unix() || floatingProfit[0].Value != 2 {
+	if floatingProfit[0].Time != time.Date(2024, time.January, 5, 0, 0, 0, 0, time.UTC).Unix() || floatingProfit[0].Value != 2 {
 		t.Fatalf("floatingProfit[0] = %#v, want floating gain context before final settlement", floatingProfit[0])
 	}
 
@@ -443,7 +619,7 @@ func TestBuildHTMLViewIncludesSettledEquitySeries(t *testing.T) {
 	if len(floatingLoss) != 1 {
 		t.Fatalf("len(floatingLoss) = %d, want 1", len(floatingLoss))
 	}
-	if floatingLoss[0].Time != time.Date(2024, time.January, 1, 4, 0, 0, 0, time.UTC).Unix() || floatingLoss[0].Value != -2 {
+	if floatingLoss[0].Time != time.Date(2024, time.January, 5, 0, 0, 0, 0, time.UTC).Unix() || floatingLoss[0].Value != -2 {
 		t.Fatalf("floatingLoss[0] = %#v, want floating loss context before final settlement", floatingLoss[0])
 	}
 
@@ -462,18 +638,61 @@ func TestBuildHTMLViewIncludesSettledEquitySeries(t *testing.T) {
 	}
 }
 
+func decodeCompressedPayloadField(t *testing.T, encoded string, target any) {
+	t.Helper()
+	raw, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		t.Fatalf("base64 decode error = %v", err)
+	}
+	reader, err := gzip.NewReader(bytes.NewReader(raw))
+	if err != nil {
+		t.Fatalf("gzip reader error = %v", err)
+	}
+	defer reader.Close()
+	decoded, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatalf("gzip read error = %v", err)
+	}
+	if err := json.Unmarshal(decoded, target); err != nil {
+		t.Fatalf("json.Unmarshal(decoded payload) error = %v", err)
+	}
+}
+
+func extractCompressedHTMLPayload(t *testing.T, html, variableName string) string {
+	t.Helper()
+	pattern := regexp.MustCompile(variableName + `\s*=\s*"([^"]*)"`)
+	match := pattern.FindStringSubmatch(html)
+	if len(match) != 2 {
+		t.Fatalf("failed to extract %s from generated html", variableName)
+	}
+	raw, err := base64.StdEncoding.DecodeString(match[1])
+	if err != nil {
+		t.Fatalf("base64 decode error for %s: %v", variableName, err)
+	}
+	reader, err := gzip.NewReader(bytes.NewReader(raw))
+	if err != nil {
+		t.Fatalf("gzip reader error for %s: %v", variableName, err)
+	}
+	defer reader.Close()
+	decoded, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatalf("gzip read error for %s: %v", variableName, err)
+	}
+	return string(decoded)
+}
+
 func TestBuildHTMLViewIncludesUnderlyingVolumeHistogram(t *testing.T) {
 	result := &backtest.Result{
 		StrategyName:   "test",
 		StartTime:      time.Date(2024, time.January, 1, 0, 0, 0, 0, time.UTC),
-		EndTime:        time.Date(2024, time.January, 1, 1, 0, 0, 0, time.UTC),
+		EndTime:        time.Date(2024, time.January, 2, 0, 0, 0, 0, time.UTC),
 		BarsCount:      2,
 		InitialCapital: 100,
 		FinalEquity:    101,
 		EquityCurve:    []float64{100, 101},
 		Timestamps: []time.Time{
 			time.Date(2024, time.January, 1, 0, 0, 0, 0, time.UTC),
-			time.Date(2024, time.January, 1, 1, 0, 0, 0, time.UTC),
+			time.Date(2024, time.January, 2, 0, 0, 0, 0, time.UTC),
 		},
 		Series: map[string][]float64{
 			"open":   {60000, 60200},
@@ -953,23 +1172,24 @@ func TestWriteBacktestHTMLPlacesSpreadOpenTimeBesideHeaderStatus(t *testing.T) {
 		t.Fatalf("os.ReadFile() error = %v", err)
 	}
 	html := string(htmlBytes)
+	spreadHTML := extractCompressedHTMLPayload(t, html, "compressedSpreadSectionsHTML")
 
-	if !strings.Contains(html, "下单 2024-01-02 03:04 UTC") {
+	if !strings.Contains(spreadHTML, "下单 2024-01-02 03:04 UTC") {
 		t.Fatalf("expected generated html to place spread open time in the card header")
 	}
-	if !strings.Contains(html, "平仓触发 2024-01-03 04:30 UTC") {
+	if !strings.Contains(spreadHTML, "平仓触发 2024-01-03 04:30 UTC") {
 		t.Fatalf("expected generated html to show the close trigger time in the close card header")
 	}
-	if strings.Contains(html, "下单 2024-01-02 03:04 UTC</span></div><div class=\"flex gap-5 text-xs text-slate-400\"><span>盈亏") {
+	if strings.Contains(spreadHTML, "下单 2024-01-02 03:04 UTC</span></div><div class=\"flex gap-5 text-xs text-slate-400\"><span>盈亏") {
 		t.Fatalf("did not expect close cards to keep showing the original order time in the header")
 	}
-	if !strings.Contains(html, "平仓触发时间") {
+	if !strings.Contains(spreadHTML, "平仓触发时间") {
 		t.Fatalf("expected generated html to relabel leg close time column to close trigger time when available")
 	}
-	if !strings.Contains(html, "定位到图表") {
+	if !strings.Contains(spreadHTML, "定位到图表") {
 		t.Fatalf("expected generated html to include spread-to-chart location button")
 	}
-	if !strings.Contains(html, fmt.Sprintf("data-chart-jump-time=\"%d\"", openTime.Unix())) {
+	if !strings.Contains(spreadHTML, fmt.Sprintf("data-chart-jump-time=\"%d\"", openTime.Unix())) {
 		t.Fatalf("expected generated html to include chart jump timestamp for spread events")
 	}
 }
@@ -1266,8 +1486,9 @@ func TestWriteBacktestHTMLIncludesSpreadGroupSections(t *testing.T) {
 		t.Fatalf("os.ReadFile() error = %v", err)
 	}
 	html := string(htmlBytes)
+	spreadHTML := extractCompressedHTMLPayload(t, html, "compressedSpreadSectionsHTML")
 
-	if !strings.Contains(html, "组 #3 bull-call") {
+	if !strings.Contains(spreadHTML, "组 #3 bull-call") {
 		t.Fatalf("expected generated html to include spread group header")
 	}
 	if !strings.Contains(html, "最大回撤前 5 订单组") {
@@ -1276,10 +1497,10 @@ func TestWriteBacktestHTMLIncludesSpreadGroupSections(t *testing.T) {
 	if !strings.Contains(html, "最高权益") || !strings.Contains(html, "最低权益") || !strings.Contains(html, "15.00%") {
 		t.Fatalf("expected generated html to include spread group equity stats")
 	}
-	if !strings.Contains(html, "未分组持仓") {
+	if !strings.Contains(spreadHTML, "未分组持仓") {
 		t.Fatalf("expected generated html to include ungrouped spread section")
 	}
-	if !strings.Contains(html, "grouped-spread") || !strings.Contains(html, "standalone") {
+	if !strings.Contains(spreadHTML, "grouped-spread") || !strings.Contains(spreadHTML, "standalone") {
 		t.Fatalf("expected generated html to include both grouped and ungrouped spread tags")
 	}
 }
@@ -1389,15 +1610,16 @@ func TestWriteBacktestHTMLIncludesSpreadReportMetricSnapshots(t *testing.T) {
 		t.Fatalf("os.ReadFile() error = %v", err)
 	}
 	html := string(htmlBytes)
+	spreadHTML := extractCompressedHTMLPayload(t, html, "compressedSpreadSectionsHTML")
 
-	if !strings.Contains(html, "策略列快照") {
-		t.Fatalf("expected generated html to include spread metric snapshot section")
-	}
-	if !strings.Contains(html, "Signal Edge") || !strings.Contains(html, "signal_edge") {
+	if !strings.Contains(spreadHTML, "Signal Edge") || !strings.Contains(spreadHTML, "signal_edge") {
 		t.Fatalf("expected generated html to include spread metric label and source")
 	}
-	if !strings.Contains(html, ">1.11<") || !strings.Contains(html, ">1.33<") {
+	if !strings.Contains(spreadHTML, ">1.11<") || !strings.Contains(spreadHTML, ">1.33<") {
 		t.Fatalf("expected generated html to include open and close metric values")
+	}
+	if !strings.Contains(spreadHTML, "子图") {
+		t.Fatalf("expected generated html to include spread metric kind label")
 	}
 }
 

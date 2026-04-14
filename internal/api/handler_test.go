@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -1070,6 +1071,7 @@ func TestStartStrategyBacktestRoute(t *testing.T) {
 			CreatedAt: time.Date(2026, 4, 7, 8, 0, 0, 0, time.UTC),
 			StatusURL: "/api/v1/backtests/runs/run-123",
 			EventsURL: "/api/v1/backtests/runs/run-123/events",
+			ReportURL: "/internal/ignored/by-handler",
 		}},
 		nil, nil, nil, nil, nil,
 	)
@@ -1089,6 +1091,9 @@ func TestStartStrategyBacktestRoute(t *testing.T) {
 	}
 	if resp.RunID != "run-123" || resp.EventsURL == "" {
 		t.Fatalf("unexpected start response: %+v", resp)
+	}
+	if resp.ReportURL != "/api/v1/backtests/runs/run-123/report" {
+		t.Fatalf("unexpected report url: %+v", resp)
 	}
 }
 
@@ -1125,6 +1130,9 @@ func TestGetStrategyBacktestRunRoute(t *testing.T) {
 	}
 	if resp.RunID != "run-123" || resp.Progress == nil || resp.Progress.Percent != 10 {
 		t.Fatalf("unexpected status response: %+v", resp)
+	}
+	if resp.ReportURL != "/api/v1/backtests/runs/run-123/report" {
+		t.Fatalf("unexpected report url: %+v", resp)
 	}
 }
 
@@ -1178,5 +1186,135 @@ func TestStreamStrategyBacktestEventsRoute(t *testing.T) {
 	}
 	if !strings.Contains(body, `"run_id":"run-123"`) {
 		t.Fatalf("expected run payload, got %q", body)
+	}
+}
+
+func TestGetStrategyBacktestReportRoutePending(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := NewRouter(
+		&mockQuerier{},
+		&mockUSStocksQuerier{},
+		&mockUSOptionsQuerier{},
+		&mockInfra{},
+		&mockFeature{},
+		nil,
+		&mockStrategyBacktests{statusResp: &dto.StrategyBacktestRunStatus{
+			RunID:     "run-123",
+			Status:    "running",
+			Request:   dto.StrategyBacktestRunRequest{Asset: "BTC", From: "2026-01-01", To: "2026-02-01", Capital: 5},
+			CreatedAt: time.Date(2026, 4, 7, 8, 0, 0, 0, time.UTC),
+			UpdatedAt: time.Date(2026, 4, 7, 8, 0, 1, 0, time.UTC),
+			Progress:  &dto.StrategyBacktestProgress{Phase: "prepare", Current: 5, Total: 100, Percent: 5},
+		}},
+		nil, nil, nil, nil, nil,
+	)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/api/v1/backtests/runs/run-123/report", nil)
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp dto.StrategyBacktestRunStatus
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if resp.ReportURL != "/api/v1/backtests/runs/run-123/report" {
+		t.Fatalf("unexpected report url: %+v", resp)
+	}
+}
+
+func TestGetStrategyBacktestReportRouteCompleted(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	tempFile, err := os.CreateTemp(t.TempDir(), "report-*.html")
+	if err != nil {
+		t.Fatalf("create temp file: %v", err)
+	}
+	html := "<html><body>ok</body></html>"
+	if _, err := tempFile.WriteString(html); err != nil {
+		t.Fatalf("write temp file: %v", err)
+	}
+	if err := tempFile.Close(); err != nil {
+		t.Fatalf("close temp file: %v", err)
+	}
+
+	r := NewRouter(
+		&mockQuerier{},
+		&mockUSStocksQuerier{},
+		&mockUSOptionsQuerier{},
+		&mockInfra{},
+		&mockFeature{},
+		nil,
+		&mockStrategyBacktests{statusResp: &dto.StrategyBacktestRunStatus{
+			RunID:     "run-123",
+			Status:    "completed",
+			Request:   dto.StrategyBacktestRunRequest{Asset: "BTC", From: "2026-01-01", To: "2026-02-01", Capital: 5},
+			CreatedAt: time.Date(2026, 4, 7, 8, 0, 0, 0, time.UTC),
+			UpdatedAt: time.Date(2026, 4, 7, 8, 0, 1, 0, time.UTC),
+			Result:    &dto.StrategyBacktestRunResult{Summaries: []dto.StrategyBacktestSummary{{StrategyName: "demo", HTMLPath: tempFile.Name()}}},
+		}},
+		nil, nil, nil, nil, nil,
+	)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/api/v1/backtests/runs/run-123/report", nil)
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if got := w.Header().Get("Content-Type"); !strings.Contains(got, "text/html") {
+		t.Fatalf("expected html content type, got %q", got)
+	}
+	if w.Body.String() != html {
+		t.Fatalf("unexpected html body: %q", w.Body.String())
+	}
+}
+
+func TestGetStrategyBacktestNamedReportRouteOverview(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	tempFile, err := os.CreateTemp(t.TempDir(), "overview-*.html")
+	if err != nil {
+		t.Fatalf("create temp file: %v", err)
+	}
+	html := "<html><body>overview</body></html>"
+	if _, err := tempFile.WriteString(html); err != nil {
+		t.Fatalf("write temp file: %v", err)
+	}
+	if err := tempFile.Close(); err != nil {
+		t.Fatalf("close temp file: %v", err)
+	}
+
+	r := NewRouter(
+		&mockQuerier{},
+		&mockUSStocksQuerier{},
+		&mockUSOptionsQuerier{},
+		&mockInfra{},
+		&mockFeature{},
+		nil,
+		&mockStrategyBacktests{statusResp: &dto.StrategyBacktestRunStatus{
+			RunID:     "run-123",
+			Status:    "completed",
+			Request:   dto.StrategyBacktestRunRequest{Asset: "BTC", From: "2026-01-01", To: "2026-02-01", Capital: 5},
+			CreatedAt: time.Date(2026, 4, 7, 8, 0, 0, 0, time.UTC),
+			UpdatedAt: time.Date(2026, 4, 7, 8, 0, 1, 0, time.UTC),
+			Result: &dto.StrategyBacktestRunResult{
+				OverviewHTMLPath: tempFile.Name(),
+				Summaries:        []dto.StrategyBacktestSummary{{StrategyName: "demo", HTMLPath: tempFile.Name()}},
+			},
+		}},
+		nil, nil, nil, nil, nil,
+	)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/api/v1/backtests/runs/run-123/reports/overview", nil)
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if w.Body.String() != html {
+		t.Fatalf("unexpected html body: %q", w.Body.String())
 	}
 }

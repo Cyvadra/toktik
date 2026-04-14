@@ -49,8 +49,11 @@ const (
 	featHeightQuantilePeriod = 100
 	featHeightQuantileQ      = 0.65
 	leftCloseQuantilePeriod  = 100
-	leftCloseVolQuantileQ    = 0.60
+	leftCloseVolQuantileQ    = 0.80
 	leftCloseDropQuantileQ   = 0.80
+
+	extraReductionMinHold = 7 * 24 * time.Hour
+	trailingLockRatio     = 0.70
 
 	colEntrySignal      = "entry_signal"
 	colATR14            = "atr14"
@@ -98,7 +101,9 @@ type groupState struct {
 	tpTriggered             []bool
 	extraReductionTriggered bool
 	dteReductionTriggered   bool
+	leftCloseTriggered      bool
 	reductionCount          int
+	peakGroupPnL            float64
 }
 
 type strategy struct {
@@ -466,7 +471,8 @@ func (s *strategy) manageGroup(ctx *backtest.BarContext, gs *groupState, contrac
 		return false
 	}
 
-	if s.shouldLeftClose(ctx) {
+	lcPnl := s.groupCombinedPnL(ctx, gs, contractMap)
+	if lcPnl < 0 && s.shouldLeftClose(ctx) {
 		s.logLeftClose(ctx)
 		s.closeTrackedGroup(ctx, gs, contractMap, leftCloseReasonText)
 		return false
@@ -487,6 +493,28 @@ func (s *strategy) manageGroup(ctx *backtest.BarContext, gs *groupState, contrac
 	}
 
 	pnl := s.groupCombinedPnL(ctx, gs, contractMap)
+
+	// Trailing profit lock: after any TP has triggered, track peak PnL.
+	// If PnL drops below trailingLockRatio of peak, close all remaining.
+	anyTP := false
+	for _, t := range gs.tpTriggered {
+		if t {
+			anyTP = true
+			break
+		}
+	}
+	if anyTP {
+		if pnl > gs.peakGroupPnL {
+			gs.peakGroupPnL = pnl
+		}
+		if gs.peakGroupPnL > gs.profitBaseAmount*0.20 && pnl < gs.peakGroupPnL*trailingLockRatio {
+			fmt.Printf("[%s] ambush close: reason=trailing_profit_lock peak=%.4f current=%.4f ratio=%.2f\n",
+				ctx.Time().Format(time.RFC3339), gs.peakGroupPnL, pnl, trailingLockRatio)
+			s.closeTrackedGroup(ctx, gs, contractMap, "trailing_profit_lock")
+			return false
+		}
+	}
+
 	reasons := s.pendingReductionReasons(ctx, gs, pnl)
 	for _, reason := range reasons {
 		if !s.closeOneActiveTranche(ctx, gs, contractMap, reason, pnl) {
@@ -517,7 +545,7 @@ func (s *strategy) pendingReductionReasons(ctx *backtest.BarContext, gs *groupSt
 		}
 	}
 
-	if !gs.extraReductionTriggered && s.conditionFallExtra(ctx) {
+	if !gs.extraReductionTriggered && ctx.Time().Sub(gs.entryTime) >= extraReductionMinHold && s.conditionFallExtra(ctx) {
 		gs.extraReductionTriggered = true
 		reasons = append(reasons, "conditionFallExtra")
 	}

@@ -6,6 +6,9 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"os"
+	"strconv"
+	"strings"
 
 	"github.com/Cyvadra/toktik/internal/dto"
 	"github.com/gin-gonic/gin"
@@ -68,6 +71,118 @@ func writeSSEEvent(c *gin.Context, event string, payload any) error {
 	}
 	c.Writer.Flush()
 	return nil
+}
+
+func strategyBacktestPrimaryReportURL(runID string) string {
+	return "/api/v1/backtests/runs/" + strings.TrimSpace(runID) + "/report"
+}
+
+func strategyBacktestNamedReportURL(runID, reportID string) string {
+	return "/api/v1/backtests/runs/" + strings.TrimSpace(runID) + "/reports/" + strings.TrimSpace(reportID)
+}
+
+func decorateAcceptedBacktestRun(resp *dto.StrategyBacktestRunAccepted) *dto.StrategyBacktestRunAccepted {
+	if resp == nil {
+		return nil
+	}
+	copy := *resp
+	copy.ReportURL = strategyBacktestPrimaryReportURL(resp.RunID)
+	return &copy
+}
+
+func decorateBacktestRunStatus(resp *dto.StrategyBacktestRunStatus) *dto.StrategyBacktestRunStatus {
+	if resp == nil {
+		return nil
+	}
+	copy := *resp
+	copy.ReportURL = strategyBacktestPrimaryReportURL(resp.RunID)
+	if resp.Result == nil {
+		return &copy
+	}
+	resultCopy := *resp.Result
+	resultCopy.ReportURL = strategyBacktestPrimaryReportURL(resp.RunID)
+	if strings.TrimSpace(resp.Result.OverviewHTMLPath) != "" {
+		resultCopy.OverviewReportURL = strategyBacktestNamedReportURL(resp.RunID, "overview")
+	}
+	if len(resp.Result.Summaries) > 0 {
+		resultCopy.Summaries = make([]dto.StrategyBacktestSummary, len(resp.Result.Summaries))
+		for index, summary := range resp.Result.Summaries {
+			summaryCopy := summary
+			summaryCopy.ReportURL = strategyBacktestNamedReportURL(resp.RunID, strconv.Itoa(index+1))
+			resultCopy.Summaries[index] = summaryCopy
+		}
+	}
+	copy.Result = &resultCopy
+	return &copy
+}
+
+func resolveStrategyBacktestReportPath(status *dto.StrategyBacktestRunStatus, reportID string) (string, error) {
+	if status == nil {
+		return "", dto.NewNotFoundError("backtest run not found")
+	}
+	if status.Result == nil {
+		return "", dto.NewNotFoundError("backtest report is not ready")
+	}
+	trimmed := strings.TrimSpace(reportID)
+	if trimmed == "" {
+		if strings.TrimSpace(status.Result.OverviewHTMLPath) != "" {
+			return status.Result.OverviewHTMLPath, nil
+		}
+		if len(status.Result.Summaries) == 0 || strings.TrimSpace(status.Result.Summaries[0].HTMLPath) == "" {
+			return "", dto.NewNotFoundError("backtest report is not ready")
+		}
+		return status.Result.Summaries[0].HTMLPath, nil
+	}
+	if strings.EqualFold(trimmed, "overview") {
+		if strings.TrimSpace(status.Result.OverviewHTMLPath) == "" {
+			return "", dto.NewNotFoundError("overview report is not available")
+		}
+		return status.Result.OverviewHTMLPath, nil
+	}
+	index, err := strconv.Atoi(trimmed)
+	if err != nil || index < 1 || index > len(status.Result.Summaries) {
+		return "", dto.NewNotFoundError("backtest report %q not found", reportID)
+	}
+	path := strings.TrimSpace(status.Result.Summaries[index-1].HTMLPath)
+	if path == "" {
+		return "", dto.NewNotFoundError("backtest report %q not found", reportID)
+	}
+	return path, nil
+}
+
+func writeBacktestReportResponse(c *gin.Context, status *dto.StrategyBacktestRunStatus, reportID string) {
+	decorated := decorateBacktestRunStatus(status)
+	if decorated == nil {
+		c.JSON(http.StatusNotFound, dto.ErrorResponse{Error: "backtest run not found"})
+		return
+	}
+	if decorated.Status == "queued" || decorated.Status == "running" {
+		c.JSON(http.StatusAccepted, decorated)
+		return
+	}
+	if decorated.Status == "failed" {
+		message := strings.TrimSpace(decorated.Error)
+		if message == "" {
+			message = "backtest run failed"
+		}
+		c.JSON(http.StatusConflict, dto.ErrorResponse{Error: message})
+		return
+	}
+	reportPath, err := resolveStrategyBacktestReportPath(status, reportID)
+	if err != nil {
+		handleServiceError(c, err)
+		return
+	}
+	body, err := os.ReadFile(reportPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			handleServiceError(c, dto.NewNotFoundError("backtest report file not found"))
+			return
+		}
+		handleServiceError(c, err)
+		return
+	}
+	c.Data(http.StatusOK, "text/html; charset=utf-8", body)
 }
 
 // GetReadiness handles GET /ready.
@@ -643,7 +758,7 @@ func (h *Handler) StartStrategyBacktest(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusAccepted, resp)
+	c.JSON(http.StatusAccepted, decorateAcceptedBacktestRun(resp))
 }
 
 // GetStrategyBacktestRun handles GET /api/v1/backtests/runs/:runID.
@@ -669,7 +784,62 @@ func (h *Handler) GetStrategyBacktestRun(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, resp)
+	c.JSON(http.StatusOK, decorateBacktestRunStatus(resp))
+}
+
+// GetStrategyBacktestReport handles GET /api/v1/backtests/runs/:runID/report.
+//
+// @Summary      Get primary backtest report
+// @Description  Returns the reserved HTML report for a backtest run. Before completion, it returns 202 with the current run status.
+// @Tags         Backtests
+// @Produce      html
+// @Produce      json
+// @Param        runID  path      string  true  "Backtest run ID"
+// @Success      200    {string}  string
+// @Success      202    {object}  dto.StrategyBacktestRunStatus
+// @Failure      404    {object}  dto.ErrorResponse
+// @Failure      409    {object}  dto.ErrorResponse
+// @Failure      500    {object}  dto.ErrorResponse
+// @Router       /backtests/runs/{runID}/report [get]
+func (h *Handler) GetStrategyBacktestReport(c *gin.Context) {
+	if h.strategyBacktests == nil {
+		c.JSON(http.StatusNotImplemented, dto.ErrorResponse{Error: "strategy backtest provider not configured"})
+		return
+	}
+	status, err := h.strategyBacktests.GetStrategyBacktestRun(c.Request.Context(), c.Param("runID"))
+	if err != nil {
+		handleServiceError(c, err)
+		return
+	}
+	writeBacktestReportResponse(c, status, "")
+}
+
+// GetStrategyBacktestNamedReport handles GET /api/v1/backtests/runs/:runID/reports/:reportID.
+//
+// @Summary      Get a named backtest report
+// @Description  Returns an HTML report variant for a backtest run. Use reportID=overview for the overview page or 1..N for per-strategy detail pages.
+// @Tags         Backtests
+// @Produce      html
+// @Produce      json
+// @Param        runID     path      string  true  "Backtest run ID"
+// @Param        reportID  path      string  true  "Report selector: overview or 1..N"
+// @Success      200       {string}  string
+// @Success      202       {object}  dto.StrategyBacktestRunStatus
+// @Failure      404       {object}  dto.ErrorResponse
+// @Failure      409       {object}  dto.ErrorResponse
+// @Failure      500       {object}  dto.ErrorResponse
+// @Router       /backtests/runs/{runID}/reports/{reportID} [get]
+func (h *Handler) GetStrategyBacktestNamedReport(c *gin.Context) {
+	if h.strategyBacktests == nil {
+		c.JSON(http.StatusNotImplemented, dto.ErrorResponse{Error: "strategy backtest provider not configured"})
+		return
+	}
+	status, err := h.strategyBacktests.GetStrategyBacktestRun(c.Request.Context(), c.Param("runID"))
+	if err != nil {
+		handleServiceError(c, err)
+		return
+	}
+	writeBacktestReportResponse(c, status, c.Param("reportID"))
 }
 
 // StreamStrategyBacktestEvents handles GET /api/v1/backtests/runs/:runID/events.
