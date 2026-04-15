@@ -24,9 +24,6 @@ func TestLoadRuntimeFromPathYAML(t *testing.T) {
 		"  rate_limit_rps: 125\n" +
 		"paths:\n" +
 		"  schema_dir: \"/srv/toktik/schema\"\n" +
-		"thetadata:\n" +
-		"  base_url: \"http://theta.internal:25503/v3\"\n" +
-		"  timeout_seconds: 45\n" +
 		"deribit:\n" +
 		"  base_url: \"https://deribit-proxy.internal\"\n" +
 		"tiger:\n" +
@@ -75,12 +72,6 @@ func TestLoadRuntimeFromPathYAML(t *testing.T) {
 	if cfg.Paths.SchemaDir != "/srv/toktik/schema" {
 		t.Fatalf("unexpected schema dir: %q", cfg.Paths.SchemaDir)
 	}
-	if cfg.ThetaData.BaseURL != "http://theta.internal:25503/v3" {
-		t.Fatalf("unexpected theta base url: %q", cfg.ThetaData.BaseURL)
-	}
-	if cfg.ThetaData.TimeoutSeconds != 45 {
-		t.Fatalf("unexpected theta timeout: %d", cfg.ThetaData.TimeoutSeconds)
-	}
 	if cfg.Deribit.BaseURL != "https://deribit-proxy.internal" {
 		t.Fatalf("unexpected deribit base url: %q", cfg.Deribit.BaseURL)
 	}
@@ -108,8 +99,6 @@ func TestLoadRuntimeFromPathEnvOverrides(t *testing.T) {
 	t.Setenv(EnvAPIKeys, "key-a, key-b")
 	t.Setenv(EnvRateLimitRPS, "75")
 	t.Setenv(EnvSchemaDir, "/opt/toktik/schema")
-	t.Setenv(EnvThetaDataBaseURL, "http://theta-env:25503/v3")
-	t.Setenv(EnvThetaDataTimeoutSec, "33")
 	t.Setenv(EnvDeribitBaseURL, "https://deribit-env.example")
 	t.Setenv(EnvTigerID, "20109999")
 	t.Setenv(EnvTigerPrivateKey, "env-private-key")
@@ -147,12 +136,6 @@ func TestLoadRuntimeFromPathEnvOverrides(t *testing.T) {
 	}
 	if cfg.Paths.SchemaDir != "/opt/toktik/schema" {
 		t.Fatalf("unexpected schema dir override: %q", cfg.Paths.SchemaDir)
-	}
-	if cfg.ThetaData.BaseURL != "http://theta-env:25503/v3" {
-		t.Fatalf("unexpected theta url override: %q", cfg.ThetaData.BaseURL)
-	}
-	if cfg.ThetaData.TimeoutSeconds != 33 {
-		t.Fatalf("unexpected theta timeout override: %d", cfg.ThetaData.TimeoutSeconds)
 	}
 	if cfg.Deribit.BaseURL != "https://deribit-env.example" {
 		t.Fatalf("unexpected deribit override: %q", cfg.Deribit.BaseURL)

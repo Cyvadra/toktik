@@ -20,8 +20,6 @@ const (
 	EnvAPIKeys               = "API_KEYS"
 	EnvRateLimitRPS          = "RATE_LIMIT_RPS"
 	EnvSchemaDir             = "TOKTIK_SCHEMA_DIR"
-	EnvThetaDataBaseURL      = "THETADATA_BASE_URL"
-	EnvThetaDataTimeoutSec   = "THETADATA_TIMEOUT_SECONDS"
 	EnvDeribitBaseURL        = "DERIBIT_BASE_URL"
 	EnvTigerID               = "TIGEROPEN_TIGER_ID"
 	EnvTigerPrivateKey       = "TIGEROPEN_PRIVATE_KEY"
@@ -48,7 +46,6 @@ const (
 	defaultClickHouseDSN     = "clickhouse://default:@localhost:9000/default"
 	defaultListenAddr        = ":9010"
 	defaultSchemaDir         = "schema/clickhouse"
-	defaultThetaDataBaseURL  = "http://127.0.0.1:25503/v3"
 	defaultDeribitBaseURL    = "https://www.deribit.com"
 	defaultRedisKeyPrefix    = "toktik"
 	defaultRedisAddr         = "127.0.0.1:6379"
@@ -60,7 +57,6 @@ type Runtime struct {
 	APIServer  APIServer  `yaml:"api_server"`
 	API        API        `yaml:"api"`
 	Paths      Paths      `yaml:"paths"`
-	ThetaData  ThetaData  `yaml:"thetadata"`
 	Deribit    Deribit    `yaml:"deribit"`
 	Tiger      Tiger      `yaml:"tiger"`
 	Polygon    Polygon    `yaml:"polygon"`
@@ -87,11 +83,6 @@ type API struct {
 
 type Paths struct {
 	SchemaDir string `yaml:"schema_dir"`
-}
-
-type ThetaData struct {
-	BaseURL        string `yaml:"base_url"`
-	TimeoutSeconds int    `yaml:"timeout_seconds"`
 }
 
 type Deribit struct {
@@ -155,10 +146,6 @@ func DefaultRuntime() Runtime {
 		},
 		Paths: Paths{
 			SchemaDir: defaultSchemaDir,
-		},
-		ThetaData: ThetaData{
-			BaseURL:        defaultThetaDataBaseURL,
-			TimeoutSeconds: 120,
 		},
 		Deribit: Deribit{
 			BaseURL: defaultDeribitBaseURL,
@@ -235,14 +222,6 @@ func (c *Runtime) applyEnvOverrides() {
 	}
 	if value := strings.TrimSpace(os.Getenv(EnvSchemaDir)); value != "" {
 		c.Paths.SchemaDir = value
-	}
-	if value := strings.TrimSpace(os.Getenv(EnvThetaDataBaseURL)); value != "" {
-		c.ThetaData.BaseURL = value
-	}
-	if value := strings.TrimSpace(os.Getenv(EnvThetaDataTimeoutSec)); value != "" {
-		if parsed, err := strconv.Atoi(value); err == nil {
-			c.ThetaData.TimeoutSeconds = parsed
-		}
 	}
 	if value := strings.TrimSpace(os.Getenv(EnvDeribitBaseURL)); value != "" {
 		c.Deribit.BaseURL = value
@@ -357,12 +336,6 @@ func (c *Runtime) normalize() {
 		c.Paths.SchemaDir = defaultSchemaDir
 	}
 	c.Paths.SchemaDir = filepath.Clean(c.Paths.SchemaDir)
-	if strings.TrimSpace(c.ThetaData.BaseURL) == "" {
-		c.ThetaData.BaseURL = defaultThetaDataBaseURL
-	}
-	if c.ThetaData.TimeoutSeconds <= 0 {
-		c.ThetaData.TimeoutSeconds = 120
-	}
 	if strings.TrimSpace(c.Deribit.BaseURL) == "" {
 		c.Deribit.BaseURL = defaultDeribitBaseURL
 	}
@@ -448,10 +421,6 @@ func (c Runtime) APIServerWriteTimeout() time.Duration {
 
 func (c Runtime) APIServerIdleTimeout() time.Duration {
 	return time.Duration(c.APIServer.IdleTimeoutSeconds) * time.Second
-}
-
-func (c Runtime) ThetaDataTimeout() time.Duration {
-	return time.Duration(c.ThetaData.TimeoutSeconds) * time.Second
 }
 
 func (c Runtime) SchemaPathCandidates(fileName string) []string {

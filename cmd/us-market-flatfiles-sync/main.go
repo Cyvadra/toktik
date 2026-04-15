@@ -25,6 +25,7 @@ func main() {
 	riskFreeRate := flag.Float64("risk-free-rate", 0.05, "Annualized risk-free rate used for option greeks")
 	schemaFile := flag.String("schema", "", "Path to DDL SQL file (auto-detected if empty)")
 	skipExisting := flag.Bool("skip-existing", true, "Skip files whose date already has data in ClickHouse")
+	skipGreeksBackfill := flag.Bool("skip-greeks-backfill", false, "Skip the automatic local recalculation of missing option greeks after import")
 	forceDownload := flag.Bool("force-download", false, "Force re-download even if a flat file already exists in the local cache")
 	confirmColdStart := flag.Bool("confirm-cold-start", false, "Acknowledge that empty us-market tables will start syncing from 2023-01-01")
 	flag.Parse()
@@ -104,6 +105,40 @@ func main() {
 		result.Import.StockRows,
 		result.Import.Elapsed.Round(time.Second),
 	)
+
+	if !*skipGreeksBackfill {
+		backfillPaths := append([]string{}, result.Stocks.Files...)
+		backfillPaths = append(backfillPaths, result.Options.Files...)
+		from, to, ok, err := usmarket.ResolveCSVDateRange(backfillPaths)
+		if err != nil {
+			log.Fatalf("resolve local greek backfill range: %v", err)
+		}
+		if ok {
+			backfillResult, err := usmarket.BackfillMissingOptionGreeks(ctx, usmarket.OptionGreeksBackfillConfig{
+				Conn:              conn,
+				DSN:               *dsn,
+				StartDate:         from,
+				EndDate:           to,
+				Workers:           *workers,
+				BatchSize:         *batchSize,
+				RiskFreeRate:      *riskFreeRate,
+				RebuildAggregates: true,
+			})
+			if err != nil {
+				log.Fatalf("auto backfill missing option greeks: %v", err)
+			}
+			log.Printf("Auto greek backfill: range=%s..%s processed=%d backfilled_rows=%d remaining_tasks=%d",
+				from.Format("2006-01-02"),
+				to.Format("2006-01-02"),
+				backfillResult.ProcessedTasks,
+				backfillResult.BackfilledRows,
+				backfillResult.RemainingTasks,
+			)
+			if backfillResult.RemainingTasks > 0 {
+				log.Printf("Auto greek backfill left unresolved tasks in %s..%s; those rows still have no local underlying minute data to support calculation", from.Format("2006-01-02"), to.Format("2006-01-02"))
+			}
+		}
+	}
 }
 
 func formatDate(value time.Time) string {

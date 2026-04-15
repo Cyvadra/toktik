@@ -66,7 +66,7 @@ Unified multi-market quantitative trading platform for crypto and US equity opti
 | `internal/report` | Output | Self-contained HTML report generation (equity curves, drawdown charts, trade markers) |
 | `internal/cli` | Util | CLI bootstrap: env fallback, DSN resolution, ClickHouse connection helpers |
 | `internal/validation` | Util | Numeric sanity checks (NaN, Inf) |
-| `pkg/feeds` | Plugin | External data source interface (`Feed`) + registry; pluggable sources (DVOL, ThetaData) |
+| `pkg/feeds` | Plugin | External data source interface (`Feed`) + registry; pluggable sources (DVOL) |
 | `pkg/strategies` | Plugin | Strategy catalog, config parsing, and individual strategy implementations |
 | `pkg/strategies/optutil` | Mixin | Shared options helpers: PricingMixin, GroupMixin, PendingRefCounter, contract resolution |
 
@@ -1023,15 +1023,15 @@ Notes:
 - The schema file is auto-detected from `schema/clickhouse/us_market.sql`; override with `--schema path/to/file.sql` if needed.
 - Existing dates are skipped by default; pass `--skip-existing=false` to force re-import.
 
-### 7.5. Backfill Missing US Option Greeks from ThetaData
+### 7.5. Recalculate Missing US Option Greeks Locally
 
-When imported US option `1m` rows are missing Greeks because the underlying was not covered by the stock flatfiles, use the ThetaData daily-Greeks backfill command:
+When imported US option `1m` rows are missing Greeks, use the local backfill command to recompute them from the corresponding stock minute bars already stored in ClickHouse:
 
 ```bash
 go run ./cmd/us-market-greeks-backfill \
   --start-date 2023-01-03 \
   --end-date 2025-12-31 \
-  --symbols "SPX,SPXW,XSP,VIX,VIXW,RUT,RUTW,NDX,NDXP,DJX,OEX,MRUT,NANOS" \
+  --symbols "SPY,QQQ,IWM,DIA,AAPL,TSLA" \
   --clickhouse-dsn "clickhouse://default:@localhost:9000/default" \
   --workers 4 \
   --batch-size 50000
@@ -1048,10 +1048,10 @@ go run ./cmd/us-market-greeks-backfill \
 
 Notes:
 - The command only scans rows that are still missing one or more of `underlying_close`, `implied_volatility`, `delta`, `gamma`, `vega`, `theta`, or `rho`.
-- ThetaData EOD chain requests are made day by day with `expiration=*`, then matched back onto ClickHouse rows by `expiration + strike + option_type`.
-- Known index-option alias families such as `SPX/SPXW`, `RUT/RUTW`, `VIX/VIXW`, and `NDX/NDXP` are tried automatically.
-- If ThetaData returns `No data found` for a product/day, that task is logged as `SKIPPED` and the batch continues.
-- Backfilled rows use the confirmed daily ThetaData Greeks as authoritative values for all affected `1m` rows of the matched contract on that market date.
+- Each missing row is recomputed from the latest available underlying close at or before that option-bar timestamp on the same market date.
+- The command does not call any external greek vendor; if the required underlying minute bars do not exist locally, the task remains unresolved and is reported in the summary.
+- For index options such as `SPX` or `NDX`, local backfill only works if you also ingest a matching local underlying minute series into `us_stocks_bar_1m`.
+- `cmd/us-market-flatfiles-sync` now runs this recalculation automatically for the downloaded date range after import; pass `--skip-greeks-backfill` only if you explicitly want to suppress it.
 
 ### 8. Backfill Feature-Store Snapshots
 
@@ -1144,7 +1144,7 @@ cmd/
   feature-store-backfill/      Precompute volatility/liquidity/panel snapshots
   options-kline-backfill/      Backfill higher K-line windows from 1m base
   us-market-import/            Polygon OPRA/SIP flatfile importer (session-aware)
-  us-market-greeks-backfill/   ThetaData daily greeks backfill for US options
+  us-market-greeks-backfill/   Local missing-greeks recalculation for US options
 internal/
   api/           Gin HTTP handlers & router
   backtest/      Core engine: Strategy, Engine, Broker, Indicator DAG, DataSet, OptionsChain, SpreadGroup

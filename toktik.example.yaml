@@ -20,10 +20,6 @@ api:
 paths:
   schema_dir: "schema/clickhouse"
 
-thetadata:
-  base_url: "http://127.0.0.1:25503/v3"
-  timeout_seconds: 120
-
 deribit:
   base_url: "https://www.deribit.com"
 
