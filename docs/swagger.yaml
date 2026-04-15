@@ -966,6 +966,33 @@ definitions:
       volume:
         type: integer
     type: object
+  github_com_Cyvadra_toktik_internal_dto.StrategyBacktestDSLParam:
+    properties:
+      default: {}
+      max:
+        type: number
+      min:
+        type: number
+      name:
+        type: string
+      options:
+        items:
+          type: string
+        type: array
+      step:
+        type: number
+      title:
+        type: string
+      type:
+        type: string
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.StrategyBacktestDSLProfile:
+    properties:
+      regular_trade:
+        type: string
+      uses_options:
+        type: boolean
+    type: object
   github_com_Cyvadra_toktik_internal_dto.StrategyBacktestProgress:
     properties:
       completed:
@@ -1012,6 +1039,13 @@ definitions:
         type: number
       direction:
         type: string
+      dsl:
+        type: string
+      dsl_params:
+        additionalProperties: true
+        type: object
+      dsl_profile:
+        $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.StrategyBacktestDSLProfile'
       from:
         type: string
       html_output:
@@ -1173,6 +1207,61 @@ definitions:
         type: number
       winning_trades:
         type: integer
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.StrategyBacktestValidationItem:
+    properties:
+      canonical_name:
+        type: string
+      display_name:
+        type: string
+      dsl_params:
+        items:
+          $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.StrategyBacktestDSLParam'
+        type: array
+      profile_label:
+        type: string
+      profile_source:
+        type: string
+      regular_trade:
+        type: string
+      runtime:
+        $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.StrategyBacktestValidationRuntime'
+      uses_options:
+        type: boolean
+      warnings:
+        items:
+          type: string
+        type: array
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.StrategyBacktestValidationResponse:
+    properties:
+      strategies:
+        items:
+          $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.StrategyBacktestValidationItem'
+        type: array
+      strategy_count:
+        type: integer
+      strategy_label:
+        type: string
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.StrategyBacktestValidationRuntime:
+    properties:
+      capital_explanation:
+        type: string
+      capital_mode:
+        type: string
+      capital_unit:
+        type: string
+      instrument:
+        type: string
+      market:
+        type: string
+      options_chain_required:
+        type: boolean
+      options_unit:
+        type: string
+      regular_trade_summary:
+        type: string
     type: object
   github_com_Cyvadra_toktik_internal_dto.StrategyCatalogEntry:
     properties:
@@ -1789,15 +1878,15 @@ paths:
         required: true
         type: string
       produces:
-      - application/json
       - text/html
+      - application/json
       responses:
         "200":
-          description: HTML report
+          description: OK
           schema:
             type: string
         "202":
-          description: Run status while report is not ready
+          description: Accepted
           schema:
             $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.StrategyBacktestRunStatus'
         "404":
@@ -1831,15 +1920,15 @@ paths:
         required: true
         type: string
       produces:
-      - application/json
       - text/html
+      - application/json
       responses:
         "200":
-          description: HTML report
+          description: OK
           schema:
             type: string
         "202":
-          description: Run status while report is not ready
+          description: Accepted
           schema:
             $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.StrategyBacktestRunStatus'
         "404":
@@ -1855,6 +1944,37 @@ paths:
           schema:
             $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
       summary: Get a named backtest report
+      tags:
+      - Backtests
+  /backtests/validate:
+    post:
+      consumes:
+      - application/json
+      description: Validates strategy or DSL backtest inputs, resolves strategy metadata,
+        and performs a prepare-time preflight check without starting an async run.
+      parameters:
+      - description: Backtest validation configuration
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.StrategyBacktestRunRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.StrategyBacktestValidationResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+      summary: Validate a strategy backtest request
       tags:
       - Backtests
   /crypto-options/backtest:

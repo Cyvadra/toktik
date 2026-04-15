@@ -35,6 +35,7 @@ import (
 	appCli "github.com/Cyvadra/toktik/internal/cli"
 	"github.com/Cyvadra/toktik/internal/config"
 	"github.com/Cyvadra/toktik/internal/service"
+	_ "github.com/Cyvadra/toktik/pkg/dsl/catalog"
 	"github.com/Cyvadra/toktik/pkg/feeds"
 	_ "github.com/Cyvadra/toktik/pkg/feeds/dvol"
 )

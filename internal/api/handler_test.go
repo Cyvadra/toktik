@@ -67,10 +67,13 @@ type mockIndicatorProvider struct {
 }
 
 type mockStrategyBacktests struct {
-	startResp  *dto.StrategyBacktestRunAccepted
-	statusResp *dto.StrategyBacktestRunStatus
-	stream     <-chan dto.StrategyBacktestSSEvent
-	err        error
+	validateResp *dto.StrategyBacktestValidationResponse
+	startResp    *dto.StrategyBacktestRunAccepted
+	statusResp   *dto.StrategyBacktestRunStatus
+	stream       <-chan dto.StrategyBacktestSSEvent
+	validateReq  dto.StrategyBacktestRunRequest
+	startReq     dto.StrategyBacktestRunRequest
+	err          error
 }
 
 type mockPolygonProvider struct {
@@ -183,7 +186,13 @@ func (m *mockFeature) QuerySkewHistory(_ context.Context, _ dto.FeatureSkewHisto
 	return nil, m.err
 }
 
-func (m *mockStrategyBacktests) StartStrategyBacktest(_ context.Context, _ dto.StrategyBacktestRunRequest) (*dto.StrategyBacktestRunAccepted, error) {
+func (m *mockStrategyBacktests) ValidateStrategyBacktest(_ context.Context, req dto.StrategyBacktestRunRequest) (*dto.StrategyBacktestValidationResponse, error) {
+	m.validateReq = req
+	return m.validateResp, m.err
+}
+
+func (m *mockStrategyBacktests) StartStrategyBacktest(_ context.Context, req dto.StrategyBacktestRunRequest) (*dto.StrategyBacktestRunAccepted, error) {
+	m.startReq = req
 	return m.startResp, m.err
 }
 
@@ -1058,6 +1067,14 @@ func TestFeatureDailyPanelRoute(t *testing.T) {
 
 func TestStartStrategyBacktestRoute(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+	mockBacktests := &mockStrategyBacktests{startResp: &dto.StrategyBacktestRunAccepted{
+		RunID:     "run-123",
+		Status:    "queued",
+		CreatedAt: time.Date(2026, 4, 7, 8, 0, 0, 0, time.UTC),
+		StatusURL: "/api/v1/backtests/runs/run-123",
+		EventsURL: "/api/v1/backtests/runs/run-123/events",
+		ReportURL: "/internal/ignored/by-handler",
+	}}
 	r := NewRouter(
 		&mockQuerier{},
 		&mockUSStocksQuerier{},
@@ -1065,14 +1082,7 @@ func TestStartStrategyBacktestRoute(t *testing.T) {
 		&mockInfra{},
 		&mockFeature{},
 		nil,
-		&mockStrategyBacktests{startResp: &dto.StrategyBacktestRunAccepted{
-			RunID:     "run-123",
-			Status:    "queued",
-			CreatedAt: time.Date(2026, 4, 7, 8, 0, 0, 0, time.UTC),
-			StatusURL: "/api/v1/backtests/runs/run-123",
-			EventsURL: "/api/v1/backtests/runs/run-123/events",
-			ReportURL: "/internal/ignored/by-handler",
-		}},
+		mockBacktests,
 		nil, nil, nil, nil, nil,
 	)
 
@@ -1094,6 +1104,115 @@ func TestStartStrategyBacktestRoute(t *testing.T) {
 	}
 	if resp.ReportURL != "/api/v1/backtests/runs/run-123/report" {
 		t.Fatalf("unexpected report url: %+v", resp)
+	}
+	if mockBacktests.startReq.Asset != "BTC" || mockBacktests.startReq.Capital != 5 {
+		t.Fatalf("unexpected captured request: %+v", mockBacktests.startReq)
+	}
+}
+
+func TestValidateStrategyBacktestRouteWithDSL(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	validateResp := &dto.StrategyBacktestValidationResponse{
+		StrategyLabel: "runtime-dsl",
+		StrategyCount: 1,
+		Strategies: []dto.StrategyBacktestValidationItem{{
+			DisplayName:   "Runtime DSL",
+			ProfileLabel:  "常规交易",
+			ProfileSource: "inferred",
+			Runtime: &dto.StrategyBacktestValidationRuntime{
+				Market:               "crypto",
+				Instrument:           "auto",
+				CapitalMode:          "usd",
+				CapitalUnit:          "USD",
+				CapitalExplanation:   "该策略不包含合约逻辑，capital 按 USD 计价。",
+				OptionsChainRequired: false,
+				RegularTradeSummary:  "Regular trades consume meaningful capital alongside any option legs.",
+			},
+			Warnings: []string{"dsl_profile not provided; strategy profile was inferred from the DSL AST and may need an explicit override for scripts with indirect option helpers or atypical execution wrappers."},
+			DSLParams: []dto.StrategyBacktestDSLParam{{
+				Name:    "length",
+				Title:   "Length",
+				Type:    "int",
+				Default: 5,
+			}},
+		}},
+	}
+	mockBacktests := &mockStrategyBacktests{validateResp: validateResp}
+	r := NewRouter(
+		&mockQuerier{},
+		&mockUSStocksQuerier{},
+		&mockUSOptionsQuerier{},
+		&mockInfra{},
+		&mockFeature{},
+		nil,
+		mockBacktests,
+		nil, nil, nil, nil, nil,
+	)
+
+	body := `{"asset":"BTC","from":"2026-01-01","to":"2026-02-01","capital":5,"dsl":"strategy(\"Runtime DSL\")\nlength = input.int(5, title=\"Length\")\nplot(close, title=\"Close\")","dsl_params":{"Length":8}}`
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("POST", "/api/v1/backtests/validate", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if strings.TrimSpace(mockBacktests.validateReq.DSL) == "" {
+		t.Fatalf("expected DSL in validate request, got %+v", mockBacktests.validateReq)
+	}
+	var resp dto.StrategyBacktestValidationResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if resp.StrategyCount != 1 || len(resp.Strategies) != 1 {
+		t.Fatalf("unexpected validate response: %+v", resp)
+	}
+	if len(resp.Strategies[0].DSLParams) != 1 || resp.Strategies[0].DSLParams[0].Title != "Length" {
+		t.Fatalf("unexpected validate params: %+v", resp.Strategies[0].DSLParams)
+	}
+	if resp.Strategies[0].ProfileSource != "inferred" || len(resp.Strategies[0].Warnings) != 1 {
+		t.Fatalf("unexpected validate warnings/profile source: %+v", resp.Strategies[0])
+	}
+}
+
+func TestStartStrategyBacktestRouteWithDSL(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	mockBacktests := &mockStrategyBacktests{startResp: &dto.StrategyBacktestRunAccepted{
+		RunID:     "run-dsl",
+		Status:    "queued",
+		CreatedAt: time.Date(2026, 4, 7, 8, 0, 0, 0, time.UTC),
+		StatusURL: "/api/v1/backtests/runs/run-dsl",
+		EventsURL: "/api/v1/backtests/runs/run-dsl/events",
+	}}
+	r := NewRouter(
+		&mockQuerier{},
+		&mockUSStocksQuerier{},
+		&mockUSOptionsQuerier{},
+		&mockInfra{},
+		&mockFeature{},
+		nil,
+		mockBacktests,
+		nil, nil, nil, nil, nil,
+	)
+
+	body := `{"asset":"BTC","from":"2026-01-01","to":"2026-02-01","capital":5,"dsl":"strategy(\"Runtime DSL\")\nlength = input.int(5, title=\"Length\")\nif bar_index == 0 {\n  strategy.entry(id=\"long\", direction=strategy.long, qty=1)\n}","dsl_params":{"Length":8},"dsl_profile":{"uses_options":false,"regular_trade":"material"}}`
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("POST", "/api/v1/backtests/runs", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d: %s", w.Code, w.Body.String())
+	}
+	if strings.TrimSpace(mockBacktests.startReq.DSL) == "" {
+		t.Fatalf("expected DSL to be bound, got %+v", mockBacktests.startReq)
+	}
+	if mockBacktests.startReq.DSLParams["Length"] != float64(8) {
+		t.Fatalf("unexpected DSL params: %+v", mockBacktests.startReq.DSLParams)
+	}
+	if mockBacktests.startReq.DSLProfile == nil || mockBacktests.startReq.DSLProfile.UsesOptions == nil || *mockBacktests.startReq.DSLProfile.UsesOptions {
+		t.Fatalf("unexpected DSL profile: %+v", mockBacktests.startReq.DSLProfile)
 	}
 }
 

@@ -154,8 +154,8 @@ const docTemplate = `{
             "get": {
                 "description": "Returns the reserved HTML report for a backtest run. Before completion, it returns 202 with the current run status.",
                 "produces": [
-                    "application/json",
-                    "text/html"
+                    "text/html",
+                    "application/json"
                 ],
                 "tags": [
                     "Backtests"
@@ -172,13 +172,13 @@ const docTemplate = `{
                 ],
                 "responses": {
                     "200": {
-                        "description": "HTML report",
+                        "description": "OK",
                         "schema": {
                             "type": "string"
                         }
                     },
                     "202": {
-                        "description": "Run status while report is not ready",
+                        "description": "Accepted",
                         "schema": {
                             "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.StrategyBacktestRunStatus"
                         }
@@ -208,8 +208,8 @@ const docTemplate = `{
             "get": {
                 "description": "Returns an HTML report variant for a backtest run. Use reportID=overview for the overview page or 1..N for per-strategy detail pages.",
                 "produces": [
-                    "application/json",
-                    "text/html"
+                    "text/html",
+                    "application/json"
                 ],
                 "tags": [
                     "Backtests"
@@ -233,13 +233,13 @@ const docTemplate = `{
                 ],
                 "responses": {
                     "200": {
-                        "description": "HTML report",
+                        "description": "OK",
                         "schema": {
                             "type": "string"
                         }
                     },
                     "202": {
-                        "description": "Run status while report is not ready",
+                        "description": "Accepted",
                         "schema": {
                             "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.StrategyBacktestRunStatus"
                         }
@@ -252,6 +252,52 @@ const docTemplate = `{
                     },
                     "409": {
                         "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/backtests/validate": {
+            "post": {
+                "description": "Validates strategy or DSL backtest inputs, resolves strategy metadata, and performs a prepare-time preflight check without starting an async run.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Backtests"
+                ],
+                "summary": "Validate a strategy backtest request",
+                "parameters": [
+                    {
+                        "description": "Backtest validation configuration",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.StrategyBacktestRunRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.StrategyBacktestValidationResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
                         "schema": {
                             "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse"
                         }
@@ -4492,6 +4538,47 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_Cyvadra_toktik_internal_dto.StrategyBacktestDSLParam": {
+            "type": "object",
+            "properties": {
+                "default": {},
+                "max": {
+                    "type": "number"
+                },
+                "min": {
+                    "type": "number"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "options": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "step": {
+                    "type": "number"
+                },
+                "title": {
+                    "type": "string"
+                },
+                "type": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_Cyvadra_toktik_internal_dto.StrategyBacktestDSLProfile": {
+            "type": "object",
+            "properties": {
+                "regular_trade": {
+                    "type": "string"
+                },
+                "uses_options": {
+                    "type": "boolean"
+                }
+            }
+        },
         "github_com_Cyvadra_toktik_internal_dto.StrategyBacktestProgress": {
             "type": "object",
             "properties": {
@@ -4567,6 +4654,16 @@ const docTemplate = `{
                 },
                 "direction": {
                     "type": "string"
+                },
+                "dsl": {
+                    "type": "string"
+                },
+                "dsl_params": {
+                    "type": "object",
+                    "additionalProperties": true
+                },
+                "dsl_profile": {
+                    "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.StrategyBacktestDSLProfile"
                 },
                 "from": {
                     "type": "string"
@@ -4803,6 +4900,90 @@ const docTemplate = `{
                 },
                 "winning_trades": {
                     "type": "integer"
+                }
+            }
+        },
+        "github_com_Cyvadra_toktik_internal_dto.StrategyBacktestValidationItem": {
+            "type": "object",
+            "properties": {
+                "canonical_name": {
+                    "type": "string"
+                },
+                "display_name": {
+                    "type": "string"
+                },
+                "dsl_params": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.StrategyBacktestDSLParam"
+                    }
+                },
+                "profile_label": {
+                    "type": "string"
+                },
+                "profile_source": {
+                    "type": "string"
+                },
+                "regular_trade": {
+                    "type": "string"
+                },
+                "runtime": {
+                    "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.StrategyBacktestValidationRuntime"
+                },
+                "uses_options": {
+                    "type": "boolean"
+                },
+                "warnings": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "github_com_Cyvadra_toktik_internal_dto.StrategyBacktestValidationResponse": {
+            "type": "object",
+            "properties": {
+                "strategies": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.StrategyBacktestValidationItem"
+                    }
+                },
+                "strategy_count": {
+                    "type": "integer"
+                },
+                "strategy_label": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_Cyvadra_toktik_internal_dto.StrategyBacktestValidationRuntime": {
+            "type": "object",
+            "properties": {
+                "capital_explanation": {
+                    "type": "string"
+                },
+                "capital_mode": {
+                    "type": "string"
+                },
+                "capital_unit": {
+                    "type": "string"
+                },
+                "instrument": {
+                    "type": "string"
+                },
+                "market": {
+                    "type": "string"
+                },
+                "options_chain_required": {
+                    "type": "boolean"
+                },
+                "options_unit": {
+                    "type": "string"
+                },
+                "regular_trade_summary": {
+                    "type": "string"
                 }
             }
         },

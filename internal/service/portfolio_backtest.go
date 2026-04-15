@@ -57,11 +57,12 @@ const (
 )
 
 type PortfolioBacktestService struct {
-	conn        driver.Conn
-	factorStore *feeds.Store
-	now         func() time.Time
-	chainLoader func(context.Context, string, string, string, time.Time, time.Time) (backtest.OptionsChainProvider, error)
-	chainCache  *optionsChainProviderCache
+	conn          driver.Conn
+	factorStore   *feeds.Store
+	now           func() time.Time
+	chainLoader   func(context.Context, string, string, string, time.Time, time.Time) (backtest.OptionsChainProvider, error)
+	engineBuilder func(backtest.Config, backtest.OptionsChainProvider, bool) *backtest.Engine
+	chainCache    *optionsChainProviderCache
 
 	mu   sync.RWMutex
 	runs map[string]*portfolioBacktestRun
@@ -116,6 +117,9 @@ func NewPortfolioBacktestService(conn driver.Conn, factorStore *feeds.Store) *Po
 		runs:        make(map[string]*portfolioBacktestRun),
 	}
 	svc.chainLoader = svc.defaultChainLoader
+	svc.engineBuilder = func(cfg backtest.Config, chainProvider backtest.OptionsChainProvider, usesOptions bool) *backtest.Engine {
+		return newPortfolioBacktestEngine(cfg, svc.conn, svc.factorStore, chainProvider, usesOptions)
+	}
 	svc.chainCache = newOptionsChainProviderCache(svc.now, defaultChainProviderTTL, maxChainProviderEntries)
 	return svc
 }
@@ -325,112 +329,51 @@ func (s *PortfolioBacktestService) executeRun(run *portfolioBacktestRun) {
 	run.markCompleted(completedAt, result)
 }
 
+func (s *PortfolioBacktestService) ValidateStrategyBacktest(ctx context.Context, req dto.StrategyBacktestRunRequest) (*dto.StrategyBacktestValidationResponse, error) {
+	plan, err := s.resolveBacktestPlan(ctx, nil, req)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.preflightBacktestPlan(ctx, nil, plan); err != nil {
+		return nil, err
+	}
+	return buildStrategyBacktestValidationResponse(plan), nil
+}
+
 func (s *PortfolioBacktestService) runBacktest(ctx context.Context, run *portfolioBacktestRun, req dto.StrategyBacktestRunRequest) (*dto.StrategyBacktestRunResult, error) {
-	from, to, err := dto.ParseTimeRange(req.From, req.To)
+	plan, err := s.resolveBacktestPlan(ctx, run, req)
 	if err != nil {
 		return nil, err
 	}
-	if err := validateStrategyBacktestRunRequest(req); err != nil {
-		return nil, err
-	}
-
-	strategyCfg := strategies.DefaultConfig()
-	strategyCfg.PositionSize = req.PositionSize
-	strategyCfg.MaxHoldTime = time.Duration(req.MaxHoldHours * float64(time.Hour))
-	strategyCfg.TargetExpiryDays = req.TargetExpiryDays
-	strategyCfg.MinExpiryDays = req.MinExpiryDays
-	strategyCfg.MinPremium = req.MinPremium
-	strategyCfg.ShortDeltaMin = req.ShortDeltaMin
-	strategyCfg.ShortDeltaMax = req.ShortDeltaMax
-	strategyCfg.LongDeltaMin = req.LongDeltaMin
-	strategyCfg.LongDeltaMax = req.LongDeltaMax
-	strategyCfg.SignalSource = strings.TrimSpace(req.SignalSource)
-	strategyCfg.EntryPriceMode, err = parseOptionPriceMode(defaultString(req.SpreadEntryPriceMode, "mark_close"), "spread_entry_price_mode")
-	if err != nil {
-		return nil, err
-	}
-	strategyCfg.ExitPriceMode, err = parseOptionPriceMode(defaultString(req.SpreadExitPriceMode, "mark_close"), "spread_exit_price_mode")
-	if err != nil {
-		return nil, err
-	}
-	strategyCfg.ValuationPriceMode, err = parseOptionPriceMode(defaultString(req.SpreadValuationPriceMode, "mark_close"), "spread_valuation_price_mode")
-	if err != nil {
-		return nil, err
-	}
-	strategyCfg.MAPeriod = req.MAPeriod
-	strategyCfg.PThreshold = req.PThreshold
-
-	tradeDirection, err := parseTradeDirection(defaultString(req.Direction, "both"))
-	if err != nil {
-		return nil, err
-	}
-	strategyCfg.Direction = tradeDirection
-
-	primaryMarket, err := parsePrimaryMarket(defaultString(req.Market, marketCrypto))
-	if err != nil {
-		return nil, err
-	}
-	tradeScope, err := parseInstrumentScope(defaultString(req.Instrument, string(instrumentAuto)))
-	if err != nil {
-		return nil, err
-	}
-	asset := strings.ToUpper(strings.TrimSpace(req.Asset))
-	interval := defaultString(req.Interval, "1h")
-	strategyRequest := defaultString(req.Strategy, "both")
-
-	resolved, err := strategies.ResolveDetailed(strategyRequest, strategyCfg, asset)
-	if err != nil {
-		return nil, err
-	}
-	if err := validateInstrumentScope(tradeScope, resolved); err != nil {
-		return nil, err
-	}
-
-	commissionModel, err := parseCommissionModel(defaultString(req.CommissionModel, "none"))
-	if err != nil {
-		return nil, err
-	}
-
-	var chainProvider backtest.OptionsChainProvider
-	if shouldLoadOptionChain(tradeScope, resolved) {
-		run.setProgress(&dto.StrategyBacktestProgress{
-			Phase:     string(backtest.ProgressPhasePrepare),
-			Current:   0,
-			Total:     1,
-			Percent:   0,
-			Message:   fmt.Sprintf("loading options chain for %s [%s/%s]", asset, primaryMarket.name, interval),
-			StartedAt: derefTime(run.startedAt),
-			Timestamp: s.now().UTC(),
-		})
-		chainProvider, err = s.loadOptionsChainProvider(ctx, primaryMarket.name, asset, interval, from, to)
-		if err != nil {
-			return nil, fmt.Errorf("load options chain: %w", err)
+	if strings.TrimSpace(req.DSL) != "" {
+		if err := s.preflightBacktestPlan(ctx, run, plan); err != nil {
+			return nil, err
 		}
 	}
 
 	runDir := filepath.Join(defaultBacktestHTMLDir, defaultAPIRunHTMLSubdir, run.id)
 	htmlBase := strings.TrimSpace(req.HTMLOutput)
-	htmlMeta := report.HTMLMeta{Asset: asset, Interval: interval, GeneratedAt: s.now()}
-	resultSet := make([]dto.StrategyBacktestSummary, 0, len(resolved))
-	overviewItems := make([]report.OverviewItem, 0, len(resolved))
+	htmlMeta := report.HTMLMeta{Asset: plan.asset, Interval: plan.interval, GeneratedAt: s.now()}
+	resultSet := make([]dto.StrategyBacktestSummary, 0, len(plan.resolved))
+	overviewItems := make([]report.OverviewItem, 0, len(plan.resolved))
 
-	for index, item := range resolved {
-		capitalProfile := resolveCapitalProfile(primaryMarket, item.Profile, asset)
-		engine := newPortfolioBacktestEngine(backtest.Config{
+	for index, item := range plan.resolved {
+		capitalProfile := resolveCapitalProfile(plan.primaryMarket, item.Profile, plan.asset)
+		engine := s.engineBuilder(backtest.Config{
 			InitialCapital:  req.Capital,
 			AccountUnit:     capitalProfile.unit,
-			CommissionModel: commissionModel,
+			CommissionModel: plan.commissionModel,
 			CommissionValue: req.CommissionValue,
 			SlippagePct:     req.SlippagePct,
 			ExecutionMode:   backtest.ExecutionPriceCanonical,
 			ValuationMode:   backtest.ValuationPriceClose,
 			TriggerMode:     backtest.TriggerPriceCanonical,
-		}, s.conn, s.factorStore, chainProvider, item.Profile.UsesOptions)
+		}, plan.chainProvider, item.Profile.UsesOptions)
 		engine.SetProgressFunc(func(update backtest.ProgressUpdate) {
 			run.setProgress(progressFromUpdate(update))
 		})
 
-		result, runErr := engine.Run(ctx, primaryMarket.underlyingFeed, asset, interval, from, to, item.Strategy, nil)
+		result, runErr := engine.Run(ctx, plan.primaryMarket.underlyingFeed, plan.asset, plan.interval, plan.from, plan.to, item.Strategy, nil)
 		if runErr != nil {
 			return nil, fmt.Errorf("run strategy %s: %w", item.Strategy.Name(), runErr)
 		}
@@ -438,7 +381,7 @@ func (s *PortfolioBacktestService) runBacktest(ctx context.Context, run *portfol
 		result.CapitalProfile = item.Runtime.ProfileLabel
 		result.CapitalNote = capitalProfile.note
 
-		htmlPath := resolveAPIHTMLOutputPath(htmlBase, runDir, result.StrategyName, asset, interval, from, to, index, len(resolved))
+		htmlPath := resolveAPIHTMLOutputPath(htmlBase, runDir, result.StrategyName, plan.asset, plan.interval, plan.from, plan.to, index, len(plan.resolved))
 		if err := report.WriteBacktestHTML(htmlPath, result, htmlMeta); err != nil {
 			return nil, fmt.Errorf("write html report for %s: %w", result.StrategyName, err)
 		}
@@ -448,7 +391,7 @@ func (s *PortfolioBacktestService) runBacktest(ctx context.Context, run *portfol
 
 	resp := &dto.StrategyBacktestRunResult{Summaries: resultSet}
 	if len(resultSet) > 1 {
-		overviewPath := resolveAPIOverviewHTMLOutputPath(htmlBase, runDir, strategyRequest, asset, interval, from, to)
+		overviewPath := resolveAPIOverviewHTMLOutputPath(htmlBase, runDir, describeResolvedStrategies(plan.resolved, plan.strategyLabel), plan.asset, plan.interval, plan.from, plan.to)
 		if err := report.WriteBacktestOverviewHTML(overviewPath, overviewItems, htmlMeta); err != nil {
 			return nil, fmt.Errorf("write overview html report: %w", err)
 		}
@@ -510,6 +453,17 @@ func validateStrategyBacktestRunRequest(req dto.StrategyBacktestRunRequest) erro
 	}
 	if req.LongDeltaMax > 0 && req.LongDeltaMin > req.LongDeltaMax {
 		return dto.NewValidationError("long_delta_min must be <= long_delta_max")
+	}
+	if strings.TrimSpace(req.DSL) != "" && strings.TrimSpace(req.Strategy) != "" {
+		return dto.NewValidationError("strategy and dsl are mutually exclusive")
+	}
+	if strings.TrimSpace(req.DSL) == "" {
+		if len(req.DSLParams) > 0 {
+			return dto.NewValidationError("dsl_params requires dsl")
+		}
+		if req.DSLProfile != nil {
+			return dto.NewValidationError("dsl_profile requires dsl")
+		}
 	}
 	return nil
 }

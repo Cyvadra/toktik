@@ -62,25 +62,34 @@ func ExtractParams(prog *ast.Program) []ParamSchema {
 	}
 	var params []ParamSchema
 	for _, stmt := range prog.Stmts {
-		id, ok := stmt.(*ast.InputDecl)
-		if !ok {
-			continue
+		switch node := stmt.(type) {
+		case *ast.InputDecl:
+			params = append(params, extractInputDecl(node))
+		case *ast.VarDecl:
+			call, ok := node.Value.(*ast.CallExpr)
+			if !ok || !isInputCall(call.Callee) {
+				continue
+			}
+			params = append(params, extractInputCall(node.Name, call))
 		}
-		ps := extractInputDecl(id)
-		params = append(params, ps)
 	}
 	return params
 }
 
+func extractInputCall(name string, call *ast.CallExpr) ParamSchema {
+	funcName := inputCallName(call.Callee)
+	return extractInputSchema(name, funcName, call.Args)
+}
+
 func extractInputDecl(id *ast.InputDecl) ParamSchema {
-	ps := ParamSchema{
-		Name: id.Name,
-	}
+	funcName := strings.TrimSpace(id.Token.Literal)
+	return extractInputSchema(id.Name, funcName, id.Args)
+}
+
+func extractInputSchema(name, funcName string, argsList []ast.CallArg) ParamSchema {
+	ps := ParamSchema{Name: name}
 
 	// Determine type and resolve args by inspecting the call function name.
-	// InputDecl.Token.Literal contains the function name (e.g., "input", "input.int").
-	funcName := strings.TrimSpace(id.Token.Literal)
-
 	switch {
 	case funcName == "input.int":
 		ps.Type = ParamInt
@@ -96,7 +105,7 @@ func extractInputDecl(id *ast.InputDecl) ParamSchema {
 	}
 
 	// Collect named and positional args.
-	args := resolveInputArgs(id.Args, ps.Type)
+	args := resolveInputArgs(argsList, ps.Type)
 
 	// Resolve title.
 	if t, ok := args["title"]; ok {
@@ -140,6 +149,26 @@ func extractInputDecl(id *ast.InputDecl) ParamSchema {
 	}
 
 	return ps
+}
+
+func isInputCall(expr ast.Expr) bool {
+	name := inputCallName(expr)
+	return name == "input" || name == "input.int" || name == "input.float" || name == "input.bool" || name == "input.string"
+}
+
+func inputCallName(expr ast.Expr) string {
+	switch node := expr.(type) {
+	case *ast.IdentExpr:
+		return strings.TrimSpace(node.Name)
+	case *ast.DotExpr:
+		left := inputCallName(node.Object)
+		if left == "" {
+			return strings.TrimSpace(node.Field)
+		}
+		return left + "." + strings.TrimSpace(node.Field)
+	default:
+		return ""
+	}
 }
 
 // resolveInputArgs extracts named/positional args from an InputDecl's CallArg list.

@@ -6,34 +6,82 @@ import (
 )
 
 type StrategyBacktestRunRequest struct {
-	Market                   string  `json:"market,omitempty"`
-	Instrument               string  `json:"instrument,omitempty"`
-	Asset                    string  `json:"asset" binding:"required"`
-	Interval                 string  `json:"interval,omitempty"`
-	From                     string  `json:"from" binding:"required"`
-	To                       string  `json:"to" binding:"required"`
-	Capital                  float64 `json:"capital" binding:"required"`
-	Strategy                 string  `json:"strategy,omitempty"`
-	SignalSource             string  `json:"signal_source,omitempty"`
-	CommissionModel          string  `json:"commission_model,omitempty"`
-	CommissionValue          float64 `json:"commission_value,omitempty"`
-	SlippagePct              float64 `json:"slippage_pct,omitempty"`
-	HTMLOutput               string  `json:"html_output,omitempty"`
-	PositionSize             float64 `json:"position_size,omitempty"`
-	MaxHoldHours             float64 `json:"max_hold_hours,omitempty"`
-	TargetExpiryDays         int     `json:"target_expiry_days,omitempty"`
-	MinExpiryDays            int     `json:"min_expiry_days,omitempty"`
-	MinPremium               float64 `json:"min_premium,omitempty"`
-	ShortDeltaMin            float64 `json:"short_delta_min,omitempty"`
-	ShortDeltaMax            float64 `json:"short_delta_max,omitempty"`
-	LongDeltaMin             float64 `json:"long_delta_min,omitempty"`
-	LongDeltaMax             float64 `json:"long_delta_max,omitempty"`
-	SpreadEntryPriceMode     string  `json:"spread_entry_price_mode,omitempty"`
-	SpreadExitPriceMode      string  `json:"spread_exit_price_mode,omitempty"`
-	SpreadValuationPriceMode string  `json:"spread_valuation_price_mode,omitempty"`
-	MAPeriod                 int     `json:"ma_period,omitempty"`
-	PThreshold               float64 `json:"p_threshold,omitempty"`
-	Direction                string  `json:"direction,omitempty"`
+	Market                   string                      `json:"market,omitempty"`
+	Instrument               string                      `json:"instrument,omitempty"`
+	Asset                    string                      `json:"asset" binding:"required"`
+	Interval                 string                      `json:"interval,omitempty"`
+	From                     string                      `json:"from" binding:"required"`
+	To                       string                      `json:"to" binding:"required"`
+	Capital                  float64                     `json:"capital" binding:"required"`
+	Strategy                 string                      `json:"strategy,omitempty"`
+	DSL                      string                      `json:"dsl,omitempty"`
+	DSLParams                map[string]interface{}      `json:"dsl_params,omitempty"`
+	DSLProfile               *StrategyBacktestDSLProfile `json:"dsl_profile,omitempty"`
+	SignalSource             string                      `json:"signal_source,omitempty"`
+	CommissionModel          string                      `json:"commission_model,omitempty"`
+	CommissionValue          float64                     `json:"commission_value,omitempty"`
+	SlippagePct              float64                     `json:"slippage_pct,omitempty"`
+	HTMLOutput               string                      `json:"html_output,omitempty"`
+	PositionSize             float64                     `json:"position_size,omitempty"`
+	MaxHoldHours             float64                     `json:"max_hold_hours,omitempty"`
+	TargetExpiryDays         int                         `json:"target_expiry_days,omitempty"`
+	MinExpiryDays            int                         `json:"min_expiry_days,omitempty"`
+	MinPremium               float64                     `json:"min_premium,omitempty"`
+	ShortDeltaMin            float64                     `json:"short_delta_min,omitempty"`
+	ShortDeltaMax            float64                     `json:"short_delta_max,omitempty"`
+	LongDeltaMin             float64                     `json:"long_delta_min,omitempty"`
+	LongDeltaMax             float64                     `json:"long_delta_max,omitempty"`
+	SpreadEntryPriceMode     string                      `json:"spread_entry_price_mode,omitempty"`
+	SpreadExitPriceMode      string                      `json:"spread_exit_price_mode,omitempty"`
+	SpreadValuationPriceMode string                      `json:"spread_valuation_price_mode,omitempty"`
+	MAPeriod                 int                         `json:"ma_period,omitempty"`
+	PThreshold               float64                     `json:"p_threshold,omitempty"`
+	Direction                string                      `json:"direction,omitempty"`
+}
+
+type StrategyBacktestDSLProfile struct {
+	UsesOptions  *bool  `json:"uses_options,omitempty"`
+	RegularTrade string `json:"regular_trade,omitempty"`
+}
+
+type StrategyBacktestDSLParam struct {
+	Name    string      `json:"name"`
+	Title   string      `json:"title,omitempty"`
+	Type    string      `json:"type"`
+	Default interface{} `json:"default,omitempty"`
+	Min     *float64    `json:"min,omitempty"`
+	Max     *float64    `json:"max,omitempty"`
+	Step    *float64    `json:"step,omitempty"`
+	Options []string    `json:"options,omitempty"`
+}
+
+type StrategyBacktestValidationRuntime struct {
+	Market               string `json:"market,omitempty"`
+	Instrument           string `json:"instrument,omitempty"`
+	CapitalMode          string `json:"capital_mode,omitempty"`
+	CapitalUnit          string `json:"capital_unit,omitempty"`
+	CapitalExplanation   string `json:"capital_explanation,omitempty"`
+	OptionsChainRequired bool   `json:"options_chain_required"`
+	OptionsUnit          string `json:"options_unit,omitempty"`
+	RegularTradeSummary  string `json:"regular_trade_summary,omitempty"`
+}
+
+type StrategyBacktestValidationItem struct {
+	CanonicalName string                             `json:"canonical_name,omitempty"`
+	DisplayName   string                             `json:"display_name"`
+	ProfileLabel  string                             `json:"profile_label,omitempty"`
+	ProfileSource string                             `json:"profile_source,omitempty"`
+	UsesOptions   bool                               `json:"uses_options"`
+	RegularTrade  string                             `json:"regular_trade,omitempty"`
+	Runtime       *StrategyBacktestValidationRuntime `json:"runtime,omitempty"`
+	DSLParams     []StrategyBacktestDSLParam         `json:"dsl_params,omitempty"`
+	Warnings      []string                           `json:"warnings,omitempty"`
+}
+
+type StrategyBacktestValidationResponse struct {
+	StrategyLabel string                           `json:"strategy_label,omitempty"`
+	StrategyCount int                              `json:"strategy_count"`
+	Strategies    []StrategyBacktestValidationItem `json:"strategies"`
 }
 
 type StrategyBacktestRunAccepted struct {

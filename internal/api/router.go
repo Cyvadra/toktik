@@ -31,6 +31,7 @@ func NewRouter(cos CryptoOptionsQuerier, usStocks USStocksQuerier, usOptions USO
 	v1 := r.Group("/api/v1")
 	{
 		backtestsGroup := v1.Group("/backtests")
+		backtestsGroup.POST("/validate", h.ValidateStrategyBacktest)
 		backtestsGroup.POST("/runs", h.StartStrategyBacktest)
 		backtestsGroup.GET("/runs/:runID", h.GetStrategyBacktestRun)
 		backtestsGroup.GET("/runs/:runID/events", h.StreamStrategyBacktestEvents)

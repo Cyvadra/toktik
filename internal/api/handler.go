@@ -730,7 +730,38 @@ func (h *Handler) RunBacktest(c *gin.Context) {
 }
 
 // StartStrategyBacktest handles POST /api/v1/backtests/runs.
-//
+
+// ValidateStrategyBacktest handles POST /api/v1/backtests/validate.
+// @Summary      Validate a strategy backtest request
+// @Description  Validates strategy or DSL backtest inputs, resolves strategy metadata, and performs a prepare-time preflight check without starting an async run.
+// @Tags         Backtests
+// @Accept       json
+// @Produce      json
+// @Param        body  body      dto.StrategyBacktestRunRequest  true  "Backtest validation configuration"
+// @Success      200   {object}  dto.StrategyBacktestValidationResponse
+// @Failure      400   {object}  dto.ErrorResponse
+// @Failure      500   {object}  dto.ErrorResponse
+// @Router       /backtests/validate [post]
+func (h *Handler) ValidateStrategyBacktest(c *gin.Context) {
+	var req dto.StrategyBacktestRunRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: err.Error()})
+		return
+	}
+	if h.strategyBacktests == nil {
+		c.JSON(http.StatusNotImplemented, dto.ErrorResponse{Error: "strategy backtest provider not configured"})
+		return
+	}
+
+	resp, err := h.strategyBacktests.ValidateStrategyBacktest(c.Request.Context(), req)
+	if err != nil {
+		handleServiceError(c, err)
+		return
+	}
+
+	c.JSON(http.StatusOK, resp)
+}
+
 // @Summary      Start an async strategy backtest
 // @Description  Submits a strategy backtest run that executes asynchronously. Poll the run status via GET /backtests/runs/:runID.
 // @Tags         Backtests
