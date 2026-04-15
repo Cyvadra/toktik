@@ -2,6 +2,7 @@ package service
 
 import (
 	"testing"
+	"time"
 
 	"github.com/Cyvadra/toktik/internal/backtest"
 	"github.com/Cyvadra/toktik/internal/dto"
@@ -92,55 +93,90 @@ func TestParseEnum(t *testing.T) {
 func ptrFloat(v float64) *float64 { return &v }
 
 func TestValidateBacktestRequest(t *testing.T) {
+	defaultFrom := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	defaultTo := time.Date(2025, 3, 1, 0, 0, 0, 0, time.UTC)
+
 	tests := []struct {
 		name    string
 		req     dto.BacktestRequest
+		from    time.Time
+		to      time.Time
 		wantErr bool
 	}{
 		{
 			name:    "valid defaults",
 			req:     dto.BacktestRequest{Symbol: "BTC-20250328-90000-C", Interval: "1m", From: "2025-01-01", To: "2025-03-01"},
+			from:    defaultFrom,
+			to:      defaultTo,
 			wantErr: false,
 		},
 		{
 			name:    "valid with explicit params",
 			req:     dto.BacktestRequest{Symbol: "BTC-20250328-90000-C", Interval: "1m", From: "2025-01-01", To: "2025-03-01", Capital: ptrFloat(10), CommissionValue: ptrFloat(0.01), SlippagePct: ptrFloat(0.001)},
+			from:    defaultFrom,
+			to:      defaultTo,
 			wantErr: false,
 		},
 		{
+			name:    "empty symbol",
+			req:     dto.BacktestRequest{},
+			from:    defaultFrom,
+			to:      defaultTo,
+			wantErr: true,
+		},
+		{
+			name:    "range exceeds 5 years",
+			req:     dto.BacktestRequest{Symbol: "BTC-20250328-90000-C"},
+			from:    time.Date(2018, 1, 1, 0, 0, 0, 0, time.UTC),
+			to:      time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC),
+			wantErr: true,
+		},
+		{
 			name:    "negative capital",
-			req:     dto.BacktestRequest{Capital: ptrFloat(-1)},
+			req:     dto.BacktestRequest{Symbol: "BTC", Capital: ptrFloat(-1)},
+			from:    defaultFrom,
+			to:      defaultTo,
 			wantErr: true,
 		},
 		{
 			name:    "zero capital",
-			req:     dto.BacktestRequest{Capital: ptrFloat(0)},
+			req:     dto.BacktestRequest{Symbol: "BTC", Capital: ptrFloat(0)},
+			from:    defaultFrom,
+			to:      defaultTo,
 			wantErr: true,
 		},
 		{
 			name:    "negative commission",
-			req:     dto.BacktestRequest{CommissionValue: ptrFloat(-0.01)},
+			req:     dto.BacktestRequest{Symbol: "BTC", CommissionValue: ptrFloat(-0.01)},
+			from:    defaultFrom,
+			to:      defaultTo,
 			wantErr: true,
 		},
 		{
 			name:    "negative slippage",
-			req:     dto.BacktestRequest{SlippagePct: ptrFloat(-0.01)},
+			req:     dto.BacktestRequest{Symbol: "BTC", SlippagePct: ptrFloat(-0.01)},
+			from:    defaultFrom,
+			to:      defaultTo,
 			wantErr: true,
 		},
 		{
 			name:    "slippage > 1",
-			req:     dto.BacktestRequest{SlippagePct: ptrFloat(1.5)},
+			req:     dto.BacktestRequest{Symbol: "BTC", SlippagePct: ptrFloat(1.5)},
+			from:    defaultFrom,
+			to:      defaultTo,
 			wantErr: true,
 		},
 		{
 			name:    "slippage exactly 1",
-			req:     dto.BacktestRequest{SlippagePct: ptrFloat(1.0)},
+			req:     dto.BacktestRequest{Symbol: "BTC", SlippagePct: ptrFloat(1.0)},
+			from:    defaultFrom,
+			to:      defaultTo,
 			wantErr: false,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := validateBacktestRequest(tt.req)
+			err := validateBacktestRequest(tt.req, tt.from, tt.to)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("validateBacktestRequest() error = %v, wantErr %v", err, tt.wantErr)
 			}

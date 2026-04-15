@@ -2,6 +2,7 @@ package backtest
 
 import (
 	"fmt"
+	"log/slog"
 	"math"
 	"strings"
 	"time"
@@ -267,6 +268,13 @@ func (r *Replayer) Replay(prepared *PreparedData, strategy Strategy, params map[
 							entryPrice := spreadPricing.EntryMode.EntryPrice(leg.Side, contract)
 							entryPrice = applySlippage(entryPrice, leg.Side, sa.SlippagePct, defaultSlipPct)
 							if math.IsNaN(entryPrice) || entryPrice <= 0 {
+								slog.Warn("spread leg execution skipped: invalid entry price",
+									"tag", sa.OpenTag,
+									"legIndex", legIndex,
+									"contract", contract.Symbol,
+									"entryPrice", entryPrice,
+									"barTime", prepared.PrimaryDS.Timestamps[i],
+								)
 								legs = nil
 								break
 							}

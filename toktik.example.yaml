@@ -59,3 +59,8 @@ redis:
   dial_timeout_seconds: 2
   read_timeout_seconds: 2
   write_timeout_seconds: 2
+
+# Hex-encoded AES key (16, 24, or 32 bytes) for encrypting credentials in memory.
+# Generate with: openssl rand -hex 32
+# Leave empty to disable encryption (credentials stored as plaintext in memory).
+aes_key: ""

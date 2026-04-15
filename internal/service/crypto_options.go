@@ -44,7 +44,7 @@ func (s *CryptoOptionsService) QueryBars(ctx context.Context, req dto.BarRequest
 	if req.Cursor != "" {
 		cursorTime, err := decodeCursor(req.Cursor)
 		if err != nil {
-			return nil, fmt.Errorf("invalid cursor: %w", err)
+			return nil, invalidCursorError(err)
 		}
 		if cursorTime.After(fromT) {
 			fromT = cursorTime
@@ -81,13 +81,14 @@ FROM (%s) AS b
 LEFT JOIN (%s) AS u
     ON u.timestamp = b.timestamp AND u.symbol = b.base_asset
 ORDER BY b.timestamp
-LIMIT %d`, barSourceSQL, spotSourceSQL, limit+1)
+LIMIT {limit:UInt32}`, barSourceSQL, spotSourceSQL)
 
 	rows, err := s.conn.Query(ctx, query,
 		clickhouse.Named("symbol_id", symbolID),
 		clickhouse.Named("symbol", baseAsset),
 		clickhouse.Named("from", cryptooptions.ClickHouseTimeParam(fromT)),
 		clickhouse.Named("to", cryptooptions.ClickHouseTimeParam(toT)),
+		clickhouse.Named("limit", limit+1),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("query bars: %w", err)
@@ -133,7 +134,7 @@ FROM crypto_options_symbol_meta FINAL`
 	if req.Cursor != "" {
 		cursorID, err := decodeCursorUint64(req.Cursor)
 		if err != nil {
-			return nil, fmt.Errorf("invalid cursor: %w", err)
+			return nil, invalidCursorError(err)
 		}
 		conditions = append(conditions, "symbol_id > {cursor_id:UInt64}")
 		args = append(args, clickhouse.Named("cursor_id", cursorID))
@@ -149,7 +150,8 @@ FROM crypto_options_symbol_meta FINAL`
 		}
 	}
 
-	query += fmt.Sprintf(" ORDER BY symbol_id LIMIT %d", limit+1)
+	query += " ORDER BY symbol_id LIMIT {limit:UInt32}"
+	args = append(args, clickhouse.Named("limit", limit+1))
 
 	rows, err := s.conn.Query(ctx, query, args...)
 	if err != nil {
@@ -200,7 +202,7 @@ func (s *CryptoOptionsService) QueryGreeks(ctx context.Context, req dto.GreeksRe
 	if req.Cursor != "" {
 		cursorTime, err := decodeCursor(req.Cursor)
 		if err != nil {
-			return nil, fmt.Errorf("invalid cursor: %w", err)
+			return nil, invalidCursorError(err)
 		}
 		if cursorTime.After(fromT) {
 			fromT = cursorTime
@@ -229,13 +231,14 @@ FROM (%s) AS b
 LEFT JOIN (%s) AS u
     ON u.timestamp = b.timestamp AND u.symbol = b.base_asset
 ORDER BY b.timestamp
-LIMIT %d`, barSourceSQL, spotSourceSQL, limit+1)
+LIMIT {limit:UInt32}`, barSourceSQL, spotSourceSQL)
 
 	rows, err := s.conn.Query(ctx, query,
 		clickhouse.Named("symbol_id", symbolID),
 		clickhouse.Named("symbol", baseAsset),
 		clickhouse.Named("from", cryptooptions.ClickHouseTimeParam(fromT)),
 		clickhouse.Named("to", cryptooptions.ClickHouseTimeParam(toT)),
+		clickhouse.Named("limit", limit+1),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("query greeks: %w", err)

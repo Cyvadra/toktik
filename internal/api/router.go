@@ -19,6 +19,10 @@ func NewRouter(cos CryptoOptionsQuerier, usStocks USStocksQuerier, usOptions USO
 
 	// Apply middleware
 	r.Use(CORSMiddleware())
+	// TODO: Apply APIKeyAuth() middleware once API keys are configured in production.
+	// TODO: Apply RateLimitMiddleware() to protect against abuse.
+	// r.Use(APIKeyAuth())
+	// r.Use(RateLimitMiddleware())
 
 	// Swagger UI
 	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))

@@ -53,7 +53,8 @@ func (s *CryptoSpotService) QuerySymbols(ctx context.Context, req dto.CryptoSpot
 		args = append(args, clickhouse.Named("cursor_symbol", cursorSymbol))
 	}
 
-	query += fmt.Sprintf(` GROUP BY symbol ORDER BY symbol LIMIT %d`, limit+1)
+	query += ` GROUP BY symbol ORDER BY symbol LIMIT {limit:UInt32}`
+	args = append(args, clickhouse.Named("limit", limit+1))
 
 	rows, err := s.conn.Query(ctx, query, args...)
 	if err != nil {
@@ -121,12 +122,13 @@ WHERE symbol = {symbol:String}
   AND timestamp >= toDateTime({from:String}, 'UTC')
   AND timestamp < toDateTime({to:String}, 'UTC')
 ORDER BY timestamp
-LIMIT %d`, tableName, limit+1)
+LIMIT {limit:UInt32}`, tableName)
 
 	rows, err := s.conn.Query(ctx, query,
 		clickhouse.Named("symbol", req.Symbol),
 		clickhouse.Named("from", cryptooptions.ClickHouseTimeParam(fromT)),
 		clickhouse.Named("to", cryptooptions.ClickHouseTimeParam(toT)),
+		clickhouse.Named("limit", limit+1),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("query crypto spot bars: %w", err)

@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"strings"
+	"time"
 
 	"github.com/Cyvadra/toktik/internal/backtest"
 	"github.com/Cyvadra/toktik/internal/cryptooptions"
@@ -27,7 +28,7 @@ func (s *CryptoOptionsService) RunBacktest(ctx context.Context, req dto.Backtest
 		return nil, err
 	}
 
-	if err := validateBacktestRequest(req); err != nil {
+	if err := validateBacktestRequest(req, fromT, toT); err != nil {
 		return nil, err
 	}
 
@@ -106,7 +107,15 @@ var triggerModeMap = map[string]backtest.TriggerPriceMode{
 	"bidask-envelope": backtest.TriggerPriceBidAskEnvelope,
 }
 
-func validateBacktestRequest(req dto.BacktestRequest) error {
+const maxBacktestDuration = 5 * 365 * 24 * time.Hour // 5 years
+
+func validateBacktestRequest(req dto.BacktestRequest, from, to time.Time) error {
+	if to.Sub(from) > maxBacktestDuration {
+		return dto.NewValidationError("backtest time range must not exceed 5 years")
+	}
+	if req.Symbol == "" {
+		return dto.NewValidationError("symbol is required")
+	}
 	if req.Capital != nil && *req.Capital <= 0 {
 		return dto.NewValidationError("capital must be > 0")
 	}

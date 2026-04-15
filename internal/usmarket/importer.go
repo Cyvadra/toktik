@@ -58,6 +58,9 @@ func InitializeImportStorage(ctx context.Context, conn driver.Conn, ddlPath stri
 	if err := InitStockKlineSchema(ctx, conn); err != nil {
 		return nil, fmt.Errorf("init stock kline schema: %w", err)
 	}
+	if err := EnsurePrecomputedKlineCoverage(ctx, conn); err != nil {
+		return nil, fmt.Errorf("ensure precomputed us kline coverage: %w", err)
+	}
 	return sessions, nil
 }
 

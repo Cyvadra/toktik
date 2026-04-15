@@ -71,12 +71,31 @@ type rateBucket struct {
 // RateLimitMiddleware returns a gin middleware enforcing rate limits.
 // Rate is configured via runtime config (requests per second, default 50).
 // Burst is 2× the RPS. Keyed by X-API-Key header or remote IP.
+// Stale buckets are evicted every 5 minutes.
 func RateLimitMiddleware() gin.HandlerFunc {
 	rps := loadRuntimeConfigOrDefault().API.RateLimitRPS
 	burst := rps * 2
 
 	var mu sync.Mutex
 	buckets := make(map[string]*rateBucket)
+
+	// Evict stale buckets periodically.
+	const evictInterval = 5 * time.Minute
+	const bucketTTL = 10 * time.Minute
+	go func() {
+		ticker := time.NewTicker(evictInterval)
+		defer ticker.Stop()
+		for range ticker.C {
+			mu.Lock()
+			now := time.Now()
+			for k, b := range buckets {
+				if now.Sub(b.lastRefill) > bucketTTL {
+					delete(buckets, k)
+				}
+			}
+			mu.Unlock()
+		}
+	}()
 
 	return func(c *gin.Context) {
 		key := c.GetHeader("X-API-Key")

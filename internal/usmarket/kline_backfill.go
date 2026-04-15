@@ -23,6 +23,28 @@ type KlineBackfillOptions struct {
 	Replace   bool
 }
 
+// EnsurePrecomputedKlineCoverage bootstraps precomputed US stock/option
+// aggregates when the 1m source history predates the current aggregate
+// coverage. This handles the case where materialized views are added after
+// historical 1m rows already exist in ClickHouse.
+func EnsurePrecomputedKlineCoverage(ctx context.Context, conn driver.Conn) error {
+	for _, iv := range KlineIntervals {
+		if err := ensureOptionIntervalCoverage(ctx, conn, iv); err != nil {
+			return fmt.Errorf("ensure option interval %s coverage: %w", iv.Suffix, err)
+		}
+		if _, ok := ChainPrecomputedIntervals[iv.Suffix]; ok {
+			if err := ensureOptionChainIntervalCoverage(ctx, conn, iv); err != nil {
+				return fmt.Errorf("ensure option chain interval %s coverage: %w", iv.Suffix, err)
+			}
+		}
+		if err := ensureStockIntervalCoverage(ctx, conn, iv); err != nil {
+			return fmt.Errorf("ensure stock interval %s coverage: %w", iv.Suffix, err)
+		}
+	}
+
+	return nil
+}
+
 func BackfillKlineWindows(ctx context.Context, conn driver.Conn, opts KlineBackfillOptions) error {
 	intervals, err := normalizeBackfillIntervals(opts.Intervals)
 	if err != nil {
@@ -93,6 +115,122 @@ func normalizeBackfillIntervals(input []string) ([]string, error) {
 		return nil, fmt.Errorf("no valid intervals provided")
 	}
 	return out, nil
+}
+
+func ensureOptionIntervalCoverage(ctx context.Context, conn driver.Conn, iv KlineInterval) error {
+	sourceFrom, sourceTo, hasRows, err := resolveUSSourceBounds(ctx, conn, "us_options_bar_1m", "underlying", "")
+	if err != nil {
+		return fmt.Errorf("resolve option source bounds: %w", err)
+	}
+	if !hasRows {
+		return nil
+	}
+
+	aggTable := "us_options_bar_" + iv.Suffix + "_agg"
+	needsBackfill, reason, err := usAggCoverageNeedsBackfill(ctx, conn, aggTable, sourceFrom, sourceTo)
+	if err != nil {
+		return err
+	}
+	if !needsBackfill {
+		return nil
+	}
+
+	log.Printf("[us-kline-bootstrap] backfill options %s: %s", iv.Suffix, reason)
+	return backfillOptionInterval(ctx, conn, iv, sourceFrom, sourceTo, "", false)
+}
+
+func ensureOptionChainIntervalCoverage(ctx context.Context, conn driver.Conn, iv KlineInterval) error {
+	sourceFrom, sourceTo, hasRows, err := resolveUSSourceBounds(ctx, conn, "us_options_bar_1m", "underlying", "")
+	if err != nil {
+		return fmt.Errorf("resolve option chain source bounds: %w", err)
+	}
+	if !hasRows {
+		return nil
+	}
+
+	aggTable := "us_options_chain_" + iv.Suffix + "_agg"
+	needsBackfill, reason, err := usAggCoverageNeedsBackfill(ctx, conn, aggTable, sourceFrom, sourceTo)
+	if err != nil {
+		return err
+	}
+	if !needsBackfill {
+		return nil
+	}
+
+	log.Printf("[us-kline-bootstrap] backfill option chain %s: %s", iv.Suffix, reason)
+	return backfillOptionChainInterval(ctx, conn, iv, sourceFrom, sourceTo, "", false)
+}
+
+func ensureStockIntervalCoverage(ctx context.Context, conn driver.Conn, iv KlineInterval) error {
+	sourceFrom, sourceTo, hasRows, err := resolveUSSourceBounds(ctx, conn, "us_stocks_bar_1m", "symbol", "")
+	if err != nil {
+		return fmt.Errorf("resolve stock source bounds: %w", err)
+	}
+	if !hasRows {
+		return nil
+	}
+
+	aggTable := "us_stocks_bar_" + iv.Suffix + "_agg"
+	needsBackfill, reason, err := usAggCoverageNeedsBackfill(ctx, conn, aggTable, sourceFrom, sourceTo)
+	if err != nil {
+		return err
+	}
+	if !needsBackfill {
+		return nil
+	}
+
+	log.Printf("[us-kline-bootstrap] backfill stocks %s: %s", iv.Suffix, reason)
+	return backfillStockInterval(ctx, conn, iv, sourceFrom, sourceTo, "", false)
+}
+
+func usAggCoverageNeedsBackfill(ctx context.Context, conn driver.Conn, aggTable string, sourceFrom, sourceTo time.Time) (bool, string, error) {
+	rows, err := conn.Query(ctx, fmt.Sprintf(`SELECT count(), ifNull(minOrNull(ts), toDateTime('1970-01-01 00:00:00', 'UTC')), ifNull(maxOrNull(ts), toDateTime('1970-01-01 00:00:00', 'UTC')) FROM %s`, aggTable))
+	if err != nil {
+		return false, "", fmt.Errorf("query %s coverage bounds: %w", aggTable, err)
+	}
+	defer rows.Close()
+
+	var (
+		count  uint64
+		aggMin time.Time
+		aggMax time.Time
+	)
+	if rows.Next() {
+		if err := rows.Scan(&count, &aggMin, &aggMax); err != nil {
+			return false, "", fmt.Errorf("scan %s coverage bounds: %w", aggTable, err)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return false, "", fmt.Errorf("iterate %s coverage bounds: %w", aggTable, err)
+	}
+
+	return needsAggregateCoverageBackfill(sourceFrom, sourceTo, count, aggMin, aggMax)
+}
+
+func needsAggregateCoverageBackfill(sourceFrom, sourceTo time.Time, aggCount uint64, aggMin, aggMax time.Time) (bool, string, error) {
+	if sourceFrom.IsZero() || sourceTo.IsZero() {
+		return false, "", fmt.Errorf("source coverage bounds are required")
+	}
+	if !sourceTo.After(sourceFrom) {
+		return false, "", fmt.Errorf("source coverage upper bound must be after lower bound")
+	}
+	if aggCount == 0 {
+		return true, "aggregate table is empty while source 1m rows exist", nil
+	}
+
+	sourceFirstDay := normalizeUTCDay(sourceFrom)
+	sourceLastDay := normalizeUTCDay(sourceTo.Add(-24 * time.Hour))
+	aggFirstDay := normalizeUTCDay(aggMin)
+	aggLastDay := normalizeUTCDay(aggMax)
+
+	if aggFirstDay.After(sourceFirstDay) {
+		return true, fmt.Sprintf("aggregate starts at %s but source starts at %s", aggFirstDay.Format("2006-01-02"), sourceFirstDay.Format("2006-01-02")), nil
+	}
+	if aggLastDay.Before(sourceLastDay) {
+		return true, fmt.Sprintf("aggregate ends at %s but source ends at %s", aggLastDay.Format("2006-01-02"), sourceLastDay.Format("2006-01-02")), nil
+	}
+
+	return false, "", nil
 }
 
 type usBackfillWindow struct {
@@ -354,13 +492,14 @@ func splitUSBackfillWindows(from, to time.Time) []usBackfillWindow {
 		return nil
 	}
 
-	windows := make([]usBackfillWindow, 0, int(to.Sub(from)/(24*time.Hour))+1)
+	approxMonths := (to.Year()-from.Year())*12 + int(to.Month()-from.Month()) + 2
+	if approxMonths < 1 {
+		approxMonths = 1
+	}
+	windows := make([]usBackfillWindow, 0, approxMonths)
 	cursor := from.UTC()
 	for cursor.Before(to) {
-		next := normalizeUTCDay(cursor).Add(24 * time.Hour)
-		if !next.After(cursor) {
-			next = cursor.Add(24 * time.Hour)
-		}
+		next := startOfNextMonth(cursor)
 		if next.After(to) {
 			next = to.UTC()
 		}
@@ -369,6 +508,11 @@ func splitUSBackfillWindows(from, to time.Time) []usBackfillWindow {
 	}
 
 	return windows
+}
+
+func startOfNextMonth(ts time.Time) time.Time {
+	ts = ts.UTC()
+	return time.Date(ts.Year(), ts.Month()+1, 1, 0, 0, 0, 0, time.UTC)
 }
 
 func normalizeUTCDay(ts time.Time) time.Time {

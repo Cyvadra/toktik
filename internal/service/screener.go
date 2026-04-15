@@ -130,7 +130,8 @@ WHERE 1 = 1`
 	case "open_interest":
 		sortBy = "l.total_oi DESC"
 	}
-	query += fmt.Sprintf(` ORDER BY %s LIMIT %d`, sortBy, limit+1)
+	query += fmt.Sprintf(` ORDER BY %s LIMIT {limit:UInt32}`, sortBy)
+	args = append(args, clickhouse.Named("limit", limit+1))
 
 	rows, err := s.conn.Query(ctx, query, args...)
 	if err != nil {
@@ -343,7 +344,8 @@ WHERE chain.timestamp = latest.ts
 		sortBy = "close DESC"
 	}
 
-	query += fmt.Sprintf(` ORDER BY %s LIMIT %d`, sortBy, limit+1)
+	query += fmt.Sprintf(` ORDER BY %s LIMIT {limit:UInt32}`, sortBy)
+	args = append(args, clickhouse.Named("limit", limit+1))
 
 	rows, err := s.conn.Query(ctx, query, args...)
 	if err != nil {

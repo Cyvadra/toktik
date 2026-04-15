@@ -2,7 +2,6 @@ package service
 
 import (
 	"encoding/base64"
-	"fmt"
 	"strings"
 
 	"github.com/Cyvadra/toktik/internal/dto"
@@ -82,7 +81,7 @@ func usBarLimit(limit int) int {
 }
 
 func invalidCursorError(err error) error {
-	return fmt.Errorf("invalid cursor: %w", err)
+	return dto.NewValidationError("invalid cursor: %v", err)
 }
 
 func encodeCursorString(value string) string {

@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/Cyvadra/toktik/internal/secrets"
 )
 
 const (
@@ -42,6 +44,7 @@ const (
 	EnvRedisDialTimeoutSec   = "TOKTIK_REDIS_DIAL_TIMEOUT_SECONDS"
 	EnvRedisReadTimeoutSec   = "TOKTIK_REDIS_READ_TIMEOUT_SECONDS"
 	EnvRedisWriteTimeoutSec  = "TOKTIK_REDIS_WRITE_TIMEOUT_SECONDS"
+	EnvAESKey                = "TOKTIK_AES_KEY"
 	defaultConfigPath        = "toktik.yaml"
 	defaultClickHouseDSN     = "clickhouse://default:@localhost:9000/default"
 	defaultListenAddr        = ":9010"
@@ -61,6 +64,11 @@ type Runtime struct {
 	Tiger      Tiger      `yaml:"tiger"`
 	Polygon    Polygon    `yaml:"polygon"`
 	Redis      Redis      `yaml:"redis"`
+	AESKey     string     `yaml:"aes_key"`
+
+	// Secrets is the in-memory secrets manager initialised after config load.
+	// Not serialised to YAML.
+	Secrets *secrets.Manager `yaml:"-"`
 }
 
 type ClickHouse struct {
@@ -196,6 +204,9 @@ func LoadRuntimeFromPath(path string) (Runtime, error) {
 	if err := cfg.Validate(); err != nil {
 		return Runtime{}, err
 	}
+	if err := cfg.sealCredentials(); err != nil {
+		return Runtime{}, err
+	}
 	return cfg, nil
 }
 
@@ -303,6 +314,40 @@ func (c *Runtime) applyEnvOverrides() {
 			c.Redis.WriteTimeoutSeconds = parsed
 		}
 	}
+	if value := strings.TrimSpace(os.Getenv(EnvAESKey)); value != "" {
+		c.AESKey = value
+	}
+}
+
+// sealCredentials initialises the secrets manager and encrypts sensitive
+// fields in memory, then zeroes the plaintext copies.
+func (c *Runtime) sealCredentials() error {
+	mgr, err := secrets.New(c.AESKey)
+	if err != nil {
+		return fmt.Errorf("init secrets manager: %w", err)
+	}
+	c.Secrets = mgr
+
+	if c.AESKey == "" {
+		return nil // passthrough mode – keep plaintext fields as-is
+	}
+
+	seal := func(field, value string) string {
+		if value == "" {
+			return ""
+		}
+		mgr.Seal(field, value)
+		return ""
+	}
+
+	c.Tiger.PrivateKey = seal("tiger.private_key", c.Tiger.PrivateKey)
+	c.Tiger.Token = seal("tiger.token", c.Tiger.Token)
+	c.Polygon.APIKey = seal("polygon.api_key", c.Polygon.APIKey)
+	c.Polygon.FlatFilesAccessKey = seal("polygon.flat_files_access_key", c.Polygon.FlatFilesAccessKey)
+	c.Polygon.FlatFilesSecretKey = seal("polygon.flat_files_secret_key", c.Polygon.FlatFilesSecretKey)
+	c.Redis.Password = seal("redis.password", c.Redis.Password)
+	c.AESKey = "" // don't retain the key itself
+	return nil
 }
 
 func (c *Runtime) normalize() {

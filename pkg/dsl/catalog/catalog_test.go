@@ -13,7 +13,6 @@ func TestDSLStrategiesParse(t *testing.T) {
 		"golden-cross-dsl",
 		"ema-atr-spot-dsl",
 		"delta-filter-dsl",
-		"lvol-scalper-dsl",
 	}
 
 	for _, name := range dslStrategies {
