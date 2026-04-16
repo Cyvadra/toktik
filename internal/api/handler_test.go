@@ -269,7 +269,7 @@ func TestGetBars_Success(t *testing.T) {
 	ts := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 	mock := &mockQuerier{
 		barsResp: &dto.BarResponse{
-			Data: []dto.BarRow{{Timestamp: ts, SymbolID: 1, MarkClose: 100}},
+			Data: []dto.BarRow{{Timestamp: ts, SymbolID: 1, MarkClose: 100, ImpliedVolatility: 0.42}},
 		},
 	}
 	r := setupRouter(mock)
@@ -287,6 +287,9 @@ func TestGetBars_Success(t *testing.T) {
 	}
 	if len(resp.Data) != 1 {
 		t.Fatalf("expected 1 bar, got %d", len(resp.Data))
+	}
+	if resp.Data[0].ImpliedVolatility != 0.42 {
+		t.Fatalf("expected implied volatility 0.42, got %v", resp.Data[0].ImpliedVolatility)
 	}
 }
 

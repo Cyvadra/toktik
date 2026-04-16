@@ -37,6 +37,7 @@ type BarRow struct {
 	AskHigh              float32   `json:"ask_high"`
 	AskLow               float32   `json:"ask_low"`
 	AskClose             float32   `json:"ask_close"`
+	ImpliedVolatility    float32   `json:"implied_volatility"`
 	MarkIVOpen           float32   `json:"mark_iv_open"`
 	MarkIVClose          float32   `json:"mark_iv_close"`
 	BidIVOpen            float32   `json:"bid_iv_open"`
@@ -105,6 +106,7 @@ type GreeksRow struct {
 	Vega                 float32   `json:"vega"`
 	Theta                float32   `json:"theta"`
 	Rho                  float32   `json:"rho"`
+	ImpliedVolatility    float32   `json:"implied_volatility"`
 	MarkIVOpen           float32   `json:"mark_iv_open"`
 	MarkIVClose          float32   `json:"mark_iv_close"`
 	UnderlyingPriceOpen  float32   `json:"underlying_price_open"`

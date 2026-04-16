@@ -453,7 +453,10 @@ func resolveUSSourceBounds(ctx context.Context, conn driver.Conn, tableName, ass
 }
 
 func resolveUSSourceBoundsInScope(ctx context.Context, conn driver.Conn, tableName, assetColumn, asset string, from, to time.Time) (time.Time, time.Time, bool, error) {
-	query := fmt.Sprintf(`SELECT min(market_date), max(market_date)
+	query := fmt.Sprintf(`SELECT
+    count(),
+    ifNull(minOrNull(toDateTime(market_date, 'UTC')), toDateTime('1970-01-01 00:00:00', 'UTC')),
+    ifNull(maxOrNull(toDateTime(market_date, 'UTC')), toDateTime('1970-01-01 00:00:00', 'UTC'))
 FROM %s
 WHERE is_regular_session = 1`, tableName)
 	args := make([]interface{}, 0, 3)
@@ -477,20 +480,30 @@ WHERE is_regular_session = 1`, tableName)
 	defer rows.Close()
 
 	var (
+		count   uint64
 		minDate time.Time
 		maxDate time.Time
 	)
 	if rows.Next() {
-		if err := rows.Scan(&minDate, &maxDate); err != nil {
+		if err := rows.Scan(&count, &minDate, &maxDate); err != nil {
 			return time.Time{}, time.Time{}, false, fmt.Errorf("scan %s source bounds: %w", tableName, err)
 		}
 	}
-	if minDate.IsZero() || maxDate.IsZero() {
+	if err := rows.Err(); err != nil {
+		return time.Time{}, time.Time{}, false, fmt.Errorf("iterate %s source bounds: %w", tableName, err)
+	}
+	return scopedSourceBounds(count, minDate, maxDate)
+}
+
+func scopedSourceBounds(count uint64, minDate, maxDate time.Time) (time.Time, time.Time, bool, error) {
+	if count == 0 || minDate.IsZero() || maxDate.IsZero() {
 		return time.Time{}, time.Time{}, false, nil
 	}
-
 	fromBound := normalizeUTCDay(minDate)
 	toBound := normalizeUTCDay(maxDate).Add(24 * time.Hour)
+	if !toBound.After(fromBound) {
+		return time.Time{}, time.Time{}, false, fmt.Errorf("source bounds upper bound must be after lower bound")
+	}
 	return fromBound, toBound, true, nil
 }
 

@@ -3215,6 +3215,9 @@ const docTemplate = `{
                 "gamma": {
                     "type": "number"
                 },
+                "implied_volatility": {
+                    "type": "number"
+                },
                 "last_close": {
                     "type": "number"
                 },
@@ -4235,6 +4238,9 @@ const docTemplate = `{
                     "type": "number"
                 },
                 "gamma": {
+                    "type": "number"
+                },
+                "implied_volatility": {
                     "type": "number"
                 },
                 "mark_iv_close": {

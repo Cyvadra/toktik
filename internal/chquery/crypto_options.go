@@ -2,6 +2,19 @@ package chquery
 
 import "fmt"
 
+// CryptoOptionsImpliedVolatilityExpr returns the reusable bar-level IV
+// expression for crypto option queries.
+func CryptoOptionsImpliedVolatilityExpr(alias string) string {
+	if alias == "" {
+		alias = "b"
+	}
+	return fmt.Sprintf(`if(
+    isFinite(%[1]s.mark_iv_close) AND %[1]s.mark_iv_close > 0,
+    %[1]s.mark_iv_close,
+    if(isFinite(%[1]s.mark_iv_open), %[1]s.mark_iv_open, toFloat32(0))
+)`, alias)
+}
+
 // ----- Crypto Options SQL -----
 
 // CryptoOptionsSymbolQuery is the base query for crypto option symbol metadata.
@@ -17,6 +30,7 @@ func CryptoOptionsBarsWithUnderlyingSQL(barSourceSQL, spotSourceSQL string) stri
     b.last_open, b.last_high, b.last_low, b.last_close,
     b.bid_open, b.bid_high, b.bid_low, b.bid_close,
     b.ask_open, b.ask_high, b.ask_low, b.ask_close,
+    %s AS implied_volatility,
     b.mark_iv_open, b.mark_iv_close, b.bid_iv_open, b.ask_iv_open,
     b.delta, b.gamma, b.vega, b.theta, b.rho,
     ifNull(u.open, toFloat32(0))  AS underlying_price_open,
@@ -30,7 +44,7 @@ FROM (%s) AS b
 LEFT JOIN (%s) AS u
     ON u.timestamp = b.timestamp AND u.symbol = b.base_asset
 ORDER BY b.timestamp
-LIMIT {limit:UInt32}`, barSourceSQL, spotSourceSQL)
+LIMIT {limit:UInt32}`, CryptoOptionsImpliedVolatilityExpr("b"), barSourceSQL, spotSourceSQL)
 }
 
 // CryptoOptionsGreeksSQL returns a query for greeks time series,
@@ -39,6 +53,7 @@ func CryptoOptionsGreeksSQL(barSourceSQL, spotSourceSQL string) string {
 	return fmt.Sprintf(`SELECT
     b.timestamp, b.symbol_id,
     b.delta, b.gamma, b.vega, b.theta, b.rho,
+    %s AS implied_volatility,
     b.mark_iv_open, b.mark_iv_close,
     ifNull(u.open, toFloat32(0))  AS underlying_price_open,
     ifNull(u.high, toFloat32(0))  AS underlying_price_high,
@@ -49,7 +64,7 @@ FROM (%s) AS b
 LEFT JOIN (%s) AS u
     ON u.timestamp = b.timestamp AND u.symbol = b.base_asset
 ORDER BY b.timestamp
-LIMIT {limit:UInt32}`, barSourceSQL, spotSourceSQL)
+LIMIT {limit:UInt32}`, CryptoOptionsImpliedVolatilityExpr("b"), barSourceSQL, spotSourceSQL)
 }
 
 // CryptoOptionsChainSQL returns a query for crypto option chain snapshots

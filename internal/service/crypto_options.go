@@ -64,26 +64,7 @@ func (s *CryptoOptionsService) QueryBars(ctx context.Context, req dto.BarRequest
 		return nil, dto.NewValidationError("unsupported interval %q", interval)
 	}
 
-	query := fmt.Sprintf(`SELECT
-    b.timestamp, b.symbol_id, b.base_asset,
-    b.mark_open, b.mark_high, b.mark_low, b.mark_close,
-    b.last_open, b.last_high, b.last_low, b.last_close,
-    b.bid_open, b.bid_high, b.bid_low, b.bid_close,
-    b.ask_open, b.ask_high, b.ask_low, b.ask_close,
-    b.mark_iv_open, b.mark_iv_close, b.bid_iv_open, b.ask_iv_open,
-    b.delta, b.gamma, b.vega, b.theta, b.rho,
-    ifNull(u.open, toFloat32(0))  AS underlying_price_open,
-    ifNull(u.high, toFloat32(0))  AS underlying_price_high,
-    ifNull(u.low, toFloat32(0))   AS underlying_price_low,
-    ifNull(u.close, toFloat32(0)) AS underlying_price_close,
-	b.volume,
-    b.open_interest,
-    toUInt16(b.tick_count) AS tick_count
-FROM (%s) AS b
-LEFT JOIN (%s) AS u
-    ON u.timestamp = b.timestamp AND u.symbol = b.base_asset
-ORDER BY b.timestamp
-LIMIT {limit:UInt32}`, barSourceSQL, spotSourceSQL)
+	query := chquery.CryptoOptionsBarsWithUnderlyingSQL(barSourceSQL, spotSourceSQL)
 
 	rows, err := s.repo.Query(ctx, query,
 		clickhouse.Named("symbol_id", symbolID),
@@ -220,20 +201,7 @@ func (s *CryptoOptionsService) QueryGreeks(ctx context.Context, req dto.GreeksRe
 		return nil, dto.NewValidationError("unsupported interval %q", interval)
 	}
 
-	query := fmt.Sprintf(`SELECT
-    b.timestamp, b.symbol_id,
-    b.delta, b.gamma, b.vega, b.theta, b.rho,
-    b.mark_iv_open, b.mark_iv_close,
-    ifNull(u.open, toFloat32(0))  AS underlying_price_open,
-    ifNull(u.high, toFloat32(0))  AS underlying_price_high,
-    ifNull(u.low, toFloat32(0))   AS underlying_price_low,
-    ifNull(u.close, toFloat32(0)) AS underlying_price_close,
-    b.open_interest
-FROM (%s) AS b
-LEFT JOIN (%s) AS u
-    ON u.timestamp = b.timestamp AND u.symbol = b.base_asset
-ORDER BY b.timestamp
-LIMIT {limit:UInt32}`, barSourceSQL, spotSourceSQL)
+	query := chquery.CryptoOptionsGreeksSQL(barSourceSQL, spotSourceSQL)
 
 	rows, err := s.repo.Query(ctx, query,
 		clickhouse.Named("symbol_id", symbolID),
@@ -253,6 +221,7 @@ LIMIT {limit:UInt32}`, barSourceSQL, spotSourceSQL)
 		if err := rows.Scan(
 			&r.Timestamp, &r.SymbolID,
 			&r.Delta, &r.Gamma, &r.Vega, &r.Theta, &r.Rho,
+			&r.ImpliedVolatility,
 			&r.MarkIVOpen, &r.MarkIVClose,
 			&r.UnderlyingPriceOpen, &r.UnderlyingPriceHigh, &r.UnderlyingPriceLow, &r.UnderlyingPriceClose,
 			&r.OpenInterest,
@@ -287,6 +256,7 @@ func scanBarRows(rows driver.Rows) ([]dto.BarRow, error) {
 			&r.LastOpen, &r.LastHigh, &r.LastLow, &r.LastClose,
 			&r.BidOpen, &r.BidHigh, &r.BidLow, &r.BidClose,
 			&r.AskOpen, &r.AskHigh, &r.AskLow, &r.AskClose,
+			&r.ImpliedVolatility,
 			&r.MarkIVOpen, &r.MarkIVClose, &r.BidIVOpen, &r.AskIVOpen,
 			&r.Delta, &r.Gamma, &r.Vega, &r.Theta, &r.Rho,
 			&r.UnderlyingPriceOpen, &r.UnderlyingPriceHigh, &r.UnderlyingPriceLow, &r.UnderlyingPriceClose,

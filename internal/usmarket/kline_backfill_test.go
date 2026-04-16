@@ -108,3 +108,44 @@ func TestNeedsAggregateCoverageBackfillSkipsCoveredRange(t *testing.T) {
 		t.Fatalf("expected empty reason, got %q", reason)
 	}
 }
+
+func TestScopedSourceBoundsTreatsEmptyResultAsNoRows(t *testing.T) {
+	t.Parallel()
+
+	from, to, hasRows, err := scopedSourceBounds(
+		0,
+		time.Date(1970, 1, 1, 0, 0, 0, 0, time.UTC),
+		time.Date(1970, 1, 1, 0, 0, 0, 0, time.UTC),
+	)
+	if err != nil {
+		t.Fatalf("scopedSourceBounds returned error: %v", err)
+	}
+	if hasRows {
+		t.Fatalf("expected empty result to report no rows, got from=%s to=%s", from.Format(time.RFC3339), to.Format(time.RFC3339))
+	}
+	if !from.IsZero() || !to.IsZero() {
+		t.Fatalf("expected zero bounds for empty result, got from=%s to=%s", from.Format(time.RFC3339), to.Format(time.RFC3339))
+	}
+}
+
+func TestScopedSourceBoundsNormalizesInclusiveDateRange(t *testing.T) {
+	t.Parallel()
+
+	from, to, hasRows, err := scopedSourceBounds(
+		2,
+		time.Date(2022, 4, 19, 12, 0, 0, 0, time.UTC),
+		time.Date(2022, 12, 31, 12, 0, 0, 0, time.UTC),
+	)
+	if err != nil {
+		t.Fatalf("scopedSourceBounds returned error: %v", err)
+	}
+	if !hasRows {
+		t.Fatal("expected rows to be reported")
+	}
+	if got := from.Format("2006-01-02"); got != "2022-04-19" {
+		t.Fatalf("unexpected from bound: %s", got)
+	}
+	if got := to.Format("2006-01-02"); got != "2023-01-01" {
+		t.Fatalf("unexpected to bound: %s", got)
+	}
+}
