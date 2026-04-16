@@ -25,6 +25,8 @@ type FlatFileSyncConfig struct {
 	ForceDownload bool
 	Now           func() time.Time
 	ColdStartDate time.Time
+	StartDate     time.Time
+	EndDate       time.Time
 }
 
 type FlatFileAssetResult struct {
@@ -62,6 +64,8 @@ func SyncPolygonFlatFiles(ctx context.Context, cfg FlatFileSyncConfig) (FlatFile
 		forceDownload:  cfg.ForceDownload,
 		now:            cfg.Now,
 		coldStartDate:  cfg.ColdStartDate,
+		overrideStart:  cfg.StartDate,
+		overrideEnd:    cfg.EndDate,
 		loadLatestDate: LatestStockMarketDate,
 		download:       cfg.Downloader.DownloadStockMinuteAggregates,
 	}, cfg.Conn)
@@ -74,6 +78,8 @@ func SyncPolygonFlatFiles(ctx context.Context, cfg FlatFileSyncConfig) (FlatFile
 		forceDownload:  cfg.ForceDownload,
 		now:            cfg.Now,
 		coldStartDate:  cfg.ColdStartDate,
+		overrideStart:  cfg.StartDate,
+		overrideEnd:    cfg.EndDate,
 		loadLatestDate: LatestOptionMarketDate,
 		download:       cfg.Downloader.DownloadOptionMinuteAggregates,
 	}, cfg.Conn)
@@ -94,6 +100,8 @@ type flatFileAssetConfig struct {
 	forceDownload  bool
 	now            func() time.Time
 	coldStartDate  time.Time
+	overrideStart  time.Time
+	overrideEnd    time.Time
 	loadLatestDate func(context.Context, driver.Conn) (time.Time, bool, error)
 	download       func(context.Context, time.Time, bool) (string, error)
 }
@@ -104,7 +112,7 @@ func syncFlatFileAsset(ctx context.Context, cfg flatFileAssetConfig, conn driver
 		return FlatFileAssetResult{}, fmt.Errorf("load latest %s market date: %w", cfg.assetClass, err)
 	}
 
-	startDate, err := resolveFlatFileStartDate(cfg.assetClass, latest, hasData, cfg.coldStartDate)
+	startDate, err := resolveFlatFileStartDate(cfg.assetClass, latest, hasData, cfg.coldStartDate, cfg.overrideStart)
 	if err != nil {
 		return FlatFileAssetResult{}, err
 	}
@@ -120,7 +128,10 @@ func syncFlatFileAsset(ctx context.Context, cfg flatFileAssetConfig, conn driver
 		return result, nil
 	}
 
-	endDate := resolveFlatFileEndDate(cfg.now)
+	endDate, err := resolveFlatFileEndDate(cfg.now, cfg.overrideEnd)
+	if err != nil {
+		return FlatFileAssetResult{}, err
+	}
 	result.ScanEnd = endDate
 	if startDate.After(endDate) {
 		log.Printf("No new %s flatfiles available from %s onward", cfg.assetClass, startDate.Format("2006-01-02"))
@@ -143,7 +154,10 @@ func syncFlatFileAsset(ctx context.Context, cfg flatFileAssetConfig, conn driver
 	return result, nil
 }
 
-func resolveFlatFileStartDate(assetClass string, latest time.Time, hasData bool, coldStartDate time.Time) (time.Time, error) {
+func resolveFlatFileStartDate(assetClass string, latest time.Time, hasData bool, coldStartDate, overrideStartDate time.Time) (time.Time, error) {
+	if !overrideStartDate.IsZero() {
+		return normalizeUTCDay(overrideStartDate), nil
+	}
 	if hasData {
 		return normalizeUTCDay(latest).Add(24 * time.Hour), nil
 	}
@@ -153,11 +167,14 @@ func resolveFlatFileStartDate(assetClass string, latest time.Time, hasData bool,
 	return normalizeUTCDay(coldStartDate), nil
 }
 
-func resolveFlatFileEndDate(now func() time.Time) time.Time {
+func resolveFlatFileEndDate(now func() time.Time, overrideEndDate time.Time) (time.Time, error) {
+	if !overrideEndDate.IsZero() {
+		return normalizeUTCDay(overrideEndDate), nil
+	}
 	if now == nil {
 		now = time.Now
 	}
-	return normalizeUTCDay(now().UTC()).Add(-24 * time.Hour)
+	return normalizeUTCDay(now().UTC()).Add(-24 * time.Hour), nil
 }
 
 func downloadFlatFileRange(ctx context.Context, startDate, endDate time.Time, force bool, download func(context.Context, time.Time, bool) (string, error)) ([]string, time.Time, error) {

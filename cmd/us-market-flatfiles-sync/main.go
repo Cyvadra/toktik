@@ -27,7 +27,9 @@ func main() {
 	skipExisting := flag.Bool("skip-existing", true, "Skip files whose date already has data in ClickHouse")
 	skipGreeksBackfill := flag.Bool("skip-greeks-backfill", false, "Skip the automatic local recalculation of missing option greeks after import")
 	forceDownload := flag.Bool("force-download", false, "Force re-download even if a flat file already exists in the local cache")
-	confirmColdStart := flag.Bool("confirm-cold-start", false, "Acknowledge that empty us-market tables will start syncing from 2023-01-01")
+	startDateFlag := flag.String("start-date", "", "Override sync start market date (YYYY-MM-DD)")
+	endDateFlag := flag.String("end-date", "", "Override sync end market date (YYYY-MM-DD); defaults to yesterday when omitted")
+	confirmColdStart := flag.Bool("confirm-cold-start", false, "Acknowledge that empty us-market tables will start syncing from the requested start date")
 	flag.Parse()
 
 	if *workers < 1 {
@@ -35,6 +37,14 @@ func main() {
 	}
 	if strings.TrimSpace(runtimeCfg.Polygon.FlatFilesCacheDir) == "" {
 		log.Fatal("polygon.flat_files_cache_dir is required; specify a local cache directory in runtime config")
+	}
+	requestedStartDate, requestedEndDate, err := resolveRequestedDateRange(*startDateFlag, *endDateFlag)
+	if err != nil {
+		log.Fatalf("parse sync date range: %v", err)
+	}
+	effectiveColdStartDate := coldStartDate
+	if !requestedStartDate.IsZero() {
+		effectiveColdStartDate = requestedStartDate
 	}
 
 	ctx := context.Background()
@@ -56,11 +66,13 @@ func main() {
 	if err != nil {
 		log.Fatalf("inspect existing us-market data: %v", err)
 	}
-	if err := requireColdStartConfirmation(assetStates, *confirmColdStart); err != nil {
+	if err := requireColdStartConfirmation(assetStates, *confirmColdStart, effectiveColdStartDate); err != nil {
 		log.Fatal(err)
 	}
 
-	sessions, err := usmarket.InitializeImportStorage(ctx, conn, ddlFile)
+	sessions, err := usmarket.InitializeImportStorageWithOptions(ctx, conn, ddlFile, usmarket.ImportStorageOptions{
+		PrecomputedCoverageScope: coverageBootstrapScope(requestedStartDate, requestedEndDate),
+	})
 	if err != nil {
 		log.Fatalf("initialize import storage: %v", err)
 	}
@@ -70,7 +82,9 @@ func main() {
 		Conn:          conn,
 		Sessions:      sessions,
 		ForceDownload: *forceDownload,
-		ColdStartDate: coldStartDate,
+		ColdStartDate: effectiveColdStartDate,
+		StartDate:     requestedStartDate,
+		EndDate:       requestedEndDate,
 		Import: usmarket.ImportConfig{
 			DSN:          *dsn,
 			BatchSize:    *batchSize,
@@ -155,25 +169,67 @@ func formatDateIfPresent(value time.Time, ok bool) string {
 	return formatDate(value)
 }
 
-func requireColdStartConfirmation(states []usmarket.FlatFileAssetState, confirmed bool) error {
+func requireColdStartConfirmation(states []usmarket.FlatFileAssetState, confirmed bool, startDate time.Time) error {
 	missingAssets := coldStartAssetClasses(states)
 	if len(missingAssets) == 0 {
 		return nil
 	}
+	if startDate.IsZero() {
+		startDate = coldStartDate
+	}
+	startLabel := startDate.Format("2006-01-02")
 	if !confirmed {
-		return fmt.Errorf("no existing data found for %s; rerun with --confirm-cold-start to allow syncing from %s", strings.Join(missingAssets, ", "), coldStartDate.Format("2006-01-02"))
+		return fmt.Errorf("no existing data found for %s; rerun with --confirm-cold-start to allow syncing from %s", strings.Join(missingAssets, ", "), startLabel)
 	}
 
 	reader := bufio.NewReader(os.Stdin)
-	_, _ = fmt.Fprintf(os.Stdout, "No existing data found for %s. This will start syncing from %s. Type %q to continue: ", strings.Join(missingAssets, ", "), coldStartDate.Format("2006-01-02"), coldStartDate.Format("2006-01-02"))
+	_, _ = fmt.Fprintf(os.Stdout, "No existing data found for %s. This will start syncing from %s. Type %q to continue: ", strings.Join(missingAssets, ", "), startLabel, startLabel)
 	response, err := reader.ReadString('\n')
 	if err != nil {
 		return fmt.Errorf("read cold-start confirmation: %w", err)
 	}
-	if strings.TrimSpace(response) != coldStartDate.Format("2006-01-02") {
+	if strings.TrimSpace(response) != startLabel {
 		return fmt.Errorf("cold-start confirmation declined")
 	}
 	return nil
+}
+
+func resolveRequestedDateRange(startValue, endValue string) (time.Time, time.Time, error) {
+	start, err := parseOptionalDate(startValue)
+	if err != nil {
+		return time.Time{}, time.Time{}, fmt.Errorf("start-date: %w", err)
+	}
+	end, err := parseOptionalDate(endValue)
+	if err != nil {
+		return time.Time{}, time.Time{}, fmt.Errorf("end-date: %w", err)
+	}
+	if !start.IsZero() && !end.IsZero() && end.Before(start) {
+		return time.Time{}, time.Time{}, fmt.Errorf("end-date %s is before start-date %s", end.Format("2006-01-02"), start.Format("2006-01-02"))
+	}
+	return start, end, nil
+}
+
+func parseOptionalDate(value string) (time.Time, error) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return time.Time{}, nil
+	}
+	parsed, err := time.Parse("2006-01-02", trimmed)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("must be YYYY-MM-DD: %w", err)
+	}
+	return parsed.UTC(), nil
+}
+
+func coverageBootstrapScope(startDate, endDate time.Time) usmarket.KlineBackfillOptions {
+	if startDate.IsZero() && endDate.IsZero() {
+		return usmarket.KlineBackfillOptions{}
+	}
+	scope := usmarket.KlineBackfillOptions{From: startDate}
+	if !endDate.IsZero() {
+		scope.To = endDate.Add(24 * time.Hour)
+	}
+	return scope
 }
 
 func coldStartAssetClasses(states []usmarket.FlatFileAssetState) []string {

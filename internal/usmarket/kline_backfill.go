@@ -28,16 +28,20 @@ type KlineBackfillOptions struct {
 // coverage. This handles the case where materialized views are added after
 // historical 1m rows already exist in ClickHouse.
 func EnsurePrecomputedKlineCoverage(ctx context.Context, conn driver.Conn) error {
+	return EnsurePrecomputedKlineCoverageInScope(ctx, conn, KlineBackfillOptions{})
+}
+
+func EnsurePrecomputedKlineCoverageInScope(ctx context.Context, conn driver.Conn, opts KlineBackfillOptions) error {
 	for _, iv := range KlineIntervals {
-		if err := ensureOptionIntervalCoverage(ctx, conn, iv); err != nil {
+		if err := ensureOptionIntervalCoverage(ctx, conn, iv, opts); err != nil {
 			return fmt.Errorf("ensure option interval %s coverage: %w", iv.Suffix, err)
 		}
 		if _, ok := ChainPrecomputedIntervals[iv.Suffix]; ok {
-			if err := ensureOptionChainIntervalCoverage(ctx, conn, iv); err != nil {
+			if err := ensureOptionChainIntervalCoverage(ctx, conn, iv, opts); err != nil {
 				return fmt.Errorf("ensure option chain interval %s coverage: %w", iv.Suffix, err)
 			}
 		}
-		if err := ensureStockIntervalCoverage(ctx, conn, iv); err != nil {
+		if err := ensureStockIntervalCoverage(ctx, conn, iv, opts); err != nil {
 			return fmt.Errorf("ensure stock interval %s coverage: %w", iv.Suffix, err)
 		}
 	}
@@ -117,8 +121,8 @@ func normalizeBackfillIntervals(input []string) ([]string, error) {
 	return out, nil
 }
 
-func ensureOptionIntervalCoverage(ctx context.Context, conn driver.Conn, iv KlineInterval) error {
-	sourceFrom, sourceTo, hasRows, err := resolveUSSourceBounds(ctx, conn, "us_options_bar_1m", "underlying", "")
+func ensureOptionIntervalCoverage(ctx context.Context, conn driver.Conn, iv KlineInterval, opts KlineBackfillOptions) error {
+	sourceFrom, sourceTo, hasRows, err := resolveUSSourceBoundsInScope(ctx, conn, "us_options_bar_1m", "underlying", strings.ToUpper(strings.TrimSpace(opts.Asset)), opts.From, opts.To)
 	if err != nil {
 		return fmt.Errorf("resolve option source bounds: %w", err)
 	}
@@ -136,11 +140,11 @@ func ensureOptionIntervalCoverage(ctx context.Context, conn driver.Conn, iv Klin
 	}
 
 	log.Printf("[us-kline-bootstrap] backfill options %s: %s", iv.Suffix, reason)
-	return backfillOptionInterval(ctx, conn, iv, sourceFrom, sourceTo, "", false)
+	return backfillOptionInterval(ctx, conn, iv, sourceFrom, sourceTo, strings.ToUpper(strings.TrimSpace(opts.Asset)), false)
 }
 
-func ensureOptionChainIntervalCoverage(ctx context.Context, conn driver.Conn, iv KlineInterval) error {
-	sourceFrom, sourceTo, hasRows, err := resolveUSSourceBounds(ctx, conn, "us_options_bar_1m", "underlying", "")
+func ensureOptionChainIntervalCoverage(ctx context.Context, conn driver.Conn, iv KlineInterval, opts KlineBackfillOptions) error {
+	sourceFrom, sourceTo, hasRows, err := resolveUSSourceBoundsInScope(ctx, conn, "us_options_bar_1m", "underlying", strings.ToUpper(strings.TrimSpace(opts.Asset)), opts.From, opts.To)
 	if err != nil {
 		return fmt.Errorf("resolve option chain source bounds: %w", err)
 	}
@@ -158,11 +162,11 @@ func ensureOptionChainIntervalCoverage(ctx context.Context, conn driver.Conn, iv
 	}
 
 	log.Printf("[us-kline-bootstrap] backfill option chain %s: %s", iv.Suffix, reason)
-	return backfillOptionChainInterval(ctx, conn, iv, sourceFrom, sourceTo, "", false)
+	return backfillOptionChainInterval(ctx, conn, iv, sourceFrom, sourceTo, strings.ToUpper(strings.TrimSpace(opts.Asset)), false)
 }
 
-func ensureStockIntervalCoverage(ctx context.Context, conn driver.Conn, iv KlineInterval) error {
-	sourceFrom, sourceTo, hasRows, err := resolveUSSourceBounds(ctx, conn, "us_stocks_bar_1m", "symbol", "")
+func ensureStockIntervalCoverage(ctx context.Context, conn driver.Conn, iv KlineInterval, opts KlineBackfillOptions) error {
+	sourceFrom, sourceTo, hasRows, err := resolveUSSourceBoundsInScope(ctx, conn, "us_stocks_bar_1m", "symbol", strings.ToUpper(strings.TrimSpace(opts.Asset)), opts.From, opts.To)
 	if err != nil {
 		return fmt.Errorf("resolve stock source bounds: %w", err)
 	}
@@ -180,7 +184,7 @@ func ensureStockIntervalCoverage(ctx context.Context, conn driver.Conn, iv Kline
 	}
 
 	log.Printf("[us-kline-bootstrap] backfill stocks %s: %s", iv.Suffix, reason)
-	return backfillStockInterval(ctx, conn, iv, sourceFrom, sourceTo, "", false)
+	return backfillStockInterval(ctx, conn, iv, sourceFrom, sourceTo, strings.ToUpper(strings.TrimSpace(opts.Asset)), false)
 }
 
 func usAggCoverageNeedsBackfill(ctx context.Context, conn driver.Conn, aggTable string, sourceFrom, sourceTo time.Time) (bool, string, error) {
@@ -445,13 +449,25 @@ func resolveUSBackfillWindows(ctx context.Context, conn driver.Conn, tableName, 
 }
 
 func resolveUSSourceBounds(ctx context.Context, conn driver.Conn, tableName, assetColumn, asset string) (time.Time, time.Time, bool, error) {
+	return resolveUSSourceBoundsInScope(ctx, conn, tableName, assetColumn, asset, time.Time{}, time.Time{})
+}
+
+func resolveUSSourceBoundsInScope(ctx context.Context, conn driver.Conn, tableName, assetColumn, asset string, from, to time.Time) (time.Time, time.Time, bool, error) {
 	query := fmt.Sprintf(`SELECT min(market_date), max(market_date)
 FROM %s
 WHERE is_regular_session = 1`, tableName)
-	args := make([]interface{}, 0, 1)
+	args := make([]interface{}, 0, 3)
 	if asset != "" {
 		query += fmt.Sprintf(" AND %s = {asset:String}", assetColumn)
 		args = append(args, clickhouse.Named("asset", asset))
+	}
+	if !from.IsZero() {
+		query += " AND market_date >= {from:Date}"
+		args = append(args, clickhouse.Named("from", normalizeUTCDay(from).Format("2006-01-02")))
+	}
+	if !to.IsZero() {
+		query += " AND market_date < {to:Date}"
+		args = append(args, clickhouse.Named("to", normalizeUTCDay(to).Format("2006-01-02")))
 	}
 
 	rows, err := conn.Query(ctx, query, args...)
@@ -473,9 +489,9 @@ WHERE is_regular_session = 1`, tableName)
 		return time.Time{}, time.Time{}, false, nil
 	}
 
-	from := normalizeUTCDay(minDate)
-	to := normalizeUTCDay(maxDate).Add(24 * time.Hour)
-	return from, to, true, nil
+	fromBound := normalizeUTCDay(minDate)
+	toBound := normalizeUTCDay(maxDate).Add(24 * time.Hour)
+	return fromBound, toBound, true, nil
 }
 
 func splitUSBackfillWindows(from, to time.Time) []usBackfillWindow {

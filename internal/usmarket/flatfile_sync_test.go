@@ -87,7 +87,7 @@ func TestDownloadFlatFileRangeReturnsZeroLastDownloadedWhenAllDatesMissing(t *te
 
 func TestResolveFlatFileStartDate(t *testing.T) {
 	latest := time.Date(2026, 4, 8, 13, 0, 0, 0, time.UTC)
-	start, err := resolveFlatFileStartDate("stocks", latest, true, time.Date(2023, 1, 1, 0, 0, 0, 0, time.UTC))
+	start, err := resolveFlatFileStartDate("stocks", latest, true, time.Date(2023, 1, 1, 0, 0, 0, 0, time.UTC), time.Time{})
 	if err != nil {
 		t.Fatalf("resolve with existing data failed: %v", err)
 	}
@@ -95,7 +95,7 @@ func TestResolveFlatFileStartDate(t *testing.T) {
 		t.Fatalf("unexpected next start date: %s", got)
 	}
 
-	coldStart, err := resolveFlatFileStartDate("options", time.Time{}, false, time.Date(2023, 1, 1, 15, 0, 0, 0, time.UTC))
+	coldStart, err := resolveFlatFileStartDate("options", time.Time{}, false, time.Date(2023, 1, 1, 15, 0, 0, 0, time.UTC), time.Time{})
 	if err != nil {
 		t.Fatalf("resolve cold start failed: %v", err)
 	}
@@ -104,11 +104,41 @@ func TestResolveFlatFileStartDate(t *testing.T) {
 	}
 }
 
+func TestResolveFlatFileStartDateUsesOverrideRange(t *testing.T) {
+	latest := time.Date(2026, 4, 8, 13, 0, 0, 0, time.UTC)
+	start, err := resolveFlatFileStartDate(
+		"stocks",
+		latest,
+		true,
+		time.Date(2023, 1, 1, 0, 0, 0, 0, time.UTC),
+		time.Date(2022, 5, 1, 9, 30, 0, 0, time.UTC),
+	)
+	if err != nil {
+		t.Fatalf("resolve override start failed: %v", err)
+	}
+	if got := start.Format("2006-01-02"); got != "2022-05-01" {
+		t.Fatalf("unexpected override start date: %s", got)
+	}
+}
+
 func TestResolveFlatFileEndDateUsesUTCYesterday(t *testing.T) {
-	end := resolveFlatFileEndDate(func() time.Time {
+	end, err := resolveFlatFileEndDate(func() time.Time {
 		return time.Date(2026, 4, 10, 1, 30, 0, 0, time.FixedZone("CST", 8*3600))
-	})
+	}, time.Time{})
+	if err != nil {
+		t.Fatalf("resolve end date failed: %v", err)
+	}
 	if got := end.Format("2006-01-02"); got != "2026-04-08" {
 		t.Fatalf("unexpected end date: %s", got)
+	}
+}
+
+func TestResolveFlatFileEndDateUsesOverride(t *testing.T) {
+	end, err := resolveFlatFileEndDate(nil, time.Date(2022, 12, 31, 20, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("resolve override end date failed: %v", err)
+	}
+	if got := end.Format("2006-01-02"); got != "2022-12-31" {
+		t.Fatalf("unexpected override end date: %s", got)
 	}
 }

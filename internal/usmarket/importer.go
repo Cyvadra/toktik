@@ -32,7 +32,15 @@ type ImportResult struct {
 	Elapsed        time.Duration
 }
 
+type ImportStorageOptions struct {
+	PrecomputedCoverageScope KlineBackfillOptions
+}
+
 func InitializeImportStorage(ctx context.Context, conn driver.Conn, ddlPath string) (SessionMap, error) {
+	return InitializeImportStorageWithOptions(ctx, conn, ddlPath, ImportStorageOptions{})
+}
+
+func InitializeImportStorageWithOptions(ctx context.Context, conn driver.Conn, ddlPath string, opts ImportStorageOptions) (SessionMap, error) {
 	if err := InitSchema(ctx, conn, ddlPath); err != nil {
 		return nil, fmt.Errorf("init schema: %w", err)
 	}
@@ -58,7 +66,7 @@ func InitializeImportStorage(ctx context.Context, conn driver.Conn, ddlPath stri
 	if err := InitStockKlineSchema(ctx, conn); err != nil {
 		return nil, fmt.Errorf("init stock kline schema: %w", err)
 	}
-	if err := EnsurePrecomputedKlineCoverage(ctx, conn); err != nil {
+	if err := EnsurePrecomputedKlineCoverageInScope(ctx, conn, opts.PrecomputedCoverageScope); err != nil {
 		return nil, fmt.Errorf("ensure precomputed us kline coverage: %w", err)
 	}
 	return sessions, nil
