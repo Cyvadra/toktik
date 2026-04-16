@@ -636,6 +636,42 @@ func TestNewFromEnvAndQueries(t *testing.T) {
 	}
 }
 
+func TestOptionChainReturnsHTTPStatusErrorOnAPIError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer test_massive_key" {
+			t.Fatalf("unexpected Authorization header: %q", got)
+		}
+		if r.URL.Path != "/v3/snapshot/options/EWH" {
+			t.Fatalf("unexpected request path: %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"status":"ERROR","request_id":"d4e9e56585b307b4e608c9d97a704ef2","error":"Failed to parse query parameters from URL: Key: 'OptionsChainQueryParam.Limit' Error:Field validation for 'Limit' failed on the 'max' tag"}`))
+	}))
+	defer server.Close()
+
+	client, err := New(Config{APIKey: "test_massive_key", BaseURL: server.URL})
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+
+	_, err = client.OptionChain(OptionChainRequest{Underlying: "EWH", Limit: 500})
+	if err == nil {
+		t.Fatal("expected option chain error")
+	}
+
+	var statusErr *HTTPStatusError
+	if !errors.As(err, &statusErr) {
+		t.Fatalf("expected HTTPStatusError, got %T: %v", err, err)
+	}
+	if statusErr.StatusCode != http.StatusBadRequest {
+		t.Fatalf("unexpected status code: %d", statusErr.StatusCode)
+	}
+	if !strings.Contains(statusErr.Body, "OptionsChainQueryParam.Limit") {
+		t.Fatalf("expected upstream body detail, got %q", statusErr.Body)
+	}
+}
+
 func writeJSON(t *testing.T, w http.ResponseWriter, payload any) {
 	t.Helper()
 	w.Header().Set("Content-Type", "application/json")

@@ -6,12 +6,14 @@ import (
 	"time"
 
 	"github.com/Cyvadra/toktik/internal/cache"
+	"github.com/Cyvadra/toktik/internal/dto"
 	polygonpkg "github.com/Cyvadra/toktik/pkg/polygon"
 )
 
 type stubPolygonClient struct {
 	stockSnapshotCalls  int
 	stockAggregateCalls int
+	optionChainReq      polygonpkg.OptionChainRequest
 }
 
 func (s *stubPolygonClient) DownloadStockMinuteAggregates(context.Context, time.Time, bool) (string, error) {
@@ -45,6 +47,7 @@ func (s *stubPolygonClient) OptionContract(ticker string) (*polygonpkg.OptionCon
 }
 
 func (s *stubPolygonClient) OptionChain(req polygonpkg.OptionChainRequest) ([]polygonpkg.OptionChainContract, error) {
+	s.optionChainReq = req
 	return nil, nil
 }
 
@@ -101,5 +104,23 @@ func TestPolygonServiceWindowTTL(t *testing.T) {
 		if got := svc.windowTTL(tt.from, tt.to); got != tt.want {
 			t.Fatalf("%s: windowTTL() = %s, want %s", tt.name, got, tt.want)
 		}
+	}
+}
+
+func TestPolygonServiceQueryOptionChainClampsLimit(t *testing.T) {
+	client := &stubPolygonClient{}
+	svc := NewPolygonService(client, nil)
+
+	_, err := svc.QueryOptionChain(context.Background(), dto.PolygonOptionChainRequest{
+		Underlying:        "EWH",
+		ExpirationDateGte: "2026-05-07",
+		ExpirationDateLte: "2026-05-31",
+		Limit:             500,
+	})
+	if err != nil {
+		t.Fatalf("QueryOptionChain failed: %v", err)
+	}
+	if client.optionChainReq.Limit != polygonOptionChainMaxLimit {
+		t.Fatalf("expected option chain limit to clamp to %d, got %d", polygonOptionChainMaxLimit, client.optionChainReq.Limit)
 	}
 }

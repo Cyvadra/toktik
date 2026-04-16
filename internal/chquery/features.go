@@ -453,9 +453,9 @@ SELECT
 FROM (
     SELECT market, underlying, as_of_date, hv10, hv20, hv30, current_iv, iv_percentile, iv_rank
     FROM feature_volatility_snapshot_daily
-    WHERE market = {market:String}
+	WHERE market = %s
       AND as_of_date = (
-          SELECT max(as_of_date) FROM feature_volatility_snapshot_daily WHERE market = {market:String}
+		  SELECT max(as_of_date) FROM feature_volatility_snapshot_daily WHERE market = %s
       )
     GROUP BY market, underlying, as_of_date, hv10, hv20, hv30, current_iv, iv_percentile, iv_rank
 ) v
@@ -466,9 +466,9 @@ LEFT JOIN (
         avg(activity_ratio) AS avg_activity_ratio,
         avg(tradability_ratio) AS avg_tradability_ratio
     FROM feature_liquidity_snapshot_daily
-    WHERE market = {market:String}
+		WHERE market = %s
       AND as_of_date = (
-          SELECT max(as_of_date) FROM feature_liquidity_snapshot_daily WHERE market = {market:String}
+					SELECT max(as_of_date) FROM feature_liquidity_snapshot_daily WHERE market = %s
       )
     GROUP BY market, underlying
 ) l ON v.market = l.market AND v.underlying = l.underlying

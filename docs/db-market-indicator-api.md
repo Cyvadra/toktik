@@ -7,19 +7,21 @@
 - Source Swagger: `docs/swagger.json`
 - API title: `Toktik Options Platform API`
 - API version: `1.0`
-- Generated at: `2026-04-16T08:46:31Z`
+- Generated at: `2026-04-16T10:19:55Z`
 
 ## Scope
 
-This document exports the database-backed market data and technical indicator query APIs. It intentionally excludes external proxy endpoints such as Polygon, and also excludes backtest, screener, and feature-store analytics endpoints that are not primary market or indicator query surfaces.
+This document exports the database-backed market data, technical indicator, feature-store analytics, and screener APIs. It intentionally excludes external proxy endpoints such as Polygon, and also excludes backtest and other non-query operational endpoints.
 
 ## Contents
 
 - [Technical Indicators](#technical-indicators)
+- [Feature Store Analytics](#feature-store-analytics)
 - [Crypto Options Market Data](#crypto-options-market-data)
 - [Crypto Spot Market Data](#crypto-spot-market-data)
 - [US Stocks Market Data](#us-stocks-market-data)
 - [US Options Market Data](#us-options-market-data)
+- [Screeners](#screeners)
 
 ## Technical Indicators
 
@@ -122,6 +124,290 @@ No parameters.
 | Status | Schema | Description |
 | --- | --- | --- |
 | 200 | github_com_Cyvadra_toktik_internal_dto.FactorBarResponse | OK |
+| 400 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Bad Request |
+| 500 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Internal Server Error |
+
+## Feature Store Analytics
+
+### Volatility snapshot
+
+- Endpoint: `GET /api/v1/features/volatility-snapshot`
+- Tags: `Features`
+- Produces: `application/json`
+- Summary: Get volatility snapshot
+- Description: Returns current HV and IV regime metrics for an underlying.
+
+#### Parameters
+
+| Name | In | Type | Required | Description |
+| --- | --- | --- | --- | --- |
+| market | query | string | yes | Market (crypto-options, us-options) |
+| underlying | query | string | yes | Underlying asset symbol |
+| lookback_days | query | integer | no | IV percentile lookback window (default 252) |
+
+#### Responses
+
+| Status | Schema | Description |
+| --- | --- | --- |
+| 200 | github_com_Cyvadra_toktik_internal_dto.FeatureVolatilitySnapshotResponse | OK |
+| 400 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Bad Request |
+| 500 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Internal Server Error |
+
+### Volatility history
+
+- Endpoint: `GET /api/v1/features/volatility-history`
+- Tags: `Features`
+- Produces: `application/json`
+- Summary: Get volatility history
+- Description: Returns a range of daily HV and IV metrics for an underlying.
+
+#### Parameters
+
+| Name | In | Type | Required | Description |
+| --- | --- | --- | --- | --- |
+| market | query | string | yes | Market (crypto-options, us-options) |
+| underlying | query | string | yes | Underlying asset symbol |
+| from | query | string | yes | Start date (RFC3339 or YYYY-MM-DD) |
+| to | query | string | yes | End date (RFC3339 or YYYY-MM-DD) |
+| lookback_days | query | integer | no | IV percentile lookback window (default 252) |
+
+#### Responses
+
+| Status | Schema | Description |
+| --- | --- | --- |
+| 200 | github_com_Cyvadra_toktik_internal_dto.FeatureVolatilityHistoryResponse | OK |
+| 400 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Bad Request |
+| 500 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Internal Server Error |
+
+### Term-structure snapshot
+
+- Endpoint: `GET /api/v1/features/term-structure-snapshot`
+- Tags: `Features`
+- Produces: `application/json`
+- Summary: Get IV term structure snapshot
+- Description: Returns the current ATM IV term structure by expiration for an underlying.
+
+#### Parameters
+
+| Name | In | Type | Required | Description |
+| --- | --- | --- | --- | --- |
+| market | query | string | yes | Market (crypto-options, us-options) |
+| underlying | query | string | yes | Underlying asset symbol |
+| min_days_to_expiry | query | integer | no | Min DTE filter |
+| max_days_to_expiry | query | integer | no | Max DTE filter |
+
+#### Responses
+
+| Status | Schema | Description |
+| --- | --- | --- |
+| 200 | github_com_Cyvadra_toktik_internal_dto.FeatureTermStructureSnapshotResponse | OK |
+| 400 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Bad Request |
+| 500 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Internal Server Error |
+
+### Term-structure history
+
+- Endpoint: `GET /api/v1/features/term-structure-history`
+- Tags: `Features`
+- Produces: `application/json`
+- Summary: Get term structure history
+- Description: Returns historical IV term structure data for an underlying.
+
+#### Parameters
+
+| Name | In | Type | Required | Description |
+| --- | --- | --- | --- | --- |
+| market | query | string | yes | Market (crypto-options, us-options) |
+| underlying | query | string | yes | Underlying asset symbol |
+| from | query | string | yes | Start date (RFC3339 or YYYY-MM-DD) |
+| to | query | string | yes | End date (RFC3339 or YYYY-MM-DD) |
+| limit | query | integer | no | Max rows (default 1000) |
+| cursor | query | string | no | Pagination cursor |
+
+#### Responses
+
+| Status | Schema | Description |
+| --- | --- | --- |
+| 200 | github_com_Cyvadra_toktik_internal_dto.FeatureTermStructureHistoryResponse | OK |
+| 400 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Bad Request |
+| 500 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Internal Server Error |
+
+### Skew snapshot
+
+- Endpoint: `GET /api/v1/features/skew-snapshot`
+- Tags: `Features`
+- Produces: `application/json`
+- Summary: Get put-call skew snapshot
+- Description: Returns the current OTM put-call IV skew by expiration for an underlying.
+
+#### Parameters
+
+| Name | In | Type | Required | Description |
+| --- | --- | --- | --- | --- |
+| market | query | string | yes | Market (crypto-options, us-options) |
+| underlying | query | string | yes | Underlying asset symbol |
+| min_days_to_expiry | query | integer | no | Min DTE filter |
+| max_days_to_expiry | query | integer | no | Max DTE filter |
+
+#### Responses
+
+| Status | Schema | Description |
+| --- | --- | --- |
+| 200 | github_com_Cyvadra_toktik_internal_dto.FeatureSkewSnapshotResponse | OK |
+| 400 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Bad Request |
+| 500 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Internal Server Error |
+
+### Skew history
+
+- Endpoint: `GET /api/v1/features/skew-history`
+- Tags: `Features`
+- Produces: `application/json`
+- Summary: Get skew history
+- Description: Returns historical put-call skew data for an underlying.
+
+#### Parameters
+
+| Name | In | Type | Required | Description |
+| --- | --- | --- | --- | --- |
+| market | query | string | yes | Market (crypto-options, us-options) |
+| underlying | query | string | yes | Underlying asset symbol |
+| from | query | string | yes | Start date (RFC3339 or YYYY-MM-DD) |
+| to | query | string | yes | End date (RFC3339 or YYYY-MM-DD) |
+| limit | query | integer | no | Max rows (default 1000) |
+| cursor | query | string | no | Pagination cursor |
+
+#### Responses
+
+| Status | Schema | Description |
+| --- | --- | --- |
+| 200 | github_com_Cyvadra_toktik_internal_dto.FeatureSkewHistoryResponse | OK |
+| 400 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Bad Request |
+| 500 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Internal Server Error |
+
+### Liquidity snapshot
+
+- Endpoint: `GET /api/v1/features/liquidity-snapshot`
+- Tags: `Features`
+- Produces: `application/json`
+- Summary: Get liquidity snapshot
+- Description: Returns option liquidity metrics by expiration bucket for an underlying.
+
+#### Parameters
+
+| Name | In | Type | Required | Description |
+| --- | --- | --- | --- | --- |
+| market | query | string | yes | Market (crypto-options, us-options) |
+| underlying | query | string | yes | Underlying asset symbol |
+| min_days_to_expiry | query | integer | no | Min DTE filter |
+| max_days_to_expiry | query | integer | no | Max DTE filter |
+
+#### Responses
+
+| Status | Schema | Description |
+| --- | --- | --- |
+| 200 | github_com_Cyvadra_toktik_internal_dto.FeatureLiquiditySnapshotResponse | OK |
+| 400 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Bad Request |
+| 500 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Internal Server Error |
+
+### Liquidity history
+
+- Endpoint: `GET /api/v1/features/liquidity-history`
+- Tags: `Features`
+- Produces: `application/json`
+- Summary: Get liquidity history
+- Description: Returns a range of daily liquidity metrics for an underlying.
+
+#### Parameters
+
+| Name | In | Type | Required | Description |
+| --- | --- | --- | --- | --- |
+| market | query | string | yes | Market (crypto-options, us-options) |
+| underlying | query | string | yes | Underlying asset symbol |
+| from | query | string | yes | Start date (RFC3339 or YYYY-MM-DD) |
+| to | query | string | yes | End date (RFC3339 or YYYY-MM-DD) |
+| min_days_to_expiry | query | integer | no | Min DTE filter |
+| max_days_to_expiry | query | integer | no | Max DTE filter |
+
+#### Responses
+
+| Status | Schema | Description |
+| --- | --- | --- |
+| 200 | github_com_Cyvadra_toktik_internal_dto.FeatureLiquidityHistoryResponse | OK |
+| 400 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Bad Request |
+| 500 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Internal Server Error |
+
+### Event-window snapshot
+
+- Endpoint: `GET /api/v1/features/event-window-snapshot`
+- Tags: `Features`
+- Produces: `application/json`
+- Summary: Get event window snapshot
+- Description: Returns market-session proximity flags (holidays, early close) for an underlying.
+
+#### Parameters
+
+| Name | In | Type | Required | Description |
+| --- | --- | --- | --- | --- |
+| market | query | string | yes | Market (crypto-options, us-options) |
+| underlying | query | string | yes | Underlying asset symbol |
+
+#### Responses
+
+| Status | Schema | Description |
+| --- | --- | --- |
+| 200 | github_com_Cyvadra_toktik_internal_dto.FeatureEventWindowSnapshotResponse | OK |
+| 400 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Bad Request |
+| 500 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Internal Server Error |
+
+### Event-window history
+
+- Endpoint: `GET /api/v1/features/event-window-history`
+- Tags: `Features`
+- Produces: `application/json`
+- Summary: Get event window history
+- Description: Returns a range of daily event-window flags for an underlying.
+
+#### Parameters
+
+| Name | In | Type | Required | Description |
+| --- | --- | --- | --- | --- |
+| market | query | string | yes | Market (crypto-options, us-options) |
+| underlying | query | string | yes | Underlying asset symbol |
+| from | query | string | yes | Start date (RFC3339 or YYYY-MM-DD) |
+| to | query | string | yes | End date (RFC3339 or YYYY-MM-DD) |
+
+#### Responses
+
+| Status | Schema | Description |
+| --- | --- | --- |
+| 200 | github_com_Cyvadra_toktik_internal_dto.FeatureEventWindowHistoryResponse | OK |
+| 400 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Bad Request |
+| 500 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Internal Server Error |
+
+### Daily feature panel
+
+- Endpoint: `GET /api/v1/features/daily-feature-panel`
+- Tags: `Features`
+- Produces: `application/json`
+- Summary: Get daily feature panel
+- Description: Returns a consolidated daily panel with volatility, term structure, liquidity, and event features.
+
+#### Parameters
+
+| Name | In | Type | Required | Description |
+| --- | --- | --- | --- | --- |
+| market | query | string | yes | Market (crypto-options, us-options) |
+| underlying | query | string | yes | Underlying asset symbol |
+| from | query | string | yes | Start date (RFC3339 or YYYY-MM-DD) |
+| to | query | string | yes | End date (RFC3339 or YYYY-MM-DD) |
+| lookback_days | query | integer | no | IV percentile lookback window (default 252) |
+| min_days_to_expiry | query | integer | no | Min DTE filter |
+| max_days_to_expiry | query | integer | no | Max DTE filter |
+
+#### Responses
+
+| Status | Schema | Description |
+| --- | --- | --- |
+| 200 | github_com_Cyvadra_toktik_internal_dto.FeatureDailyPanelResponse | OK |
 | 400 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Bad Request |
 | 500 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Internal Server Error |
 
@@ -448,6 +734,64 @@ No parameters.
 | Status | Schema | Description |
 | --- | --- | --- |
 | 200 | github_com_Cyvadra_toktik_internal_dto.USOptionChainResponse | OK |
+| 400 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Bad Request |
+| 500 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Internal Server Error |
+
+## Screeners
+
+### Underlying screener
+
+- Endpoint: `GET /api/v1/screener/underlyings`
+- Tags: `Screener`
+- Produces: `application/json`
+- Summary: Screen underlyings
+- Description: Filters and ranks underlying assets by IV, volume, and other criteria.
+
+#### Parameters
+
+| Name | In | Type | Required | Description |
+| --- | --- | --- | --- | --- |
+| market | query | string | yes | Market (crypto-options, us-options) |
+| sort_by | query | string | no | Sort field |
+| order | query | string | no | Sort order (asc, desc) |
+| limit | query | integer | no | Max rows (default 50) |
+| cursor | query | string | no | Pagination cursor |
+
+#### Responses
+
+| Status | Schema | Description |
+| --- | --- | --- |
+| 200 | github_com_Cyvadra_toktik_internal_dto.ScreenUnderlyingResponse | OK |
+| 400 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Bad Request |
+| 500 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Internal Server Error |
+
+### Option screener
+
+- Endpoint: `GET /api/v1/screener/options`
+- Tags: `Screener`
+- Produces: `application/json`
+- Summary: Screen option contracts
+- Description: Filters and ranks individual option contracts by Greeks, volume, open interest, and other criteria.
+
+#### Parameters
+
+| Name | In | Type | Required | Description |
+| --- | --- | --- | --- | --- |
+| market | query | string | yes | Market (crypto-options, us-options) |
+| underlying | query | string | no | Filter by underlying |
+| type | query | string | no | Option type (call, put) |
+| min_dte | query | integer | no | Minimum days to expiry |
+| max_dte | query | integer | no | Maximum days to expiry |
+| sort_by | query | string | no | Sort field |
+| order | query | string | no | Sort order (asc, desc) |
+| limit | query | integer | no | Max rows (default 50) |
+| cursor | query | string | no | Pagination cursor |
+
+#### Responses
+
+| Status | Schema | Description |
+| --- | --- | --- |
+| 200 | github_com_Cyvadra_toktik_internal_dto.ScreenOptionResponse | OK |
 | 400 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Bad Request |
 | 500 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Internal Server Error |
 

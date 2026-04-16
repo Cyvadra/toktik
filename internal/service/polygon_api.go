@@ -6,6 +6,8 @@ import (
 	"github.com/Cyvadra/toktik/internal/dto"
 )
 
+const polygonOptionChainMaxLimit = 250
+
 func (s *PolygonService) QueryStockSnapshot(ctx context.Context, req dto.PolygonStockSnapshotRequest) (*dto.PolygonStockSnapshotResponse, error) {
 	data, err := s.StockSnapshot(ctx, req.Symbol)
 	if err != nil {
@@ -47,7 +49,11 @@ func (s *PolygonService) QueryOptionContract(ctx context.Context, req dto.Polygo
 }
 
 func (s *PolygonService) QueryOptionChain(ctx context.Context, req dto.PolygonOptionChainRequest) (*dto.PolygonOptionChainResponse, error) {
-	data, err := s.OptionChain(ctx, req.ToPolygon())
+	polygonReq := req.ToPolygon()
+	if polygonReq.Limit > polygonOptionChainMaxLimit {
+		polygonReq.Limit = polygonOptionChainMaxLimit
+	}
+	data, err := s.OptionChain(ctx, polygonReq)
 	if err != nil {
 		return nil, err
 	}

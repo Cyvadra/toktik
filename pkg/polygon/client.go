@@ -378,7 +378,7 @@ func (c *Client) StockSnapshot(symbol string) (*StockSnapshot, error) {
 	if err != nil {
 		return nil, fmt.Errorf("query massive stock snapshot: %w", err)
 	}
-	if err := rest.CheckResponse(resp); err != nil {
+	if err := normalizeResponseError(resp, resp.HTTPResponse, resp.Body, rest.CheckResponse(resp)); err != nil {
 		return nil, err
 	}
 	if resp.JSON200 == nil || resp.JSON200.Ticker == nil {
@@ -461,7 +461,7 @@ func (c *Client) StockAggregates(req AggregateRequest) ([]AggregateBar, error) {
 	if err != nil {
 		return nil, fmt.Errorf("query massive stock aggregates: %w", err)
 	}
-	if err := rest.CheckResponse(resp); err != nil {
+	if err := normalizeResponseError(resp, resp.HTTPResponse, resp.Body, rest.CheckResponse(resp)); err != nil {
 		return nil, err
 	}
 	if resp.JSON200 == nil {
@@ -520,7 +520,7 @@ func (c *Client) StockQuotes(symbol string, req QuoteRequest) ([]Quote, error) {
 	if err != nil {
 		return nil, fmt.Errorf("query massive stock quotes: %w", err)
 	}
-	if err := rest.CheckResponse(resp); err != nil {
+	if err := normalizeResponseError(resp, resp.HTTPResponse, resp.Body, rest.CheckResponse(resp)); err != nil {
 		return nil, err
 	}
 
@@ -556,7 +556,7 @@ func (c *Client) StockTrades(symbol string, req TradeRequest) ([]Trade, error) {
 	if err != nil {
 		return nil, fmt.Errorf("query massive stock trades: %w", err)
 	}
-	if err := rest.CheckResponse(resp); err != nil {
+	if err := normalizeResponseError(resp, resp.HTTPResponse, resp.Body, rest.CheckResponse(resp)); err != nil {
 		return nil, err
 	}
 
@@ -592,7 +592,7 @@ func (c *Client) OptionContract(ticker string) (*OptionContract, error) {
 	if err != nil {
 		return nil, fmt.Errorf("query massive option contract: %w", err)
 	}
-	if err := rest.CheckResponse(resp); err != nil {
+	if err := normalizeResponseError(resp, resp.HTTPResponse, resp.Body, rest.CheckResponse(resp)); err != nil {
 		return nil, err
 	}
 	if resp.JSON200 == nil || resp.JSON200.Results == nil {
@@ -659,7 +659,7 @@ func (c *Client) OptionChain(req OptionChainRequest) ([]OptionChainContract, err
 	if err != nil {
 		return nil, fmt.Errorf("query massive option chain: %w", err)
 	}
-	if err := rest.CheckResponse(resp); err != nil {
+	if err := normalizeResponseError(resp, resp.HTTPResponse, resp.Body, rest.CheckResponse(resp)); err != nil {
 		return nil, err
 	}
 
@@ -713,7 +713,7 @@ func (c *Client) OptionAggregates(req AggregateRequest) ([]AggregateBar, error) 
 	if err != nil {
 		return nil, fmt.Errorf("query massive option aggregates: %w", err)
 	}
-	if err := rest.CheckResponse(resp); err != nil {
+	if err := normalizeResponseError(resp, resp.HTTPResponse, resp.Body, rest.CheckResponse(resp)); err != nil {
 		return nil, err
 	}
 	if resp.JSON200 == nil {
@@ -749,7 +749,7 @@ func (c *Client) OptionQuotes(ticker string, req QuoteRequest) ([]Quote, error) 
 	if err != nil {
 		return nil, fmt.Errorf("query massive option quotes: %w", err)
 	}
-	if err := rest.CheckResponse(resp); err != nil {
+	if err := normalizeResponseError(resp, resp.HTTPResponse, resp.Body, rest.CheckResponse(resp)); err != nil {
 		return nil, err
 	}
 	quotes := make([]Quote, 0)
@@ -784,7 +784,7 @@ func (c *Client) OptionTrades(ticker string, req TradeRequest) ([]Trade, error) 
 	if err != nil {
 		return nil, fmt.Errorf("query massive option trades: %w", err)
 	}
-	if err := rest.CheckResponse(resp); err != nil {
+	if err := normalizeResponseError(resp, resp.HTTPResponse, resp.Body, rest.CheckResponse(resp)); err != nil {
 		return nil, err
 	}
 	trades := make([]Trade, 0)

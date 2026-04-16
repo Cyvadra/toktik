@@ -2333,7 +2333,7 @@ const docTemplate = `{
                     },
                     {
                         "type": "integer",
-                        "description": "Page size",
+                        "description": "Page size (max 250)",
                         "name": "limit",
                         "in": "query"
                     }

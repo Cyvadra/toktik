@@ -3,9 +3,9 @@ package service
 import (
 	"context"
 	"fmt"
+	"math"
 	"strings"
 
-	clickhouse "github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/Cyvadra/toktik/internal/chquery"
 	"github.com/Cyvadra/toktik/internal/chrepo"
 	"github.com/Cyvadra/toktik/internal/dto"
@@ -22,54 +22,41 @@ func NewScreenerService(repo *chrepo.Repo) *ScreenerService {
 
 func (s *ScreenerService) ScreenUnderlyings(ctx context.Context, req dto.ScreenUnderlyingRequest) (*dto.ScreenUnderlyingResponse, error) {
 	limit := clamp(req.Limit, defaultSymbolLimit, maxSymbolLimit)
+	marketLiteral := clickHouseStringLiteral(req.Market)
 
 	// Join latest volatility snapshot with latest aggregated liquidity data.
 	// The volatility snapshot is per-underlying; liquidity is per-expiration, so we aggregate.
-	query := chquery.ScreenUnderlyingsBase
-
-	args := []interface{}{
-		clickhouse.Named("market", req.Market),
-	}
+	query := fmt.Sprintf(chquery.ScreenUnderlyingsBase, marketLiteral, marketLiteral, marketLiteral, marketLiteral)
 
 	if req.IVPercentileMin != nil {
-		query += ` AND v.iv_percentile >= {iv_pctl_min:Float64}`
-		args = append(args, clickhouse.Named("iv_pctl_min", *req.IVPercentileMin))
+		query += fmt.Sprintf(` AND v.iv_percentile >= %.17g`, *req.IVPercentileMin)
 	}
 	if req.IVPercentileMax != nil {
-		query += ` AND v.iv_percentile <= {iv_pctl_max:Float64}`
-		args = append(args, clickhouse.Named("iv_pctl_max", *req.IVPercentileMax))
+		query += fmt.Sprintf(` AND v.iv_percentile <= %.17g`, *req.IVPercentileMax)
 	}
 	if req.IVRankMin != nil {
-		query += ` AND v.iv_rank >= {iv_rank_min:Float64}`
-		args = append(args, clickhouse.Named("iv_rank_min", *req.IVRankMin))
+		query += fmt.Sprintf(` AND v.iv_rank >= %.17g`, *req.IVRankMin)
 	}
 	if req.IVRankMax != nil {
-		query += ` AND v.iv_rank <= {iv_rank_max:Float64}`
-		args = append(args, clickhouse.Named("iv_rank_max", *req.IVRankMax))
+		query += fmt.Sprintf(` AND v.iv_rank <= %.17g`, *req.IVRankMax)
 	}
 	if req.HV20Min != nil {
-		query += ` AND v.hv20 >= {hv20_min:Float64}`
-		args = append(args, clickhouse.Named("hv20_min", *req.HV20Min))
+		query += fmt.Sprintf(` AND v.hv20 >= %.17g`, *req.HV20Min)
 	}
 	if req.HV20Max != nil {
-		query += ` AND v.hv20 <= {hv20_max:Float64}`
-		args = append(args, clickhouse.Named("hv20_max", *req.HV20Max))
+		query += fmt.Sprintf(` AND v.hv20 <= %.17g`, *req.HV20Max)
 	}
 	if req.VolumeMin != nil {
-		query += ` AND l.total_volume >= {vol_min:Float64}`
-		args = append(args, clickhouse.Named("vol_min", *req.VolumeMin))
+		query += fmt.Sprintf(` AND l.total_volume >= %.17g`, *req.VolumeMin)
 	}
 	if req.OpenInterestMin != nil {
-		query += ` AND l.total_oi >= {oi_min:Float64}`
-		args = append(args, clickhouse.Named("oi_min", *req.OpenInterestMin))
+		query += fmt.Sprintf(` AND l.total_oi >= %.17g`, *req.OpenInterestMin)
 	}
 	if req.ActivityRatioMin != nil {
-		query += ` AND l.avg_activity_ratio >= {act_min:Float64}`
-		args = append(args, clickhouse.Named("act_min", *req.ActivityRatioMin))
+		query += fmt.Sprintf(` AND l.avg_activity_ratio >= %.17g`, *req.ActivityRatioMin)
 	}
 	if req.TradabilityRatioMin != nil {
-		query += ` AND l.avg_tradability_ratio >= {trd_min:Float64}`
-		args = append(args, clickhouse.Named("trd_min", *req.TradabilityRatioMin))
+		query += fmt.Sprintf(` AND l.avg_tradability_ratio >= %.17g`, *req.TradabilityRatioMin)
 	}
 
 	if req.Cursor != "" {
@@ -77,8 +64,7 @@ func (s *ScreenerService) ScreenUnderlyings(ctx context.Context, req dto.ScreenU
 		if err != nil {
 			return nil, invalidCursorError(err)
 		}
-		query += ` AND v.underlying > {cursor:String}`
-		args = append(args, clickhouse.Named("cursor", cursorUnderlying))
+		query += ` AND v.underlying > ` + clickHouseStringLiteral(cursorUnderlying)
 	}
 
 	sortBy := "v.underlying"
@@ -94,10 +80,9 @@ func (s *ScreenerService) ScreenUnderlyings(ctx context.Context, req dto.ScreenU
 	case "open_interest":
 		sortBy = "l.total_oi DESC"
 	}
-	query += fmt.Sprintf(` ORDER BY %s LIMIT {limit:UInt32}`, sortBy)
-	args = append(args, clickhouse.Named("limit", limit+1))
+	query += fmt.Sprintf(` ORDER BY %s LIMIT %d`, sortBy, limit+1)
 
-	rows, err := s.repo.Query(ctx, query, args...)
+	rows, err := s.repo.Query(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("screen underlyings: %w", err)
 	}
@@ -106,15 +91,19 @@ func (s *ScreenerService) ScreenUnderlyings(ctx context.Context, req dto.ScreenU
 	results := make([]dto.ScreenedUnderlying, 0, limit)
 	for rows.Next() {
 		var r dto.ScreenedUnderlying
+		var volume uint64
 		if err := rows.Scan(
 			&r.Market, &r.Underlying, &r.AsOfDate,
 			&r.HV10, &r.HV20, &r.HV30,
 			&r.CurrentIV, &r.IVPercentile, &r.IVRank,
-			&r.OpenInterest, &r.Volume,
+			&r.OpenInterest, &volume,
 			&r.ActivityRatio, &r.TradabilityRatio,
 		); err != nil {
 			return nil, fmt.Errorf("scan screened underlying: %w", err)
 		}
+		volumeInt := int(volume)
+		r.Volume = &volumeInt
+		sanitizeUnderlyingResult(&r)
 		results = append(results, r)
 	}
 	if err := rows.Err(); err != nil {
@@ -151,7 +140,7 @@ func (s *ScreenerService) ScreenOptions(ctx context.Context, req dto.ScreenOptio
 	if isCrypto {
 		query = fmt.Sprintf(`
 WITH latest AS (
-    SELECT max(timestamp) AS ts FROM %s WHERE base_asset = {underlying:String}
+	SELECT max(timestamp) AS ts FROM %s WHERE base_asset = %s
 )
 SELECT
     m.symbol,
@@ -189,41 +178,50 @@ ARRAY JOIN
 INNER JOIN crypto_options_symbol_meta FINAL AS m ON m.symbol_id = sid
 CROSS JOIN latest
 WHERE chain.timestamp = latest.ts
-  AND chain.base_asset = {underlying:String}
-`, chainTable, chainTable)
+	AND chain.base_asset = %s
+`, chainTable, clickHouseStringLiteral(req.Underlying), chainTable, clickHouseStringLiteral(req.Underlying))
 	} else {
 		query = fmt.Sprintf(`
 WITH latest AS (
-    SELECT max(timestamp) AS ts FROM %s WHERE underlying = {underlying:String}
+		SELECT max(timestamp) AS ts FROM %s WHERE underlying = %s
 )
 SELECT
-    chain.symbol,
-    chain.underlying,
-    chain.option_type,
-    chain.expiration,
-    toInt32(dateDiff('day', now(), chain.expiration)) AS days_to_expiry,
-    chain.strike,
-    chain.close,
+	symbol_val AS symbol,
+	chain.underlying,
+	lower(toString(option_type_val)) AS option_type,
+	expiration_val AS expiration,
+	toInt32(dateDiff('day', now(), expiration_val)) AS days_to_expiry,
+	strike_val AS strike,
+	toFloat64(close_price_val) AS close,
     toFloat64(0) AS bid_close,
     toFloat64(0) AS ask_close,
-    chain.implied_volatility,
-    chain.delta,
-    chain.gamma,
-    chain.vega,
-    chain.theta,
+	toFloat64(implied_volatility_val) AS implied_volatility,
+	toFloat64(delta_val) AS delta,
+	toFloat64(gamma_val) AS gamma,
+	toFloat64(vega_val) AS vega,
+	toFloat64(theta_val) AS theta,
     toFloat64(0) AS open_interest,
-	toFloat64(chain.volume) AS volume,
+	toFloat64(volume_val) AS volume,
     toFloat64(0) AS relative_spread,
-    chain.underlying_close
+	toFloat64(underlying_close_val) AS underlying_close
 FROM %s AS chain
+ARRAY JOIN
+	chain.symbols AS symbol_val,
+	chain.option_types AS option_type_val,
+	chain.expirations AS expiration_val,
+	chain.strikes AS strike_val,
+	chain.close_prices AS close_price_val,
+	chain.underlying_closes AS underlying_close_val,
+	chain.implied_volatilities AS implied_volatility_val,
+	chain.deltas AS delta_val,
+	chain.gammas AS gamma_val,
+	chain.vegas AS vega_val,
+	chain.thetas AS theta_val,
+	chain.volumes AS volume_val
 CROSS JOIN latest
 WHERE chain.timestamp = latest.ts
-  AND chain.underlying = {underlying:String}
-`, chainTable, chainTable)
-	}
-
-	args := []interface{}{
-		clickhouse.Named("underlying", req.Underlying),
+	AND chain.underlying = %s
+`, chainTable, clickHouseStringLiteral(req.Underlying), chainTable, clickHouseStringLiteral(req.Underlying))
 	}
 
 	// Apply filters
@@ -233,61 +231,50 @@ WHERE chain.timestamp = latest.ts
 	volumeCol := "volume_val"
 	oiCol := "oi_val"
 	if !isCrypto {
-		deltaCol = "chain.delta"
-		ivCol = "chain.implied_volatility"
-		premiumCol = "chain.close"
-		volumeCol = "chain.volume"
+		deltaCol = "delta_val"
+		ivCol = "implied_volatility_val"
+		premiumCol = "close_price_val"
+		volumeCol = "volume_val"
 		oiCol = "0"
 	}
 
 	if req.OptionType != "" {
 		optType := strings.ToLower(req.OptionType)
 		if isCrypto {
-			query += ` AND m.option_type = {opt_type:String}`
+			query += ` AND m.option_type = ` + clickHouseStringLiteral(optType)
 		} else {
-			query += ` AND chain.option_type = {opt_type:String}`
+			query += ` AND chain.option_type = ` + clickHouseStringLiteral(optType)
 		}
-		args = append(args, clickhouse.Named("opt_type", optType))
 	}
 	if req.DTEMin != nil {
-		query += ` AND toInt32(dateDiff('day', now(), ` + expirationCol(isCrypto) + `)) >= {dte_min:Int32}`
-		args = append(args, clickhouse.Named("dte_min", int32(*req.DTEMin)))
+		query += fmt.Sprintf(` AND toInt32(dateDiff('day', now(), %s)) >= %d`, expirationCol(isCrypto), *req.DTEMin)
 	}
 	if req.DTEMax != nil {
-		query += ` AND toInt32(dateDiff('day', now(), ` + expirationCol(isCrypto) + `)) <= {dte_max:Int32}`
-		args = append(args, clickhouse.Named("dte_max", int32(*req.DTEMax)))
+		query += fmt.Sprintf(` AND toInt32(dateDiff('day', now(), %s)) <= %d`, expirationCol(isCrypto), *req.DTEMax)
 	}
 	if req.DeltaMin != nil {
-		query += fmt.Sprintf(` AND %s >= {delta_min:Float64}`, deltaCol)
-		args = append(args, clickhouse.Named("delta_min", *req.DeltaMin))
+		query += fmt.Sprintf(` AND %s >= %.17g`, deltaCol, *req.DeltaMin)
 	}
 	if req.DeltaMax != nil {
-		query += fmt.Sprintf(` AND %s <= {delta_max:Float64}`, deltaCol)
-		args = append(args, clickhouse.Named("delta_max", *req.DeltaMax))
+		query += fmt.Sprintf(` AND %s <= %.17g`, deltaCol, *req.DeltaMax)
 	}
 	if req.IVMin != nil {
-		query += fmt.Sprintf(` AND %s >= {iv_min:Float64}`, ivCol)
-		args = append(args, clickhouse.Named("iv_min", *req.IVMin))
+		query += fmt.Sprintf(` AND %s >= %.17g`, ivCol, *req.IVMin)
 	}
 	if req.IVMax != nil {
-		query += fmt.Sprintf(` AND %s <= {iv_max:Float64}`, ivCol)
-		args = append(args, clickhouse.Named("iv_max", *req.IVMax))
+		query += fmt.Sprintf(` AND %s <= %.17g`, ivCol, *req.IVMax)
 	}
 	if req.PremiumMin != nil {
-		query += fmt.Sprintf(` AND %s >= {prem_min:Float64}`, premiumCol)
-		args = append(args, clickhouse.Named("prem_min", *req.PremiumMin))
+		query += fmt.Sprintf(` AND %s >= %.17g`, premiumCol, *req.PremiumMin)
 	}
 	if req.PremiumMax != nil {
-		query += fmt.Sprintf(` AND %s <= {prem_max:Float64}`, premiumCol)
-		args = append(args, clickhouse.Named("prem_max", *req.PremiumMax))
+		query += fmt.Sprintf(` AND %s <= %.17g`, premiumCol, *req.PremiumMax)
 	}
 	if req.VolumeMin != nil {
-		query += fmt.Sprintf(` AND %s >= {vol_min:Float64}`, volumeCol)
-		args = append(args, clickhouse.Named("vol_min", *req.VolumeMin))
+		query += fmt.Sprintf(` AND %s >= %.17g`, volumeCol, *req.VolumeMin)
 	}
 	if req.OpenInterestMin != nil {
-		query += fmt.Sprintf(` AND %s >= {oi_min:Float64}`, oiCol)
-		args = append(args, clickhouse.Named("oi_min", *req.OpenInterestMin))
+		query += fmt.Sprintf(` AND %s >= %.17g`, oiCol, *req.OpenInterestMin)
 	}
 
 	_ = premiumCol
@@ -308,10 +295,9 @@ WHERE chain.timestamp = latest.ts
 		sortBy = "close DESC"
 	}
 
-	query += fmt.Sprintf(` ORDER BY %s LIMIT {limit:UInt32}`, sortBy)
-	args = append(args, clickhouse.Named("limit", limit+1))
+	query += fmt.Sprintf(` ORDER BY %s LIMIT %d`, sortBy, limit+1)
 
-	rows, err := s.repo.Query(ctx, query, args...)
+	rows, err := s.repo.Query(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("screen options: %w", err)
 	}
@@ -320,9 +306,10 @@ WHERE chain.timestamp = latest.ts
 	results := make([]dto.ScreenedOption, 0, limit)
 	for rows.Next() {
 		var r dto.ScreenedOption
+		var daysToExpiry int32
 		if err := rows.Scan(
 			&r.Symbol, &r.Underlying, &r.OptionType,
-			&r.Expiration, &r.DaysToExpiry,
+			&r.Expiration, &daysToExpiry,
 			&r.Strike, &r.Close,
 			&r.BidClose, &r.AskClose,
 			&r.ImpliedVolatility,
@@ -332,6 +319,8 @@ WHERE chain.timestamp = latest.ts
 		); err != nil {
 			return nil, fmt.Errorf("scan screened option: %w", err)
 		}
+		r.DaysToExpiry = int(daysToExpiry)
+		sanitizeOptionResult(&r)
 		results = append(results, r)
 	}
 	if err := rows.Err(); err != nil {
@@ -354,4 +343,52 @@ func expirationCol(isCrypto bool) string {
 		return "m.expiration"
 	}
 	return "chain.expiration"
+}
+
+func clickHouseStringLiteral(value string) string {
+	escaped := strings.ReplaceAll(value, "'", "''")
+	return "'" + escaped + "'"
+}
+
+func sanitizeUnderlyingResult(r *dto.ScreenedUnderlying) {
+	r.HV10 = sanitizeFloatPointer(r.HV10)
+	r.HV20 = sanitizeFloatPointer(r.HV20)
+	r.HV30 = sanitizeFloatPointer(r.HV30)
+	r.CurrentIV = sanitizeFloatPointer(r.CurrentIV)
+	r.IVPercentile = sanitizeFloatPointer(r.IVPercentile)
+	r.IVRank = sanitizeFloatPointer(r.IVRank)
+	r.OpenInterest = sanitizeFloatPointer(r.OpenInterest)
+	r.ActivityRatio = sanitizeFloatPointer(r.ActivityRatio)
+	r.TradabilityRatio = sanitizeFloatPointer(r.TradabilityRatio)
+}
+
+func sanitizeOptionResult(r *dto.ScreenedOption) {
+	r.Strike = sanitizeFloatValue(r.Strike)
+	r.Close = sanitizeFloatValue(r.Close)
+	r.BidClose = sanitizeFloatValue(r.BidClose)
+	r.AskClose = sanitizeFloatValue(r.AskClose)
+	r.ImpliedVolatility = sanitizeFloatValue(r.ImpliedVolatility)
+	r.Delta = sanitizeFloatValue(r.Delta)
+	r.Gamma = sanitizeFloatValue(r.Gamma)
+	r.Vega = sanitizeFloatValue(r.Vega)
+	r.Theta = sanitizeFloatValue(r.Theta)
+	r.OpenInterest = sanitizeFloatValue(r.OpenInterest)
+	r.Volume = sanitizeFloatValue(r.Volume)
+	r.RelativeSpread = sanitizeFloatPointer(r.RelativeSpread)
+	r.UnderlyingClose = sanitizeFloatValue(r.UnderlyingClose)
+}
+
+func sanitizeFloatPointer(value *float64) *float64 {
+	if value == nil {
+		return nil
+	}
+	v := sanitizeFloatValue(*value)
+	return &v
+}
+
+func sanitizeFloatValue(value float64) float64 {
+	if math.IsNaN(value) || math.IsInf(value, 0) {
+		return 0
+	}
+	return value
 }

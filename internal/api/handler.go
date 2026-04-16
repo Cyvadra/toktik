@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/Cyvadra/toktik/internal/dto"
+	polygonpkg "github.com/Cyvadra/toktik/pkg/polygon"
 	"github.com/gin-gonic/gin"
 )
 
@@ -50,8 +51,55 @@ func handleServiceError(c *gin.Context, err error) {
 		c.JSON(http.StatusGatewayTimeout, dto.ErrorResponse{Error: "request timeout"})
 		return
 	}
+	var polygonErr *polygonpkg.HTTPStatusError
+	if errors.As(err, &polygonErr) {
+		status := polygonErr.StatusCode
+		if status < http.StatusBadRequest || status > 599 {
+			status = http.StatusBadGateway
+		}
+		c.JSON(status, dto.ErrorResponse{Error: polygonErrorMessage(polygonErr)})
+		return
+	}
 	slog.Error("internal error", "error", err)
 	c.JSON(http.StatusInternalServerError, dto.ErrorResponse{Error: "internal server error"})
+}
+
+func polygonErrorMessage(err *polygonpkg.HTTPStatusError) string {
+	if err == nil {
+		return "polygon upstream error"
+	}
+	body := strings.TrimSpace(err.Body)
+	if body == "" {
+		status := strings.TrimSpace(err.Status)
+		if status == "" {
+			return "polygon upstream error"
+		}
+		return status
+	}
+	var payload struct {
+		Error     string `json:"error"`
+		Message   string `json:"message"`
+		RequestID string `json:"request_id"`
+		Status    string `json:"status"`
+	}
+	if json.Unmarshal([]byte(body), &payload) == nil {
+		parts := make([]string, 0, 3)
+		if message := strings.TrimSpace(payload.Error); message != "" {
+			parts = append(parts, message)
+		} else if message := strings.TrimSpace(payload.Message); message != "" {
+			parts = append(parts, message)
+		}
+		if requestID := strings.TrimSpace(payload.RequestID); requestID != "" {
+			parts = append(parts, "request_id="+requestID)
+		}
+		if status := strings.TrimSpace(payload.Status); status != "" && !strings.EqualFold(status, "error") {
+			parts = append(parts, "status="+status)
+		}
+		if len(parts) > 0 {
+			return strings.Join(parts, " | ")
+		}
+	}
+	return body
 }
 
 func bindUSOptionSymbolRequest(c *gin.Context, req *dto.USOptionSymbolRequest) error {

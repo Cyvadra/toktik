@@ -75,6 +75,22 @@ var sections = []sectionSpec{
 		},
 	},
 	{
+		Title: "Feature Store Analytics",
+		Endpoints: []endpointSpec{
+			{Method: "GET", Path: "/features/volatility-snapshot", Label: "Volatility snapshot"},
+			{Method: "GET", Path: "/features/volatility-history", Label: "Volatility history"},
+			{Method: "GET", Path: "/features/term-structure-snapshot", Label: "Term-structure snapshot"},
+			{Method: "GET", Path: "/features/term-structure-history", Label: "Term-structure history"},
+			{Method: "GET", Path: "/features/skew-snapshot", Label: "Skew snapshot"},
+			{Method: "GET", Path: "/features/skew-history", Label: "Skew history"},
+			{Method: "GET", Path: "/features/liquidity-snapshot", Label: "Liquidity snapshot"},
+			{Method: "GET", Path: "/features/liquidity-history", Label: "Liquidity history"},
+			{Method: "GET", Path: "/features/event-window-snapshot", Label: "Event-window snapshot"},
+			{Method: "GET", Path: "/features/event-window-history", Label: "Event-window history"},
+			{Method: "GET", Path: "/features/daily-feature-panel", Label: "Daily feature panel"},
+		},
+	},
+	{
 		Title: "Crypto Options Market Data",
 		Endpoints: []endpointSpec{
 			{Method: "GET", Path: "/crypto-options/bars", Label: "Crypto option bars"},
@@ -104,6 +120,13 @@ var sections = []sectionSpec{
 			{Method: "GET", Path: "/markets/us-options/symbols", Label: "US option symbols"},
 			{Method: "GET", Path: "/markets/us-options/greeks", Label: "US option greeks"},
 			{Method: "GET", Path: "/markets/us-options/chain", Label: "US option chain"},
+		},
+	},
+	{
+		Title: "Screeners",
+		Endpoints: []endpointSpec{
+			{Method: "GET", Path: "/screener/underlyings", Label: "Underlying screener"},
+			{Method: "GET", Path: "/screener/options", Label: "Option screener"},
 		},
 	},
 }
@@ -167,7 +190,7 @@ func renderMarkdown(doc *swaggerDoc, inputPath string, title string) (string, er
 	builder.WriteString(time.Now().UTC().Format(time.RFC3339))
 	builder.WriteString("`\n\n")
 	builder.WriteString("## Scope\n\n")
-	builder.WriteString("This document exports the database-backed market data and technical indicator query APIs. It intentionally excludes external proxy endpoints such as Polygon, and also excludes backtest, screener, and feature-store analytics endpoints that are not primary market or indicator query surfaces.\n\n")
+	builder.WriteString("This document exports the database-backed market data, technical indicator, feature-store analytics, and screener APIs. It intentionally excludes external proxy endpoints such as Polygon, and also excludes backtest and other non-query operational endpoints.\n\n")
 	builder.WriteString("## Contents\n\n")
 	for _, section := range sections {
 		builder.WriteString("- [")

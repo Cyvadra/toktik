@@ -181,7 +181,7 @@ func (h *Handler) GetPolygonOptionContract(c *gin.Context) {
 // @Param        strike_price_lt      query     number   false  "Strike price less than"
 // @Param        order                query     string   false  "Sort direction"
 // @Param        sort                 query     string   false  "Sort field"
-// @Param        limit                query     int      false  "Page size"
+// @Param        limit                query     int      false  "Page size (max 250)"
 // @Success      200                  {object}  dto.PolygonOptionChainResponse
 // @Failure      400                  {object}  dto.ErrorResponse
 // @Failure      500                  {object}  dto.ErrorResponse

@@ -414,6 +414,37 @@ func TestGetPolygonOptionChain_NotConfigured(t *testing.T) {
 	}
 }
 
+func TestGetPolygonOptionChain_UpstreamErrorDetails(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	provider := &mockPolygonProvider{err: &polygonpkg.HTTPStatusError{
+		StatusCode: http.StatusBadRequest,
+		Status:     "400 Bad Request",
+		Body:       `{"status":"ERROR","request_id":"d4e9e56585b307b4e608c9d97a704ef2","error":"Failed to parse query parameters from URL: Key: 'OptionsChainQueryParam.Limit' Error:Field validation for 'Limit' failed on the 'max' tag"}`,
+	}}
+	r := NewRouter(&mockQuerier{}, &mockUSStocksQuerier{}, &mockUSOptionsQuerier{}, &mockInfra{}, &mockFeature{}, nil, nil, nil, nil, nil, nil, provider)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/api/v1/polygon/options/chain?underlying=EWH&limit=500", nil)
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+	var errResp dto.ErrorResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &errResp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if strings.Contains(errResp.Error, "internal server error") {
+		t.Fatalf("expected detailed polygon error, got %q", errResp.Error)
+	}
+	if !strings.Contains(errResp.Error, "OptionsChainQueryParam.Limit") {
+		t.Fatalf("expected upstream validation detail, got %q", errResp.Error)
+	}
+	if !strings.Contains(errResp.Error, "request_id=d4e9e56585b307b4e608c9d97a704ef2") {
+		t.Fatalf("expected request id in error, got %q", errResp.Error)
+	}
+}
+
 func TestGetPolygonStockAggregates_BadRequest(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := NewRouter(&mockQuerier{}, &mockUSStocksQuerier{}, &mockUSOptionsQuerier{}, &mockInfra{}, &mockFeature{}, nil, nil, nil, nil, nil, nil, &mockPolygonProvider{})
