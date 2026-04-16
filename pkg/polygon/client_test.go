@@ -15,6 +15,7 @@ import (
 	"time"
 
 	runtimeconfig "github.com/Cyvadra/toktik/internal/config"
+	"github.com/Cyvadra/toktik/internal/secrets"
 	"github.com/massive-com/client-go/v3/rest"
 )
 
@@ -53,6 +54,38 @@ func TestLoadConfigFromEnvReadsRuntimePolygonConfig(t *testing.T) {
 	}
 	if cfg.APIKey != "yaml_key" || cfg.BaseURL != "http://localhost:9999" || cfg.FlatFilesBaseURL != "http://localhost:7777/files" || cfg.FlatFilesTool != "mc" || cfg.FlatFilesCacheDir != "/tmp/polygon-cache" || cfg.FlatFilesAccessKey != "flat-access" || cfg.FlatFilesSecretKey != "flat-secret" || cfg.Timeout.Seconds() != 15 || !cfg.Trace || cfg.Pagination {
 		t.Fatalf("unexpected config: %#v", cfg)
+	}
+}
+
+func TestLoadConfigFromRuntimeReadsSealedSecrets(t *testing.T) {
+	mgr, err := secrets.New("8b52f5ad926b946334dac0a6a07b202dc26dbde82d15b75a500240ef147d04f6")
+	if err != nil {
+		t.Fatalf("secrets.New failed: %v", err)
+	}
+	t.Cleanup(mgr.Wipe)
+
+	runtimeCfg := runtimeconfig.DefaultRuntime()
+	runtimeCfg.Secrets = mgr
+	runtimeCfg.Polygon.BaseURL = "https://api.massive.com"
+	runtimeCfg.Polygon.FlatFilesBaseURL = "https://files.massive.com/flatfiles"
+	runtimeCfg.Polygon.FlatFilesTool = "rclone"
+	runtimeCfg.Polygon.FlatFilesCacheDir = "/tmp/polygon-cache"
+	runtimeCfg.Polygon.TimeoutSeconds = 15
+	runtimeCfg.Polygon.Trace = true
+	runtimeCfg.Polygon.Pagination = false
+	runtimeCfg.Polygon.APIKey = ""
+	runtimeCfg.Polygon.FlatFilesAccessKey = ""
+	runtimeCfg.Polygon.FlatFilesSecretKey = ""
+	mgr.Seal("polygon.api_key", "sealed_key")
+	mgr.Seal("polygon.flat_files_access_key", "sealed-access")
+	mgr.Seal("polygon.flat_files_secret_key", "sealed-secret")
+
+	cfg, err := LoadConfigFromRuntime(runtimeCfg)
+	if err != nil {
+		t.Fatalf("LoadConfigFromRuntime failed: %v", err)
+	}
+	if cfg.APIKey != "sealed_key" || cfg.FlatFilesAccessKey != "sealed-access" || cfg.FlatFilesSecretKey != "sealed-secret" {
+		t.Fatalf("unexpected sealed config: %#v", cfg)
 	}
 }
 

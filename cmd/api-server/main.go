@@ -112,7 +112,8 @@ func main() {
 	var polygonSvc api.PolygonProvider
 	polygonService, err := service.NewPolygonServiceFromConfig(runtimeCfg, cacheStore)
 	if err != nil {
-		slog.Warn("polygon service disabled", "error", err)
+		slog.Error("init polygon service", "error", err)
+		os.Exit(1)
 	} else {
 		polygonSvc = polygonService
 	}

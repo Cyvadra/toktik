@@ -36,14 +36,27 @@ func LoadConfigFromEnv() (Config, error) {
 }
 
 func LoadConfigFromRuntime(runtimeCfg runtimeconfig.Runtime) (Config, error) {
+	apiKey, err := runtimeSecret(runtimeCfg, "polygon.api_key", runtimeCfg.Polygon.APIKey)
+	if err != nil {
+		return Config{}, err
+	}
+	flatFilesAccessKey, err := runtimeSecret(runtimeCfg, "polygon.flat_files_access_key", runtimeCfg.Polygon.FlatFilesAccessKey)
+	if err != nil {
+		return Config{}, err
+	}
+	flatFilesSecretKey, err := runtimeSecret(runtimeCfg, "polygon.flat_files_secret_key", runtimeCfg.Polygon.FlatFilesSecretKey)
+	if err != nil {
+		return Config{}, err
+	}
+
 	cfg := Config{
-		APIKey:             strings.TrimSpace(runtimeCfg.Polygon.APIKey),
+		APIKey:             apiKey,
 		BaseURL:            strings.TrimSpace(runtimeCfg.Polygon.BaseURL),
 		FlatFilesBaseURL:   strings.TrimSpace(runtimeCfg.Polygon.FlatFilesBaseURL),
 		FlatFilesTool:      strings.TrimSpace(runtimeCfg.Polygon.FlatFilesTool),
 		FlatFilesCacheDir:  strings.TrimSpace(runtimeCfg.Polygon.FlatFilesCacheDir),
-		FlatFilesAccessKey: strings.TrimSpace(runtimeCfg.Polygon.FlatFilesAccessKey),
-		FlatFilesSecretKey: strings.TrimSpace(runtimeCfg.Polygon.FlatFilesSecretKey),
+		FlatFilesAccessKey: flatFilesAccessKey,
+		FlatFilesSecretKey: flatFilesSecretKey,
 		Timeout:            time.Duration(runtimeCfg.Polygon.TimeoutSeconds) * time.Second,
 		Trace:              runtimeCfg.Polygon.Trace,
 		Pagination:         runtimeCfg.Polygon.Pagination,
@@ -53,6 +66,20 @@ func LoadConfigFromRuntime(runtimeCfg runtimeconfig.Runtime) (Config, error) {
 		return Config{}, err
 	}
 	return cfg, nil
+}
+
+func runtimeSecret(runtimeCfg runtimeconfig.Runtime, field, fallback string) (string, error) {
+	if value := strings.TrimSpace(fallback); value != "" {
+		return value, nil
+	}
+	if runtimeCfg.Secrets == nil {
+		return "", nil
+	}
+	value, err := runtimeCfg.Secrets.Open(field)
+	if err != nil {
+		return "", fmt.Errorf("load %s from runtime secrets: %w", field, err)
+	}
+	return strings.TrimSpace(value), nil
 }
 
 func (c Config) Validate() error {
