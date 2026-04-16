@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+	"github.com/Cyvadra/toktik/internal/chrepo"
 	"github.com/Cyvadra/toktik/internal/dto"
 	"github.com/Cyvadra/toktik/pkg/dsl/parser"
 	"github.com/Cyvadra/toktik/pkg/dsl/runtime"
@@ -23,12 +23,12 @@ type IndicatorService struct {
 	usOptions     *USOptionsService
 }
 
-func NewIndicatorService(conn driver.Conn) *IndicatorService {
+func NewIndicatorService(repo *chrepo.Repo) *IndicatorService {
 	return &IndicatorService{
-		cryptoOptions: NewCryptoOptionsService(conn),
-		cryptoSpot:    NewCryptoSpotService(conn),
-		usStocks:      NewUSStocksService(conn),
-		usOptions:     NewUSOptionsService(conn),
+		cryptoOptions: NewCryptoOptionsService(repo),
+		cryptoSpot:    NewCryptoSpotService(repo),
+		usStocks:      NewUSStocksService(repo),
+		usOptions:     NewUSOptionsService(repo),
 	}
 }
 

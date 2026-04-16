@@ -6,33 +6,18 @@ import (
 	"strings"
 
 	clickhouse "github.com/ClickHouse/clickhouse-go/v2"
-	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
-	"github.com/Cyvadra/toktik/internal/cryptooptions"
+	"github.com/Cyvadra/toktik/internal/chquery"
+	"github.com/Cyvadra/toktik/internal/chrepo"
 	"github.com/Cyvadra/toktik/internal/dto"
 )
 
-var cryptoSpotBarIntervals = map[string]string{
-	"1m":  "crypto_spot_bar_1m",
-	"5m":  "crypto_spot_bar_5m",
-	"15m": "crypto_spot_bar_15m",
-	"30m": "crypto_spot_bar_30m",
-	"1h":  "crypto_spot_bar_1h",
-	"2h":  "crypto_spot_bar_2h",
-	"3h":  "crypto_spot_bar_3h",
-	"4h":  "crypto_spot_bar_4h",
-	"6h":  "crypto_spot_bar_6h",
-	"8h":  "crypto_spot_bar_8h",
-	"12h": "crypto_spot_bar_12h",
-	"1d":  "crypto_spot_bar_1d",
-}
-
 // CryptoSpotService provides crypto spot/underlying market-data queries.
 type CryptoSpotService struct {
-	conn driver.Conn
+	repo *chrepo.Repo
 }
 
-func NewCryptoSpotService(conn driver.Conn) *CryptoSpotService {
-	return &CryptoSpotService{conn: conn}
+func NewCryptoSpotService(repo *chrepo.Repo) *CryptoSpotService {
+	return &CryptoSpotService{repo: repo}
 }
 
 func (s *CryptoSpotService) QuerySymbols(ctx context.Context, req dto.CryptoSpotSymbolRequest) (*dto.CryptoSpotSymbolResponse, error) {
@@ -56,7 +41,7 @@ func (s *CryptoSpotService) QuerySymbols(ctx context.Context, req dto.CryptoSpot
 	query += ` GROUP BY symbol ORDER BY symbol LIMIT {limit:UInt32}`
 	args = append(args, clickhouse.Named("limit", limit+1))
 
-	rows, err := s.conn.Query(ctx, query, args...)
+	rows, err := s.repo.Query(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query crypto spot symbols: %w", err)
 	}
@@ -91,7 +76,7 @@ func (s *CryptoSpotService) QueryBars(ctx context.Context, req dto.CryptoSpotBar
 	}
 
 	interval := strings.ToLower(strings.TrimSpace(req.Interval))
-	tableName, ok := cryptoSpotBarIntervals[interval]
+	tableName, ok := chquery.CryptoSpotIntervals[interval]
 	if !ok {
 		return nil, dto.NewValidationError("unsupported crypto spot interval %q", req.Interval)
 	}
@@ -124,10 +109,10 @@ WHERE symbol = {symbol:String}
 ORDER BY timestamp
 LIMIT {limit:UInt32}`, tableName)
 
-	rows, err := s.conn.Query(ctx, query,
+	rows, err := s.repo.Query(ctx, query,
 		clickhouse.Named("symbol", req.Symbol),
-		clickhouse.Named("from", cryptooptions.ClickHouseTimeParam(fromT)),
-		clickhouse.Named("to", cryptooptions.ClickHouseTimeParam(toT)),
+		clickhouse.Named("from", chquery.TimeParam(fromT)),
+		clickhouse.Named("to", chquery.TimeParam(toT)),
 		clickhouse.Named("limit", limit+1),
 	)
 	if err != nil {

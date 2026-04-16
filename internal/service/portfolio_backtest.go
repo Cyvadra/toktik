@@ -13,6 +13,7 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 
 	"github.com/Cyvadra/toktik/internal/backtest"
+	"github.com/Cyvadra/toktik/internal/chrepo"
 	"github.com/Cyvadra/toktik/internal/datafeed"
 	"github.com/Cyvadra/toktik/internal/dto"
 	"github.com/Cyvadra/toktik/internal/report"
@@ -57,7 +58,7 @@ const (
 )
 
 type PortfolioBacktestService struct {
-	conn          driver.Conn
+	repo          *chrepo.Repo
 	factorStore   *feeds.Store
 	now           func() time.Time
 	chainLoader   func(context.Context, string, string, string, time.Time, time.Time) (backtest.OptionsChainProvider, error)
@@ -109,16 +110,16 @@ type portfolioBacktestRun struct {
 	dirty       bool
 }
 
-func NewPortfolioBacktestService(conn driver.Conn, factorStore *feeds.Store) *PortfolioBacktestService {
+func NewPortfolioBacktestService(repo *chrepo.Repo, factorStore *feeds.Store) *PortfolioBacktestService {
 	svc := &PortfolioBacktestService{
-		conn:        conn,
+		repo:        repo,
 		factorStore: factorStore,
 		now:         time.Now,
 		runs:        make(map[string]*portfolioBacktestRun),
 	}
 	svc.chainLoader = svc.defaultChainLoader
 	svc.engineBuilder = func(cfg backtest.Config, chainProvider backtest.OptionsChainProvider, usesOptions bool) *backtest.Engine {
-		return newPortfolioBacktestEngine(cfg, svc.conn, svc.factorStore, chainProvider, usesOptions)
+		return newPortfolioBacktestEngine(cfg, svc.repo.Conn, svc.factorStore, chainProvider, usesOptions)
 	}
 	svc.chainCache = newOptionsChainProviderCache(svc.now, defaultChainProviderTTL, maxChainProviderEntries)
 	return svc
@@ -145,9 +146,9 @@ func newOptionsChainProviderCache(now func() time.Time, ttl time.Duration, maxSi
 
 func (s *PortfolioBacktestService) defaultChainLoader(ctx context.Context, marketName, asset, interval string, from, to time.Time) (backtest.OptionsChainProvider, error) {
 	if marketName == marketUS {
-		return datafeed.NewUSOptionsChainProvider(ctx, s.conn, asset, interval, from, to)
+		return datafeed.NewUSOptionsChainProvider(ctx, s.repo.Conn, asset, interval, from, to)
 	}
-	return datafeed.NewCryptoOptionsChainProvider(ctx, s.conn, asset, interval, from, to)
+	return datafeed.NewCryptoOptionsChainProvider(ctx, s.repo.Conn, asset, interval, from, to)
 }
 
 func (s *PortfolioBacktestService) loadOptionsChainProvider(ctx context.Context, marketName, asset, interval string, from, to time.Time) (backtest.OptionsChainProvider, error) {

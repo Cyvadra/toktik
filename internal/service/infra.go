@@ -7,14 +7,14 @@ import (
 	"strings"
 	"time"
 
-	clickhouse "github.com/ClickHouse/clickhouse-go/v2"
-	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+	"github.com/Cyvadra/toktik/internal/chquery"
+	"github.com/Cyvadra/toktik/internal/chrepo"
 	"github.com/Cyvadra/toktik/internal/dto"
 )
 
 // InfraService exposes non-business infrastructure endpoints.
 type InfraService struct {
-	conn driver.Conn
+	repo *chrepo.Repo
 }
 
 type infraDatasetSpec struct {
@@ -26,24 +26,24 @@ type infraDatasetSpec struct {
 }
 
 var infraDatasetSpecs = []infraDatasetSpec{
-	{Name: "crypto-options-bars", Market: "crypto-options", Relation: "crypto_options_bar_1m", TimeField: "timestamp", MaxAge: 96 * time.Hour},
-	{Name: "crypto-spot-bars", Market: "crypto-options", Relation: "crypto_spot_bar_1m", TimeField: "timestamp", MaxAge: 96 * time.Hour},
-	{Name: "us-stocks-bars", Market: "us-stocks", Relation: "us_stocks_bar_1m", TimeField: "timestamp", MaxAge: 96 * time.Hour},
-	{Name: "us-options-bars", Market: "us-options", Relation: "us_options_bar_1m", TimeField: "timestamp", MaxAge: 96 * time.Hour},
-	{Name: "us-options-chain", Market: "us-options", Relation: "us_options_chain_1d", TimeField: "timestamp", MaxAge: 10 * 24 * time.Hour},
-	{Name: "feature-volatility-snapshots", Market: "feature-store", Relation: "feature_volatility_snapshot_daily", TimeField: "updated_at", MaxAge: 48 * time.Hour},
-	{Name: "feature-term-structure-snapshots", Market: "feature-store", Relation: "feature_term_structure_snapshot_daily", TimeField: "updated_at", MaxAge: 48 * time.Hour},
-	{Name: "feature-skew-snapshots", Market: "feature-store", Relation: "feature_skew_snapshot_daily", TimeField: "updated_at", MaxAge: 48 * time.Hour},
-	{Name: "feature-liquidity-snapshots", Market: "feature-store", Relation: "feature_liquidity_snapshot_daily", TimeField: "updated_at", MaxAge: 48 * time.Hour},
-	{Name: "feature-daily-panels", Market: "feature-store", Relation: "feature_daily_panel_daily", TimeField: "updated_at", MaxAge: 48 * time.Hour},
+	{Name: "crypto-options-bars", Market: "crypto-options", Relation: chquery.CryptoOptionsBar1m, TimeField: "timestamp", MaxAge: 96 * time.Hour},
+	{Name: "crypto-spot-bars", Market: "crypto-options", Relation: chquery.CryptoSpotBar1m, TimeField: "timestamp", MaxAge: 96 * time.Hour},
+	{Name: "us-stocks-bars", Market: "us-stocks", Relation: chquery.USStocksBar1m, TimeField: "timestamp", MaxAge: 96 * time.Hour},
+	{Name: "us-options-bars", Market: "us-options", Relation: chquery.USOptionsBar1m, TimeField: "timestamp", MaxAge: 96 * time.Hour},
+	{Name: "us-options-chain", Market: "us-options", Relation: chquery.USOptionsChain1d, TimeField: "timestamp", MaxAge: 10 * 24 * time.Hour},
+	{Name: "feature-volatility-snapshots", Market: "feature-store", Relation: chquery.FeatureVolatilitySnapshotDaily, TimeField: "updated_at", MaxAge: 48 * time.Hour},
+	{Name: "feature-term-structure-snapshots", Market: "feature-store", Relation: chquery.FeatureTermStructureSnapshotDaily, TimeField: "updated_at", MaxAge: 48 * time.Hour},
+	{Name: "feature-skew-snapshots", Market: "feature-store", Relation: chquery.FeatureSkewSnapshotDaily, TimeField: "updated_at", MaxAge: 48 * time.Hour},
+	{Name: "feature-liquidity-snapshots", Market: "feature-store", Relation: chquery.FeatureLiquiditySnapshotDaily, TimeField: "updated_at", MaxAge: 48 * time.Hour},
+	{Name: "feature-daily-panels", Market: "feature-store", Relation: chquery.FeatureDailyPanelDaily, TimeField: "updated_at", MaxAge: 48 * time.Hour},
 }
 
-func NewInfraService(conn driver.Conn) *InfraService {
-	return &InfraService{conn: conn}
+func NewInfraService(repo *chrepo.Repo) *InfraService {
+	return &InfraService{repo: repo}
 }
 
 func (s *InfraService) Readiness(ctx context.Context) (*dto.ReadinessResponse, error) {
-	if err := s.conn.Ping(ctx); err != nil {
+	if err := s.repo.Ping(ctx); err != nil {
 		return nil, err
 	}
 	return &dto.ReadinessResponse{Status: "ready"}, nil
@@ -146,59 +146,15 @@ func (s *InfraService) inspectDataset(ctx context.Context, spec infraDatasetSpec
 }
 
 func (s *InfraService) relationExists(ctx context.Context, relation string) (bool, error) {
-	rows, err := s.conn.Query(ctx, `SELECT count()
-FROM system.tables
-WHERE database = currentDatabase()
-  AND name = {relation:String}`, clickhouse.Named("relation", relation))
-	if err != nil {
-		return false, err
-	}
-	defer rows.Close()
-	if !rows.Next() {
-		return false, nil
-	}
-	var count uint64
-	if err := rows.Scan(&count); err != nil {
-		return false, err
-	}
-	return count > 0, nil
+	return s.repo.RelationExists(ctx, relation)
 }
 
 func (s *InfraService) relationLastTimestamp(ctx context.Context, relation, timeField string) (time.Time, bool, error) {
-	query := fmt.Sprintf(`SELECT ifNull(toDateTime(maxOrNull(%s), 'UTC'), toDateTime(0, 'UTC')) AS last_ts FROM %s`, timeField, relation)
-	rows, err := s.conn.Query(ctx, query)
-	if err != nil {
-		return time.Time{}, false, err
-	}
-	defer rows.Close()
-	if !rows.Next() {
-		return time.Time{}, false, nil
-	}
-	var lastTS time.Time
-	if err := rows.Scan(&lastTS); err != nil {
-		return time.Time{}, false, err
-	}
-	if lastTS.IsZero() || lastTS.UTC().Unix() == 0 {
-		return time.Time{}, false, nil
-	}
-	return lastTS.UTC(), true, nil
+	return s.repo.RelationLastTimestamp(ctx, relation, timeField)
 }
 
 func (s *InfraService) relationRowCount(ctx context.Context, relation string) (uint64, error) {
-	query := fmt.Sprintf(`SELECT toUInt64(count()) FROM %s`, relation)
-	rows, err := s.conn.Query(ctx, query)
-	if err != nil {
-		return 0, err
-	}
-	defer rows.Close()
-	if !rows.Next() {
-		return 0, nil
-	}
-	var count uint64
-	if err := rows.Scan(&count); err != nil {
-		return 0, err
-	}
-	return count, nil
+	return s.repo.RelationRowCount(ctx, relation)
 }
 
 func summarizeDatasets(datasets []dto.DatasetDescriptor) dto.DatasetSummary {

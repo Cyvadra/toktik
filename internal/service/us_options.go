@@ -7,19 +7,19 @@ import (
 	"time"
 
 	clickhouse "github.com/ClickHouse/clickhouse-go/v2"
-	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
-	"github.com/Cyvadra/toktik/internal/cryptooptions"
+	"github.com/Cyvadra/toktik/internal/chquery"
+	"github.com/Cyvadra/toktik/internal/chrepo"
 	"github.com/Cyvadra/toktik/internal/dto"
 	"github.com/Cyvadra/toktik/internal/usmarket"
 )
 
 // USOptionsService provides low-level US option market-data queries.
 type USOptionsService struct {
-	conn driver.Conn
+	repo *chrepo.Repo
 }
 
-func NewUSOptionsService(conn driver.Conn) *USOptionsService {
-	return &USOptionsService{conn: conn}
+func NewUSOptionsService(repo *chrepo.Repo) *USOptionsService {
+	return &USOptionsService{repo: repo}
 }
 
 func (s *USOptionsService) QuerySymbols(ctx context.Context, req dto.USOptionSymbolRequest) (*dto.USOptionSymbolResponse, error) {
@@ -58,7 +58,7 @@ ORDER BY symbol
 LIMIT {limit:UInt32}`
 	args = append(args, clickhouse.Named("limit", limit+1))
 
-	rows, err := s.conn.Query(ctx, query, args...)
+	rows, err := s.repo.Query(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query US option symbols: %w", err)
 	}
@@ -93,7 +93,7 @@ func (s *USOptionsService) QueryBars(ctx context.Context, req dto.USOptionBarReq
 	}
 
 	interval := normalizeUSOptionInterval(req.Interval)
-	tableName, err := resolveUSBarTable(interval, usOptionBarIntervals, "US option")
+	tableName, err := resolveUSBarTable(interval, chquery.USOptionIntervals, "US option")
 	if err != nil {
 		return nil, err
 	}
@@ -140,10 +140,10 @@ WHERE symbol = {symbol:String}
 ORDER BY timestamp
 LIMIT {limit:UInt32}`, tableName, usSessionCondition(session))
 
-	rows, err := s.conn.Query(ctx, query,
+	rows, err := s.repo.Query(ctx, query,
 		clickhouse.Named("symbol", req.Symbol),
-		clickhouse.Named("from", cryptooptions.ClickHouseTimeParam(fromT)),
-		clickhouse.Named("to", cryptooptions.ClickHouseTimeParam(toT)),
+		clickhouse.Named("from", chquery.TimeParam(fromT)),
+		clickhouse.Named("to", chquery.TimeParam(toT)),
 		clickhouse.Named("limit", limit+1),
 	)
 	if err != nil {
@@ -200,7 +200,7 @@ func (s *USOptionsService) QueryGreeks(ctx context.Context, req dto.USOptionGree
 	}
 
 	interval := normalizeUSOptionInterval(req.Interval)
-	tableName, err := resolveUSBarTable(interval, usOptionBarIntervals, "US option")
+	tableName, err := resolveUSBarTable(interval, chquery.USOptionIntervals, "US option")
 	if err != nil {
 		return nil, err
 	}
@@ -243,10 +243,10 @@ WHERE symbol = {symbol:String}
 ORDER BY timestamp
 LIMIT {limit:UInt32}`, tableName, usSessionCondition(session))
 
-	rows, err := s.conn.Query(ctx, query,
+	rows, err := s.repo.Query(ctx, query,
 		clickhouse.Named("symbol", req.Symbol),
-		clickhouse.Named("from", cryptooptions.ClickHouseTimeParam(fromT)),
-		clickhouse.Named("to", cryptooptions.ClickHouseTimeParam(toT)),
+		clickhouse.Named("from", chquery.TimeParam(fromT)),
+		clickhouse.Named("to", chquery.TimeParam(toT)),
 		clickhouse.Named("limit", limit+1),
 	)
 	if err != nil {
@@ -346,10 +346,10 @@ WHERE underlying = {underlying:String}
 ORDER BY timestamp
 LIMIT {limit:UInt32}`, viewName)
 
-	rows, err := s.conn.Query(ctx, query,
+	rows, err := s.repo.Query(ctx, query,
 		clickhouse.Named("underlying", underlying),
-		clickhouse.Named("from", cryptooptions.ClickHouseTimeParam(fromT)),
-		clickhouse.Named("to", cryptooptions.ClickHouseTimeParam(toT)),
+		clickhouse.Named("from", chquery.TimeParam(fromT)),
+		clickhouse.Named("to", chquery.TimeParam(toT)),
 		clickhouse.Named("limit", limit+1),
 	)
 	if err != nil {

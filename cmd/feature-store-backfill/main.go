@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Cyvadra/toktik/internal/chrepo"
 	appCli "github.com/Cyvadra/toktik/internal/cli"
 	"github.com/Cyvadra/toktik/internal/cryptooptions"
 	"github.com/Cyvadra/toktik/internal/service"
@@ -50,7 +51,7 @@ func main() {
 		log.Fatalf("init feature store schema: %v", err)
 	}
 
-	featureSvc := service.NewFeatureService(conn)
+	featureSvc := service.NewFeatureService(chrepo.NewRepo(conn))
 	stats, err := featureSvc.BackfillFeatureSnapshots(ctx, service.FeatureBackfillOptions{
 		Markets:         splitCSV(*marketsFlag),
 		Underlyings:     splitCSV(*underlyingsFlag),

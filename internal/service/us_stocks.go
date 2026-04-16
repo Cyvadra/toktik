@@ -5,18 +5,18 @@ import (
 	"fmt"
 
 	clickhouse "github.com/ClickHouse/clickhouse-go/v2"
-	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
-	"github.com/Cyvadra/toktik/internal/cryptooptions"
+	"github.com/Cyvadra/toktik/internal/chquery"
+	"github.com/Cyvadra/toktik/internal/chrepo"
 	"github.com/Cyvadra/toktik/internal/dto"
 )
 
 // USStocksService provides low-level US stock market-data queries.
 type USStocksService struct {
-	conn driver.Conn
+	repo *chrepo.Repo
 }
 
-func NewUSStocksService(conn driver.Conn) *USStocksService {
-	return &USStocksService{conn: conn}
+func NewUSStocksService(repo *chrepo.Repo) *USStocksService {
+	return &USStocksService{repo: repo}
 }
 
 func (s *USStocksService) QuerySymbols(ctx context.Context, req dto.USStockSymbolRequest) (*dto.USStockSymbolResponse, error) {
@@ -45,7 +45,7 @@ ORDER BY symbol
 LIMIT {limit:UInt32}`
 	args = append(args, clickhouse.Named("limit", limit+1))
 
-	rows, err := s.conn.Query(ctx, query, args...)
+	rows, err := s.repo.Query(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query US stock symbols: %w", err)
 	}
@@ -79,7 +79,7 @@ func (s *USStocksService) QueryBars(ctx context.Context, req dto.USStockBarReque
 		return nil, err
 	}
 
-	tableName, err := resolveUSBarTable(req.Interval, usStockBarIntervals, "US stock")
+	tableName, err := resolveUSBarTable(req.Interval, chquery.USStockIntervals, "US stock")
 	if err != nil {
 		return nil, err
 	}
@@ -115,10 +115,10 @@ WHERE symbol = {symbol:String}
 ORDER BY timestamp
 LIMIT {limit:UInt32}`, tableName, usSessionCondition(session))
 
-	rows, err := s.conn.Query(ctx, query,
+	rows, err := s.repo.Query(ctx, query,
 		clickhouse.Named("symbol", req.Symbol),
-		clickhouse.Named("from", cryptooptions.ClickHouseTimeParam(fromT)),
-		clickhouse.Named("to", cryptooptions.ClickHouseTimeParam(toT)),
+		clickhouse.Named("from", chquery.TimeParam(fromT)),
+		clickhouse.Named("to", chquery.TimeParam(toT)),
 		clickhouse.Named("limit", limit+1),
 	)
 	if err != nil {

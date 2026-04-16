@@ -65,7 +65,7 @@ func (s *CryptoOptionsService) RunBacktest(ctx context.Context, req dto.Backtest
 		TriggerMode:     triggerMode,
 	})
 
-	engine.RegisterDataFeed("crypto-options", datafeed.NewCryptoOptionsDataFeed(s.conn))
+	engine.RegisterDataFeed("crypto-options", datafeed.NewCryptoOptionsDataFeed(s.repo.Conn))
 
 	return engine.Run(ctx, "crypto-options", req.Symbol, req.Interval, fromT, toT, strategy, nil)
 }

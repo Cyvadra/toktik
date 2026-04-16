@@ -6,17 +6,18 @@ import (
 	"strings"
 
 	clickhouse "github.com/ClickHouse/clickhouse-go/v2"
-	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+	"github.com/Cyvadra/toktik/internal/chquery"
+	"github.com/Cyvadra/toktik/internal/chrepo"
 	"github.com/Cyvadra/toktik/internal/dto"
 )
 
 // ScreenerService provides condition-based screening for underlyings and options.
 type ScreenerService struct {
-	conn driver.Conn
+	repo *chrepo.Repo
 }
 
-func NewScreenerService(conn driver.Conn) *ScreenerService {
-	return &ScreenerService{conn: conn}
+func NewScreenerService(repo *chrepo.Repo) *ScreenerService {
+	return &ScreenerService{repo: repo}
 }
 
 func (s *ScreenerService) ScreenUnderlyings(ctx context.Context, req dto.ScreenUnderlyingRequest) (*dto.ScreenUnderlyingResponse, error) {
@@ -24,44 +25,7 @@ func (s *ScreenerService) ScreenUnderlyings(ctx context.Context, req dto.ScreenU
 
 	// Join latest volatility snapshot with latest aggregated liquidity data.
 	// The volatility snapshot is per-underlying; liquidity is per-expiration, so we aggregate.
-	query := `
-SELECT
-    v.market,
-    v.underlying,
-    v.as_of_date,
-    v.hv10,
-    v.hv20,
-    v.hv30,
-    v.current_iv,
-    v.iv_percentile,
-    v.iv_rank,
-    l.total_oi,
-    l.total_volume,
-    l.avg_activity_ratio,
-    l.avg_tradability_ratio
-FROM (
-    SELECT market, underlying, as_of_date, hv10, hv20, hv30, current_iv, iv_percentile, iv_rank
-    FROM feature_volatility_snapshot_daily
-    WHERE market = {market:String}
-      AND as_of_date = (
-          SELECT max(as_of_date) FROM feature_volatility_snapshot_daily WHERE market = {market:String}
-      )
-    GROUP BY market, underlying, as_of_date, hv10, hv20, hv30, current_iv, iv_percentile, iv_rank
-) v
-LEFT JOIN (
-    SELECT market, underlying,
-        sum(open_interest) AS total_oi,
-        sum(volume) AS total_volume,
-        avg(activity_ratio) AS avg_activity_ratio,
-        avg(tradability_ratio) AS avg_tradability_ratio
-    FROM feature_liquidity_snapshot_daily
-    WHERE market = {market:String}
-      AND as_of_date = (
-          SELECT max(as_of_date) FROM feature_liquidity_snapshot_daily WHERE market = {market:String}
-      )
-    GROUP BY market, underlying
-) l ON v.market = l.market AND v.underlying = l.underlying
-WHERE 1 = 1`
+	query := chquery.ScreenUnderlyingsBase
 
 	args := []interface{}{
 		clickhouse.Named("market", req.Market),
@@ -133,7 +97,7 @@ WHERE 1 = 1`
 	query += fmt.Sprintf(` ORDER BY %s LIMIT {limit:UInt32}`, sortBy)
 	args = append(args, clickhouse.Named("limit", limit+1))
 
-	rows, err := s.conn.Query(ctx, query, args...)
+	rows, err := s.repo.Query(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("screen underlyings: %w", err)
 	}
@@ -347,7 +311,7 @@ WHERE chain.timestamp = latest.ts
 	query += fmt.Sprintf(` ORDER BY %s LIMIT {limit:UInt32}`, sortBy)
 	args = append(args, clickhouse.Named("limit", limit+1))
 
-	rows, err := s.conn.Query(ctx, query, args...)
+	rows, err := s.repo.Query(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("screen options: %w", err)
 	}

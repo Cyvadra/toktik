@@ -8,28 +8,6 @@ import (
 	"github.com/Cyvadra/toktik/internal/usmarket"
 )
 
-var usStockBarIntervals = map[string]string{
-	"1m":  "us_stocks_bar_1m",
-	"5m":  "us_stocks_bar_5m",
-	"15m": "us_stocks_bar_15m",
-	"30m": "us_stocks_bar_30m",
-	"1h":  "us_stocks_bar_1h",
-	"2h":  "us_stocks_bar_2h",
-	"4h":  "us_stocks_bar_4h",
-	"1d":  "us_stocks_bar_1d",
-}
-
-var usOptionBarIntervals = map[string]string{
-	"1m":  "us_options_bar_1m",
-	"5m":  "us_options_bar_5m",
-	"15m": "us_options_bar_15m",
-	"30m": "us_options_bar_30m",
-	"1h":  "us_options_bar_1h",
-	"2h":  "us_options_bar_2h",
-	"4h":  "us_options_bar_4h",
-	"1d":  "us_options_bar_1d",
-}
-
 func resolveUSBarTable(interval string, tables map[string]string, label string) (string, error) {
 	key := strings.ToLower(strings.TrimSpace(interval))
 	table, ok := tables[key]

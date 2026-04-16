@@ -9,6 +9,8 @@ import (
 
 	clickhouse "github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+	"github.com/Cyvadra/toktik/internal/chquery"
+	"github.com/Cyvadra/toktik/internal/chrepo"
 	"github.com/Cyvadra/toktik/internal/cryptooptions"
 	"github.com/Cyvadra/toktik/internal/dto"
 )
@@ -22,11 +24,11 @@ const (
 
 // CryptoOptionsService provides market data queries backed by ClickHouse.
 type CryptoOptionsService struct {
-	conn driver.Conn
+	repo *chrepo.Repo
 }
 
-func NewCryptoOptionsService(conn driver.Conn) *CryptoOptionsService {
-	return &CryptoOptionsService{conn: conn}
+func NewCryptoOptionsService(repo *chrepo.Repo) *CryptoOptionsService {
+	return &CryptoOptionsService{repo: repo}
 }
 
 // QueryBars returns OHLCV bars for a symbol, time range, and interval.
@@ -53,11 +55,11 @@ func (s *CryptoOptionsService) QueryBars(ctx context.Context, req dto.BarRequest
 
 	interval := req.Interval
 
-	barSourceSQL, err := cryptooptions.BuildOptionBarSubquery(interval)
+	barSourceSQL, err := chquery.BuildOptionBarSubquery(interval)
 	if err != nil {
 		return nil, dto.NewValidationError("unsupported interval %q", interval)
 	}
-	spotSourceSQL, err := cryptooptions.BuildSpotBarSubquery(interval)
+	spotSourceSQL, err := chquery.BuildSpotBarSubquery(interval)
 	if err != nil {
 		return nil, dto.NewValidationError("unsupported interval %q", interval)
 	}
@@ -83,11 +85,11 @@ LEFT JOIN (%s) AS u
 ORDER BY b.timestamp
 LIMIT {limit:UInt32}`, barSourceSQL, spotSourceSQL)
 
-	rows, err := s.conn.Query(ctx, query,
+	rows, err := s.repo.Query(ctx, query,
 		clickhouse.Named("symbol_id", symbolID),
 		clickhouse.Named("symbol", baseAsset),
-		clickhouse.Named("from", cryptooptions.ClickHouseTimeParam(fromT)),
-		clickhouse.Named("to", cryptooptions.ClickHouseTimeParam(toT)),
+		clickhouse.Named("from", chquery.TimeParam(fromT)),
+		clickhouse.Named("to", chquery.TimeParam(toT)),
 		clickhouse.Named("limit", limit+1),
 	)
 	if err != nil {
@@ -153,7 +155,7 @@ FROM crypto_options_symbol_meta FINAL`
 	query += " ORDER BY symbol_id LIMIT {limit:UInt32}"
 	args = append(args, clickhouse.Named("limit", limit+1))
 
-	rows, err := s.conn.Query(ctx, query, args...)
+	rows, err := s.repo.Query(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query symbols: %w", err)
 	}
@@ -209,11 +211,11 @@ func (s *CryptoOptionsService) QueryGreeks(ctx context.Context, req dto.GreeksRe
 		}
 	}
 
-	barSourceSQL, err := cryptooptions.BuildOptionBarSubquery(interval)
+	barSourceSQL, err := chquery.BuildOptionBarSubquery(interval)
 	if err != nil {
 		return nil, dto.NewValidationError("unsupported interval %q", interval)
 	}
-	spotSourceSQL, err := cryptooptions.BuildSpotBarSubquery(interval)
+	spotSourceSQL, err := chquery.BuildSpotBarSubquery(interval)
 	if err != nil {
 		return nil, dto.NewValidationError("unsupported interval %q", interval)
 	}
@@ -233,11 +235,11 @@ LEFT JOIN (%s) AS u
 ORDER BY b.timestamp
 LIMIT {limit:UInt32}`, barSourceSQL, spotSourceSQL)
 
-	rows, err := s.conn.Query(ctx, query,
+	rows, err := s.repo.Query(ctx, query,
 		clickhouse.Named("symbol_id", symbolID),
 		clickhouse.Named("symbol", baseAsset),
-		clickhouse.Named("from", cryptooptions.ClickHouseTimeParam(fromT)),
-		clickhouse.Named("to", cryptooptions.ClickHouseTimeParam(toT)),
+		clickhouse.Named("from", chquery.TimeParam(fromT)),
+		clickhouse.Named("to", chquery.TimeParam(toT)),
 		clickhouse.Named("limit", limit+1),
 	)
 	if err != nil {
@@ -393,7 +395,7 @@ ORDER BY c.timestamp ASC, m.strike_price ASC
 LIMIT {limit:UInt32}
 `, chainView)
 
-	rows, err := s.conn.Query(ctx, query,
+	rows, err := s.repo.Query(ctx, query,
 		clickhouse.Named("base_asset", req.BaseAsset),
 		clickhouse.DateNamed("from", from, clickhouse.NanoSeconds),
 		clickhouse.DateNamed("to", to, clickhouse.NanoSeconds),

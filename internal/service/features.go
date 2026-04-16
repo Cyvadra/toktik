@@ -10,6 +10,7 @@ import (
 
 	clickhouse "github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+	"github.com/Cyvadra/toktik/internal/chrepo"
 	"github.com/Cyvadra/toktik/internal/dto"
 )
 
@@ -130,11 +131,11 @@ type FeatureBackfillStats struct {
 
 // FeatureService exposes read-only derived feature APIs.
 type FeatureService struct {
-	conn driver.Conn
+	repo *chrepo.Repo
 }
 
-func NewFeatureService(conn driver.Conn) *FeatureService {
-	return &FeatureService{conn: conn}
+func NewFeatureService(repo *chrepo.Repo) *FeatureService {
+	return &FeatureService{repo: repo}
 }
 
 func (s *FeatureService) QueryVolatilitySnapshot(ctx context.Context, req dto.FeatureVolatilitySnapshotRequest) (*dto.FeatureVolatilitySnapshotResponse, error) {
@@ -455,7 +456,7 @@ func (s *FeatureService) QueryTermStructureHistory(ctx context.Context, req dto.
 		return resp, nil
 	}
 
-	rows, err := s.conn.Query(ctx, fmt.Sprintf(`SELECT
+	rows, err := s.repo.Query(ctx, fmt.Sprintf(`SELECT
 	as_of_date,
 	expiration,
 	days_to_expiry,
@@ -528,7 +529,7 @@ func (s *FeatureService) QuerySkewHistory(ctx context.Context, req dto.FeatureSk
 		return resp, nil
 	}
 
-	rows, err := s.conn.Query(ctx, fmt.Sprintf(`SELECT
+	rows, err := s.repo.Query(ctx, fmt.Sprintf(`SELECT
 	as_of_date,
 	expiration,
 	days_to_expiry,
@@ -1006,7 +1007,7 @@ func normalizeFeatureDTEBounds(minDTE, maxDTE int) (int32, int32, error) {
 }
 
 func (s *FeatureService) latestUSOptionsFeatureDate(ctx context.Context, underlying string) (time.Time, bool, error) {
-	rows, err := s.conn.Query(ctx, `SELECT ifNull(maxOrNull(market_date), toDate('1970-01-01'))
+	rows, err := s.repo.Query(ctx, `SELECT ifNull(maxOrNull(market_date), toDate('1970-01-01'))
 FROM us_options_bar_1m
 WHERE underlying = {underlying:String}
   AND is_regular_session = 1`, clickhouse.Named("underlying", underlying))
@@ -1028,7 +1029,7 @@ WHERE underlying = {underlying:String}
 }
 
 func (s *FeatureService) latestCryptoOptionsFeatureDate(ctx context.Context, underlying string) (time.Time, bool, error) {
-	rows, err := s.conn.Query(ctx, `SELECT ifNull(toDate(maxOrNull(timestamp)), toDate('1970-01-01'))
+	rows, err := s.repo.Query(ctx, `SELECT ifNull(toDate(maxOrNull(timestamp)), toDate('1970-01-01'))
 FROM crypto_options_bar_1m
 WHERE base_asset = {underlying:String}`,
 		clickhouse.Named("underlying", underlying),
@@ -1051,7 +1052,7 @@ WHERE base_asset = {underlying:String}`,
 }
 
 func (s *FeatureService) latestUSStocksFeatureDate(ctx context.Context, underlying string) (time.Time, bool, error) {
-	rows, err := s.conn.Query(ctx, `SELECT ifNull(maxOrNull(market_date), toDate('1970-01-01'))
+	rows, err := s.repo.Query(ctx, `SELECT ifNull(maxOrNull(market_date), toDate('1970-01-01'))
 FROM us_stocks_bar_1m
 WHERE symbol = {underlying:String}
   AND is_regular_session = 1`, clickhouse.Named("underlying", underlying))
@@ -1131,7 +1132,7 @@ WHERE underlying = {underlying:String}
 	query += `
 GROUP BY as_of_date, expiration
 ORDER BY as_of_date ASC, expiration ASC`
-	rows, err := s.conn.Query(ctx, query, args...)
+	rows, err := s.repo.Query(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query us-options surface aggregates: %w", err)
 	}
@@ -1240,7 +1241,7 @@ FROM (
 )
 GROUP BY as_of_date, expiration
 ORDER BY as_of_date ASC, expiration ASC`
-	rows, err := s.conn.Query(ctx, query, args...)
+	rows, err := s.repo.Query(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query crypto-options liquidity aggregates: %w", err)
 	}
@@ -1323,7 +1324,7 @@ WHERE underlying = {underlying:String}
 	query += `
 GROUP BY as_of_date, expiration
 ORDER BY as_of_date ASC, expiration ASC`
-	rows, err := s.conn.Query(ctx, query, args...)
+	rows, err := s.repo.Query(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query us-options liquidity aggregates: %w", err)
 	}
@@ -1505,7 +1506,7 @@ ORDER BY day ASC`
 	default:
 		return nil, dto.NewValidationError("unsupported feature market %q", market)
 	}
-	return queryFeatureSeries(ctx, s.conn, query, args...)
+	return queryFeatureSeries(ctx, s.repo.Conn, query, args...)
 }
 
 func (s *FeatureService) queryImpliedVolatilityHistory(ctx context.Context, market, underlying string, from, to time.Time) ([]featurePoint, error) {
@@ -1564,7 +1565,7 @@ ORDER BY day ASC`
 	default:
 		return nil, dto.NewValidationError("unsupported feature market %q", market)
 	}
-	return queryFeatureSeries(ctx, s.conn, query, args...)
+	return queryFeatureSeries(ctx, s.repo.Conn, query, args...)
 }
 
 func (s *FeatureService) listFeatureUnderlyings(ctx context.Context, market string) ([]string, error) {
@@ -1577,7 +1578,7 @@ func (s *FeatureService) listFeatureUnderlyings(ctx context.Context, market stri
 	default:
 		return nil, dto.NewValidationError("unsupported feature market %q", market)
 	}
-	rows, err := s.conn.Query(ctx, query)
+	rows, err := s.repo.Query(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("query feature underlyings: %w", err)
 	}
@@ -1602,7 +1603,7 @@ func (s *FeatureService) queryPrecomputedVolatilitySnapshot(ctx context.Context,
 	if err != nil || !exists {
 		return nil, false, err
 	}
-	rows, err := s.conn.Query(ctx, fmt.Sprintf(`SELECT
+	rows, err := s.repo.Query(ctx, fmt.Sprintf(`SELECT
 	as_of_date,
 	price_observations,
 	iv_observations,
@@ -1662,7 +1663,7 @@ func (s *FeatureService) queryPrecomputedVolatilityHistory(ctx context.Context, 
 	if err != nil || !exists {
 		return nil, false, err
 	}
-	rows, err := s.conn.Query(ctx, fmt.Sprintf(`SELECT
+	rows, err := s.repo.Query(ctx, fmt.Sprintf(`SELECT
 	as_of_date,
 	price_observations,
 	iv_observations,
@@ -1715,7 +1716,7 @@ func (s *FeatureService) queryPrecomputedTermStructureSnapshot(ctx context.Conte
 	if err != nil || !ok {
 		return nil, ok, err
 	}
-	rows, err := s.conn.Query(ctx, fmt.Sprintf(`SELECT
+	rows, err := s.repo.Query(ctx, fmt.Sprintf(`SELECT
 	expiration,
 	days_to_expiry,
 	atm_iv,
@@ -1769,7 +1770,7 @@ func (s *FeatureService) queryPrecomputedSkewSnapshot(ctx context.Context, marke
 	if err != nil || !ok {
 		return nil, ok, err
 	}
-	rows, err := s.conn.Query(ctx, fmt.Sprintf(`SELECT
+	rows, err := s.repo.Query(ctx, fmt.Sprintf(`SELECT
 	expiration,
 	days_to_expiry,
 	otm_call_iv,
@@ -1823,7 +1824,7 @@ func (s *FeatureService) queryPrecomputedLiquiditySnapshot(ctx context.Context, 
 	if err != nil || !ok {
 		return nil, ok, err
 	}
-	rows, err := s.conn.Query(ctx, fmt.Sprintf(`SELECT
+	rows, err := s.repo.Query(ctx, fmt.Sprintf(`SELECT
 	expiration,
 	days_to_expiry,
 	avg_bid_close,
@@ -1892,7 +1893,7 @@ func (s *FeatureService) queryPrecomputedLiquidityHistory(ctx context.Context, m
 	if err != nil || !exists {
 		return nil, false, err
 	}
-	rows, err := s.conn.Query(ctx, fmt.Sprintf(`SELECT
+	rows, err := s.repo.Query(ctx, fmt.Sprintf(`SELECT
 	as_of_date,
 	expiration,
 	days_to_expiry,
@@ -1968,7 +1969,7 @@ func (s *FeatureService) queryPrecomputedDailyFeaturePanel(ctx context.Context, 
 	if err != nil || !exists {
 		return nil, false, err
 	}
-	rows, err := s.conn.Query(ctx, fmt.Sprintf(`SELECT
+	rows, err := s.repo.Query(ctx, fmt.Sprintf(`SELECT
 	as_of_date,
 	price_observations,
 	iv_observations,
@@ -2109,7 +2110,7 @@ func (s *FeatureService) featureStoreTableExists(ctx context.Context) (bool, err
 }
 
 func (s *FeatureService) featureStoreRelationExists(ctx context.Context, relation string) (bool, error) {
-	rows, err := s.conn.Query(ctx, `SELECT count()
+	rows, err := s.repo.Query(ctx, `SELECT count()
 FROM system.tables
 WHERE database = currentDatabase()
   AND name = {relation:String}`,
@@ -2130,7 +2131,7 @@ WHERE database = currentDatabase()
 }
 
 func (s *FeatureService) latestPrecomputedSurfaceDate(ctx context.Context, table, market, underlying string) (time.Time, bool, error) {
-	rows, err := s.conn.Query(ctx, fmt.Sprintf(`SELECT ifNull(maxOrNull(as_of_date), toDate('1970-01-01'))
+	rows, err := s.repo.Query(ctx, fmt.Sprintf(`SELECT ifNull(maxOrNull(as_of_date), toDate('1970-01-01'))
 FROM %s
 WHERE market = {market:String}
   AND underlying = {underlying:String}`, table),
@@ -2173,7 +2174,7 @@ func (s *FeatureService) precomputedVolatilityRowsExist(ctx context.Context, mar
 		query += ` AND as_of_date < toDate({to:String})`
 		args = append(args, clickhouse.Named("to", to.UTC().Format("2006-01-02")))
 	}
-	rows, err := s.conn.Query(ctx, query, args...)
+	rows, err := s.repo.Query(ctx, query, args...)
 	if err != nil {
 		return false, fmt.Errorf("query precomputed volatility row count: %w", err)
 	}
@@ -2203,7 +2204,7 @@ func (s *FeatureService) deletePrecomputedVolatilityRows(ctx context.Context, ma
 		query += ` AND as_of_date < toDate({to:String})`
 		args = append(args, clickhouse.Named("to", to.UTC().Format("2006-01-02")))
 	}
-	if err := s.conn.Exec(ctx, query, args...); err != nil {
+	if err := s.repo.Exec(ctx, query, args...); err != nil {
 		return fmt.Errorf("delete precomputed volatility rows: %w", err)
 	}
 	return nil
@@ -2227,7 +2228,7 @@ func (s *FeatureService) precomputedSurfaceRowsExist(ctx context.Context, table,
 		query += ` AND as_of_date < toDate({to:String})`
 		args = append(args, clickhouse.Named("to", to.UTC().Format("2006-01-02")))
 	}
-	rows, err := s.conn.Query(ctx, query, args...)
+	rows, err := s.repo.Query(ctx, query, args...)
 	if err != nil {
 		return false, fmt.Errorf("query precomputed surface row count: %w", err)
 	}
@@ -2263,7 +2264,7 @@ func (s *FeatureService) precomputedDailyPanelRowsExist(ctx context.Context, mar
 		query += ` AND as_of_date < toDate({to:String})`
 		args = append(args, clickhouse.Named("to", to.UTC().Format("2006-01-02")))
 	}
-	rows, err := s.conn.Query(ctx, query, args...)
+	rows, err := s.repo.Query(ctx, query, args...)
 	if err != nil {
 		return false, fmt.Errorf("query precomputed daily panel row count: %w", err)
 	}
@@ -2292,7 +2293,7 @@ func (s *FeatureService) deletePrecomputedSurfaceRows(ctx context.Context, table
 		query += ` AND as_of_date < toDate({to:String})`
 		args = append(args, clickhouse.Named("to", to.UTC().Format("2006-01-02")))
 	}
-	if err := s.conn.Exec(ctx, query, args...); err != nil {
+	if err := s.repo.Exec(ctx, query, args...); err != nil {
 		return fmt.Errorf("delete precomputed surface rows: %w", err)
 	}
 	return nil
@@ -2315,14 +2316,14 @@ func (s *FeatureService) deletePrecomputedDailyPanelRows(ctx context.Context, ma
 		query += ` AND as_of_date < toDate({to:String})`
 		args = append(args, clickhouse.Named("to", to.UTC().Format("2006-01-02")))
 	}
-	if err := s.conn.Exec(ctx, query, args...); err != nil {
+	if err := s.repo.Exec(ctx, query, args...); err != nil {
 		return fmt.Errorf("delete precomputed daily panel rows: %w", err)
 	}
 	return nil
 }
 
 func (s *FeatureService) insertPrecomputedVolatilityRows(ctx context.Context, market, underlying string, lookbackDays int, history []dto.FeatureVolatilityHistoryRow) error {
-	batch, err := s.conn.PrepareBatch(ctx, fmt.Sprintf(`INSERT INTO %s (
+	batch, err := s.repo.PrepareBatch(ctx, fmt.Sprintf(`INSERT INTO %s (
 	market,
 	underlying,
 	lookback_days,
@@ -2367,7 +2368,7 @@ func (s *FeatureService) insertPrecomputedVolatilityRows(ctx context.Context, ma
 }
 
 func (s *FeatureService) insertPrecomputedTermStructureRows(ctx context.Context, market, underlying string, rows []usOptionsSurfaceAggregateRow) error {
-	batch, err := s.conn.PrepareBatch(ctx, fmt.Sprintf(`INSERT INTO %s (
+	batch, err := s.repo.PrepareBatch(ctx, fmt.Sprintf(`INSERT INTO %s (
 	market,
 	underlying,
 	as_of_date,
@@ -2406,7 +2407,7 @@ func (s *FeatureService) insertPrecomputedTermStructureRows(ctx context.Context,
 }
 
 func (s *FeatureService) insertPrecomputedSkewRows(ctx context.Context, market, underlying string, rows []usOptionsSurfaceAggregateRow) error {
-	batch, err := s.conn.PrepareBatch(ctx, fmt.Sprintf(`INSERT INTO %s (
+	batch, err := s.repo.PrepareBatch(ctx, fmt.Sprintf(`INSERT INTO %s (
 	market,
 	underlying,
 	as_of_date,
@@ -2445,7 +2446,7 @@ func (s *FeatureService) insertPrecomputedSkewRows(ctx context.Context, market, 
 }
 
 func (s *FeatureService) insertPrecomputedLiquidityRows(ctx context.Context, market, underlying string, rows []cryptoLiquidityAggregateRow) error {
-	batch, err := s.conn.PrepareBatch(ctx, fmt.Sprintf(`INSERT INTO %s (
+	batch, err := s.repo.PrepareBatch(ctx, fmt.Sprintf(`INSERT INTO %s (
 	market,
 	underlying,
 	as_of_date,
@@ -2502,7 +2503,7 @@ func (s *FeatureService) insertPrecomputedLiquidityRows(ctx context.Context, mar
 }
 
 func (s *FeatureService) insertPrecomputedDailyPanelRows(ctx context.Context, market, underlying string, lookbackDays int, minDTE, maxDTE int32, rows []dto.FeatureDailyPanelRow) error {
-	batch, err := s.conn.PrepareBatch(ctx, fmt.Sprintf(`INSERT INTO %s (
+	batch, err := s.repo.PrepareBatch(ctx, fmt.Sprintf(`INSERT INTO %s (
 	market,
 	underlying,
 	lookback_days,
@@ -2972,7 +2973,7 @@ func mergeDailyFeaturePanelRows(volHistory []dto.FeatureVolatilityHistoryRow, li
 }
 
 func (s *FeatureService) queryEventWindowHistoryRows(ctx context.Context, market, underlying string, from, to time.Time) ([]dto.FeatureEventWindowHistoryRow, error) {
-	rows, err := s.conn.Query(ctx, `SELECT market_date, is_early_close
+	rows, err := s.repo.Query(ctx, `SELECT market_date, is_early_close
 FROM us_equity_sessions
 WHERE market_date >= toDate({from:String})
   AND market_date < toDate({to:String})
@@ -2985,7 +2986,7 @@ ORDER BY market_date ASC`,
 		return nil, fmt.Errorf("query event-window history rows: %w", err)
 	}
 	defer rows.Close()
-	holidayRows, err := s.conn.Query(ctx, `SELECT market_date
+	holidayRows, err := s.repo.Query(ctx, `SELECT market_date
 FROM us_equity_sessions
 WHERE is_holiday = 1
 ORDER BY market_date ASC`)
@@ -3101,7 +3102,7 @@ func activityRatioValue(activeContracts, contractCount int) *float64 {
 }
 
 func (s *FeatureService) populateEventWindowFlags(ctx context.Context, resp *dto.FeatureEventWindowSnapshotResponse, asOf time.Time) error {
-	rows, err := s.conn.Query(ctx, `SELECT is_early_close
+	rows, err := s.repo.Query(ctx, `SELECT is_early_close
 FROM us_equity_sessions
 WHERE market_date = toDate({as_of:String})`, clickhouse.Named("as_of", asOf.UTC().Format("2006-01-02")))
 	if err != nil {
@@ -3154,7 +3155,7 @@ WHERE is_holiday = 1`
 	} else {
 		query += ` AND market_date < toDate({as_of:String})`
 	}
-	rows, err := s.conn.Query(ctx, query, clickhouse.Named(argName, asOf.UTC().Format("2006-01-02")))
+	rows, err := s.repo.Query(ctx, query, clickhouse.Named(argName, asOf.UTC().Format("2006-01-02")))
 	if err != nil {
 		return time.Time{}, false, fmt.Errorf("query nearest holiday date: %w", err)
 	}

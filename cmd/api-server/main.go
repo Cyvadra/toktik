@@ -32,6 +32,7 @@ import (
 	_ "github.com/Cyvadra/toktik/docs"
 	"github.com/Cyvadra/toktik/internal/api"
 	"github.com/Cyvadra/toktik/internal/cache"
+	"github.com/Cyvadra/toktik/internal/chrepo"
 	appCli "github.com/Cyvadra/toktik/internal/cli"
 	"github.com/Cyvadra/toktik/internal/config"
 	"github.com/Cyvadra/toktik/internal/service"
@@ -84,15 +85,17 @@ func main() {
 		}
 	}()
 
-	svc := service.NewCryptoOptionsService(conn)
-	usStocksSvc := service.NewUSStocksService(conn)
-	usOptionsSvc := service.NewUSOptionsService(conn)
-	infraSvc := service.NewInfraService(conn)
-	featureSvc := service.NewFeatureService(conn)
-	indicatorSvc := service.NewIndicatorService(conn)
-	strategyBacktestSvc := service.NewPortfolioBacktestService(conn, factorStore)
-	cryptoSpotSvc := service.NewCryptoSpotService(conn)
-	screenerSvc := service.NewScreenerService(conn)
+	repo := chrepo.NewRepo(conn)
+
+	svc := service.NewCryptoOptionsService(repo)
+	usStocksSvc := service.NewUSStocksService(repo)
+	usOptionsSvc := service.NewUSOptionsService(repo)
+	infraSvc := service.NewInfraService(repo)
+	featureSvc := service.NewFeatureService(repo)
+	indicatorSvc := service.NewIndicatorService(repo)
+	strategyBacktestSvc := service.NewPortfolioBacktestService(repo, factorStore)
+	cryptoSpotSvc := service.NewCryptoSpotService(repo)
+	screenerSvc := service.NewScreenerService(repo)
 	strategyCatalogSvc := service.NewStrategyCatalogService()
 	factorSvc := service.NewFactorService(factorStore)
 	cacheStore, err := cache.NewStore(ctx, runtimeCfg)
