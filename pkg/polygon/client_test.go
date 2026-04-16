@@ -73,9 +73,6 @@ func TestLoadConfigFromRuntimeReadsSealedSecrets(t *testing.T) {
 	runtimeCfg.Polygon.TimeoutSeconds = 15
 	runtimeCfg.Polygon.Trace = true
 	runtimeCfg.Polygon.Pagination = false
-	runtimeCfg.Polygon.APIKey = ""
-	runtimeCfg.Polygon.FlatFilesAccessKey = ""
-	runtimeCfg.Polygon.FlatFilesSecretKey = ""
 	mgr.Seal("polygon.api_key", "sealed_key")
 	mgr.Seal("polygon.flat_files_access_key", "sealed-access")
 	mgr.Seal("polygon.flat_files_secret_key", "sealed-secret")

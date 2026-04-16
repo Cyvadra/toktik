@@ -84,10 +84,22 @@ func TestLoadRuntimeFromPathYAML(t *testing.T) {
 	if cfg.Tiger.TimeoutSeconds != 12 || cfg.Tiger.EnableDynamicDomain {
 		t.Fatalf("unexpected tiger timeout or dynamic domain config: %#v", cfg.Tiger)
 	}
-	if cfg.Tiger.Token != "runtime-token" || cfg.Tiger.TokenFile != "/tmp/tiger-token.properties" || cfg.Tiger.ServerURL != "https://tiger-proxy.internal" || cfg.Tiger.DeviceID != "device-123" {
+	tigerToken, err := cfg.TigerToken()
+	if err != nil {
+		t.Fatalf("TigerToken failed: %v", err)
+	}
+	if tigerToken != "runtime-token" || cfg.Tiger.TokenFile != "/tmp/tiger-token.properties" || cfg.Tiger.ServerURL != "https://tiger-proxy.internal" || cfg.Tiger.DeviceID != "device-123" {
 		t.Fatalf("unexpected tiger auth config: %#v", cfg.Tiger)
 	}
-	if cfg.Polygon.FlatFilesTool != "mc" || cfg.Polygon.FlatFilesCacheDir != "/srv/toktik/polygon-cache" || cfg.Polygon.FlatFilesAccessKey != "flat-access" || cfg.Polygon.FlatFilesSecretKey != "flat-secret" {
+	polygonAccessKey, err := cfg.PolygonFlatFilesAccessKey()
+	if err != nil {
+		t.Fatalf("PolygonFlatFilesAccessKey failed: %v", err)
+	}
+	polygonSecretKey, err := cfg.PolygonFlatFilesSecretKey()
+	if err != nil {
+		t.Fatalf("PolygonFlatFilesSecretKey failed: %v", err)
+	}
+	if cfg.Polygon.FlatFilesTool != "mc" || cfg.Polygon.FlatFilesCacheDir != "/srv/toktik/polygon-cache" || polygonAccessKey != "flat-access" || polygonSecretKey != "flat-secret" {
 		t.Fatalf("unexpected polygon flatfile config: %#v", cfg.Polygon)
 	}
 }
@@ -146,11 +158,49 @@ func TestLoadRuntimeFromPathEnvOverrides(t *testing.T) {
 	if cfg.Tiger.Language != "zh_CN" || cfg.Tiger.Timezone != "Asia/Shanghai" || cfg.Tiger.TimeoutSeconds != 44 {
 		t.Fatalf("unexpected tiger runtime override: %#v", cfg.Tiger)
 	}
-	if cfg.Tiger.EnableDynamicDomain || cfg.Tiger.Token != "env-token" || cfg.Tiger.TokenFile != "/tmp/env-tiger-token.properties" || cfg.Tiger.ServerURL != "https://tiger-env.example" || cfg.Tiger.DeviceID != "env-device" {
+	tigerToken, err := cfg.TigerToken()
+	if err != nil {
+		t.Fatalf("TigerToken failed: %v", err)
+	}
+	if cfg.Tiger.EnableDynamicDomain || tigerToken != "env-token" || cfg.Tiger.TokenFile != "/tmp/env-tiger-token.properties" || cfg.Tiger.ServerURL != "https://tiger-env.example" || cfg.Tiger.DeviceID != "env-device" {
 		t.Fatalf("unexpected tiger auth override: %#v", cfg.Tiger)
 	}
 	if cfg.Polygon != DefaultRuntime().Polygon {
 		t.Fatalf("unexpected polygon override from environment: %#v", cfg.Polygon)
+	}
+}
+
+func TestRuntimeSecretAccessors(t *testing.T) {
+	cfg := DefaultRuntime()
+	cfg.SetTigerPrivateKey(" private-key ")
+	cfg.SetTigerToken(" token ")
+	cfg.SetPolygonAPIKey(" polygon-key ")
+	cfg.SetPolygonFlatFilesAccessKey(" access-key ")
+	cfg.SetPolygonFlatFilesSecretKey(" secret-key ")
+
+	tigerPrivateKey, err := cfg.TigerPrivateKey()
+	if err != nil {
+		t.Fatalf("TigerPrivateKey failed: %v", err)
+	}
+	tigerToken, err := cfg.TigerToken()
+	if err != nil {
+		t.Fatalf("TigerToken failed: %v", err)
+	}
+	polygonAPIKey, err := cfg.PolygonAPIKey()
+	if err != nil {
+		t.Fatalf("PolygonAPIKey failed: %v", err)
+	}
+	polygonAccessKey, err := cfg.PolygonFlatFilesAccessKey()
+	if err != nil {
+		t.Fatalf("PolygonFlatFilesAccessKey failed: %v", err)
+	}
+	polygonSecretKey, err := cfg.PolygonFlatFilesSecretKey()
+	if err != nil {
+		t.Fatalf("PolygonFlatFilesSecretKey failed: %v", err)
+	}
+
+	if tigerPrivateKey != "private-key" || tigerToken != "token" || polygonAPIKey != "polygon-key" || polygonAccessKey != "access-key" || polygonSecretKey != "secret-key" {
+		t.Fatalf("unexpected secret accessor values")
 	}
 }
 

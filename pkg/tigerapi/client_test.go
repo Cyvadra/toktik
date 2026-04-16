@@ -90,7 +90,7 @@ func TestLoadConfigFromRuntimeLoadsTokenFromExplicitFile(t *testing.T) {
 
 	runtimeCfg := runtimeconfig.DefaultRuntime()
 	runtimeCfg.Tiger.TigerID = "runtime_tiger_id"
-	runtimeCfg.Tiger.PrivateKey = mustGeneratePrivateKeyPEM(t)
+	runtimeCfg.SetTigerPrivateKey(mustGeneratePrivateKeyPEM(t))
 	runtimeCfg.Tiger.Account = "runtime_account"
 	runtimeCfg.Tiger.License = "TBNZ"
 	runtimeCfg.Tiger.Environment = string(EnvironmentProd)

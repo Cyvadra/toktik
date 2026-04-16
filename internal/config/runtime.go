@@ -99,7 +99,6 @@ type Deribit struct {
 
 type Tiger struct {
 	TigerID             string `yaml:"tiger_id"`
-	PrivateKey          string `yaml:"private_key"`
 	Account             string `yaml:"account"`
 	License             string `yaml:"license"`
 	Environment         string `yaml:"environment"`
@@ -107,23 +106,92 @@ type Tiger struct {
 	Timezone            string `yaml:"timezone"`
 	TimeoutSeconds      int    `yaml:"timeout_seconds"`
 	EnableDynamicDomain bool   `yaml:"enable_dynamic_domain"`
-	Token               string `yaml:"token"`
 	TokenFile           string `yaml:"token_file"`
 	ServerURL           string `yaml:"server_url"`
 	DeviceID            string `yaml:"device_id"`
+
+	privateKey string
+	token      string
 }
 
 type Polygon struct {
-	APIKey             string `yaml:"api_key"`
-	BaseURL            string `yaml:"base_url"`
-	FlatFilesBaseURL   string `yaml:"flat_files_base_url"`
-	FlatFilesTool      string `yaml:"flat_files_tool"`
-	FlatFilesCacheDir  string `yaml:"flat_files_cache_dir"`
-	FlatFilesAccessKey string `yaml:"flat_files_access_key"`
-	FlatFilesSecretKey string `yaml:"flat_files_secret_key"`
-	TimeoutSeconds     int    `yaml:"timeout_seconds"`
-	Trace              bool   `yaml:"trace"`
-	Pagination         bool   `yaml:"pagination"`
+	BaseURL           string `yaml:"base_url"`
+	FlatFilesBaseURL  string `yaml:"flat_files_base_url"`
+	FlatFilesTool     string `yaml:"flat_files_tool"`
+	FlatFilesCacheDir string `yaml:"flat_files_cache_dir"`
+	TimeoutSeconds    int    `yaml:"timeout_seconds"`
+	Trace             bool   `yaml:"trace"`
+	Pagination        bool   `yaml:"pagination"`
+
+	apiKey             string
+	flatFilesAccessKey string
+	flatFilesSecretKey string
+}
+
+func (t *Tiger) UnmarshalYAML(value *yaml.Node) error {
+	type rawTiger struct {
+		TigerID             string `yaml:"tiger_id"`
+		PrivateKey          string `yaml:"private_key"`
+		Account             string `yaml:"account"`
+		License             string `yaml:"license"`
+		Environment         string `yaml:"environment"`
+		Language            string `yaml:"language"`
+		Timezone            string `yaml:"timezone"`
+		TimeoutSeconds      int    `yaml:"timeout_seconds"`
+		EnableDynamicDomain bool   `yaml:"enable_dynamic_domain"`
+		Token               string `yaml:"token"`
+		TokenFile           string `yaml:"token_file"`
+		ServerURL           string `yaml:"server_url"`
+		DeviceID            string `yaml:"device_id"`
+	}
+	var raw rawTiger
+	if err := value.Decode(&raw); err != nil {
+		return err
+	}
+	t.TigerID = raw.TigerID
+	t.privateKey = raw.PrivateKey
+	t.Account = raw.Account
+	t.License = raw.License
+	t.Environment = raw.Environment
+	t.Language = raw.Language
+	t.Timezone = raw.Timezone
+	t.TimeoutSeconds = raw.TimeoutSeconds
+	t.EnableDynamicDomain = raw.EnableDynamicDomain
+	t.token = raw.Token
+	t.TokenFile = raw.TokenFile
+	t.ServerURL = raw.ServerURL
+	t.DeviceID = raw.DeviceID
+	return nil
+}
+
+func (p *Polygon) UnmarshalYAML(value *yaml.Node) error {
+	type rawPolygon struct {
+		APIKey             string `yaml:"api_key"`
+		BaseURL            string `yaml:"base_url"`
+		FlatFilesBaseURL   string `yaml:"flat_files_base_url"`
+		FlatFilesTool      string `yaml:"flat_files_tool"`
+		FlatFilesCacheDir  string `yaml:"flat_files_cache_dir"`
+		FlatFilesAccessKey string `yaml:"flat_files_access_key"`
+		FlatFilesSecretKey string `yaml:"flat_files_secret_key"`
+		TimeoutSeconds     int    `yaml:"timeout_seconds"`
+		Trace              bool   `yaml:"trace"`
+		Pagination         bool   `yaml:"pagination"`
+	}
+	var raw rawPolygon
+	if err := value.Decode(&raw); err != nil {
+		return err
+	}
+	p.apiKey = raw.APIKey
+	p.BaseURL = raw.BaseURL
+	p.FlatFilesBaseURL = raw.FlatFilesBaseURL
+	p.FlatFilesTool = raw.FlatFilesTool
+	p.FlatFilesCacheDir = raw.FlatFilesCacheDir
+	p.flatFilesAccessKey = raw.FlatFilesAccessKey
+	p.flatFilesSecretKey = raw.FlatFilesSecretKey
+	p.TimeoutSeconds = raw.TimeoutSeconds
+	p.Trace = raw.Trace
+	p.Pagination = raw.Pagination
+	return nil
 }
 
 type Redis struct {
@@ -241,7 +309,7 @@ func (c *Runtime) applyEnvOverrides() {
 		c.Tiger.TigerID = value
 	}
 	if value := strings.TrimSpace(os.Getenv(EnvTigerPrivateKey)); value != "" {
-		c.Tiger.PrivateKey = value
+		c.SetTigerPrivateKey(value)
 	}
 	if value := strings.TrimSpace(os.Getenv(EnvTigerAccount)); value != "" {
 		c.Tiger.Account = value
@@ -269,7 +337,7 @@ func (c *Runtime) applyEnvOverrides() {
 		}
 	}
 	if value := strings.TrimSpace(os.Getenv(EnvTigerToken)); value != "" {
-		c.Tiger.Token = value
+		c.SetTigerToken(value)
 	}
 	if value := strings.TrimSpace(os.Getenv(EnvTigerTokenFile)); value != "" {
 		c.Tiger.TokenFile = value
@@ -340,11 +408,11 @@ func (c *Runtime) sealCredentials() error {
 		return ""
 	}
 
-	c.Tiger.PrivateKey = seal("tiger.private_key", c.Tiger.PrivateKey)
-	c.Tiger.Token = seal("tiger.token", c.Tiger.Token)
-	c.Polygon.APIKey = seal("polygon.api_key", c.Polygon.APIKey)
-	c.Polygon.FlatFilesAccessKey = seal("polygon.flat_files_access_key", c.Polygon.FlatFilesAccessKey)
-	c.Polygon.FlatFilesSecretKey = seal("polygon.flat_files_secret_key", c.Polygon.FlatFilesSecretKey)
+	c.Tiger.privateKey = seal("tiger.private_key", c.Tiger.privateKey)
+	c.Tiger.token = seal("tiger.token", c.Tiger.token)
+	c.Polygon.apiKey = seal("polygon.api_key", c.Polygon.apiKey)
+	c.Polygon.flatFilesAccessKey = seal("polygon.flat_files_access_key", c.Polygon.flatFilesAccessKey)
+	c.Polygon.flatFilesSecretKey = seal("polygon.flat_files_secret_key", c.Polygon.flatFilesSecretKey)
 	c.Redis.Password = seal("redis.password", c.Redis.Password)
 	c.AESKey = "" // don't retain the key itself
 	return nil
@@ -385,28 +453,28 @@ func (c *Runtime) normalize() {
 		c.Deribit.BaseURL = defaultDeribitBaseURL
 	}
 	c.Tiger.TigerID = strings.TrimSpace(c.Tiger.TigerID)
-	c.Tiger.PrivateKey = strings.TrimSpace(c.Tiger.PrivateKey)
+	c.Tiger.privateKey = strings.TrimSpace(c.Tiger.privateKey)
 	c.Tiger.Account = strings.TrimSpace(c.Tiger.Account)
 	c.Tiger.License = strings.TrimSpace(c.Tiger.License)
 	c.Tiger.Environment = strings.ToUpper(strings.TrimSpace(c.Tiger.Environment))
 	c.Tiger.Language = strings.TrimSpace(c.Tiger.Language)
 	c.Tiger.Timezone = strings.TrimSpace(c.Tiger.Timezone)
-	c.Tiger.Token = strings.TrimSpace(c.Tiger.Token)
+	c.Tiger.token = strings.TrimSpace(c.Tiger.token)
 	c.Tiger.TokenFile = strings.TrimSpace(c.Tiger.TokenFile)
 	c.Tiger.ServerURL = strings.TrimSpace(c.Tiger.ServerURL)
 	c.Tiger.DeviceID = strings.TrimSpace(c.Tiger.DeviceID)
 	if c.Tiger.TimeoutSeconds < 0 {
 		c.Tiger.TimeoutSeconds = 0
 	}
-	c.Polygon.APIKey = strings.TrimSpace(c.Polygon.APIKey)
+	c.Polygon.apiKey = strings.TrimSpace(c.Polygon.apiKey)
 	c.Polygon.BaseURL = strings.TrimSpace(c.Polygon.BaseURL)
 	c.Polygon.FlatFilesBaseURL = strings.TrimSpace(c.Polygon.FlatFilesBaseURL)
 	c.Polygon.FlatFilesTool = strings.ToLower(strings.TrimSpace(c.Polygon.FlatFilesTool))
 	if strings.TrimSpace(c.Polygon.FlatFilesCacheDir) != "" && !filepath.IsAbs(c.Polygon.FlatFilesCacheDir) {
 		c.Polygon.FlatFilesCacheDir = filepath.Clean(c.Polygon.FlatFilesCacheDir)
 	}
-	c.Polygon.FlatFilesAccessKey = strings.TrimSpace(c.Polygon.FlatFilesAccessKey)
-	c.Polygon.FlatFilesSecretKey = strings.TrimSpace(c.Polygon.FlatFilesSecretKey)
+	c.Polygon.flatFilesAccessKey = strings.TrimSpace(c.Polygon.flatFilesAccessKey)
+	c.Polygon.flatFilesSecretKey = strings.TrimSpace(c.Polygon.flatFilesSecretKey)
 	if c.Polygon.TimeoutSeconds <= 0 {
 		c.Polygon.TimeoutSeconds = defaultPolygonTimeoutSec
 	}
@@ -438,6 +506,88 @@ func (c Runtime) Validate() error {
 		return fmt.Errorf("redis.addr is required when redis is enabled")
 	}
 	return nil
+}
+
+func (c Runtime) TigerPrivateKey() (string, error) {
+	return c.secretValue("tiger.private_key", c.Tiger.privateKey)
+}
+
+func (c Runtime) TigerToken() (string, error) {
+	return c.secretValue("tiger.token", c.Tiger.token)
+}
+
+func (c Runtime) PolygonAPIKey() (string, error) {
+	return c.secretValue("polygon.api_key", c.Polygon.apiKey)
+}
+
+func (c Runtime) PolygonFlatFilesAccessKey() (string, error) {
+	return c.secretValue("polygon.flat_files_access_key", c.Polygon.flatFilesAccessKey)
+}
+
+func (c Runtime) PolygonFlatFilesSecretKey() (string, error) {
+	return c.secretValue("polygon.flat_files_secret_key", c.Polygon.flatFilesSecretKey)
+}
+
+func (c *Runtime) SetTigerPrivateKey(value string) {
+	if c == nil {
+		return
+	}
+	c.setSecretValue("tiger.private_key", &c.Tiger.privateKey, value)
+}
+
+func (c *Runtime) SetTigerToken(value string) {
+	if c == nil {
+		return
+	}
+	c.setSecretValue("tiger.token", &c.Tiger.token, value)
+}
+
+func (c *Runtime) SetPolygonAPIKey(value string) {
+	if c == nil {
+		return
+	}
+	c.setSecretValue("polygon.api_key", &c.Polygon.apiKey, value)
+}
+
+func (c *Runtime) SetPolygonFlatFilesAccessKey(value string) {
+	if c == nil {
+		return
+	}
+	c.setSecretValue("polygon.flat_files_access_key", &c.Polygon.flatFilesAccessKey, value)
+}
+
+func (c *Runtime) SetPolygonFlatFilesSecretKey(value string) {
+	if c == nil {
+		return
+	}
+	c.setSecretValue("polygon.flat_files_secret_key", &c.Polygon.flatFilesSecretKey, value)
+}
+
+func (c Runtime) secretValue(field, fallback string) (string, error) {
+	if value := strings.TrimSpace(fallback); value != "" {
+		return value, nil
+	}
+	if c.Secrets == nil {
+		return "", nil
+	}
+	value, err := c.Secrets.Open(field)
+	if err != nil {
+		return "", fmt.Errorf("load %s from runtime secrets: %w", field, err)
+	}
+	return strings.TrimSpace(value), nil
+}
+
+func (c *Runtime) setSecretValue(field string, target *string, value string) {
+	if target == nil {
+		return
+	}
+	trimmed := strings.TrimSpace(value)
+	if c.Secrets == nil {
+		*target = trimmed
+		return
+	}
+	c.Secrets.Seal(field, trimmed)
+	*target = ""
 }
 
 func (c Runtime) RedisDialTimeout() time.Duration {

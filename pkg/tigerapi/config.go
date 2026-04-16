@@ -101,9 +101,18 @@ func LoadConfigFromEnv() (Config, error) {
 }
 
 func LoadConfigFromRuntime(runtimeCfg runtimeconfig.Runtime) (Config, error) {
+	privateKey, err := runtimeCfg.TigerPrivateKey()
+	if err != nil {
+		return Config{}, err
+	}
+	token, err := runtimeCfg.TigerToken()
+	if err != nil {
+		return Config{}, err
+	}
+
 	cfg := Config{
 		TigerID:             strings.TrimSpace(runtimeCfg.Tiger.TigerID),
-		PrivateKey:          strings.TrimSpace(runtimeCfg.Tiger.PrivateKey),
+		PrivateKey:          strings.TrimSpace(privateKey),
 		Account:             strings.TrimSpace(runtimeCfg.Tiger.Account),
 		License:             strings.TrimSpace(runtimeCfg.Tiger.License),
 		Environment:         Environment(strings.ToUpper(strings.TrimSpace(runtimeCfg.Tiger.Environment))),
@@ -111,7 +120,7 @@ func LoadConfigFromRuntime(runtimeCfg runtimeconfig.Runtime) (Config, error) {
 		Timezone:            strings.TrimSpace(runtimeCfg.Tiger.Timezone),
 		Timeout:             time.Duration(runtimeCfg.Tiger.TimeoutSeconds) * time.Second,
 		EnableDynamicDomain: runtimeCfg.Tiger.EnableDynamicDomain,
-		Token:               strings.TrimSpace(runtimeCfg.Tiger.Token),
+		Token:               strings.TrimSpace(token),
 		TokenFile:           strings.TrimSpace(runtimeCfg.Tiger.TokenFile),
 		ServerURL:           strings.TrimSpace(runtimeCfg.Tiger.ServerURL),
 		DeviceID:            strings.TrimSpace(runtimeCfg.Tiger.DeviceID),

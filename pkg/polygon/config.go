@@ -36,15 +36,15 @@ func LoadConfigFromEnv() (Config, error) {
 }
 
 func LoadConfigFromRuntime(runtimeCfg runtimeconfig.Runtime) (Config, error) {
-	apiKey, err := runtimeSecret(runtimeCfg, "polygon.api_key", runtimeCfg.Polygon.APIKey)
+	apiKey, err := runtimeCfg.PolygonAPIKey()
 	if err != nil {
 		return Config{}, err
 	}
-	flatFilesAccessKey, err := runtimeSecret(runtimeCfg, "polygon.flat_files_access_key", runtimeCfg.Polygon.FlatFilesAccessKey)
+	flatFilesAccessKey, err := runtimeCfg.PolygonFlatFilesAccessKey()
 	if err != nil {
 		return Config{}, err
 	}
-	flatFilesSecretKey, err := runtimeSecret(runtimeCfg, "polygon.flat_files_secret_key", runtimeCfg.Polygon.FlatFilesSecretKey)
+	flatFilesSecretKey, err := runtimeCfg.PolygonFlatFilesSecretKey()
 	if err != nil {
 		return Config{}, err
 	}
@@ -66,20 +66,6 @@ func LoadConfigFromRuntime(runtimeCfg runtimeconfig.Runtime) (Config, error) {
 		return Config{}, err
 	}
 	return cfg, nil
-}
-
-func runtimeSecret(runtimeCfg runtimeconfig.Runtime, field, fallback string) (string, error) {
-	if value := strings.TrimSpace(fallback); value != "" {
-		return value, nil
-	}
-	if runtimeCfg.Secrets == nil {
-		return "", nil
-	}
-	value, err := runtimeCfg.Secrets.Open(field)
-	if err != nil {
-		return "", fmt.Errorf("load %s from runtime secrets: %w", field, err)
-	}
-	return strings.TrimSpace(value), nil
 }
 
 func (c Config) Validate() error {
