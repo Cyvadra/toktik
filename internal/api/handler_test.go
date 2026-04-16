@@ -38,6 +38,10 @@ type mockUSOptionsQuerier struct {
 	symbolsResp *dto.USOptionSymbolResponse
 	greeksResp  *dto.USOptionGreeksResponse
 	chainResp   *dto.USOptionChainResponse
+	barsReq     dto.USOptionBarRequest
+	symbolsReq  dto.USOptionSymbolRequest
+	greeksReq   dto.USOptionGreeksRequest
+	chainReq    dto.USOptionChainRequest
 	err         error
 }
 
@@ -110,19 +114,23 @@ func (m *mockUSStocksQuerier) QuerySymbols(_ context.Context, _ dto.USStockSymbo
 	return m.symbolsResp, m.err
 }
 
-func (m *mockUSOptionsQuerier) QueryBars(_ context.Context, _ dto.USOptionBarRequest) (*dto.USOptionBarResponse, error) {
+func (m *mockUSOptionsQuerier) QueryBars(_ context.Context, req dto.USOptionBarRequest) (*dto.USOptionBarResponse, error) {
+	m.barsReq = req
 	return m.barsResp, m.err
 }
 
-func (m *mockUSOptionsQuerier) QuerySymbols(_ context.Context, _ dto.USOptionSymbolRequest) (*dto.USOptionSymbolResponse, error) {
+func (m *mockUSOptionsQuerier) QuerySymbols(_ context.Context, req dto.USOptionSymbolRequest) (*dto.USOptionSymbolResponse, error) {
+	m.symbolsReq = req
 	return m.symbolsResp, m.err
 }
 
-func (m *mockUSOptionsQuerier) QueryGreeks(_ context.Context, _ dto.USOptionGreeksRequest) (*dto.USOptionGreeksResponse, error) {
+func (m *mockUSOptionsQuerier) QueryGreeks(_ context.Context, req dto.USOptionGreeksRequest) (*dto.USOptionGreeksResponse, error) {
+	m.greeksReq = req
 	return m.greeksResp, m.err
 }
 
-func (m *mockUSOptionsQuerier) QueryChain(_ context.Context, _ dto.USOptionChainRequest) (*dto.USOptionChainResponse, error) {
+func (m *mockUSOptionsQuerier) QueryChain(_ context.Context, req dto.USOptionChainRequest) (*dto.USOptionChainResponse, error) {
+	m.chainReq = req
 	return m.chainResp, m.err
 }
 
@@ -714,10 +722,11 @@ func TestUSStocksSymbolsRoute(t *testing.T) {
 
 func TestUSOptionsBarsRoute(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+	mock := &mockUSOptionsQuerier{barsResp: &dto.USOptionBarResponse{Data: []dto.USOptionBarRow{{Timestamp: time.Date(2024, 1, 2, 14, 30, 0, 0, time.UTC), Symbol: "O:AAPL240119C00190000", Underlying: "AAPL", Close: 4.25}}}}
 	r := NewRouter(
 		&mockQuerier{},
 		&mockUSStocksQuerier{},
-		&mockUSOptionsQuerier{barsResp: &dto.USOptionBarResponse{Data: []dto.USOptionBarRow{{Timestamp: time.Date(2024, 1, 2, 14, 30, 0, 0, time.UTC), Symbol: "O:AAPL240119C00190000", Underlying: "AAPL", Close: 4.25}}}},
+		mock,
 		&mockInfra{},
 		&mockFeature{},
 		nil,
@@ -731,14 +740,18 @@ func TestUSOptionsBarsRoute(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
 	}
+	if mock.barsReq.Symbol != "O:AAPL240119C00190000" {
+		t.Fatalf("expected symbol to be forwarded, got %q", mock.barsReq.Symbol)
+	}
 }
 
 func TestUSOptionsSymbolsRoute(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+	mock := &mockUSOptionsQuerier{symbolsResp: &dto.USOptionSymbolResponse{Data: []dto.USOptionSymbolRow{{Symbol: "O:AAPL240119C00190000", Underlying: "AAPL", OptionType: "C", Strike: 190}}}}
 	r := NewRouter(
 		&mockQuerier{},
 		&mockUSStocksQuerier{},
-		&mockUSOptionsQuerier{symbolsResp: &dto.USOptionSymbolResponse{Data: []dto.USOptionSymbolRow{{Symbol: "O:AAPL240119C00190000", Underlying: "AAPL", OptionType: "C", Strike: 190}}}},
+		mock,
 		&mockInfra{},
 		&mockFeature{},
 		nil,
@@ -752,14 +765,43 @@ func TestUSOptionsSymbolsRoute(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
 	}
+	if mock.symbolsReq.Underlying != "AAPL" {
+		t.Fatalf("expected underlying AAPL, got %q", mock.symbolsReq.Underlying)
+	}
+}
+
+func TestUSOptionsSymbolsRouteAcceptsRootAlias(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	mock := &mockUSOptionsQuerier{symbolsResp: &dto.USOptionSymbolResponse{Data: []dto.USOptionSymbolRow{{Symbol: "O:AAPL240119C00190000", Underlying: "AAPL", OptionType: "C", Strike: 190}}}}
+	r := NewRouter(
+		&mockQuerier{},
+		&mockUSStocksQuerier{},
+		mock,
+		&mockInfra{},
+		&mockFeature{},
+		nil,
+		nil, nil, nil, nil, nil,
+	)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/api/v1/markets/us-options/symbols?root=AAPL", nil)
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if mock.symbolsReq.Underlying != "AAPL" {
+		t.Fatalf("expected root alias to populate underlying, got %q", mock.symbolsReq.Underlying)
+	}
 }
 
 func TestUSOptionsGreeksRoute(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+	mock := &mockUSOptionsQuerier{greeksResp: &dto.USOptionGreeksResponse{Data: []dto.USOptionGreeksRow{{Timestamp: time.Date(2024, 1, 2, 14, 30, 0, 0, time.UTC), Symbol: "O:AAPL240119C00190000", Delta: 0.42}}}}
 	r := NewRouter(
 		&mockQuerier{},
 		&mockUSStocksQuerier{},
-		&mockUSOptionsQuerier{greeksResp: &dto.USOptionGreeksResponse{Data: []dto.USOptionGreeksRow{{Timestamp: time.Date(2024, 1, 2, 14, 30, 0, 0, time.UTC), Symbol: "O:AAPL240119C00190000", Delta: 0.42}}}},
+		mock,
 		&mockInfra{},
 		&mockFeature{},
 		nil,
@@ -773,14 +815,18 @@ func TestUSOptionsGreeksRoute(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
 	}
+	if mock.greeksReq.Symbol != "O:AAPL240119C00190000" {
+		t.Fatalf("expected symbol to be forwarded, got %q", mock.greeksReq.Symbol)
+	}
 }
 
 func TestUSOptionsChainRoute(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+	mock := &mockUSOptionsQuerier{chainResp: &dto.USOptionChainResponse{Data: []dto.USOptionChainSnapshot{{Timestamp: time.Date(2024, 1, 2, 0, 0, 0, 0, time.UTC), Underlying: "AAPL", Contracts: []dto.USOptionChainContract{{Symbol: "O:AAPL240119C00190000", Delta: 0.42}}}}}}
 	r := NewRouter(
 		&mockQuerier{},
 		&mockUSStocksQuerier{},
-		&mockUSOptionsQuerier{chainResp: &dto.USOptionChainResponse{Data: []dto.USOptionChainSnapshot{{Timestamp: time.Date(2024, 1, 2, 0, 0, 0, 0, time.UTC), Underlying: "AAPL", Contracts: []dto.USOptionChainContract{{Symbol: "O:AAPL240119C00190000", Delta: 0.42}}}}}},
+		mock,
 		&mockInfra{},
 		&mockFeature{},
 		nil,
@@ -793,6 +839,85 @@ func TestUSOptionsChainRoute(t *testing.T) {
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if mock.chainReq.Underlying != "AAPL" {
+		t.Fatalf("expected underlying AAPL, got %q", mock.chainReq.Underlying)
+	}
+	if mock.chainReq.From != "2024-01-01" || mock.chainReq.To != "2024-01-04" {
+		t.Fatalf("expected from/to to be forwarded, got from=%q to=%q", mock.chainReq.From, mock.chainReq.To)
+	}
+}
+
+func TestUSOptionsChainRouteAcceptsExpirationWithoutRange(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	mock := &mockUSOptionsQuerier{chainResp: &dto.USOptionChainResponse{Data: []dto.USOptionChainSnapshot{}}}
+	r := NewRouter(
+		&mockQuerier{},
+		&mockUSStocksQuerier{},
+		mock,
+		&mockInfra{},
+		&mockFeature{},
+		nil,
+		nil, nil, nil, nil, nil,
+	)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/api/v1/markets/us-options/chain?underlying=AAPL&expiration=2024-01-19", nil)
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if mock.chainReq.Expiration != "2024-01-19" {
+		t.Fatalf("expected expiration to be forwarded, got %q", mock.chainReq.Expiration)
+	}
+}
+
+func TestUSOptionsBarsRouteRejectsUnderlyingOnly(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := NewRouter(
+		&mockQuerier{},
+		&mockUSStocksQuerier{},
+		&mockUSOptionsQuerier{},
+		&mockInfra{},
+		&mockFeature{},
+		nil,
+		nil, nil, nil, nil, nil,
+	)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/api/v1/markets/us-options/bars?underlying=AAPL&interval=1d&from=2024-01-02&to=2024-01-03", nil)
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "underlying is not supported") {
+		t.Fatalf("expected explicit unsupported-underlying message, got %s", w.Body.String())
+	}
+}
+
+func TestUSOptionsGreeksRouteRejectsUnderlyingOnly(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := NewRouter(
+		&mockQuerier{},
+		&mockUSStocksQuerier{},
+		&mockUSOptionsQuerier{},
+		&mockInfra{},
+		&mockFeature{},
+		nil,
+		nil, nil, nil, nil, nil,
+	)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/api/v1/markets/us-options/greeks?underlying=AAPL&from=2024-01-02&to=2024-01-03", nil)
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "underlying is not supported") {
+		t.Fatalf("expected explicit unsupported-underlying message, got %s", w.Body.String())
 	}
 }
 

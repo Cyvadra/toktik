@@ -1727,7 +1727,7 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Option contract symbol",
+                        "description": "Option contract symbol (Polygon OPRA ticker or raw OCC payload without O: prefix)",
                         "name": "symbol",
                         "in": "query",
                         "required": true
@@ -1752,6 +1752,12 @@ const docTemplate = `{
                         "name": "to",
                         "in": "query",
                         "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Session filter (1m only: regular, all, extended)",
+                        "name": "session",
+                        "in": "query"
                     },
                     {
                         "type": "integer",
@@ -1790,7 +1796,7 @@ const docTemplate = `{
         },
         "/markets/us-options/chain": {
             "get": {
-                "description": "Returns an option chain snapshot for a US underlying, grouped by expiration and strike.",
+                "description": "Returns option chain snapshots for a US underlying. If from/to are omitted, the latest available snapshot is returned.",
                 "produces": [
                     "application/json"
                 ],
@@ -1808,14 +1814,35 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "Filter by expiration date",
+                        "description": "Filter contracts by expiration date (YYYY-MM-DD)",
                         "name": "expiration",
                         "in": "query"
                     },
                     {
                         "type": "string",
-                        "description": "Filter by option type (call, put)",
-                        "name": "type",
+                        "description": "Snapshot window start (RFC3339 or YYYY-MM-DD); defaults to latest available snapshot",
+                        "name": "from",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Snapshot window end (RFC3339 or YYYY-MM-DD); defaults to latest available snapshot",
+                        "name": "to",
+                        "in": "query"
+                    },
+                    {
+                        "enum": [
+                            "5m",
+                            "15m",
+                            "30m",
+                            "1h",
+                            "2h",
+                            "4h",
+                            "1d"
+                        ],
+                        "type": "string",
+                        "description": "Chain interval (default 1d)",
+                        "name": "interval",
                         "in": "query"
                     },
                     {
@@ -1866,7 +1893,7 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Option contract symbol",
+                        "description": "Option contract symbol (Polygon OPRA ticker or raw OCC payload without O: prefix)",
                         "name": "symbol",
                         "in": "query",
                         "required": true
@@ -1890,6 +1917,12 @@ const docTemplate = `{
                         "name": "to",
                         "in": "query",
                         "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Session filter (1m only: regular, all, extended)",
+                        "name": "session",
+                        "in": "query"
                     },
                     {
                         "type": "integer",
@@ -1939,7 +1972,13 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Filter by root symbol",
+                        "description": "Filter by underlying ticker symbol",
+                        "name": "underlying",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Legacy alias for underlying",
                         "name": "root",
                         "in": "query"
                     },

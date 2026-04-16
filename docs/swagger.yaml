@@ -2933,7 +2933,8 @@ paths:
     get:
       description: Returns OHLCV bars for a US listed option contract.
       parameters:
-      - description: Option contract symbol
+      - description: 'Option contract symbol (Polygon OPRA ticker or raw OCC payload
+          without O: prefix)'
         in: query
         name: symbol
         required: true
@@ -2952,6 +2953,10 @@ paths:
         in: query
         name: to
         required: true
+        type: string
+      - description: 'Session filter (1m only: regular, all, extended)'
+        in: query
+        name: session
         type: string
       - description: Max rows (default 1000)
         in: query
@@ -2981,21 +2986,39 @@ paths:
       - USOptions
   /markets/us-options/chain:
     get:
-      description: Returns an option chain snapshot for a US underlying, grouped by
-        expiration and strike.
+      description: Returns option chain snapshots for a US underlying. If from/to
+        are omitted, the latest available snapshot is returned.
       parameters:
       - description: Underlying ticker symbol
         in: query
         name: underlying
         required: true
         type: string
-      - description: Filter by expiration date
+      - description: Filter contracts by expiration date (YYYY-MM-DD)
         in: query
         name: expiration
         type: string
-      - description: Filter by option type (call, put)
+      - description: Snapshot window start (RFC3339 or YYYY-MM-DD); defaults to latest
+          available snapshot
         in: query
-        name: type
+        name: from
+        type: string
+      - description: Snapshot window end (RFC3339 or YYYY-MM-DD); defaults to latest
+          available snapshot
+        in: query
+        name: to
+        type: string
+      - description: Chain interval (default 1d)
+        enum:
+        - 5m
+        - 15m
+        - 30m
+        - 1h
+        - 2h
+        - 4h
+        - 1d
+        in: query
+        name: interval
         type: string
       - description: Max contracts (default 100)
         in: query
@@ -3027,7 +3050,8 @@ paths:
     get:
       description: Returns Greeks snapshots over time for a US listed option contract.
       parameters:
-      - description: Option contract symbol
+      - description: 'Option contract symbol (Polygon OPRA ticker or raw OCC payload
+          without O: prefix)'
         in: query
         name: symbol
         required: true
@@ -3045,6 +3069,10 @@ paths:
         in: query
         name: to
         required: true
+        type: string
+      - description: 'Session filter (1m only: regular, all, extended)'
+        in: query
+        name: session
         type: string
       - description: Max rows (default 1000)
         in: query
@@ -3076,7 +3104,11 @@ paths:
     get:
       description: Returns available US listed option contract symbols.
       parameters:
-      - description: Filter by root symbol
+      - description: Filter by underlying ticker symbol
+        in: query
+        name: underlying
+        type: string
+      - description: Legacy alias for underlying
         in: query
         name: root
         type: string

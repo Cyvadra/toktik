@@ -91,7 +91,8 @@ type USOptionBarResponse struct {
 
 // USOptionSymbolRequest is the query parameters for the US option symbols endpoint.
 type USOptionSymbolRequest struct {
-	Underlying string `form:"underlying" binding:"required"`
+	Root       string `form:"root" binding:"omitempty"`
+	Underlying string `form:"underlying" binding:"omitempty"`
 	Search     string `form:"search" binding:"omitempty"`
 	Limit      int    `form:"limit" binding:"omitempty"`
 	Cursor     string `form:"cursor" binding:"omitempty"`
@@ -151,8 +152,9 @@ type USOptionGreeksResponse struct {
 // USOptionChainRequest is the query parameters for the US option chain endpoint.
 type USOptionChainRequest struct {
 	Underlying string `form:"underlying" binding:"required"`
-	From       string `form:"from" binding:"required"`
-	To         string `form:"to" binding:"required"`
+	Expiration string `form:"expiration" binding:"omitempty"`
+	From       string `form:"from" binding:"omitempty"`
+	To         string `form:"to" binding:"omitempty"`
 	Interval   string `form:"interval" binding:"omitempty"`
 	Limit      int    `form:"limit" binding:"omitempty"`
 	Cursor     string `form:"cursor" binding:"omitempty"`

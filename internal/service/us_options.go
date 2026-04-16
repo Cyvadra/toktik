@@ -6,7 +6,6 @@ import (
 	"strings"
 	"time"
 
-	clickhouse "github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/Cyvadra/toktik/internal/chquery"
 	"github.com/Cyvadra/toktik/internal/chrepo"
 	"github.com/Cyvadra/toktik/internal/dto"
@@ -24,41 +23,36 @@ func NewUSOptionsService(repo *chrepo.Repo) *USOptionsService {
 
 func (s *USOptionsService) QuerySymbols(ctx context.Context, req dto.USOptionSymbolRequest) (*dto.USOptionSymbolResponse, error) {
 	limit := clamp(req.Limit, defaultSymbolLimit, maxSymbolLimit)
-	underlying := strings.ToUpper(strings.TrimSpace(req.Underlying))
+	underlying := resolveUSOptionUnderlying(req.Underlying, req.Root)
 	if underlying == "" {
 		return nil, dto.NewValidationError("underlying is required")
 	}
 
 	query := `SELECT
     symbol,
-    anyLast(underlying) AS underlying,
-    CAST(anyLast(option_type), 'String') AS option_type,
-    anyLast(expiration) AS expiration,
-    anyLast(strike) AS strike
+	underlying,
+	CAST(option_type, 'String') AS option_type,
+	expiration,
+	strike
 FROM us_options_bar_1m
-WHERE underlying = {underlying:String}`
-
-	args := []interface{}{clickhouse.Named("underlying", underlying)}
+WHERE underlying = ` + clickhouseStringLiteral(underlying)
 	if req.Search != "" {
-		query += ` AND symbol ILIKE {search:String}`
-		args = append(args, clickhouse.Named("search", "%"+req.Search+"%"))
+		query += ` AND symbol ILIKE ` + clickhouseStringLiteral("%"+req.Search+"%")
 	}
 	if req.Cursor != "" {
 		cursorSymbol, err := decodeCursorString(req.Cursor)
 		if err != nil {
 			return nil, invalidCursorError(err)
 		}
-		query += ` AND symbol > {cursor_symbol:String}`
-		args = append(args, clickhouse.Named("cursor_symbol", cursorSymbol))
+		query += ` AND symbol > ` + clickhouseStringLiteral(cursorSymbol)
 	}
 
-	query += `
-GROUP BY symbol
+	query += fmt.Sprintf(`
+GROUP BY symbol, underlying, option_type, expiration, strike
 ORDER BY symbol
-LIMIT {limit:UInt32}`
-	args = append(args, clickhouse.Named("limit", limit+1))
+LIMIT %s`, clickhouseUInt32Literal(limit+1))
 
-	rows, err := s.repo.Query(ctx, query, args...)
+	rows, err := s.repo.Query(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("query US option symbols: %w", err)
 	}
@@ -87,6 +81,12 @@ LIMIT {limit:UInt32}`
 }
 
 func (s *USOptionsService) QueryBars(ctx context.Context, req dto.USOptionBarRequest) (*dto.USOptionBarResponse, error) {
+	normalizedSymbol, err := normalizeUSOptionQuerySymbol(req.Symbol)
+	if err != nil {
+		return nil, err
+	}
+	req.Symbol = normalizedSymbol
+
 	fromT, toT, err := dto.ParseTimeRange(req.From, req.To)
 	if err != nil {
 		return nil, err
@@ -134,18 +134,13 @@ func (s *USOptionsService) QueryBars(ctx context.Context, req dto.USOptionBarReq
 	toFloat64(volume) AS volume,
     toUInt64(transactions) AS transactions
 FROM %s
-WHERE symbol = {symbol:String}
-  AND timestamp >= toDateTime({from:String}, 'UTC')
-  AND timestamp < toDateTime({to:String}, 'UTC')%s
+WHERE symbol = %s
+  AND timestamp >= toDateTime(%s, 'UTC')
+  AND timestamp < toDateTime(%s, 'UTC')%s
 ORDER BY timestamp
-LIMIT {limit:UInt32}`, tableName, usSessionCondition(session))
+LIMIT %s`, tableName, clickhouseStringLiteral(req.Symbol), clickhouseDateTimeLiteral(fromT), clickhouseDateTimeLiteral(toT), usSessionCondition(session), clickhouseUInt32Literal(limit+1))
 
-	rows, err := s.repo.Query(ctx, query,
-		clickhouse.Named("symbol", req.Symbol),
-		clickhouse.Named("from", chquery.TimeParam(fromT)),
-		clickhouse.Named("to", chquery.TimeParam(toT)),
-		clickhouse.Named("limit", limit+1),
-	)
+	rows, err := s.repo.Query(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("query US option bars: %w", err)
 	}
@@ -177,6 +172,19 @@ LIMIT {limit:UInt32}`, tableName, usSessionCondition(session))
 		); err != nil {
 			return nil, fmt.Errorf("scan US option bar row: %w", err)
 		}
+		row.Strike = sanitizeFloat64(row.Strike)
+		row.Open = sanitizeFloat32(row.Open)
+		row.High = sanitizeFloat32(row.High)
+		row.Low = sanitizeFloat32(row.Low)
+		row.Close = sanitizeFloat32(row.Close)
+		row.UnderlyingClose = sanitizeFloat32(row.UnderlyingClose)
+		row.ImpliedVolatility = sanitizeFloat32(row.ImpliedVolatility)
+		row.Delta = sanitizeFloat32(row.Delta)
+		row.Gamma = sanitizeFloat32(row.Gamma)
+		row.Vega = sanitizeFloat32(row.Vega)
+		row.Theta = sanitizeFloat32(row.Theta)
+		row.Rho = sanitizeFloat32(row.Rho)
+		row.Volume = sanitizeFloat64(row.Volume)
 		bars = append(bars, row)
 	}
 	if err := rows.Err(); err != nil {
@@ -194,6 +202,12 @@ LIMIT {limit:UInt32}`, tableName, usSessionCondition(session))
 }
 
 func (s *USOptionsService) QueryGreeks(ctx context.Context, req dto.USOptionGreeksRequest) (*dto.USOptionGreeksResponse, error) {
+	normalizedSymbol, err := normalizeUSOptionQuerySymbol(req.Symbol)
+	if err != nil {
+		return nil, err
+	}
+	req.Symbol = normalizedSymbol
+
 	fromT, toT, err := dto.ParseTimeRange(req.From, req.To)
 	if err != nil {
 		return nil, err
@@ -237,18 +251,13 @@ func (s *USOptionsService) QueryGreeks(ctx context.Context, req dto.USOptionGree
 	toFloat64(volume) AS volume,
     toUInt64(transactions) AS transactions
 FROM %s
-WHERE symbol = {symbol:String}
-  AND timestamp >= toDateTime({from:String}, 'UTC')
-  AND timestamp < toDateTime({to:String}, 'UTC')%s
+WHERE symbol = %s
+  AND timestamp >= toDateTime(%s, 'UTC')
+  AND timestamp < toDateTime(%s, 'UTC')%s
 ORDER BY timestamp
-LIMIT {limit:UInt32}`, tableName, usSessionCondition(session))
+LIMIT %s`, tableName, clickhouseStringLiteral(req.Symbol), clickhouseDateTimeLiteral(fromT), clickhouseDateTimeLiteral(toT), usSessionCondition(session), clickhouseUInt32Literal(limit+1))
 
-	rows, err := s.repo.Query(ctx, query,
-		clickhouse.Named("symbol", req.Symbol),
-		clickhouse.Named("from", chquery.TimeParam(fromT)),
-		clickhouse.Named("to", chquery.TimeParam(toT)),
-		clickhouse.Named("limit", limit+1),
-	)
+	rows, err := s.repo.Query(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("query US option greeks: %w", err)
 	}
@@ -276,6 +285,15 @@ LIMIT {limit:UInt32}`, tableName, usSessionCondition(session))
 		); err != nil {
 			return nil, fmt.Errorf("scan US option greeks row: %w", err)
 		}
+		row.Strike = sanitizeFloat64(row.Strike)
+		row.UnderlyingClose = sanitizeFloat32(row.UnderlyingClose)
+		row.ImpliedVolatility = sanitizeFloat32(row.ImpliedVolatility)
+		row.Delta = sanitizeFloat32(row.Delta)
+		row.Gamma = sanitizeFloat32(row.Gamma)
+		row.Vega = sanitizeFloat32(row.Vega)
+		row.Theta = sanitizeFloat32(row.Theta)
+		row.Rho = sanitizeFloat32(row.Rho)
+		row.Volume = sanitizeFloat64(row.Volume)
 		greeks = append(greeks, row)
 	}
 	if err := rows.Err(); err != nil {
@@ -293,11 +311,6 @@ LIMIT {limit:UInt32}`, tableName, usSessionCondition(session))
 }
 
 func (s *USOptionsService) QueryChain(ctx context.Context, req dto.USOptionChainRequest) (*dto.USOptionChainResponse, error) {
-	fromT, toT, err := dto.ParseTimeRange(req.From, req.To)
-	if err != nil {
-		return nil, err
-	}
-
 	interval, err := normalizeUSChainInterval(req.Interval)
 	if err != nil {
 		return nil, err
@@ -306,11 +319,31 @@ func (s *USOptionsService) QueryChain(ctx context.Context, req dto.USOptionChain
 	if !ok {
 		return nil, dto.NewValidationError("unsupported us-options chain interval %q", interval)
 	}
-	underlying := strings.ToUpper(strings.TrimSpace(req.Underlying))
+	underlying := resolveUSOptionUnderlying(req.Underlying, "")
 	if underlying == "" {
 		return nil, dto.NewValidationError("underlying is required")
 	}
+	expiration, err := parseUSOptionExpirationDate(req.Expiration)
+	if err != nil {
+		return nil, err
+	}
 	limit := usBarLimit(req.Limit)
+
+	if strings.TrimSpace(req.From) == "" || strings.TrimSpace(req.To) == "" {
+		latest, hasData, err := s.latestUSOptionChainTimestamp(ctx, viewName, underlying)
+		if err != nil {
+			return nil, err
+		}
+		if !hasData {
+			return &dto.USOptionChainResponse{Data: make([]dto.USOptionChainSnapshot, 0)}, nil
+		}
+		req.From, req.To = defaultUSOptionChainWindow(latest)
+	}
+
+	fromT, toT, err := dto.ParseTimeRange(req.From, req.To)
+	if err != nil {
+		return nil, err
+	}
 
 	if req.Cursor != "" {
 		cursorTime, err := decodeCursor(req.Cursor)
@@ -340,18 +373,13 @@ func (s *USOptionsService) QueryChain(ctx context.Context, req dto.USOptionChain
     volumes,
     transactions
 FROM %s
-WHERE underlying = {underlying:String}
-  AND timestamp >= toDateTime({from:String}, 'UTC')
-  AND timestamp < toDateTime({to:String}, 'UTC')
+WHERE underlying = %s
+  AND timestamp >= toDateTime(%s, 'UTC')
+  AND timestamp < toDateTime(%s, 'UTC')
 ORDER BY timestamp
-LIMIT {limit:UInt32}`, viewName)
+LIMIT %s`, viewName, clickhouseStringLiteral(underlying), clickhouseDateTimeLiteral(fromT), clickhouseDateTimeLiteral(toT), clickhouseUInt32Literal(limit+1))
 
-	rows, err := s.repo.Query(ctx, query,
-		clickhouse.Named("underlying", underlying),
-		clickhouse.Named("from", chquery.TimeParam(fromT)),
-		clickhouse.Named("to", chquery.TimeParam(toT)),
-		clickhouse.Named("limit", limit+1),
-	)
+	rows, err := s.repo.Query(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("query US option chain: %w", err)
 	}
@@ -404,22 +432,28 @@ LIMIT {limit:UInt32}`, viewName)
 
 		snapshot.Contracts = make([]dto.USOptionChainContract, 0, n)
 		for i := 0; i < n; i++ {
+			if !expiration.IsZero() && !expirations[i].Equal(expiration) {
+				continue
+			}
 			snapshot.Contracts = append(snapshot.Contracts, dto.USOptionChainContract{
 				Symbol:            symbols[i],
 				OptionType:        types[i],
 				Expiration:        expirations[i],
-				Strike:            strikes[i],
-				Close:             closes[i],
-				UnderlyingClose:   underlyingCloses[i],
-				ImpliedVolatility: ivs[i],
-				Delta:             deltas[i],
-				Gamma:             gammas[i],
-				Vega:              vegas[i],
-				Theta:             thetas[i],
-				Rho:               rhos[i],
-				Volume:            volumes[i],
+				Strike:            sanitizeFloat64(strikes[i]),
+				Close:             sanitizeFloat32(closes[i]),
+				UnderlyingClose:   sanitizeFloat32(underlyingCloses[i]),
+				ImpliedVolatility: sanitizeFloat32(ivs[i]),
+				Delta:             sanitizeFloat32(deltas[i]),
+				Gamma:             sanitizeFloat32(gammas[i]),
+				Vega:              sanitizeFloat32(vegas[i]),
+				Theta:             sanitizeFloat32(thetas[i]),
+				Rho:               sanitizeFloat32(rhos[i]),
+				Volume:            sanitizeFloat64(volumes[i]),
 				Transactions:      transactions[i],
 			})
+		}
+		if len(snapshot.Contracts) == 0 {
+			continue
 		}
 
 		snapshots = append(snapshots, snapshot)
@@ -436,4 +470,28 @@ LIMIT {limit:UInt32}`, viewName)
 		resp.Data = snapshots
 	}
 	return resp, nil
+}
+
+func (s *USOptionsService) latestUSOptionChainTimestamp(ctx context.Context, viewName, underlying string) (time.Time, bool, error) {
+	rows, err := s.repo.Query(ctx, fmt.Sprintf(`SELECT ifNull(maxOrNull(timestamp), toDateTime('1970-01-01 00:00:00', 'UTC'))
+FROM %s
+WHERE underlying = %s`, viewName, clickhouseStringLiteral(underlying)))
+	if err != nil {
+		return time.Time{}, false, fmt.Errorf("query latest US option chain timestamp: %w", err)
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		return time.Time{}, false, nil
+	}
+	var latest time.Time
+	if err := rows.Scan(&latest); err != nil {
+		return time.Time{}, false, fmt.Errorf("scan latest US option chain timestamp: %w", err)
+	}
+	if err := rows.Err(); err != nil {
+		return time.Time{}, false, fmt.Errorf("iterate latest US option chain timestamp: %w", err)
+	}
+	if latest.IsZero() || latest.UTC().Unix() == 0 {
+		return time.Time{}, false, nil
+	}
+	return latest.UTC(), true, nil
 }

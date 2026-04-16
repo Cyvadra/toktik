@@ -58,7 +58,7 @@ build-feature-store-backfill:
 	go build $(GOFLAGS) -ldflags '$(LDFLAGS)' -o $(BUILD_DIR)/feature-store-backfill ./cmd/feature-store-backfill
 
 swagger-docs:
-	go run github.com/swaggo/swag/cmd/swag@v1.8.12 init --parseDependency --parseInternal -g cmd/api-server/main.go -o docs
+	go run github.com/swaggo/swag/cmd/swag@v1.8.12 init --parseDependency --parseInternal --exclude tmp -g cmd/api-server/main.go -o docs
 
 export-market-api-md:
 	go run ./cmd/api-docs-markdown -input docs/swagger.json -output docs/db-market-indicator-api.md

@@ -54,6 +54,16 @@ func handleServiceError(c *gin.Context, err error) {
 	c.JSON(http.StatusInternalServerError, dto.ErrorResponse{Error: "internal server error"})
 }
 
+func bindUSOptionSymbolRequest(c *gin.Context, req *dto.USOptionSymbolRequest) error {
+	if err := c.ShouldBindQuery(req); err != nil {
+		return err
+	}
+	if strings.TrimSpace(req.Underlying) == "" && strings.TrimSpace(req.Root) != "" {
+		req.Underlying = req.Root
+	}
+	return nil
+}
+
 func writeSSEEvent(c *gin.Context, event string, payload any) error {
 	c.Writer.Header().Set("Content-Type", "text/event-stream")
 	c.Writer.Header().Set("Cache-Control", "no-cache")
@@ -1003,10 +1013,11 @@ func (h *Handler) GetUSStockSymbols(c *gin.Context) {
 // @Description  Returns OHLCV bars for a US listed option contract.
 // @Tags         USOptions
 // @Produce      json
-// @Param        symbol    query     string  true   "Option contract symbol"
+// @Param        symbol    query     string  true   "Option contract symbol (Polygon OPRA ticker or raw OCC payload without O: prefix)"
 // @Param        interval  query     string  true   "Bar interval"
 // @Param        from      query     string  true   "Start time (RFC3339 or YYYY-MM-DD)"
 // @Param        to        query     string  true   "End time (RFC3339 or YYYY-MM-DD)"
+// @Param        session   query     string  false  "Session filter (1m only: regular, all, extended)"
 // @Param        limit     query     int     false  "Max rows (default 1000)"
 // @Param        cursor    query     string  false  "Pagination cursor"
 // @Success      200       {object}  dto.USOptionBarResponse
@@ -1016,6 +1027,10 @@ func (h *Handler) GetUSStockSymbols(c *gin.Context) {
 func (h *Handler) GetUSOptionBars(c *gin.Context) {
 	var req dto.USOptionBarRequest
 	if err := c.ShouldBindQuery(&req); err != nil {
+		if strings.TrimSpace(c.Query("underlying")) != "" && strings.TrimSpace(req.Symbol) == "" {
+			c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: "symbol is required; underlying is not supported on this endpoint"})
+			return
+		}
 		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: err.Error()})
 		return
 	}
@@ -1039,17 +1054,18 @@ func (h *Handler) GetUSOptionBars(c *gin.Context) {
 // @Description  Returns available US listed option contract symbols.
 // @Tags         USOptions
 // @Produce      json
-// @Param        root    query     string  false  "Filter by root symbol"
-// @Param        search  query     string  false  "Substring match filter"
-// @Param        limit   query     int     false  "Max rows (default 100)"
-// @Param        cursor  query     string  false  "Pagination cursor"
+// @Param        underlying  query     string  false  "Filter by underlying ticker symbol"
+// @Param        root        query     string  false  "Legacy alias for underlying"
+// @Param        search      query     string  false  "Substring match filter"
+// @Param        limit       query     int     false  "Max rows (default 100)"
+// @Param        cursor      query     string  false  "Pagination cursor"
 // @Success      200     {object}  dto.USOptionSymbolResponse
 // @Failure      400     {object}  dto.ErrorResponse
 // @Failure      500     {object}  dto.ErrorResponse
 // @Router       /markets/us-options/symbols [get]
 func (h *Handler) GetUSOptionSymbols(c *gin.Context) {
 	var req dto.USOptionSymbolRequest
-	if err := c.ShouldBindQuery(&req); err != nil {
+	if err := bindUSOptionSymbolRequest(c, &req); err != nil {
 		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: err.Error()})
 		return
 	}
@@ -1073,10 +1089,11 @@ func (h *Handler) GetUSOptionSymbols(c *gin.Context) {
 // @Description  Returns Greeks snapshots over time for a US listed option contract.
 // @Tags         USOptions
 // @Produce      json
-// @Param        symbol    query     string  true   "Option contract symbol"
+// @Param        symbol    query     string  true   "Option contract symbol (Polygon OPRA ticker or raw OCC payload without O: prefix)"
 // @Param        interval  query     string  false  "Bar interval (default 1h)"
 // @Param        from      query     string  true   "Start time (RFC3339 or YYYY-MM-DD)"
 // @Param        to        query     string  true   "End time (RFC3339 or YYYY-MM-DD)"
+// @Param        session   query     string  false  "Session filter (1m only: regular, all, extended)"
 // @Param        limit     query     int     false  "Max rows (default 1000)"
 // @Param        cursor    query     string  false  "Pagination cursor"
 // @Success      200       {object}  dto.USOptionGreeksResponse
@@ -1086,6 +1103,10 @@ func (h *Handler) GetUSOptionSymbols(c *gin.Context) {
 func (h *Handler) GetUSOptionGreeks(c *gin.Context) {
 	var req dto.USOptionGreeksRequest
 	if err := c.ShouldBindQuery(&req); err != nil {
+		if strings.TrimSpace(c.Query("underlying")) != "" && strings.TrimSpace(req.Symbol) == "" {
+			c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: "symbol is required; underlying is not supported on this endpoint"})
+			return
+		}
 		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: err.Error()})
 		return
 	}
@@ -1106,12 +1127,14 @@ func (h *Handler) GetUSOptionGreeks(c *gin.Context) {
 // GetUSOptionChain handles GET /api/v1/markets/us-options/chain.
 //
 // @Summary      Get US option chain
-// @Description  Returns an option chain snapshot for a US underlying, grouped by expiration and strike.
+// @Description  Returns option chain snapshots for a US underlying. If from/to are omitted, the latest available snapshot is returned.
 // @Tags         USOptions
 // @Produce      json
 // @Param        underlying  query     string  true   "Underlying ticker symbol"
-// @Param        expiration  query     string  false  "Filter by expiration date"
-// @Param        type        query     string  false  "Filter by option type (call, put)"
+// @Param        expiration  query     string  false  "Filter contracts by expiration date (YYYY-MM-DD)"
+// @Param        from        query     string  false  "Snapshot window start (RFC3339 or YYYY-MM-DD); defaults to latest available snapshot"
+// @Param        to          query     string  false  "Snapshot window end (RFC3339 or YYYY-MM-DD); defaults to latest available snapshot"
+// @Param        interval    query     string  false  "Chain interval (default 1d)"  Enums(5m,15m,30m,1h,2h,4h,1d)
 // @Param        limit       query     int     false  "Max contracts (default 100)"
 // @Param        cursor      query     string  false  "Pagination cursor"
 // @Success      200         {object}  dto.USOptionChainResponse
@@ -1133,6 +1156,9 @@ func (h *Handler) GetUSOptionChain(c *gin.Context) {
 	if err != nil {
 		handleServiceError(c, err)
 		return
+	}
+	if resp == nil {
+		resp = &dto.USOptionChainResponse{Data: make([]dto.USOptionChainSnapshot, 0)}
 	}
 
 	c.JSON(http.StatusOK, resp)

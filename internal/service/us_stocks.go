@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 
-	clickhouse "github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/Cyvadra/toktik/internal/chquery"
 	"github.com/Cyvadra/toktik/internal/chrepo"
 	"github.com/Cyvadra/toktik/internal/dto"
@@ -24,28 +23,23 @@ func (s *USStocksService) QuerySymbols(ctx context.Context, req dto.USStockSymbo
 	query := `SELECT symbol
 FROM us_stocks_bar_1m
 WHERE 1 = 1`
-
-	args := make([]interface{}, 0, 2)
 	if req.Search != "" {
-		query += ` AND symbol ILIKE {search:String}`
-		args = append(args, clickhouse.Named("search", "%"+req.Search+"%"))
+		query += fmt.Sprintf(` AND symbol ILIKE %s`, clickhouseStringLiteral("%"+req.Search+"%"))
 	}
 	if req.Cursor != "" {
 		cursorSymbol, err := decodeCursorString(req.Cursor)
 		if err != nil {
 			return nil, invalidCursorError(err)
 		}
-		query += ` AND symbol > {cursor_symbol:String}`
-		args = append(args, clickhouse.Named("cursor_symbol", cursorSymbol))
+		query += fmt.Sprintf(` AND symbol > %s`, clickhouseStringLiteral(cursorSymbol))
 	}
 
-	query += `
+	query += fmt.Sprintf(`
 GROUP BY symbol
 ORDER BY symbol
-LIMIT {limit:UInt32}`
-	args = append(args, clickhouse.Named("limit", limit+1))
+LIMIT %s`, clickhouseUInt32Literal(limit+1))
 
-	rows, err := s.repo.Query(ctx, query, args...)
+	rows, err := s.repo.Query(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("query US stock symbols: %w", err)
 	}
@@ -109,18 +103,13 @@ func (s *USStocksService) QueryBars(ctx context.Context, req dto.USStockBarReque
 	toFloat64(volume) AS volume,
     toUInt64(transactions) AS transactions
 FROM %s
-WHERE symbol = {symbol:String}
-  AND timestamp >= toDateTime({from:String}, 'UTC')
-  AND timestamp < toDateTime({to:String}, 'UTC')%s
+WHERE symbol = %s
+  AND timestamp >= toDateTime(%s, 'UTC')
+  AND timestamp < toDateTime(%s, 'UTC')%s
 ORDER BY timestamp
-LIMIT {limit:UInt32}`, tableName, usSessionCondition(session))
+LIMIT %s`, tableName, clickhouseStringLiteral(req.Symbol), clickhouseDateTimeLiteral(fromT), clickhouseDateTimeLiteral(toT), usSessionCondition(session), clickhouseUInt32Literal(limit+1))
 
-	rows, err := s.repo.Query(ctx, query,
-		clickhouse.Named("symbol", req.Symbol),
-		clickhouse.Named("from", chquery.TimeParam(fromT)),
-		clickhouse.Named("to", chquery.TimeParam(toT)),
-		clickhouse.Named("limit", limit+1),
-	)
+	rows, err := s.repo.Query(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("query US stock bars: %w", err)
 	}
