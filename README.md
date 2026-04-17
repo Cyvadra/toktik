@@ -948,10 +948,15 @@ Available strategies: `golden-cross`, `delta-filter`, `bull-put-spread` (alias `
 Scan ClickHouse for date gaps:
 
 ```bash
-bin/crypto-options-missing-days \
+bin/market-missing-days \
   --clickhouse-dsn "clickhouse://localhost:9000/default" \
-  --base-asset BTC
+  --market crypto-options \
+  --asset BTC \
+  --from 2025-01-01 \
+  --to 2025-03-01
 ```
+
+Supported datasets: `crypto-options`, `us-stocks`, `us-options`.
 
 ### 6. Backfill Missing K-line Window Tables
 
@@ -1136,7 +1141,7 @@ cmd/
   backtest-example/            Minimal strategy demo runner
   crypto-options-convert/      CSV.zst tick files → Parquet converter
   crypto-options-import/       Parquet → ClickHouse importer (auto-DDL + dedup)
-  crypto-options-missing-days/ Data gap scanner
+  market-missing-days/          Data gap scanner
   crypto-options-kline-migrate-utc/ K-line timezone migration utility
   crypto-spot-import-julia/    Julia-exported JSON+CSV spot → ClickHouse
   crypto-spot-import-15m/      Binance 15m spot CSV → ClickHouse
