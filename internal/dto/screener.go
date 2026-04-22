@@ -48,6 +48,8 @@ type ScreenOptionRequest struct {
 	Market            string   `form:"market" binding:"required"`
 	Underlying        string   `form:"underlying" binding:"required"`
 	OptionType        string   `form:"option_type" binding:"omitempty"`
+	MinDTE            *int     `form:"min_dte" binding:"omitempty"`
+	MaxDTE            *int     `form:"max_dte" binding:"omitempty"`
 	DTEMin            *int     `form:"dte_min" binding:"omitempty"`
 	DTEMax            *int     `form:"dte_max" binding:"omitempty"`
 	DeltaMin          *float64 `form:"delta_min" binding:"omitempty"`
@@ -62,6 +64,21 @@ type ScreenOptionRequest struct {
 	SortBy            string   `form:"sort_by" binding:"omitempty"`
 	Limit             int      `form:"limit" binding:"omitempty"`
 	Cursor            string   `form:"cursor" binding:"omitempty"`
+}
+
+func (r *ScreenOptionRequest) NormalizeAliases() {
+	if r.DTEMin == nil {
+		r.DTEMin = r.MinDTE
+	}
+	if r.DTEMax == nil {
+		r.DTEMax = r.MaxDTE
+	}
+	if r.MinDTE == nil {
+		r.MinDTE = r.DTEMin
+	}
+	if r.MaxDTE == nil {
+		r.MaxDTE = r.DTEMax
+	}
 }
 
 // ScreenedOption is one result from the options screener.

@@ -2,13 +2,21 @@ package usmarket
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
+	"net"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+)
+
+const (
+	usBackfillRetryDelay     = 5 * time.Second
+	usChainBackfillChunkSize = 7 * 24 * time.Hour // weekly chunks for heavy chain queries
 )
 
 // DefaultBackfillWindows covers every precomputed US stock/option kline interval.
@@ -244,27 +252,25 @@ type usBackfillWindow struct {
 
 func backfillOptionInterval(ctx context.Context, conn driver.Conn, iv KlineInterval, from, to time.Time, asset string, replace bool) error {
 	aggTable := "us_options_bar_" + iv.Suffix + "_agg"
-	windows, err := resolveUSBackfillWindows(ctx, conn, "us_options_bar_1m", "underlying", asset, from, to)
+	windows, err := resolveUSBackfillInsertWindows(ctx, conn, "us_options_bar_1m", aggTable, "underlying", "underlying", asset, from, to, replace)
 	if err != nil {
 		return fmt.Errorf("resolve option backfill windows: %w", err)
 	}
 	if len(windows) == 0 {
-		log.Printf("[us-kline-backfill] skip options %s: no source rows in selected scope", iv.Suffix)
+		log.Printf("[us-kline-backfill] skip options %s: no source rows or missing aggregate days in selected scope", iv.Suffix)
 		return nil
 	}
 
 	for idx, window := range windows {
-		hasRows, err := usOptionAggHasRows(ctx, conn, aggTable, window.From, window.To, asset)
-		if err != nil {
-			return err
-		}
-		if hasRows && !replace {
-			log.Printf("[us-kline-backfill] skip options %s chunk %d/%d: target rows already exist in %s to %s", iv.Suffix, idx+1, len(windows), window.From.Format(time.RFC3339), window.To.Format(time.RFC3339))
-			continue
-		}
-		if hasRows && replace {
-			if err := usOptionAggDeleteScope(ctx, conn, aggTable, window.From, window.To, asset); err != nil {
-				return fmt.Errorf("clear existing options %s scope: %w", iv.Suffix, err)
+		if replace {
+			hasRows, err := usOptionAggHasRows(ctx, conn, aggTable, window.From, window.To, asset)
+			if err != nil {
+				return err
+			}
+			if hasRows {
+				if err := usOptionAggDeleteScope(ctx, conn, aggTable, window.From, window.To, asset); err != nil {
+					return fmt.Errorf("clear existing options %s scope: %w", iv.Suffix, err)
+				}
 			}
 		}
 
@@ -293,7 +299,9 @@ FROM us_options_bar_1m
 %s
 GROUP BY ts, symbol, underlying, option_type, expiration, strike`, aggTable, klineTimeFunc(iv), usOptionSourceWhere(window.From, window.To, asset))
 
-		if err := conn.Exec(ctx, query, usOptionSourceArgs(window.From, window.To, asset)...); err != nil {
+		if err := retryUSBackfillTimeout(ctx, fmt.Sprintf("insert us options %s rows chunk %d/%d", iv.Suffix, idx+1, len(windows)), func() error {
+			return conn.Exec(ctx, query, usOptionSourceArgs(window.From, window.To, asset)...)
+		}); err != nil {
 			return fmt.Errorf("insert us options %s rows: %w", iv.Suffix, err)
 		}
 		log.Printf("[us-kline-backfill] options interval %s chunk %d/%d completed", iv.Suffix, idx+1, len(windows))
@@ -305,27 +313,25 @@ GROUP BY ts, symbol, underlying, option_type, expiration, strike`, aggTable, kli
 
 func backfillOptionChainInterval(ctx context.Context, conn driver.Conn, iv KlineInterval, from, to time.Time, asset string, replace bool) error {
 	aggTable := "us_options_chain_" + iv.Suffix + "_agg"
-	windows, err := resolveUSBackfillWindows(ctx, conn, "us_options_bar_1m", "underlying", asset, from, to)
+	windows, err := resolveUSChainBackfillInsertWindows(ctx, conn, "us_options_bar_1m", aggTable, "underlying", "underlying", asset, from, to, replace)
 	if err != nil {
 		return fmt.Errorf("resolve option chain backfill windows: %w", err)
 	}
 	if len(windows) == 0 {
-		log.Printf("[us-kline-backfill] skip option chain %s: no source rows in selected scope", iv.Suffix)
+		log.Printf("[us-kline-backfill] skip option chain %s: no source rows or missing aggregate days in selected scope", iv.Suffix)
 		return nil
 	}
 
 	for idx, window := range windows {
-		hasRows, err := usOptionChainAggHasRows(ctx, conn, aggTable, window.From, window.To, asset)
-		if err != nil {
-			return err
-		}
-		if hasRows && !replace {
-			log.Printf("[us-kline-backfill] skip option chain %s chunk %d/%d: target rows already exist in %s to %s", iv.Suffix, idx+1, len(windows), window.From.Format(time.RFC3339), window.To.Format(time.RFC3339))
-			continue
-		}
-		if hasRows && replace {
-			if err := usOptionChainAggDeleteScope(ctx, conn, aggTable, window.From, window.To, asset); err != nil {
-				return fmt.Errorf("clear existing option chain %s scope: %w", iv.Suffix, err)
+		if replace {
+			hasRows, err := usOptionChainAggHasRows(ctx, conn, aggTable, window.From, window.To, asset)
+			if err != nil {
+				return err
+			}
+			if hasRows {
+				if err := usOptionChainAggDeleteScope(ctx, conn, aggTable, window.From, window.To, asset); err != nil {
+					return fmt.Errorf("clear existing option chain %s scope: %w", iv.Suffix, err)
+				}
 			}
 		}
 
@@ -373,7 +379,9 @@ FROM
 )
 GROUP BY ts, underlying, symbol`, aggTable, klineTimeFunc(iv), usOptionSourceWhere(window.From, window.To, asset))
 
-		if err := conn.Exec(ctx, query, usOptionSourceArgs(window.From, window.To, asset)...); err != nil {
+		if err := retryUSBackfillTimeout(ctx, fmt.Sprintf("insert us option chain %s rows chunk %d/%d", iv.Suffix, idx+1, len(windows)), func() error {
+			return conn.Exec(ctx, query, usOptionSourceArgs(window.From, window.To, asset)...)
+		}); err != nil {
 			return fmt.Errorf("insert us option chain %s rows: %w", iv.Suffix, err)
 		}
 		log.Printf("[us-kline-backfill] option chain interval %s chunk %d/%d completed", iv.Suffix, idx+1, len(windows))
@@ -385,27 +393,25 @@ GROUP BY ts, underlying, symbol`, aggTable, klineTimeFunc(iv), usOptionSourceWhe
 
 func backfillStockInterval(ctx context.Context, conn driver.Conn, iv KlineInterval, from, to time.Time, asset string, replace bool) error {
 	aggTable := "us_stocks_bar_" + iv.Suffix + "_agg"
-	windows, err := resolveUSBackfillWindows(ctx, conn, "us_stocks_bar_1m", "symbol", asset, from, to)
+	windows, err := resolveUSBackfillInsertWindows(ctx, conn, "us_stocks_bar_1m", aggTable, "symbol", "symbol", asset, from, to, replace)
 	if err != nil {
 		return fmt.Errorf("resolve stock backfill windows: %w", err)
 	}
 	if len(windows) == 0 {
-		log.Printf("[us-kline-backfill] skip stocks %s: no source rows in selected scope", iv.Suffix)
+		log.Printf("[us-kline-backfill] skip stocks %s: no source rows or missing aggregate days in selected scope", iv.Suffix)
 		return nil
 	}
 
 	for idx, window := range windows {
-		hasRows, err := usStockAggHasRows(ctx, conn, aggTable, window.From, window.To, asset)
-		if err != nil {
-			return err
-		}
-		if hasRows && !replace {
-			log.Printf("[us-kline-backfill] skip stocks %s chunk %d/%d: target rows already exist in %s to %s", iv.Suffix, idx+1, len(windows), window.From.Format(time.RFC3339), window.To.Format(time.RFC3339))
-			continue
-		}
-		if hasRows && replace {
-			if err := usStockAggDeleteScope(ctx, conn, aggTable, window.From, window.To, asset); err != nil {
-				return fmt.Errorf("clear existing stocks %s scope: %w", iv.Suffix, err)
+		if replace {
+			hasRows, err := usStockAggHasRows(ctx, conn, aggTable, window.From, window.To, asset)
+			if err != nil {
+				return err
+			}
+			if hasRows {
+				if err := usStockAggDeleteScope(ctx, conn, aggTable, window.From, window.To, asset); err != nil {
+					return fmt.Errorf("clear existing stocks %s scope: %w", iv.Suffix, err)
+				}
 			}
 		}
 
@@ -423,7 +429,9 @@ FROM us_stocks_bar_1m
 %s
 GROUP BY ts, symbol`, aggTable, klineTimeFunc(iv), usStockSourceWhere(window.From, window.To, asset))
 
-		if err := conn.Exec(ctx, query, usStockSourceArgs(window.From, window.To, asset)...); err != nil {
+		if err := retryUSBackfillTimeout(ctx, fmt.Sprintf("insert us stocks %s rows chunk %d/%d", iv.Suffix, idx+1, len(windows)), func() error {
+			return conn.Exec(ctx, query, usStockSourceArgs(window.From, window.To, asset)...)
+		}); err != nil {
 			return fmt.Errorf("insert us stocks %s rows: %w", iv.Suffix, err)
 		}
 		log.Printf("[us-kline-backfill] stocks interval %s chunk %d/%d completed", iv.Suffix, idx+1, len(windows))
@@ -446,6 +454,105 @@ func resolveUSBackfillWindows(ctx context.Context, conn driver.Conn, tableName, 
 		return nil, nil
 	}
 	return splitUSBackfillWindows(fromBound, toBound), nil
+}
+
+func resolveUSBackfillInsertWindows(ctx context.Context, conn driver.Conn, sourceTable, aggTable, sourceAssetColumn, aggAssetColumn, asset string, from, to time.Time, replace bool) ([]usBackfillWindow, error) {
+	baseWindows, err := resolveUSBackfillWindows(ctx, conn, sourceTable, sourceAssetColumn, asset, from, to)
+	if err != nil {
+		return nil, err
+	}
+	if replace || len(baseWindows) == 0 {
+		return baseWindows, nil
+	}
+
+	insertWindows := make([]usBackfillWindow, 0, len(baseWindows))
+	for _, window := range baseWindows {
+		missingWindows, err := resolveUSMissingTradingDayWindows(ctx, conn, sourceTable, aggTable, sourceAssetColumn, aggAssetColumn, asset, window.From, window.To)
+		if err != nil {
+			return nil, err
+		}
+		insertWindows = append(insertWindows, missingWindows...)
+	}
+	return insertWindows, nil
+}
+
+func resolveUSMissingTradingDayWindows(ctx context.Context, conn driver.Conn, sourceTable, aggTable, sourceAssetColumn, aggAssetColumn, asset string, from, to time.Time) ([]usBackfillWindow, error) {
+	sourceDays, err := queryUSSourceTradingDays(ctx, conn, sourceTable, sourceAssetColumn, asset, from, to)
+	if err != nil {
+		return nil, err
+	}
+	if len(sourceDays) == 0 {
+		return nil, nil
+	}
+
+	aggDays, err := queryUSAggregateTradingDays(ctx, conn, aggTable, aggAssetColumn, asset, from, to)
+	if err != nil {
+		return nil, err
+	}
+	return missingTradingDayWindows(sourceDays, aggDays), nil
+}
+
+func queryUSSourceTradingDays(ctx context.Context, conn driver.Conn, tableName, assetColumn, asset string, from, to time.Time) ([]time.Time, error) {
+	query := fmt.Sprintf(`SELECT DISTINCT toDateTime(market_date, 'UTC') AS day
+FROM %s
+WHERE is_regular_session = 1`, tableName)
+	args := make([]interface{}, 0, 3)
+	if asset != "" {
+		query += fmt.Sprintf(" AND %s = {asset:String}", assetColumn)
+		args = append(args, clickhouse.Named("asset", asset))
+	}
+	if !from.IsZero() {
+		query += " AND market_date >= {from:Date}"
+		args = append(args, clickhouse.Named("from", normalizeUTCDay(from).Format("2006-01-02")))
+	}
+	if !to.IsZero() {
+		query += " AND market_date < {to:Date}"
+		args = append(args, clickhouse.Named("to", normalizeUTCDay(to).Format("2006-01-02")))
+	}
+	query += " ORDER BY day"
+	return queryUSTradingDays(ctx, conn, query, args, fmt.Sprintf("query %s source trading days", tableName))
+}
+
+func queryUSAggregateTradingDays(ctx context.Context, conn driver.Conn, tableName, assetColumn, asset string, from, to time.Time) ([]time.Time, error) {
+	query := fmt.Sprintf(`SELECT DISTINCT toDateTime(toDate(ts), 'UTC') AS day
+FROM %s
+WHERE 1 = 1`, tableName)
+	args := make([]interface{}, 0, 3)
+	if asset != "" {
+		query += fmt.Sprintf(" AND %s = {asset:String}", assetColumn)
+		args = append(args, clickhouse.Named("asset", asset))
+	}
+	if !from.IsZero() {
+		query += " AND ts >= toDateTime({from:String}, 'UTC')"
+		args = append(args, clickhouse.Named("from", from.UTC().Format("2006-01-02 15:04:05")))
+	}
+	if !to.IsZero() {
+		query += " AND ts < toDateTime({to:String}, 'UTC')"
+		args = append(args, clickhouse.Named("to", to.UTC().Format("2006-01-02 15:04:05")))
+	}
+	query += " ORDER BY day"
+	return queryUSTradingDays(ctx, conn, query, args, fmt.Sprintf("query %s aggregate trading days", tableName))
+}
+
+func queryUSTradingDays(ctx context.Context, conn driver.Conn, query string, args []interface{}, operation string) ([]time.Time, error) {
+	rows, err := conn.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", operation, err)
+	}
+	defer rows.Close()
+
+	days := make([]time.Time, 0, 32)
+	for rows.Next() {
+		var day time.Time
+		if err := rows.Scan(&day); err != nil {
+			return nil, fmt.Errorf("scan %s: %w", operation, err)
+		}
+		days = append(days, normalizeUTCDay(day))
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate %s: %w", operation, err)
+	}
+	return normalizeAndSortTradingDays(days), nil
 }
 
 func resolveUSSourceBounds(ctx context.Context, conn driver.Conn, tableName, assetColumn, asset string) (time.Time, time.Time, bool, error) {
@@ -539,6 +646,71 @@ func splitUSBackfillWindows(from, to time.Time) []usBackfillWindow {
 	return windows
 }
 
+func missingTradingDayWindows(sourceDays, aggDays []time.Time) []usBackfillWindow {
+	sourceDays = normalizeAndSortTradingDays(sourceDays)
+	if len(sourceDays) == 0 {
+		return nil
+	}
+
+	aggSet := make(map[int64]struct{}, len(aggDays))
+	for _, day := range normalizeAndSortTradingDays(aggDays) {
+		aggSet[day.Unix()] = struct{}{}
+	}
+
+	missingDays := make([]time.Time, 0, len(sourceDays))
+	for _, day := range sourceDays {
+		if _, ok := aggSet[day.Unix()]; ok {
+			continue
+		}
+		missingDays = append(missingDays, day)
+	}
+	if len(missingDays) == 0 {
+		return nil
+	}
+
+	windows := make([]usBackfillWindow, 0, len(missingDays))
+	windowStart := missingDays[0]
+	windowEnd := windowStart.Add(24 * time.Hour)
+	for _, day := range missingDays[1:] {
+		if day.Equal(windowEnd) {
+			windowEnd = windowEnd.Add(24 * time.Hour)
+			continue
+		}
+		windows = append(windows, usBackfillWindow{From: windowStart, To: windowEnd})
+		windowStart = day
+		windowEnd = day.Add(24 * time.Hour)
+	}
+	windows = append(windows, usBackfillWindow{From: windowStart, To: windowEnd})
+	return windows
+}
+
+func normalizeAndSortTradingDays(days []time.Time) []time.Time {
+	if len(days) == 0 {
+		return nil
+	}
+
+	uniqueDays := make(map[int64]time.Time, len(days))
+	for _, day := range days {
+		normalized := normalizeUTCDay(day)
+		if normalized.IsZero() {
+			continue
+		}
+		uniqueDays[normalized.Unix()] = normalized
+	}
+	if len(uniqueDays) == 0 {
+		return nil
+	}
+
+	sorted := make([]time.Time, 0, len(uniqueDays))
+	for _, day := range uniqueDays {
+		sorted = append(sorted, day)
+	}
+	sort.Slice(sorted, func(i, j int) bool {
+		return sorted[i].Before(sorted[j])
+	})
+	return sorted
+}
+
 func startOfNextMonth(ts time.Time) time.Time {
 	ts = ts.UTC()
 	return time.Date(ts.Year(), ts.Month()+1, 1, 0, 0, 0, 0, time.UTC)
@@ -547,6 +719,94 @@ func startOfNextMonth(ts time.Time) time.Time {
 func normalizeUTCDay(ts time.Time) time.Time {
 	ts = ts.UTC()
 	return time.Date(ts.Year(), ts.Month(), ts.Day(), 0, 0, 0, 0, time.UTC)
+}
+
+// chunkUSBackfillWindows sub-divides each window in the input slice into
+// chunks of at most step duration. This is used for heavy queries (e.g. option
+// chain double-aggregation) to avoid single INSERT…SELECT statements that
+// span an entire month and exceed the server read timeout.
+func chunkUSBackfillWindows(windows []usBackfillWindow, step time.Duration) []usBackfillWindow {
+	if len(windows) == 0 || step <= 0 {
+		return windows
+	}
+	out := make([]usBackfillWindow, 0, len(windows)*2)
+	for _, w := range windows {
+		cursor := w.From
+		for cursor.Before(w.To) {
+			next := cursor.Add(step)
+			if next.After(w.To) {
+				next = w.To
+			}
+			out = append(out, usBackfillWindow{From: cursor, To: next})
+			cursor = next
+		}
+	}
+	return out
+}
+
+// resolveUSChainBackfillInsertWindows is like resolveUSBackfillInsertWindows but
+// sub-divides each monthly base window into weekly chunks to keep each
+// INSERT…SELECT manageable.
+func resolveUSChainBackfillInsertWindows(ctx context.Context, conn driver.Conn, sourceTable, aggTable, sourceAssetColumn, aggAssetColumn, asset string, from, to time.Time, replace bool) ([]usBackfillWindow, error) {
+	baseWindows, err := resolveUSBackfillWindows(ctx, conn, sourceTable, sourceAssetColumn, asset, from, to)
+	if err != nil {
+		return nil, err
+	}
+	if len(baseWindows) == 0 {
+		return nil, nil
+	}
+
+	// Sub-divide each monthly base window into weekly chunks.
+	weeklyWindows := chunkUSBackfillWindows(baseWindows, usChainBackfillChunkSize)
+
+	if replace {
+		return weeklyWindows, nil
+	}
+
+	insertWindows := make([]usBackfillWindow, 0, len(weeklyWindows))
+	for _, window := range weeklyWindows {
+		missingWindows, err := resolveUSMissingTradingDayWindows(ctx, conn, sourceTable, aggTable, sourceAssetColumn, aggAssetColumn, asset, window.From, window.To)
+		if err != nil {
+			return nil, err
+		}
+		insertWindows = append(insertWindows, missingWindows...)
+	}
+	return insertWindows, nil
+}
+
+func retryUSBackfillTimeout(ctx context.Context, operation string, fn func() error) error {
+	for attempt := 1; ; attempt++ {
+		err := fn()
+		if err == nil {
+			return nil
+		}
+		if !isUSRetryableTimeout(err) {
+			return err
+		}
+		log.Printf("[us-kline-backfill] warning: %s timed out on attempt %d, retrying in %s: %v", operation, attempt, usBackfillRetryDelay, err)
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("%s: context canceled while waiting to retry: %w", operation, ctx.Err())
+		case <-time.After(usBackfillRetryDelay):
+		}
+	}
+}
+
+func isUSRetryableTimeout(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "i/o timeout") ||
+		strings.Contains(msg, "context deadline exceeded") ||
+		strings.Contains(msg, "read timeout")
 }
 
 func usOptionSourceWhere(from, to time.Time, asset string) string {

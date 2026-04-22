@@ -69,6 +69,97 @@ func TestSplitUSBackfillWindowsUsesMonthSizedChunks(t *testing.T) {
 	}
 }
 
+func TestChunkUSBackfillWindowsSplitsLargeRanges(t *testing.T) {
+	t.Parallel()
+
+	windows := chunkUSBackfillWindows([]usBackfillWindow{{
+		From: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+		To:   time.Date(2026, 1, 19, 0, 0, 0, 0, time.UTC),
+	}}, 7*24*time.Hour)
+
+	if len(windows) != 3 {
+		t.Fatalf("expected 3 chunked windows, got %d", len(windows))
+	}
+	if !windows[0].From.Equal(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)) || !windows[0].To.Equal(time.Date(2026, 1, 8, 0, 0, 0, 0, time.UTC)) {
+		t.Fatalf("unexpected first chunk: %+v", windows[0])
+	}
+	if !windows[1].From.Equal(time.Date(2026, 1, 8, 0, 0, 0, 0, time.UTC)) || !windows[1].To.Equal(time.Date(2026, 1, 15, 0, 0, 0, 0, time.UTC)) {
+		t.Fatalf("unexpected second chunk: %+v", windows[1])
+	}
+	if !windows[2].From.Equal(time.Date(2026, 1, 15, 0, 0, 0, 0, time.UTC)) || !windows[2].To.Equal(time.Date(2026, 1, 19, 0, 0, 0, 0, time.UTC)) {
+		t.Fatalf("unexpected third chunk: %+v", windows[2])
+	}
+}
+
+func TestMissingTradingDayWindowsMergesConsecutiveGaps(t *testing.T) {
+	t.Parallel()
+
+	sourceDays := []time.Time{
+		time.Date(2023, 1, 20, 15, 0, 0, 0, time.UTC),
+		time.Date(2023, 1, 23, 15, 0, 0, 0, time.UTC),
+		time.Date(2023, 1, 24, 15, 0, 0, 0, time.UTC),
+		time.Date(2023, 1, 25, 15, 0, 0, 0, time.UTC),
+		time.Date(2023, 1, 26, 15, 0, 0, 0, time.UTC),
+		time.Date(2023, 1, 27, 15, 0, 0, 0, time.UTC),
+		time.Date(2023, 1, 30, 15, 0, 0, 0, time.UTC),
+		time.Date(2023, 1, 31, 15, 0, 0, 0, time.UTC),
+	}
+	aggDays := []time.Time{
+		time.Date(2023, 1, 20, 0, 0, 0, 0, time.UTC),
+		time.Date(2023, 1, 24, 0, 0, 0, 0, time.UTC),
+		time.Date(2023, 1, 30, 0, 0, 0, 0, time.UTC),
+	}
+
+	windows := missingTradingDayWindows(sourceDays, aggDays)
+	if len(windows) != 3 {
+		t.Fatalf("expected 3 windows, got %d", len(windows))
+	}
+	if !windows[0].From.Equal(time.Date(2023, 1, 23, 0, 0, 0, 0, time.UTC)) || !windows[0].To.Equal(time.Date(2023, 1, 24, 0, 0, 0, 0, time.UTC)) {
+		t.Fatalf("unexpected first window: %+v", windows[0])
+	}
+	if !windows[1].From.Equal(time.Date(2023, 1, 25, 0, 0, 0, 0, time.UTC)) || !windows[1].To.Equal(time.Date(2023, 1, 28, 0, 0, 0, 0, time.UTC)) {
+		t.Fatalf("unexpected second window: %+v", windows[1])
+	}
+	if !windows[2].From.Equal(time.Date(2023, 1, 31, 0, 0, 0, 0, time.UTC)) || !windows[2].To.Equal(time.Date(2023, 2, 1, 0, 0, 0, 0, time.UTC)) {
+		t.Fatalf("unexpected third window: %+v", windows[2])
+	}
+}
+
+func TestMissingTradingDayWindowsReturnsNilWhenAggregateCoversSourceDays(t *testing.T) {
+	t.Parallel()
+
+	days := []time.Time{
+		time.Date(2026, 4, 1, 15, 0, 0, 0, time.UTC),
+		time.Date(2026, 4, 2, 15, 0, 0, 0, time.UTC),
+	}
+
+	windows := missingTradingDayWindows(days, days)
+	if len(windows) != 0 {
+		t.Fatalf("expected no missing windows, got %+v", windows)
+	}
+}
+
+func TestNormalizeAndSortTradingDaysDeduplicatesAndNormalizes(t *testing.T) {
+	t.Parallel()
+
+	days := []time.Time{
+		time.Date(2026, 4, 2, 15, 30, 0, 0, time.UTC),
+		time.Date(2026, 4, 1, 9, 30, 0, 0, time.UTC),
+		time.Date(2026, 4, 2, 10, 15, 0, 0, time.UTC),
+	}
+
+	normalized := normalizeAndSortTradingDays(days)
+	if len(normalized) != 2 {
+		t.Fatalf("expected 2 days, got %d", len(normalized))
+	}
+	if !normalized[0].Equal(time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC)) {
+		t.Fatalf("unexpected first day: %s", normalized[0].Format(time.RFC3339))
+	}
+	if !normalized[1].Equal(time.Date(2026, 4, 2, 0, 0, 0, 0, time.UTC)) {
+		t.Fatalf("unexpected second day: %s", normalized[1].Format(time.RFC3339))
+	}
+}
+
 func TestNeedsAggregateCoverageBackfillDetectsLeadingHistoryGap(t *testing.T) {
 	t.Parallel()
 

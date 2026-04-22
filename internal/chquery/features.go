@@ -464,7 +464,7 @@ LEFT JOIN (
         sum(open_interest) AS total_oi,
         sum(volume) AS total_volume,
         avg(activity_ratio) AS avg_activity_ratio,
-        avg(tradability_ratio) AS avg_tradability_ratio
+		avg(if(%s = 'us-options' AND avg_bid_close IS NULL AND avg_ask_close IS NULL AND tradable_contract_count = 0, CAST(NULL, 'Nullable(Float64)'), tradability_ratio)) AS avg_tradability_ratio
     FROM feature_liquidity_snapshot_daily
 		WHERE market = %s
       AND as_of_date = (

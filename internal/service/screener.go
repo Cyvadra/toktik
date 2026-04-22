@@ -26,7 +26,7 @@ func (s *ScreenerService) ScreenUnderlyings(ctx context.Context, req dto.ScreenU
 
 	// Join latest volatility snapshot with latest aggregated liquidity data.
 	// The volatility snapshot is per-underlying; liquidity is per-expiration, so we aggregate.
-	query := fmt.Sprintf(chquery.ScreenUnderlyingsBase, marketLiteral, marketLiteral, marketLiteral, marketLiteral)
+	query := fmt.Sprintf(chquery.ScreenUnderlyingsBase, marketLiteral, marketLiteral, marketLiteral, marketLiteral, marketLiteral)
 
 	if req.IVPercentileMin != nil {
 		query += fmt.Sprintf(` AND v.iv_percentile >= %.17g`, *req.IVPercentileMin)

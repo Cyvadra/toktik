@@ -187,6 +187,18 @@ func TestTradabilityRatioValue(t *testing.T) {
 	}
 }
 
+func TestLiquidityTradabilityRatioValueReturnsNilForUSWithoutQuotes(t *testing.T) {
+	value := liquidityTradabilityRatioValue("us-options", cryptoLiquidityAggregateRow{ContractCount: 12})
+	if value != nil {
+		t.Fatalf("expected nil tradability ratio for US rows without bid/ask support, got %+v", value)
+	}
+
+	value = liquidityTradabilityRatioValue("crypto-options", cryptoLiquidityAggregateRow{ContractCount: 12})
+	if value == nil || *value != 0 {
+		t.Fatalf("expected zero tradability ratio for crypto rows with zero tradable contracts, got %+v", value)
+	}
+}
+
 func TestActivityRatioValue(t *testing.T) {
 	value := activityRatioValue(2, 5)
 	if value == nil || *value != 0.4 {

@@ -91,6 +91,14 @@ type mockPolygonProvider struct {
 	err           error
 }
 
+type mockScreener struct {
+	underlyingsResp *dto.ScreenUnderlyingResponse
+	optionsResp     *dto.ScreenOptionResponse
+	underlyingsReq  dto.ScreenUnderlyingRequest
+	optionsReq      dto.ScreenOptionRequest
+	err             error
+}
+
 func (m *mockQuerier) QueryBars(_ context.Context, _ dto.BarRequest) (*dto.BarResponse, error) {
 	return m.barsResp, m.err
 }
@@ -259,6 +267,16 @@ func (m *mockPolygonProvider) QueryOptionQuotes(_ context.Context, _ dto.Polygon
 
 func (m *mockPolygonProvider) QueryOptionTrades(_ context.Context, _ dto.PolygonOptionTradesRequest) (*dto.PolygonTradeResponse, error) {
 	return m.tradeResp, m.err
+}
+
+func (m *mockScreener) ScreenUnderlyings(_ context.Context, req dto.ScreenUnderlyingRequest) (*dto.ScreenUnderlyingResponse, error) {
+	m.underlyingsReq = req
+	return m.underlyingsResp, m.err
+}
+
+func (m *mockScreener) ScreenOptions(_ context.Context, req dto.ScreenOptionRequest) (*dto.ScreenOptionResponse, error) {
+	m.optionsReq = req
+	return m.optionsResp, m.err
 }
 
 // --- helpers ---
@@ -860,6 +878,44 @@ func TestUSOptionsSymbolsRouteAcceptsRootAlias(t *testing.T) {
 	}
 	if mock.symbolsReq.Underlying != "AAPL" {
 		t.Fatalf("expected root alias to populate underlying, got %q", mock.symbolsReq.Underlying)
+	}
+}
+
+func TestScreenOptionsRouteSupportsMinDTEAliases(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	mock := &mockScreener{optionsResp: &dto.ScreenOptionResponse{Data: []dto.ScreenedOption{}}}
+	r := NewRouter(
+		&mockQuerier{},
+		&mockUSStocksQuerier{},
+		&mockUSOptionsQuerier{},
+		&mockInfra{},
+		&mockFeature{},
+		nil,
+		nil,
+		nil,
+		mock,
+		nil,
+		nil,
+	)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/api/v1/screener/options?market=us-options&underlying=AAPL&min_dte=14&max_dte=60&limit=10", nil)
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if mock.optionsReq.DTEMin == nil || *mock.optionsReq.DTEMin != 14 {
+		t.Fatalf("expected min_dte alias to populate DTEMin, got %+v", mock.optionsReq)
+	}
+	if mock.optionsReq.DTEMax == nil || *mock.optionsReq.DTEMax != 60 {
+		t.Fatalf("expected max_dte alias to populate DTEMax, got %+v", mock.optionsReq)
+	}
+	if mock.optionsReq.MinDTE == nil || *mock.optionsReq.MinDTE != 14 {
+		t.Fatalf("expected normalized MinDTE, got %+v", mock.optionsReq)
+	}
+	if mock.optionsReq.MaxDTE == nil || *mock.optionsReq.MaxDTE != 60 {
+		t.Fatalf("expected normalized MaxDTE, got %+v", mock.optionsReq)
 	}
 }
 

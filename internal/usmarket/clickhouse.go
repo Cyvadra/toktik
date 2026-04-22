@@ -34,7 +34,7 @@ func ConnectClickHouse(ctx context.Context, dsn string) (driver.Conn, error) {
 	if opts.DialTimeout == 0 || opts.DialTimeout < defaultDialTimeout {
 		opts.DialTimeout = defaultDialTimeout
 	}
-	if opts.ReadTimeout != 0 && opts.ReadTimeout < defaultReadTimeout {
+	if opts.ReadTimeout == 0 || opts.ReadTimeout < defaultReadTimeout {
 		opts.ReadTimeout = defaultReadTimeout
 	}
 	conn, err := clickhouse.Open(opts)

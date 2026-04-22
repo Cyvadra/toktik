@@ -2472,6 +2472,7 @@ func (s *FeatureService) insertPrecomputedLiquidityRows(ctx context.Context, mar
 	}
 	now := time.Now().UTC()
 	for _, row := range rows {
+		tradabilityRatio := liquidityTradabilityRatioValue(market, row)
 		if err := batch.Append(
 			market,
 			underlying,
@@ -2490,7 +2491,7 @@ func (s *FeatureService) insertPrecomputedLiquidityRows(ctx context.Context, mar
 			uint32(row.ActiveContractCount),
 			uint32(row.TradableContractCount),
 			nullableFloat64(activityRatioValue(row.ActiveContractCount, row.ContractCount)),
-			nullableFloat64(tradabilityRatioValue(row.TradableContractCount, row.ContractCount)),
+			nullableFloat64(tradabilityRatio),
 			now,
 		); err != nil {
 			return fmt.Errorf("append precomputed liquidity row: %w", err)
@@ -3091,6 +3092,13 @@ func tradabilityRatioValue(tradableContracts, contractCount int) *float64 {
 	}
 	value := float64(tradableContracts) / float64(contractCount)
 	return &value
+}
+
+func liquidityTradabilityRatioValue(market string, row cryptoLiquidityAggregateRow) *float64 {
+	if market == "us-options" && row.TradableContractCount == 0 && row.AvgBidClose == nil && row.AvgAskClose == nil {
+		return nil
+	}
+	return tradabilityRatioValue(row.TradableContractCount, row.ContractCount)
 }
 
 func activityRatioValue(activeContracts, contractCount int) *float64 {

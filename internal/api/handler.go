@@ -112,6 +112,14 @@ func bindUSOptionSymbolRequest(c *gin.Context, req *dto.USOptionSymbolRequest) e
 	return nil
 }
 
+func bindScreenOptionRequest(c *gin.Context, req *dto.ScreenOptionRequest) error {
+	if err := c.ShouldBindQuery(req); err != nil {
+		return err
+	}
+	req.NormalizeAliases()
+	return nil
+}
+
 func writeSSEEvent(c *gin.Context, event string, payload any) error {
 	c.Writer.Header().Set("Content-Type", "text/event-stream")
 	c.Writer.Header().Set("Cache-Control", "no-cache")
@@ -1439,7 +1447,7 @@ func (h *Handler) ScreenUnderlyings(c *gin.Context) {
 // @Router       /screener/options [get]
 func (h *Handler) ScreenOptions(c *gin.Context) {
 	var req dto.ScreenOptionRequest
-	if err := c.ShouldBindQuery(&req); err != nil {
+	if err := bindScreenOptionRequest(c, &req); err != nil {
 		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: err.Error()})
 		return
 	}
