@@ -1384,9 +1384,35 @@ const docTemplate = `{
                 }
             }
         },
+        "/indicators/presets": {
+            "get": {
+                "description": "Returns the built-in indicator preset bundles and the plotted expressions each preset expands to.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Indicators"
+                ],
+                "summary": "List indicator presets",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.IndicatorPresetCatalogResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/indicators/series": {
             "post": {
-                "description": "Evaluates either a full DSL script or a simplified indicators[] expression list over market bars and returns aligned series arrays.",
+                "description": "Evaluates either a full DSL script, one or more built-in presets[], or a simplified indicators[] expression list over market bars and returns aligned series arrays.",
                 "consumes": [
                     "application/json"
                 ],
@@ -4281,6 +4307,48 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_Cyvadra_toktik_internal_dto.IndicatorPresetCatalogResponse": {
+            "type": "object",
+            "properties": {
+                "presets": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.IndicatorPresetDefinition"
+                    }
+                }
+            }
+        },
+        "github_com_Cyvadra_toktik_internal_dto.IndicatorPresetDefinition": {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "indicators": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.IndicatorPresetIndicator"
+                    }
+                },
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_Cyvadra_toktik_internal_dto.IndicatorPresetIndicator": {
+            "type": "object",
+            "properties": {
+                "expression": {
+                    "type": "string"
+                },
+                "key": {
+                    "type": "string"
+                }
+            }
+        },
         "github_com_Cyvadra_toktik_internal_dto.IndicatorSeriesRequest": {
             "type": "object",
             "required": [
@@ -4315,6 +4383,12 @@ const docTemplate = `{
                 },
                 "precision": {
                     "type": "integer"
+                },
+                "presets": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 },
                 "session": {
                     "type": "string"

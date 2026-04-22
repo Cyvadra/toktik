@@ -57,6 +57,7 @@ type FeatureProvider interface {
 // IndicatorSeriesProvider describes DSL-driven indicator sequence evaluation.
 type IndicatorSeriesProvider interface {
 	QueryIndicatorSeries(ctx context.Context, req dto.IndicatorSeriesRequest) (*dto.IndicatorSeriesResponse, error)
+	ListIndicatorPresets(ctx context.Context) (*dto.IndicatorPresetCatalogResponse, error)
 }
 
 type StrategyBacktestProvider interface {

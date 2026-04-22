@@ -7,7 +7,7 @@
 - Source Swagger: `docs/swagger.json`
 - API title: `Toktik Options Platform API`
 - API version: `1.0`
-- Generated at: `2026-04-16T12:55:18Z`
+- Generated at: `2026-04-22T09:08:04Z`
 
 ## Scope
 
@@ -25,6 +25,25 @@ This document exports the database-backed market data, technical indicator, feat
 
 ## Technical Indicators
 
+### Indicator preset catalog
+
+- Endpoint: `GET /api/v1/indicators/presets`
+- Tags: `Indicators`
+- Produces: `application/json`
+- Summary: List indicator presets
+- Description: Returns the built-in indicator preset bundles and the plotted expressions each preset expands to.
+
+#### Parameters
+
+No parameters.
+
+#### Responses
+
+| Status | Schema | Description |
+| --- | --- | --- |
+| 200 | github_com_Cyvadra_toktik_internal_dto.IndicatorPresetCatalogResponse | OK |
+| 500 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Internal Server Error |
+
 ### DSL indicator series query
 
 - Endpoint: `POST /api/v1/indicators/series`
@@ -32,7 +51,7 @@ This document exports the database-backed market data, technical indicator, feat
 - Consumes: `application/json`
 - Produces: `application/json`
 - Summary: Run indicator series query
-- Description: Evaluates either a full DSL script or a simplified indicators[] expression list over market bars and returns aligned series arrays.
+- Description: Evaluates either a full DSL script, one or more built-in presets[], or a simplified indicators[] expression list over market bars and returns aligned series arrays.
 
 #### Parameters
 
@@ -48,6 +67,28 @@ This document exports the database-backed market data, technical indicator, feat
 | 400 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Bad Request |
 | 500 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Internal Server Error |
 
+#### curl Example: Preset catalog
+
+```bash
+curl -sS "http://192.168.1.9:9010/api/v1/indicators/presets" | jq
+```
+
+#### curl Example: Built-in presets[]
+
+```bash
+curl -sS -X POST "http://192.168.1.9:9010/api/v1/indicators/series" \
+  -H "Content-Type: application/json" \
+  --data '{
+    "market": "us-stocks",
+    "symbol": "AAPL",
+    "interval": "1h",
+    "from": "2024-01-01",
+    "to": "2024-02-01",
+    "presets": ["classic-volatility", "classic-momentum"],
+    "precision": 2
+  }' | jq
+```
+
 #### curl Example: Simplified indicators[]
 
 ```bash
@@ -60,6 +101,23 @@ curl -sS -X POST "http://192.168.1.9:9010/api/v1/indicators/series" \
     "from": "2024-01-01",
     "to": "2024-02-01",
     "indicators": ["ta.sma(close,5)", "ta.rsi(close,10)"],
+    "precision": 2
+  }' | jq
+```
+
+#### curl Example: Presets + custom expressions
+
+```bash
+curl -sS -X POST "http://192.168.1.9:9010/api/v1/indicators/series" \
+  -H "Content-Type: application/json" \
+  --data '{
+    "market": "crypto-spot",
+    "symbol": "BTCUSDT",
+    "interval": "4h",
+    "from": "2024-01-01",
+    "to": "2024-03-01",
+    "presets": ["classic-moving-averages"],
+    "indicators": ["ta.percentrank(ta.rsi(close,14),20)", "ta.change(volume,5)"],
     "precision": 2
   }' | jq
 ```

@@ -179,6 +179,57 @@ func RegisterTABuiltins(ip *Interpreter) {
 		return FloatVal(math.Sqrt(variance / float64(length)))
 	})
 
+	// ta.cci(length) or ta.cci(source, length)
+	ip.RegisterBuiltin("ta.cci", func(args []Value) Value {
+		if len(args) < 1 {
+			return NaVal()
+		}
+		var (
+			source []float64
+			length int
+		)
+		if len(args) == 1 {
+			length = int(args[0].Float())
+			highS := ip.seriesMap["high"]
+			lowS := ip.seriesMap["low"]
+			closeS := ip.seriesMap["close"]
+			if highS == nil || lowS == nil || closeS == nil || length <= 0 || highS.Len() < length || lowS.Len() < length || closeS.Len() < length {
+				return NaVal()
+			}
+			source = make([]float64, length)
+			for i := 0; i < length; i++ {
+				source[i] = (highS.At(i) + lowS.At(i) + closeS.At(i)) / 3
+			}
+		} else {
+			s := args[0].SeriesPtr()
+			length = int(args[1].Float())
+			if s == nil || length <= 0 || s.Len() < length {
+				return NaVal()
+			}
+			source = make([]float64, length)
+			for i := 0; i < length; i++ {
+				source[i] = s.At(i)
+			}
+		}
+		if length <= 0 || len(source) < length {
+			return NaVal()
+		}
+		sum := 0.0
+		for i := 0; i < length; i++ {
+			sum += source[i]
+		}
+		sma := sum / float64(length)
+		meanDeviation := 0.0
+		for i := 0; i < length; i++ {
+			meanDeviation += math.Abs(source[i] - sma)
+		}
+		meanDeviation /= float64(length)
+		if meanDeviation == 0 {
+			return NaVal()
+		}
+		return FloatVal((source[0] - sma) / (0.015 * meanDeviation))
+	})
+
 	// ta.crossover(a, b) — true if a[0]>b[0] && a[1]<=b[1]
 	ip.RegisterBuiltin("ta.crossover", func(args []Value) Value {
 		if len(args) < 2 {

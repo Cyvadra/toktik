@@ -60,6 +60,7 @@ func NewRouter(cos CryptoOptionsQuerier, usStocks USStocksQuerier, usOptions USO
 		featuresGroup.GET("/daily-feature-panel", h.GetDailyFeaturePanel)
 
 		indicatorsGroup := v1.Group("/indicators")
+		indicatorsGroup.GET("/presets", h.ListIndicatorPresets)
 		indicatorsGroup.POST("/series", h.RunIndicatorSeries)
 
 		co := v1.Group("/crypto-options")

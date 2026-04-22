@@ -69,6 +69,7 @@ var sections = []sectionSpec{
 	{
 		Title: "Technical Indicators",
 		Endpoints: []endpointSpec{
+			{Method: "GET", Path: "/indicators/presets", Label: "Indicator preset catalog"},
 			{Method: "POST", Path: "/indicators/series", Label: "DSL indicator series query"},
 			{Method: "GET", Path: "/factors", Label: "Factor catalog"},
 			{Method: "GET", Path: "/factors/bars", Label: "Factor time series"},
@@ -308,6 +309,24 @@ func writeEndpoint(builder *strings.Builder, basePath string, spec endpointSpec,
 }
 
 func writeIndicatorExamples(builder *strings.Builder) {
+	builder.WriteString("#### curl Example: Preset catalog\n\n")
+	builder.WriteString("```bash\n")
+	builder.WriteString("curl -sS \"http://192.168.1.9:9010/api/v1/indicators/presets\" | jq\n")
+	builder.WriteString("```\n\n")
+	builder.WriteString("#### curl Example: Built-in presets[]\n\n")
+	builder.WriteString("```bash\n")
+	builder.WriteString("curl -sS -X POST \"http://192.168.1.9:9010/api/v1/indicators/series\" \\\n")
+	builder.WriteString("  -H \"Content-Type: application/json\" \\\n")
+	builder.WriteString("  --data '{\n")
+	builder.WriteString("    \"market\": \"us-stocks\",\n")
+	builder.WriteString("    \"symbol\": \"AAPL\",\n")
+	builder.WriteString("    \"interval\": \"1h\",\n")
+	builder.WriteString("    \"from\": \"2024-01-01\",\n")
+	builder.WriteString("    \"to\": \"2024-02-01\",\n")
+	builder.WriteString("    \"presets\": [\"classic-volatility\", \"classic-momentum\"],\n")
+	builder.WriteString("    \"precision\": 2\n")
+	builder.WriteString("  }' | jq\n")
+	builder.WriteString("```\n\n")
 	builder.WriteString("#### curl Example: Simplified indicators[]\n\n")
 	builder.WriteString("```bash\n")
 	builder.WriteString("curl -sS -X POST \"http://192.168.1.9:9010/api/v1/indicators/series\" \\\n")
@@ -319,6 +338,21 @@ func writeIndicatorExamples(builder *strings.Builder) {
 	builder.WriteString("    \"from\": \"2024-01-01\",\n")
 	builder.WriteString("    \"to\": \"2024-02-01\",\n")
 	builder.WriteString("    \"indicators\": [\"ta.sma(close,5)\", \"ta.rsi(close,10)\"],\n")
+	builder.WriteString("    \"precision\": 2\n")
+	builder.WriteString("  }' | jq\n")
+	builder.WriteString("```\n\n")
+	builder.WriteString("#### curl Example: Presets + custom expressions\n\n")
+	builder.WriteString("```bash\n")
+	builder.WriteString("curl -sS -X POST \"http://192.168.1.9:9010/api/v1/indicators/series\" \\\n")
+	builder.WriteString("  -H \"Content-Type: application/json\" \\\n")
+	builder.WriteString("  --data '{\n")
+	builder.WriteString("    \"market\": \"crypto-spot\",\n")
+	builder.WriteString("    \"symbol\": \"BTCUSDT\",\n")
+	builder.WriteString("    \"interval\": \"4h\",\n")
+	builder.WriteString("    \"from\": \"2024-01-01\",\n")
+	builder.WriteString("    \"to\": \"2024-03-01\",\n")
+	builder.WriteString("    \"presets\": [\"classic-moving-averages\"],\n")
+	builder.WriteString("    \"indicators\": [\"ta.percentrank(ta.rsi(close,14),20)\", \"ta.change(volume,5)\"],\n")
 	builder.WriteString("    \"precision\": 2\n")
 	builder.WriteString("  }' | jq\n")
 	builder.WriteString("```\n\n")

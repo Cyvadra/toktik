@@ -67,6 +67,7 @@ type mockFeature struct {
 
 type mockIndicatorProvider struct {
 	resp *dto.IndicatorSeriesResponse
+	cat  *dto.IndicatorPresetCatalogResponse
 	err  error
 }
 
@@ -184,6 +185,10 @@ func (m *mockFeature) QueryDailyFeaturePanel(_ context.Context, _ dto.FeatureDai
 
 func (m *mockIndicatorProvider) QueryIndicatorSeries(_ context.Context, _ dto.IndicatorSeriesRequest) (*dto.IndicatorSeriesResponse, error) {
 	return m.resp, m.err
+}
+
+func (m *mockIndicatorProvider) ListIndicatorPresets(_ context.Context) (*dto.IndicatorPresetCatalogResponse, error) {
+	return m.cat, m.err
 }
 
 func (m *mockFeature) QueryTermStructureHistory(_ context.Context, _ dto.FeatureTermStructureHistoryRequest) (*dto.FeatureTermStructureHistoryResponse, error) {
@@ -339,6 +344,35 @@ func TestRunIndicatorSeries_NotConfigured(t *testing.T) {
 
 	if w.Code != http.StatusNotImplemented {
 		t.Fatalf("expected 501, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestListIndicatorPresets_Success(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := NewRouter(&mockQuerier{}, &mockUSStocksQuerier{}, &mockUSOptionsQuerier{}, &mockInfra{}, &mockFeature{}, &mockIndicatorProvider{
+		cat: &dto.IndicatorPresetCatalogResponse{Presets: []dto.IndicatorPresetDefinition{{
+			ID:   "classic",
+			Name: "Classic Technicals",
+			Indicators: []dto.IndicatorPresetIndicator{{
+				Key:        "rsi_14",
+				Expression: "ta.rsi(close,14)",
+			}},
+		}}},
+	}, nil, nil, nil, nil, nil, nil)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/api/v1/indicators/presets", nil)
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp dto.IndicatorPresetCatalogResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(resp.Presets) != 1 || resp.Presets[0].ID != "classic" {
+		t.Fatalf("unexpected preset response: %+v", resp)
 	}
 }
 

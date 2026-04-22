@@ -67,6 +67,66 @@ func TestBuildIndicatorDSLSourceFromIndicators(t *testing.T) {
 	}
 }
 
+func TestBuildIndicatorDSLSourceFromPresets(t *testing.T) {
+	source, err := buildIndicatorDSLSource(dto.IndicatorSeriesRequest{Presets: []string{"classic-volatility"}})
+	if err != nil {
+		t.Fatalf("buildIndicatorDSLSource returned error: %v", err)
+	}
+	if !strings.Contains(source, `plot(ta.atr(14), title="atr_14")`) {
+		t.Fatalf("unexpected source: %s", source)
+	}
+	if !strings.Contains(source, `plot(ta.bb_upper(close,20,2.0), title="bb_upper_20_2")`) {
+		t.Fatalf("unexpected source: %s", source)
+	}
+}
+
+func TestBuildIndicatorDSLSourceRejectsUnknownPreset(t *testing.T) {
+	_, err := buildIndicatorDSLSource(dto.IndicatorSeriesRequest{Presets: []string{"missing"}})
+	if err == nil || !strings.Contains(err.Error(), "unknown indicator preset") {
+		t.Fatalf("expected unknown preset error, got %v", err)
+	}
+}
+
+func TestListIndicatorPresets(t *testing.T) {
+	svc := &IndicatorService{}
+	resp, err := svc.ListIndicatorPresets(nil)
+	if err != nil {
+		t.Fatalf("ListIndicatorPresets returned error: %v", err)
+	}
+	if len(resp.Presets) == 0 {
+		t.Fatal("expected presets in response")
+	}
+	if resp.Presets[0].ID == "" || len(resp.Presets[0].Indicators) == 0 {
+		t.Fatalf("unexpected preset response: %+v", resp.Presets[0])
+	}
+	if resp.Presets[0].Indicators[0].Key == "" || resp.Presets[0].Indicators[0].Expression == "" {
+		t.Fatalf("unexpected preset indicator: %+v", resp.Presets[0].Indicators[0])
+	}
+}
+
+func TestExecuteIndicatorDSLPlotsCCI(t *testing.T) {
+	bars := []indicatorBar{
+		{Timestamp: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC), High: 12, Low: 10, Close: 11},
+		{Timestamp: time.Date(2024, 1, 1, 1, 0, 0, 0, time.UTC), High: 13, Low: 11, Close: 12},
+		{Timestamp: time.Date(2024, 1, 1, 2, 0, 0, 0, time.UTC), High: 14, Low: 12, Close: 13},
+	}
+
+	result, err := executeIndicatorDSL(`plot(ta.cci(3), title="CCI 3")`, bars, nil, nil)
+	if err != nil {
+		t.Fatalf("executeIndicatorDSL returned error: %v", err)
+	}
+	cciSeries := result.series[result.columns[0].Source]
+	if len(cciSeries) != len(bars) {
+		t.Fatalf("len(cciSeries) = %d, want %d", len(cciSeries), len(bars))
+	}
+	if math.IsNaN(cciSeries[2]) {
+		t.Fatalf("expected CCI value on latest bar, got %v", cciSeries)
+	}
+	if math.Abs(cciSeries[2]-100) > 1e-9 {
+		t.Fatalf("cciSeries[2] = %v, want 100", cciSeries[2])
+	}
+}
+
 func TestNormalizeIndicatorParams(t *testing.T) {
 	numeric, stringsOut, err := normalizeIndicatorParams(map[string]interface{}{
 		"Length":  14.0,

@@ -231,6 +231,8 @@ sell(1)
 - `ta.ema(source, length)`
 - `ta.rsi(source, length)`
 - `ta.atr(length)`
+- `ta.cci(length)`
+- `ta.cci(source, length)`
 - `ta.highest(source, length)`
 - `ta.lowest(source, length)`
 - `ta.stdev(source, length)`

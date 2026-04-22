@@ -772,6 +772,33 @@ definitions:
       vega:
         type: number
     type: object
+  github_com_Cyvadra_toktik_internal_dto.IndicatorPresetCatalogResponse:
+    properties:
+      presets:
+        items:
+          $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.IndicatorPresetDefinition'
+        type: array
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.IndicatorPresetDefinition:
+    properties:
+      description:
+        type: string
+      id:
+        type: string
+      indicators:
+        items:
+          $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.IndicatorPresetIndicator'
+        type: array
+      name:
+        type: string
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.IndicatorPresetIndicator:
+    properties:
+      expression:
+        type: string
+      key:
+        type: string
+    type: object
   github_com_Cyvadra_toktik_internal_dto.IndicatorSeriesRequest:
     properties:
       dsl:
@@ -791,6 +818,10 @@ definitions:
         type: object
       precision:
         type: integer
+      presets:
+        items:
+          type: string
+        type: array
       session:
         type: string
       symbol:
@@ -2707,12 +2738,31 @@ paths:
       summary: Get volatility snapshot
       tags:
       - Features
+  /indicators/presets:
+    get:
+      description: Returns the built-in indicator preset bundles and the plotted expressions
+        each preset expands to.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.IndicatorPresetCatalogResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+      summary: List indicator presets
+      tags:
+      - Indicators
   /indicators/series:
     post:
       consumes:
       - application/json
-      description: Evaluates either a full DSL script or a simplified indicators[]
-        expression list over market bars and returns aligned series arrays.
+      description: Evaluates either a full DSL script, one or more built-in presets[],
+        or a simplified indicators[] expression list over market bars and returns
+        aligned series arrays.
       parameters:
       - description: Indicator query
         in: body

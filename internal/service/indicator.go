@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"slices"
 	"strings"
 	"time"
 
@@ -45,6 +46,87 @@ type indicatorBar struct {
 type indicatorSeriesResult struct {
 	columns []runtime.PlotSpec
 	series  map[string][]float64
+}
+
+type indicatorPlotSpec struct {
+	Title      string
+	Expression string
+}
+
+type indicatorPresetSpec struct {
+	ID          string
+	Name        string
+	Description string
+	Plots       []indicatorPlotSpec
+}
+
+var indicatorPresetCatalog = []indicatorPresetSpec{
+	{
+		ID:          "classic",
+		Name:        "Classic Technicals",
+		Description: "Classic moving-average, momentum, and volatility studies computed over the requested market bars.",
+		Plots: []indicatorPlotSpec{
+			{Title: "sma_5", Expression: "ta.sma(close,5)"},
+			{Title: "sma_10", Expression: "ta.sma(close,10)"},
+			{Title: "sma_20", Expression: "ta.sma(close,20)"},
+			{Title: "sma_60", Expression: "ta.sma(close,60)"},
+			{Title: "ema_5", Expression: "ta.ema(close,5)"},
+			{Title: "ema_10", Expression: "ta.ema(close,10)"},
+			{Title: "ema_20", Expression: "ta.ema(close,20)"},
+			{Title: "ema_60", Expression: "ta.ema(close,60)"},
+			{Title: "rsi_6", Expression: "ta.rsi(close,6)"},
+			{Title: "rsi_14", Expression: "ta.rsi(close,14)"},
+			{Title: "rsi_21", Expression: "ta.rsi(close,21)"},
+			{Title: "cci_14", Expression: "ta.cci(14)"},
+			{Title: "cci_20", Expression: "ta.cci(20)"},
+			{Title: "atr_14", Expression: "ta.atr(14)"},
+			{Title: "bb_upper_20_2", Expression: "ta.bb_upper(close,20,2.0)"},
+			{Title: "bb_basis_20_2", Expression: "ta.sma(close,20)"},
+			{Title: "bb_lower_20_2", Expression: "ta.bb_lower(close,20,2.0)"},
+			{Title: "mom_10", Expression: "ta.change(close,10)"},
+			{Title: "mom_20", Expression: "ta.change(close,20)"},
+		},
+	},
+	{
+		ID:          "classic-moving-averages",
+		Name:        "Classic Moving Averages",
+		Description: "Short and medium horizon SMA and EMA overlays.",
+		Plots: []indicatorPlotSpec{
+			{Title: "sma_5", Expression: "ta.sma(close,5)"},
+			{Title: "sma_10", Expression: "ta.sma(close,10)"},
+			{Title: "sma_20", Expression: "ta.sma(close,20)"},
+			{Title: "sma_60", Expression: "ta.sma(close,60)"},
+			{Title: "ema_5", Expression: "ta.ema(close,5)"},
+			{Title: "ema_10", Expression: "ta.ema(close,10)"},
+			{Title: "ema_20", Expression: "ta.ema(close,20)"},
+			{Title: "ema_60", Expression: "ta.ema(close,60)"},
+		},
+	},
+	{
+		ID:          "classic-momentum",
+		Name:        "Classic Momentum",
+		Description: "RSI, CCI, and price-change studies with common lookbacks.",
+		Plots: []indicatorPlotSpec{
+			{Title: "rsi_6", Expression: "ta.rsi(close,6)"},
+			{Title: "rsi_14", Expression: "ta.rsi(close,14)"},
+			{Title: "rsi_21", Expression: "ta.rsi(close,21)"},
+			{Title: "cci_14", Expression: "ta.cci(14)"},
+			{Title: "cci_20", Expression: "ta.cci(20)"},
+			{Title: "mom_10", Expression: "ta.change(close,10)"},
+			{Title: "mom_20", Expression: "ta.change(close,20)"},
+		},
+	},
+	{
+		ID:          "classic-volatility",
+		Name:        "Classic Volatility",
+		Description: "ATR and Bollinger Bands with common default parameters.",
+		Plots: []indicatorPlotSpec{
+			{Title: "atr_14", Expression: "ta.atr(14)"},
+			{Title: "bb_upper_20_2", Expression: "ta.bb_upper(close,20,2.0)"},
+			{Title: "bb_basis_20_2", Expression: "ta.sma(close,20)"},
+			{Title: "bb_lower_20_2", Expression: "ta.bb_lower(close,20,2.0)"},
+		},
+	},
 }
 
 func (s *IndicatorService) QueryIndicatorSeries(ctx context.Context, req dto.IndicatorSeriesRequest) (*dto.IndicatorSeriesResponse, error) {
@@ -102,6 +184,23 @@ func (s *IndicatorService) QueryIndicatorSeries(ctx context.Context, req dto.Ind
 	return resp, nil
 }
 
+func (s *IndicatorService) ListIndicatorPresets(_ context.Context) (*dto.IndicatorPresetCatalogResponse, error) {
+	resp := &dto.IndicatorPresetCatalogResponse{Presets: make([]dto.IndicatorPresetDefinition, 0, len(indicatorPresetCatalog))}
+	for _, preset := range indicatorPresetCatalog {
+		entry := dto.IndicatorPresetDefinition{
+			ID:          preset.ID,
+			Name:        preset.Name,
+			Description: preset.Description,
+			Indicators:  make([]dto.IndicatorPresetIndicator, 0, len(preset.Plots)),
+		}
+		for _, plot := range preset.Plots {
+			entry.Indicators = append(entry.Indicators, dto.IndicatorPresetIndicator{Key: plot.Title, Expression: plot.Expression})
+		}
+		resp.Presets = append(resp.Presets, entry)
+	}
+	return resp, nil
+}
+
 func emptyIndicatorSeriesResponse(market, symbol, interval string) *dto.IndicatorSeriesResponse {
 	return &dto.IndicatorSeriesResponse{
 		Market:     market,
@@ -119,30 +218,79 @@ func validateIndicatorSeriesRequest(req dto.IndicatorSeriesRequest) error {
 	if strings.TrimSpace(req.DSL) != "" {
 		return nil
 	}
+	for _, preset := range req.Presets {
+		if strings.TrimSpace(preset) != "" {
+			return nil
+		}
+	}
 	for _, indicator := range req.Indicators {
 		if strings.TrimSpace(indicator) != "" {
 			return nil
 		}
 	}
-	return dto.NewValidationError("either dsl or indicators must be provided")
+	return dto.NewValidationError("either dsl, presets, or indicators must be provided")
 }
 
 func buildIndicatorDSLSource(req dto.IndicatorSeriesRequest) (string, error) {
-	parts := make([]string, 0, len(req.Indicators)+1)
+	plots, err := indicatorPlotsFromRequest(req)
+	if err != nil {
+		return "", err
+	}
+	parts := make([]string, 0, len(plots)+1)
 	if dsl := strings.TrimSpace(req.DSL); dsl != "" {
 		parts = append(parts, dsl)
+	}
+	for _, plot := range plots {
+		parts = append(parts, fmt.Sprintf("plot(%s, title=\"%s\")", plot.Expression, escapeIndicatorTitle(plot.Title)))
+	}
+	if len(parts) == 0 {
+		return "", dto.NewValidationError("either dsl, presets, or indicators must be provided")
+	}
+	return strings.Join(parts, "\n"), nil
+}
+
+func indicatorPlotsFromRequest(req dto.IndicatorSeriesRequest) ([]indicatorPlotSpec, error) {
+	plots := make([]indicatorPlotSpec, 0, len(req.Presets)+len(req.Indicators))
+	seenTitles := make(map[string]struct{})
+	for _, presetID := range req.Presets {
+		trimmed := strings.TrimSpace(presetID)
+		if trimmed == "" {
+			continue
+		}
+		preset, ok := findIndicatorPreset(trimmed)
+		if !ok {
+			return nil, dto.NewValidationError("unknown indicator preset %q", trimmed)
+		}
+		for _, plot := range preset.Plots {
+			if _, exists := seenTitles[plot.Title]; exists {
+				continue
+			}
+			seenTitles[plot.Title] = struct{}{}
+			plots = append(plots, plot)
+		}
 	}
 	for _, indicator := range req.Indicators {
 		trimmed := strings.TrimSpace(indicator)
 		if trimmed == "" {
 			continue
 		}
-		parts = append(parts, fmt.Sprintf("plot(%s, title=\"%s\")", trimmed, escapeIndicatorTitle(trimmed)))
+		if _, exists := seenTitles[trimmed]; exists {
+			continue
+		}
+		seenTitles[trimmed] = struct{}{}
+		plots = append(plots, indicatorPlotSpec{Title: trimmed, Expression: trimmed})
 	}
-	if len(parts) == 0 {
-		return "", dto.NewValidationError("either dsl or indicators must be provided")
+	return plots, nil
+}
+
+func findIndicatorPreset(id string) (indicatorPresetSpec, bool) {
+	idx := slices.IndexFunc(indicatorPresetCatalog, func(preset indicatorPresetSpec) bool {
+		return strings.EqualFold(preset.ID, id)
+	})
+	if idx < 0 {
+		return indicatorPresetSpec{}, false
 	}
-	return strings.Join(parts, "\n"), nil
+	return indicatorPresetCatalog[idx], true
 }
 
 func escapeIndicatorTitle(value string) string {

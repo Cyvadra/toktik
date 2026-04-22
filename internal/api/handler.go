@@ -697,7 +697,7 @@ func (h *Handler) GetSymbols(c *gin.Context) {
 // RunIndicatorSeries handles POST /api/v1/indicators/series.
 //
 // @Summary      Run indicator series query
-// @Description  Evaluates either a full DSL script or a simplified indicators[] expression list over market bars and returns aligned series arrays.
+// @Description  Evaluates either a full DSL script, one or more built-in presets[], or a simplified indicators[] expression list over market bars and returns aligned series arrays.
 // @Tags         Indicators
 // @Accept       json
 // @Produce      json
@@ -718,6 +718,30 @@ func (h *Handler) RunIndicatorSeries(c *gin.Context) {
 	}
 
 	resp, err := h.indicators.QueryIndicatorSeries(c.Request.Context(), req)
+	if err != nil {
+		handleServiceError(c, err)
+		return
+	}
+
+	c.JSON(http.StatusOK, resp)
+}
+
+// ListIndicatorPresets handles GET /api/v1/indicators/presets.
+//
+// @Summary      List indicator presets
+// @Description  Returns the built-in indicator preset bundles and the plotted expressions each preset expands to.
+// @Tags         Indicators
+// @Produce      json
+// @Success      200  {object}  dto.IndicatorPresetCatalogResponse
+// @Failure      500  {object}  dto.ErrorResponse
+// @Router       /indicators/presets [get]
+func (h *Handler) ListIndicatorPresets(c *gin.Context) {
+	if h.indicators == nil {
+		c.JSON(http.StatusNotImplemented, dto.ErrorResponse{Error: "indicator provider not configured"})
+		return
+	}
+
+	resp, err := h.indicators.ListIndicatorPresets(c.Request.Context())
 	if err != nil {
 		handleServiceError(c, err)
 		return
