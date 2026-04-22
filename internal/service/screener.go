@@ -243,7 +243,7 @@ WHERE chain.timestamp = latest.ts
 		if isCrypto {
 			query += ` AND m.option_type = ` + clickHouseStringLiteral(optType)
 		} else {
-			query += ` AND chain.option_type = ` + clickHouseStringLiteral(optType)
+			query += ` AND option_type_val = ` + clickHouseStringLiteral(strings.ToUpper(optType))
 		}
 	}
 	if req.DTEMin != nil {
@@ -342,7 +342,7 @@ func expirationCol(isCrypto bool) string {
 	if isCrypto {
 		return "m.expiration"
 	}
-	return "chain.expiration"
+	return "expiration_val"
 }
 
 func clickHouseStringLiteral(value string) string {

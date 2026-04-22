@@ -127,6 +127,43 @@ func TestExecuteIndicatorDSLPlotsCCI(t *testing.T) {
 	}
 }
 
+func TestExecuteIndicatorDSLSupportsPineStyleATRAndCCIAndNestedPercentRank(t *testing.T) {
+	bars := make([]indicatorBar, 0, 40)
+	for i := 0; i < 40; i++ {
+		close := float64(100 + i)
+		bars = append(bars, indicatorBar{
+			Timestamp: time.Date(2024, 1, 1, i, 0, 0, 0, time.UTC),
+			Open:      close - 0.5,
+			High:      close + 1,
+			Low:       close - 1,
+			Close:     close,
+			Volume:    float64(1000 + i),
+		})
+	}
+
+	result, err := executeIndicatorDSL(`
+plot(ta.atr(high, low, close, 14), title="ATR Pine")
+plot(ta.cci(high, low, close, 20), title="CCI Pine")
+plot(ta.percentrank(ta.rsi(close,14),20), title="RSI Rank")
+`, bars, nil, nil)
+	if err != nil {
+		t.Fatalf("executeIndicatorDSL returned error: %v", err)
+	}
+	seriesByTitle := make(map[string][]float64, len(result.columns))
+	for _, column := range result.columns {
+		seriesByTitle[column.Title] = result.series[column.Source]
+	}
+	for _, key := range []string{"ATR Pine", "CCI Pine", "RSI Rank"} {
+		series := seriesByTitle[key]
+		if len(series) != len(bars) {
+			t.Fatalf("len(%s) = %d, want %d", key, len(series), len(bars))
+		}
+		if math.IsNaN(series[len(series)-1]) {
+			t.Fatalf("expected final %s value, got %v", key, series)
+		}
+	}
+}
+
 func TestNormalizeIndicatorParams(t *testing.T) {
 	numeric, stringsOut, err := normalizeIndicatorParams(map[string]interface{}{
 		"Length":  14.0,

@@ -1,6 +1,36 @@
 package runtime
 
-import "math"
+import (
+	"fmt"
+	"math"
+	"strings"
+)
+
+func taSeriesValue(ip *Interpreter, name string, value float64, args ...Value) Value {
+	var key strings.Builder
+	key.WriteString("__ta__:")
+	key.WriteString(name)
+	for _, arg := range args {
+		switch arg.Tag() {
+		case TagSeries:
+			key.WriteString(":s:")
+			key.WriteString(fmt.Sprintf("%p", arg.SeriesPtr()))
+		case TagFloat:
+			key.WriteString(":f:")
+			key.WriteString(fmt.Sprintf("%.12g", arg.Float()))
+		case TagBool:
+			key.WriteString(":b:")
+			key.WriteString(fmt.Sprintf("%t", arg.Bool()))
+		case TagString:
+			key.WriteString(":str:")
+			key.WriteString(arg.Str())
+		default:
+			key.WriteString(":tag:")
+			key.WriteString(fmt.Sprintf("%d", arg.Tag()))
+		}
+	}
+	return ip.CaptureSeries(key.String(), value)
+}
 
 // RegisterTABuiltins adds Pine Script-style ta.* functions.
 // These operate on the interpreter's series map.
@@ -23,7 +53,7 @@ func RegisterTABuiltins(ip *Interpreter) {
 		for i := 0; i < length; i++ {
 			sum += s.At(i)
 		}
-		return FloatVal(sum / float64(length))
+		return taSeriesValue(ip, "ta.sma", sum/float64(length), args...)
 	})
 
 	// ta.ema(source, length)
@@ -46,7 +76,7 @@ func RegisterTABuiltins(ip *Interpreter) {
 		for i := 1; i < len(data); i++ {
 			ema = data[i]*k + ema*(1-k)
 		}
-		return FloatVal(ema)
+		return taSeriesValue(ip, "ta.ema", ema, args...)
 	})
 
 	// ta.rsi(source, length)
@@ -81,28 +111,35 @@ func RegisterTABuiltins(ip *Interpreter) {
 		avgGain /= cnt
 		avgLoss /= cnt
 		if avgLoss == 0 {
-			return FloatVal(100)
+			return taSeriesValue(ip, "ta.rsi", 100, args...)
 		}
 		rs := avgGain / avgLoss
-		return FloatVal(100 - 100/(1+rs))
+		return taSeriesValue(ip, "ta.rsi", 100-100/(1+rs), args...)
 	})
 
-	// ta.atr(length) — uses high, low, close series from interpreter.
+	// ta.atr(length) or ta.atr(high, low, close, length)
 	ip.RegisterBuiltin("ta.atr", func(args []Value) Value {
 		if len(args) < 1 {
 			return NaVal()
 		}
-		length := int(args[0].Float())
-		if length <= 0 {
-			return NaVal()
+		var (
+			highS  *Series
+			lowS   *Series
+			closeS *Series
+			length int
+		)
+		if len(args) >= 4 {
+			highS = args[0].SeriesPtr()
+			lowS = args[1].SeriesPtr()
+			closeS = args[2].SeriesPtr()
+			length = int(args[3].Float())
+		} else {
+			length = int(args[0].Float())
+			highS = ip.seriesMap["high"]
+			lowS = ip.seriesMap["low"]
+			closeS = ip.seriesMap["close"]
 		}
-		highS := ip.seriesMap["high"]
-		lowS := ip.seriesMap["low"]
-		closeS := ip.seriesMap["close"]
-		if highS == nil || lowS == nil || closeS == nil {
-			return NaVal()
-		}
-		if highS.Len() < length+1 {
+		if length <= 0 || highS == nil || lowS == nil || closeS == nil || highS.Len() < length+1 || lowS.Len() < length+1 || closeS.Len() < length+1 {
 			return NaVal()
 		}
 		sum := 0.0
@@ -113,7 +150,7 @@ func RegisterTABuiltins(ip *Interpreter) {
 			tr := math.Max(h-l, math.Max(math.Abs(h-c), math.Abs(l-c)))
 			sum += tr
 		}
-		return FloatVal(sum / float64(length))
+		return taSeriesValue(ip, "ta.atr", sum/float64(length), args...)
 	})
 
 	// ta.highest(source, length)
@@ -133,7 +170,7 @@ func RegisterTABuiltins(ip *Interpreter) {
 				mx = v
 			}
 		}
-		return FloatVal(mx)
+		return taSeriesValue(ip, "ta.highest", mx, args...)
 	})
 
 	// ta.lowest(source, length)
@@ -153,7 +190,7 @@ func RegisterTABuiltins(ip *Interpreter) {
 				mn = v
 			}
 		}
-		return FloatVal(mn)
+		return taSeriesValue(ip, "ta.lowest", mn, args...)
 	})
 
 	// ta.stdev(source, length)
@@ -176,10 +213,10 @@ func RegisterTABuiltins(ip *Interpreter) {
 			d := s.At(i) - mean
 			variance += d * d
 		}
-		return FloatVal(math.Sqrt(variance / float64(length)))
+		return taSeriesValue(ip, "ta.stdev", math.Sqrt(variance/float64(length)), args...)
 	})
 
-	// ta.cci(length) or ta.cci(source, length)
+	// ta.cci(length), ta.cci(source, length), or ta.cci(high, low, close, length)
 	ip.RegisterBuiltin("ta.cci", func(args []Value) Value {
 		if len(args) < 1 {
 			return NaVal()
@@ -193,6 +230,18 @@ func RegisterTABuiltins(ip *Interpreter) {
 			highS := ip.seriesMap["high"]
 			lowS := ip.seriesMap["low"]
 			closeS := ip.seriesMap["close"]
+			if highS == nil || lowS == nil || closeS == nil || length <= 0 || highS.Len() < length || lowS.Len() < length || closeS.Len() < length {
+				return NaVal()
+			}
+			source = make([]float64, length)
+			for i := 0; i < length; i++ {
+				source[i] = (highS.At(i) + lowS.At(i) + closeS.At(i)) / 3
+			}
+		} else if len(args) >= 4 {
+			highS := args[0].SeriesPtr()
+			lowS := args[1].SeriesPtr()
+			closeS := args[2].SeriesPtr()
+			length = int(args[3].Float())
 			if highS == nil || lowS == nil || closeS == nil || length <= 0 || highS.Len() < length || lowS.Len() < length || closeS.Len() < length {
 				return NaVal()
 			}
@@ -227,7 +276,7 @@ func RegisterTABuiltins(ip *Interpreter) {
 		if meanDeviation == 0 {
 			return NaVal()
 		}
-		return FloatVal((source[0] - sma) / (0.015 * meanDeviation))
+		return taSeriesValue(ip, "ta.cci", (source[0]-sma)/(0.015*meanDeviation), args...)
 	})
 
 	// ta.crossover(a, b) — true if a[0]>b[0] && a[1]<=b[1]
@@ -269,7 +318,7 @@ func RegisterTABuiltins(ip *Interpreter) {
 		if s == nil || s.Len() <= length {
 			return NaVal()
 		}
-		return FloatVal(s.At(0) - s.At(length))
+		return taSeriesValue(ip, "ta.change", s.At(0)-s.At(length), args...)
 	})
 
 	// ta.cum(source)
@@ -285,7 +334,7 @@ func RegisterTABuiltins(ip *Interpreter) {
 		for _, v := range s.Data() {
 			sum += v
 		}
-		return FloatVal(sum)
+		return taSeriesValue(ip, "ta.cum", sum, args...)
 	})
 
 	// ta.wma(source, length) — linearly-weighted moving average.
@@ -305,7 +354,7 @@ func RegisterTABuiltins(ip *Interpreter) {
 			valueSum += s.At(i) * w
 			weightSum += w
 		}
-		return FloatVal(valueSum / weightSum)
+		return taSeriesValue(ip, "ta.wma", valueSum/weightSum, args...)
 	})
 
 	// ta.bb(source, length, mult) — Bollinger Bands.
@@ -357,7 +406,7 @@ func RegisterTABuiltins(ip *Interpreter) {
 			d := s.At(i) - basis
 			variance += d * d
 		}
-		return FloatVal(basis + mult*math.Sqrt(variance/float64(length)))
+		return taSeriesValue(ip, "ta.bb_upper", basis+mult*math.Sqrt(variance/float64(length)), args...)
 	})
 
 	// ta.bb_lower(source, length, mult) — convenience for the lower band.
@@ -381,7 +430,7 @@ func RegisterTABuiltins(ip *Interpreter) {
 			d := s.At(i) - basis
 			variance += d * d
 		}
-		return FloatVal(basis - mult*math.Sqrt(variance/float64(length)))
+		return taSeriesValue(ip, "ta.bb_lower", basis-mult*math.Sqrt(variance/float64(length)), args...)
 	})
 
 	// ta.barssince(condition) — number of bars since condition was true (0 = current bar).
@@ -449,6 +498,6 @@ func RegisterTABuiltins(ip *Interpreter) {
 				count++
 			}
 		}
-		return FloatVal(float64(count) / float64(length-1) * 100)
+		return taSeriesValue(ip, "ta.percentrank", float64(count)/float64(length-1)*100, args...)
 	})
 }
