@@ -27,6 +27,7 @@ type FlatFileSyncConfig struct {
 	ColdStartDate time.Time
 	StartDate     time.Time
 	EndDate       time.Time
+	SpecificDates []time.Time
 }
 
 type FlatFileAssetResult struct {
@@ -66,6 +67,7 @@ func SyncPolygonFlatFiles(ctx context.Context, cfg FlatFileSyncConfig) (FlatFile
 		coldStartDate:  cfg.ColdStartDate,
 		overrideStart:  cfg.StartDate,
 		overrideEnd:    cfg.EndDate,
+		specificDates:  cfg.SpecificDates,
 		loadLatestDate: LatestStockMarketDate,
 		download:       cfg.Downloader.DownloadStockMinuteAggregates,
 	}, cfg.Conn)
@@ -80,6 +82,7 @@ func SyncPolygonFlatFiles(ctx context.Context, cfg FlatFileSyncConfig) (FlatFile
 		coldStartDate:  cfg.ColdStartDate,
 		overrideStart:  cfg.StartDate,
 		overrideEnd:    cfg.EndDate,
+		specificDates:  cfg.SpecificDates,
 		loadLatestDate: LatestOptionMarketDate,
 		download:       cfg.Downloader.DownloadOptionMinuteAggregates,
 	}, cfg.Conn)
@@ -87,12 +90,47 @@ func SyncPolygonFlatFiles(ctx context.Context, cfg FlatFileSyncConfig) (FlatFile
 		return FlatFileSyncResult{}, err
 	}
 
-	importResult, err := ImportFiles(ctx, cfg.Import, stocks.Files, options.Files, cfg.Sessions)
+	importCfg := cfg.Import
+	if importCfg.ReplaceDates {
+		stockDates, err := collectMarketDatesFromPaths(stocks.Files)
+		if err != nil {
+			return FlatFileSyncResult{Stocks: stocks, Options: options}, fmt.Errorf("collect stock replacement dates: %w", err)
+		}
+		optionDates, err := collectMarketDatesFromPaths(options.Files)
+		if err != nil {
+			return FlatFileSyncResult{Stocks: stocks, Options: options}, fmt.Errorf("collect option replacement dates: %w", err)
+		}
+		if err := ReplaceStockMarketDates(ctx, cfg.Conn, stockDates); err != nil {
+			return FlatFileSyncResult{Stocks: stocks, Options: options}, fmt.Errorf("replace stock dates: %w", err)
+		}
+		if err := ReplaceOptionMarketDates(ctx, cfg.Conn, optionDates); err != nil {
+			return FlatFileSyncResult{Stocks: stocks, Options: options}, fmt.Errorf("replace option dates: %w", err)
+		}
+		importCfg.ReplaceDates = false
+		importCfg.SkipExisting = false
+	}
+
+	importResult, err := ImportFiles(ctx, importCfg, stocks.Files, options.Files, cfg.Sessions)
 	if err != nil {
 		return FlatFileSyncResult{Stocks: stocks, Options: options, Import: importResult}, err
 	}
 
 	return FlatFileSyncResult{Stocks: stocks, Options: options, Import: importResult}, nil
+}
+
+func collectMarketDatesFromPaths(paths []string) ([]time.Time, error) {
+	if len(paths) == 0 {
+		return nil, nil
+	}
+	dates := make([]time.Time, 0, len(paths))
+	for _, path := range paths {
+		marketDate, err := ExtractDateFromFilename(path)
+		if err != nil {
+			return nil, err
+		}
+		dates = append(dates, marketDate)
+	}
+	return normalizeUniqueUTCDates(dates), nil
 }
 
 type flatFileAssetConfig struct {
@@ -102,6 +140,7 @@ type flatFileAssetConfig struct {
 	coldStartDate  time.Time
 	overrideStart  time.Time
 	overrideEnd    time.Time
+	specificDates  []time.Time
 	loadLatestDate func(context.Context, driver.Conn) (time.Time, bool, error)
 	download       func(context.Context, time.Time, bool) (string, error)
 }
@@ -122,6 +161,25 @@ func syncFlatFileAsset(ctx context.Context, cfg flatFileAssetConfig, conn driver
 		LastImported:    latest,
 		HasImportedData: hasData,
 		StartDate:       startDate,
+	}
+
+	explicitDates := normalizeUniqueUTCDates(cfg.specificDates)
+	if len(explicitDates) > 0 {
+		result.StartDate = explicitDates[0]
+		result.ScanEnd = explicitDates[len(explicitDates)-1]
+		files, lastDownloaded, err := downloadFlatFileDates(ctx, explicitDates, cfg.forceDownload, cfg.download)
+		if err != nil {
+			return FlatFileAssetResult{}, fmt.Errorf("download %s flatfiles: %w", cfg.assetClass, err)
+		}
+		result.Files = files
+		result.LastDownloaded = lastDownloaded
+
+		if len(files) == 0 {
+			log.Printf("No requested %s flatfiles were available for %d explicit dates", cfg.assetClass, len(explicitDates))
+		} else {
+			log.Printf("Downloaded %d %s flatfiles for %d explicit dates from %s through %s", len(files), cfg.assetClass, len(explicitDates), explicitDates[0].Format("2006-01-02"), explicitDates[len(explicitDates)-1].Format("2006-01-02"))
+		}
+		return result, nil
 	}
 
 	if startDate.IsZero() {
@@ -212,4 +270,53 @@ func downloadFlatFileRange(ctx context.Context, startDate, endDate time.Time, fo
 
 	sort.Strings(files)
 	return files, lastDownloaded, nil
+}
+
+func downloadFlatFileDates(ctx context.Context, dates []time.Time, force bool, download func(context.Context, time.Time, bool) (string, error)) ([]string, time.Time, error) {
+	normalized := normalizeUniqueUTCDates(dates)
+	if len(normalized) == 0 {
+		return nil, time.Time{}, nil
+	}
+
+	var (
+		files          []string
+		lastDownloaded time.Time
+	)
+	for _, current := range normalized {
+		if err := ctx.Err(); err != nil {
+			return nil, time.Time{}, err
+		}
+		path, err := download(ctx, current, force)
+		if err != nil {
+			if polygonpkg.IsHTTPStatus(err, http.StatusNotFound) {
+				continue
+			}
+			return nil, time.Time{}, fmt.Errorf("download %s: %w", current.Format("2006-01-02"), err)
+		}
+		files = append(files, path)
+		lastDownloaded = current
+	}
+
+	sort.Strings(files)
+	return files, lastDownloaded, nil
+}
+
+func normalizeUniqueUTCDates(values []time.Time) []time.Time {
+	if len(values) == 0 {
+		return nil
+	}
+	seen := make(map[string]time.Time, len(values))
+	for _, value := range values {
+		if value.IsZero() {
+			continue
+		}
+		normalized := normalizeUTCDay(value)
+		seen[normalized.Format("2006-01-02")] = normalized
+	}
+	out := make([]time.Time, 0, len(seen))
+	for _, value := range seen {
+		out = append(out, value)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Before(out[j]) })
+	return out
 }

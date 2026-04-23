@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -29,6 +30,8 @@ func main() {
 	forceDownload := flag.Bool("force-download", false, "Force re-download even if a flat file already exists in the local cache")
 	startDateFlag := flag.String("start-date", "", "Override sync start market date (YYYY-MM-DD)")
 	endDateFlag := flag.String("end-date", "", "Override sync end market date (YYYY-MM-DD); defaults to yesterday when omitted")
+	dateListFlag := flag.String("dates", "", "Comma-separated explicit market dates to sync (YYYY-MM-DD,YYYY-MM-DD)")
+	dateFileFlag := flag.String("dates-file", "", "Path to a file containing one explicit market date per line")
 	confirmColdStart := flag.Bool("confirm-cold-start", false, "Acknowledge that empty us-market tables will start syncing from the requested start date")
 	flag.Parse()
 
@@ -38,12 +41,14 @@ func main() {
 	if strings.TrimSpace(runtimeCfg.Polygon.FlatFilesCacheDir) == "" {
 		log.Fatal("polygon.flat_files_cache_dir is required; specify a local cache directory in runtime config")
 	}
-	requestedStartDate, requestedEndDate, err := resolveRequestedDateRange(*startDateFlag, *endDateFlag)
+	requestedStartDate, requestedEndDate, specificDates, err := resolveRequestedSyncScope(*startDateFlag, *endDateFlag, *dateListFlag, *dateFileFlag)
 	if err != nil {
-		log.Fatalf("parse sync date range: %v", err)
+		log.Fatalf("parse sync scope: %v", err)
 	}
 	effectiveColdStartDate := coldStartDate
-	if !requestedStartDate.IsZero() {
+	if len(specificDates) > 0 {
+		effectiveColdStartDate = specificDates[0]
+	} else if !requestedStartDate.IsZero() {
 		effectiveColdStartDate = requestedStartDate
 	}
 
@@ -71,7 +76,7 @@ func main() {
 	}
 
 	sessions, err := usmarket.InitializeImportStorageWithOptions(ctx, conn, ddlFile, usmarket.ImportStorageOptions{
-		PrecomputedCoverageScope: coverageBootstrapScope(requestedStartDate, requestedEndDate),
+		PrecomputedCoverageScope: coverageBootstrapScope(requestedStartDate, requestedEndDate, specificDates),
 	})
 	if err != nil {
 		log.Fatalf("initialize import storage: %v", err)
@@ -85,11 +90,13 @@ func main() {
 		ColdStartDate: effectiveColdStartDate,
 		StartDate:     requestedStartDate,
 		EndDate:       requestedEndDate,
+		SpecificDates: specificDates,
 		Import: usmarket.ImportConfig{
 			DSN:          *dsn,
 			BatchSize:    *batchSize,
 			Workers:      *workers,
-			SkipExisting: *skipExisting,
+			SkipExisting: *skipExisting && len(specificDates) == 0,
+			ReplaceDates: len(specificDates) > 0,
 			RiskFreeRate: *riskFreeRate,
 		},
 	})
@@ -194,19 +201,30 @@ func requireColdStartConfirmation(states []usmarket.FlatFileAssetState, confirme
 	return nil
 }
 
-func resolveRequestedDateRange(startValue, endValue string) (time.Time, time.Time, error) {
+func resolveRequestedSyncScope(startValue, endValue, datesValue, dateFile string) (time.Time, time.Time, []time.Time, error) {
+	specificDates, err := resolveSpecificDates(datesValue, dateFile)
+	if err != nil {
+		return time.Time{}, time.Time{}, nil, err
+	}
+	if len(specificDates) > 0 {
+		if strings.TrimSpace(startValue) != "" || strings.TrimSpace(endValue) != "" {
+			return time.Time{}, time.Time{}, nil, fmt.Errorf("--dates/--dates-file cannot be combined with --start-date/--end-date")
+		}
+		return time.Time{}, time.Time{}, specificDates, nil
+	}
+
 	start, err := parseOptionalDate(startValue)
 	if err != nil {
-		return time.Time{}, time.Time{}, fmt.Errorf("start-date: %w", err)
+		return time.Time{}, time.Time{}, nil, fmt.Errorf("start-date: %w", err)
 	}
 	end, err := parseOptionalDate(endValue)
 	if err != nil {
-		return time.Time{}, time.Time{}, fmt.Errorf("end-date: %w", err)
+		return time.Time{}, time.Time{}, nil, fmt.Errorf("end-date: %w", err)
 	}
 	if !start.IsZero() && !end.IsZero() && end.Before(start) {
-		return time.Time{}, time.Time{}, fmt.Errorf("end-date %s is before start-date %s", end.Format("2006-01-02"), start.Format("2006-01-02"))
+		return time.Time{}, time.Time{}, nil, fmt.Errorf("end-date %s is before start-date %s", end.Format("2006-01-02"), start.Format("2006-01-02"))
 	}
-	return start, end, nil
+	return start, end, nil, nil
 }
 
 func parseOptionalDate(value string) (time.Time, error) {
@@ -221,7 +239,10 @@ func parseOptionalDate(value string) (time.Time, error) {
 	return parsed.UTC(), nil
 }
 
-func coverageBootstrapScope(startDate, endDate time.Time) usmarket.KlineBackfillOptions {
+func coverageBootstrapScope(startDate, endDate time.Time, specificDates []time.Time) usmarket.KlineBackfillOptions {
+	if len(specificDates) > 0 {
+		return usmarket.KlineBackfillOptions{}
+	}
 	if startDate.IsZero() && endDate.IsZero() {
 		return usmarket.KlineBackfillOptions{}
 	}
@@ -230,6 +251,56 @@ func coverageBootstrapScope(startDate, endDate time.Time) usmarket.KlineBackfill
 		scope.To = endDate.Add(24 * time.Hour)
 	}
 	return scope
+}
+
+func resolveSpecificDates(datesValue, dateFile string) ([]time.Time, error) {
+	var raw []string
+	if trimmed := strings.TrimSpace(datesValue); trimmed != "" {
+		for _, part := range strings.Split(trimmed, ",") {
+			raw = append(raw, part)
+		}
+	}
+	if trimmed := strings.TrimSpace(dateFile); trimmed != "" {
+		file, err := os.Open(trimmed)
+		if err != nil {
+			return nil, fmt.Errorf("open dates-file: %w", err)
+		}
+		defer file.Close()
+
+		scanner := bufio.NewScanner(file)
+		for scanner.Scan() {
+			raw = append(raw, scanner.Text())
+		}
+		if err := scanner.Err(); err != nil {
+			return nil, fmt.Errorf("read dates-file: %w", err)
+		}
+	}
+	if len(raw) == 0 {
+		return nil, nil
+	}
+
+	seen := make(map[string]time.Time, len(raw))
+	for _, item := range raw {
+		trimmed := strings.TrimSpace(item)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		parsed, err := time.Parse("2006-01-02", trimmed)
+		if err != nil {
+			return nil, fmt.Errorf("invalid explicit date %q: %w", trimmed, err)
+		}
+		parsed = parsed.UTC()
+		seen[parsed.Format("2006-01-02")] = parsed
+	}
+	if len(seen) == 0 {
+		return nil, nil
+	}
+	out := make([]time.Time, 0, len(seen))
+	for _, value := range seen {
+		out = append(out, value)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Before(out[j]) })
+	return out, nil
 }
 
 func coldStartAssetClasses(states []usmarket.FlatFileAssetState) []string {

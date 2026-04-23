@@ -249,6 +249,73 @@ func CountExistingStockBars(ctx context.Context, conn driver.Conn, marketDate ti
 	return count, nil
 }
 
+func ReplaceOptionMarketDate(ctx context.Context, conn driver.Conn, marketDate time.Time) error {
+	return ReplaceOptionMarketDates(ctx, conn, []time.Time{marketDate})
+}
+
+func ReplaceStockMarketDate(ctx context.Context, conn driver.Conn, marketDate time.Time) error {
+	return ReplaceStockMarketDates(ctx, conn, []time.Time{marketDate})
+}
+
+func ReplaceOptionMarketDates(ctx context.Context, conn driver.Conn, marketDates []time.Time) error {
+	dates := normalizeUniqueUTCDates(marketDates)
+	if len(dates) == 0 {
+		return nil
+	}
+	dateArgs := make([]string, 0, len(dates))
+	for _, date := range dates {
+		dateArgs = append(dateArgs, date.Format("2006-01-02"))
+	}
+	if err := conn.Exec(ctx, `ALTER TABLE us_options_bar_1m DELETE WHERE market_date IN {dates:Array(Date)} SETTINGS mutations_sync = 1`, clickhouse.Named("dates", dateArgs)); err != nil {
+		return fmt.Errorf("delete option base rows: %w", err)
+	}
+	for _, iv := range KlineIntervals {
+		aggTable := "us_options_bar_" + iv.Suffix + "_agg"
+		if err := deleteAggRowsByDates(ctx, conn, aggTable, dateArgs); err != nil {
+			return fmt.Errorf("delete option aggregate %s: %w", iv.Suffix, err)
+		}
+	}
+	for _, iv := range DefaultChainCacheIntervals {
+		aggTable := "us_options_chain_" + iv.Suffix + "_agg"
+		if err := deleteAggRowsByDates(ctx, conn, aggTable, dateArgs); err != nil {
+			return fmt.Errorf("delete option chain aggregate %s: %w", iv.Suffix, err)
+		}
+	}
+	return nil
+}
+
+func ReplaceStockMarketDates(ctx context.Context, conn driver.Conn, marketDates []time.Time) error {
+	dates := normalizeUniqueUTCDates(marketDates)
+	if len(dates) == 0 {
+		return nil
+	}
+	dateArgs := make([]string, 0, len(dates))
+	for _, date := range dates {
+		dateArgs = append(dateArgs, date.Format("2006-01-02"))
+	}
+	if err := conn.Exec(ctx, `ALTER TABLE us_stocks_bar_1m DELETE WHERE market_date IN {dates:Array(Date)} SETTINGS mutations_sync = 1`, clickhouse.Named("dates", dateArgs)); err != nil {
+		return fmt.Errorf("delete stock base rows: %w", err)
+	}
+	for _, iv := range KlineIntervals {
+		aggTable := "us_stocks_bar_" + iv.Suffix + "_agg"
+		if err := deleteAggRowsByDates(ctx, conn, aggTable, dateArgs); err != nil {
+			return fmt.Errorf("delete stock aggregate %s: %w", iv.Suffix, err)
+		}
+	}
+	return nil
+}
+
+func deleteAggRowsByDates(ctx context.Context, conn driver.Conn, table string, marketDates []string) error {
+	if len(marketDates) == 0 {
+		return nil
+	}
+	query := fmt.Sprintf("ALTER TABLE %s DELETE WHERE toDate(ts, 'UTC') IN {dates:Array(Date)} SETTINGS mutations_sync = 1", table)
+	if err := conn.Exec(ctx, query, clickhouse.Named("dates", marketDates)); err != nil {
+		return fmt.Errorf("delete aggregate rows by dates: %w", err)
+	}
+	return nil
+}
+
 func LatestOptionMarketDate(ctx context.Context, conn driver.Conn) (time.Time, bool, error) {
 	return latestMarketDate(ctx, conn, "us_options_bar_1m")
 }

@@ -20,6 +20,7 @@ type ImportConfig struct {
 	BatchSize    int
 	Workers      int
 	SkipExisting bool
+	ReplaceDates bool
 	RiskFreeRate float64
 }
 
@@ -108,7 +109,7 @@ func ImportFiles(ctx context.Context, cfg ImportConfig, stockFiles, optionFiles 
 			defer wg.Done()
 			defer func() { <-sem }()
 
-			rows, wasSkipped, err := ImportStockFile(ctx, cfg.DSN, path, cfg.BatchSize, cfg.SkipExisting, sessions)
+			rows, wasSkipped, err := ImportStockFile(ctx, cfg.DSN, path, cfg.BatchSize, cfg.SkipExisting, cfg.ReplaceDates, sessions)
 			if err != nil {
 				log.Printf("[ERROR] %s: %v", filepath.Base(path), err)
 				atomic.AddInt64(&failed, 1)
@@ -147,7 +148,7 @@ func ImportFiles(ctx context.Context, cfg ImportConfig, stockFiles, optionFiles 
 			defer wg.Done()
 			defer func() { <-sem }()
 
-			rows, wasSkipped, err := ImportOptionFile(ctx, cfg.DSN, path, cfg.BatchSize, cfg.SkipExisting, cfg.RiskFreeRate, sessions)
+			rows, wasSkipped, err := ImportOptionFile(ctx, cfg.DSN, path, cfg.BatchSize, cfg.SkipExisting, cfg.ReplaceDates, cfg.RiskFreeRate, sessions)
 			if err != nil {
 				log.Printf("[ERROR] %s: %v", filepath.Base(path), err)
 				atomic.AddInt64(&failed, 1)
@@ -211,7 +212,7 @@ func ExtractDateFromFilename(path string) (time.Time, error) {
 	return t.UTC(), nil
 }
 
-func ImportOptionFile(ctx context.Context, dsn, path string, batchSize int, skipExisting bool, riskFreeRate float64, sessions SessionMap) (int64, bool, error) {
+func ImportOptionFile(ctx context.Context, dsn, path string, batchSize int, skipExisting, replaceDates bool, riskFreeRate float64, sessions SessionMap) (int64, bool, error) {
 	baseName := filepath.Base(path)
 	log.Printf("[START] option %s", baseName)
 	fileStart := time.Now()
@@ -226,13 +227,18 @@ func ImportOptionFile(ctx context.Context, dsn, path string, batchSize int, skip
 		return 0, false, fmt.Errorf("extract market date: %w", err)
 	}
 
-	if skipExisting {
+	if !replaceDates && skipExisting {
 		count, err := CountExistingOptionBars(ctx, conn, marketDate)
 		if err != nil {
 			return 0, false, fmt.Errorf("check existing: %w", err)
 		}
 		if count > 0 {
 			return 0, true, nil
+		}
+	}
+	if replaceDates {
+		if err := ReplaceOptionMarketDate(ctx, conn, marketDate); err != nil {
+			return 0, false, fmt.Errorf("replace existing option date: %w", err)
 		}
 	}
 
@@ -267,7 +273,7 @@ func ImportOptionFile(ctx context.Context, dsn, path string, batchSize int, skip
 	return rows, false, nil
 }
 
-func ImportStockFile(ctx context.Context, dsn, path string, batchSize int, skipExisting bool, sessions SessionMap) (int64, bool, error) {
+func ImportStockFile(ctx context.Context, dsn, path string, batchSize int, skipExisting, replaceDates bool, sessions SessionMap) (int64, bool, error) {
 	baseName := filepath.Base(path)
 	log.Printf("[START] stock %s", baseName)
 	fileStart := time.Now()
@@ -277,7 +283,15 @@ func ImportStockFile(ctx context.Context, dsn, path string, batchSize int, skipE
 		return 0, false, fmt.Errorf("connect: %w", err)
 	}
 
-	if skipExisting {
+	if replaceDates {
+		marketDate, err := ExtractDateFromFilename(path)
+		if err != nil {
+			return 0, false, fmt.Errorf("extract market date: %w", err)
+		}
+		if err := ReplaceStockMarketDate(ctx, conn, marketDate); err != nil {
+			return 0, false, fmt.Errorf("replace existing stock date: %w", err)
+		}
+	} else if skipExisting {
 		marketDate, err := ExtractDateFromFilename(path)
 		if err == nil {
 			count, err := CountExistingStockBars(ctx, conn, marketDate)

@@ -85,6 +85,33 @@ func TestDownloadFlatFileRangeReturnsZeroLastDownloadedWhenAllDatesMissing(t *te
 	}
 }
 
+func TestDownloadFlatFileDatesRequestsOnlyNormalizedUniqueDates(t *testing.T) {
+	ctx := context.Background()
+	var requested []string
+	files, lastDownloaded, err := downloadFlatFileDates(ctx, []time.Time{
+		time.Date(2026, 4, 10, 9, 0, 0, 0, time.UTC),
+		time.Date(2026, 4, 7, 15, 0, 0, 0, time.UTC),
+		time.Date(2026, 4, 7, 9, 0, 0, 0, time.UTC),
+	}, false, func(_ context.Context, date time.Time, _ bool) (string, error) {
+		requested = append(requested, date.UTC().Format("2006-01-02"))
+		return "/tmp/" + date.UTC().Format("2006-01-02") + ".csv.gz", nil
+	})
+	if err != nil {
+		t.Fatalf("downloadFlatFileDates failed: %v", err)
+	}
+	wantRequests := []string{"2026-04-07", "2026-04-10"}
+	if !reflect.DeepEqual(requested, wantRequests) {
+		t.Fatalf("unexpected requested dates: got=%v want=%v", requested, wantRequests)
+	}
+	wantFiles := []string{"/tmp/2026-04-07.csv.gz", "/tmp/2026-04-10.csv.gz"}
+	if !reflect.DeepEqual(files, wantFiles) {
+		t.Fatalf("unexpected files: got=%v want=%v", files, wantFiles)
+	}
+	if got := lastDownloaded.Format("2006-01-02"); got != "2026-04-10" {
+		t.Fatalf("unexpected last downloaded date: %s", got)
+	}
+}
+
 func TestResolveFlatFileStartDate(t *testing.T) {
 	latest := time.Date(2026, 4, 8, 13, 0, 0, 0, time.UTC)
 	start, err := resolveFlatFileStartDate("stocks", latest, true, time.Date(2023, 1, 1, 0, 0, 0, 0, time.UTC), time.Time{})
