@@ -496,6 +496,9 @@ ORDER BY as_of_date ASC, expiration ASC`, featureTermStructureTable),
 		row.Expiration = row.Expiration.UTC()
 		row.DaysToExpiry = int(daysToExpiry)
 		row.ContractCount = int(contractCount)
+		row.ATMIV = sanitizeF64Ptr(row.ATMIV)
+		row.CallIV = sanitizeF64Ptr(row.CallIV)
+		row.PutIV = sanitizeF64Ptr(row.PutIV)
 		resp.Data = append(resp.Data, row)
 	}
 	if err := rows.Err(); err != nil {
@@ -569,6 +572,9 @@ ORDER BY as_of_date ASC, expiration ASC`, featureSkewTable),
 		row.Expiration = row.Expiration.UTC()
 		row.DaysToExpiry = int(daysToExpiry)
 		row.ContractCount = int(contractCount)
+		row.OTMCallIV = sanitizeF64Ptr(row.OTMCallIV)
+		row.OTMPutIV = sanitizeF64Ptr(row.OTMPutIV)
+		row.PutCallSkew = sanitizeF64Ptr(row.PutCallSkew)
 		resp.Data = append(resp.Data, row)
 	}
 	if err := rows.Err(); err != nil {
@@ -1164,6 +1170,11 @@ ORDER BY as_of_date ASC, expiration ASC`
 		row.Expiration = row.Expiration.UTC()
 		row.DaysToExpiry = int(daysToExpiry)
 		row.ContractCount = int(contractCount)
+		row.ATMIV = sanitizeF64Ptr(row.ATMIV)
+		row.CallIV = sanitizeF64Ptr(row.CallIV)
+		row.PutIV = sanitizeF64Ptr(row.PutIV)
+		row.OTMCallIV = sanitizeF64Ptr(row.OTMCallIV)
+		row.OTMPutIV = sanitizeF64Ptr(row.OTMPutIV)
 		aggregates = append(aggregates, row)
 	}
 	if err := rows.Err(); err != nil {
@@ -1265,6 +1276,11 @@ ORDER BY as_of_date ASC, expiration ASC`
 		row.ContractCount = int(contractCount)
 		row.TradableContractCount = int(tradableContractCount)
 		row.ActiveContractCount = int(contractCount)
+		row.AvgBidClose = sanitizeF64Ptr(row.AvgBidClose)
+		row.AvgAskClose = sanitizeF64Ptr(row.AvgAskClose)
+		row.AvgMarkClose = sanitizeF64Ptr(row.AvgMarkClose)
+		row.RelativeSpread = sanitizeF64Ptr(row.RelativeSpread)
+		row.OpenInterest = sanitizeF64Ptr(row.OpenInterest)
 		aggregates = append(aggregates, row)
 	}
 	if err := rows.Err(); err != nil {
@@ -1349,6 +1365,7 @@ ORDER BY as_of_date ASC, expiration ASC`
 		row.Transactions = int(transactions)
 		row.ContractCount = int(contractCount)
 		row.ActiveContractCount = int(activeContractCount)
+		row.AvgMarkClose = sanitizeF64Ptr(row.AvgMarkClose)
 		aggregates = append(aggregates, row)
 	}
 	if err := rows.Err(); err != nil {
@@ -1753,6 +1770,9 @@ ORDER BY expiration ASC`, featureTermStructureTable),
 		row.Expiration = row.Expiration.UTC()
 		row.DaysToExpiry = int(daysToExpiry)
 		row.ContractCount = int(contractCount)
+		row.ATMIV = sanitizeF64Ptr(row.ATMIV)
+		row.CallIV = sanitizeF64Ptr(row.CallIV)
+		row.PutIV = sanitizeF64Ptr(row.PutIV)
 		resp.Data = append(resp.Data, row)
 	}
 	if err := rows.Err(); err != nil {
@@ -1807,6 +1827,9 @@ ORDER BY expiration ASC`, featureSkewTable),
 		row.Expiration = row.Expiration.UTC()
 		row.DaysToExpiry = int(daysToExpiry)
 		row.ContractCount = int(contractCount)
+		row.OTMCallIV = sanitizeF64Ptr(row.OTMCallIV)
+		row.OTMPutIV = sanitizeF64Ptr(row.OTMPutIV)
+		row.PutCallSkew = sanitizeF64Ptr(row.PutCallSkew)
 		resp.Data = append(resp.Data, row)
 	}
 	if err := rows.Err(); err != nil {
@@ -1880,6 +1903,13 @@ ORDER BY expiration ASC`, featureLiquidityTable),
 		row.ContractCount = int(contractCount)
 		row.ActiveContractCount = int(activeContractCount)
 		row.TradableContractCount = int(tradableContractCount)
+		row.AvgBidClose = sanitizeF64Ptr(row.AvgBidClose)
+		row.AvgAskClose = sanitizeF64Ptr(row.AvgAskClose)
+		row.AvgMarkClose = sanitizeF64Ptr(row.AvgMarkClose)
+		row.RelativeSpread = sanitizeF64Ptr(row.RelativeSpread)
+		row.OpenInterest = sanitizeF64Ptr(row.OpenInterest)
+		row.ActivityRatio = sanitizeF64Ptr(row.ActivityRatio)
+		row.TradabilityRatio = sanitizeF64Ptr(row.TradabilityRatio)
 		resp.Data = append(resp.Data, row)
 	}
 	if err := rows.Err(); err != nil {
@@ -1953,6 +1983,13 @@ ORDER BY as_of_date ASC, expiration ASC`, featureLiquidityTable),
 		row.ContractCount = int(contractCount)
 		row.ActiveContractCount = int(activeContractCount)
 		row.TradableContractCount = int(tradableContractCount)
+		row.AvgBidClose = sanitizeF64Ptr(row.AvgBidClose)
+		row.AvgAskClose = sanitizeF64Ptr(row.AvgAskClose)
+		row.AvgMarkClose = sanitizeF64Ptr(row.AvgMarkClose)
+		row.RelativeSpread = sanitizeF64Ptr(row.RelativeSpread)
+		row.OpenInterest = sanitizeF64Ptr(row.OpenInterest)
+		row.ActivityRatio = sanitizeF64Ptr(row.ActivityRatio)
+		row.TradabilityRatio = sanitizeF64Ptr(row.TradabilityRatio)
 		history = append(history, row)
 	}
 	if err := rows.Err(); err != nil {
@@ -2067,6 +2104,19 @@ ORDER BY as_of_date ASC`, featureDailyPanelTable),
 			return nil, false, fmt.Errorf("scan precomputed daily feature panel row: %w", err)
 		}
 		row.Date = row.Date.UTC()
+		// Sanitize float64 pointers that ClickHouse may have stored as NaN/Inf.
+		row.HV10 = sanitizeF64Ptr(row.HV10)
+		row.HV20 = sanitizeF64Ptr(row.HV20)
+		row.HV30 = sanitizeF64Ptr(row.HV30)
+		row.CurrentIV = sanitizeF64Ptr(row.CurrentIV)
+		row.IVPercentile = sanitizeF64Ptr(row.IVPercentile)
+		row.IVRank = sanitizeF64Ptr(row.IVRank)
+		row.FrontATMIV = sanitizeF64Ptr(row.FrontATMIV)
+		row.FrontPutCallSkew = sanitizeF64Ptr(row.FrontPutCallSkew)
+		row.LiquidityOpenInterest = sanitizeF64Ptr(row.LiquidityOpenInterest)
+		row.LiquidityRelativeSpread = sanitizeF64Ptr(row.LiquidityRelativeSpread)
+		row.LiquidityActivityRatio = sanitizeF64Ptr(row.LiquidityActivityRatio)
+		row.LiquidityTradabilityRatio = sanitizeF64Ptr(row.LiquidityTradabilityRatio)
 		if !frontExpiration.IsZero() && frontExpiration.UTC().Unix() != 0 {
 			expiration := frontExpiration.UTC()
 			row.FrontExpiration = &expiration
@@ -3326,4 +3376,16 @@ func nullableFloat64(value *float64) any {
 
 func isFinitePositive(value float64) bool {
 	return !math.IsNaN(value) && !math.IsInf(value, 0) && value > 0
+}
+
+// sanitizeF64Ptr converts a *float64 that holds NaN or ±Inf to nil so it
+// serialises as JSON null instead of causing "unsupported value: NaN/Inf".
+func sanitizeF64Ptr(p *float64) *float64 {
+	if p == nil {
+		return nil
+	}
+	if math.IsNaN(*p) || math.IsInf(*p, 0) {
+		return nil
+	}
+	return p
 }
