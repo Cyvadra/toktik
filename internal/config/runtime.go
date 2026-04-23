@@ -53,6 +53,7 @@ const (
 	defaultRedisKeyPrefix    = "toktik"
 	defaultRedisAddr         = "127.0.0.1:6379"
 	defaultPolygonTimeoutSec = 60
+	defaultReportsRoot       = "reports/backtests"
 )
 
 type Runtime struct {
@@ -84,13 +85,16 @@ type APIServer struct {
 }
 
 type API struct {
-	CORSOrigins  []string `yaml:"cors_origins"`
-	APIKeys      []string `yaml:"api_keys"`
-	RateLimitRPS float64  `yaml:"rate_limit_rps"`
+	CORSOrigins           []string `yaml:"cors_origins"`
+	APIKeys               []string `yaml:"api_keys"`
+	RateLimitRPS          float64  `yaml:"rate_limit_rps"`
+	TrustedProxies        []string `yaml:"trusted_proxies"`
+	RequestTimeoutSeconds int      `yaml:"request_timeout_seconds"`
 }
 
 type Paths struct {
-	SchemaDir string `yaml:"schema_dir"`
+	SchemaDir   string `yaml:"schema_dir"`
+	ReportsRoot string `yaml:"reports_root"`
 }
 
 type Deribit struct {
@@ -218,10 +222,12 @@ func DefaultRuntime() Runtime {
 			IdleTimeoutSeconds:       120,
 		},
 		API: API{
-			RateLimitRPS: 50,
+			RateLimitRPS:          50,
+			RequestTimeoutSeconds: 30,
 		},
 		Paths: Paths{
-			SchemaDir: defaultSchemaDir,
+			SchemaDir:   defaultSchemaDir,
+			ReportsRoot: defaultReportsRoot,
 		},
 		Deribit: Deribit{
 			BaseURL: defaultDeribitBaseURL,
@@ -442,13 +448,21 @@ func (c *Runtime) normalize() {
 	}
 	c.API.CORSOrigins = normalizeCSVList(c.API.CORSOrigins)
 	c.API.APIKeys = normalizeCSVList(c.API.APIKeys)
+	c.API.TrustedProxies = normalizeCSVList(c.API.TrustedProxies)
 	if c.API.RateLimitRPS <= 0 {
 		c.API.RateLimitRPS = 50
+	}
+	if c.API.RequestTimeoutSeconds <= 0 {
+		c.API.RequestTimeoutSeconds = 30
 	}
 	if strings.TrimSpace(c.Paths.SchemaDir) == "" {
 		c.Paths.SchemaDir = defaultSchemaDir
 	}
 	c.Paths.SchemaDir = filepath.Clean(c.Paths.SchemaDir)
+	if strings.TrimSpace(c.Paths.ReportsRoot) == "" {
+		c.Paths.ReportsRoot = defaultReportsRoot
+	}
+	c.Paths.ReportsRoot = filepath.Clean(c.Paths.ReportsRoot)
 	if strings.TrimSpace(c.Deribit.BaseURL) == "" {
 		c.Deribit.BaseURL = defaultDeribitBaseURL
 	}
@@ -616,6 +630,11 @@ func (c Runtime) APIServerWriteTimeout() time.Duration {
 
 func (c Runtime) APIServerIdleTimeout() time.Duration {
 	return time.Duration(c.APIServer.IdleTimeoutSeconds) * time.Second
+}
+
+// APIRequestTimeout returns the per-request handler timeout.
+func (c Runtime) APIRequestTimeout() time.Duration {
+	return time.Duration(c.API.RequestTimeoutSeconds) * time.Second
 }
 
 func (c Runtime) SchemaPathCandidates(fileName string) []string {

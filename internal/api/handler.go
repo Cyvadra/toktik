@@ -7,13 +7,19 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Cyvadra/toktik/internal/dto"
 	polygonpkg "github.com/Cyvadra/toktik/pkg/polygon"
 	"github.com/gin-gonic/gin"
 )
+
+// sseKeepaliveInterval is how often a comment heartbeat is written to
+// keep idle SSE connections from being reaped by reverse proxies.
+const sseKeepaliveInterval = 25 * time.Second
 
 // Handler holds references to service layer dependencies.
 type Handler struct {
@@ -29,10 +35,38 @@ type Handler struct {
 	strategyCatalog   StrategyCatalogProvider
 	factors           FactorProvider
 	polygon           PolygonProvider
+
+	// reportsRoot is the directory on disk under which all backtest
+	// HTML reports must live. Any path outside this root is rejected
+	// by resolveStrategyBacktestReportPath. Must be an absolute path
+	// once the handler is constructed.
+	reportsRoot string
 }
 
-func NewHandler(cos CryptoOptionsQuerier, usStocks USStocksQuerier, usOptions USOptionsQuerier, infra InfraProvider, features FeatureProvider, indicators IndicatorSeriesProvider, strategyBacktests StrategyBacktestProvider, cryptoSpot CryptoSpotQuerier, screener ScreenerProvider, strategyCatalog StrategyCatalogProvider, factors FactorProvider, polygon PolygonProvider) *Handler {
-	return &Handler{cryptoOptions: cos, usStocks: usStocks, usOptions: usOptions, infra: infra, features: features, indicators: indicators, strategyBacktests: strategyBacktests, cryptoSpot: cryptoSpot, screener: screener, strategyCatalog: strategyCatalog, factors: factors, polygon: polygon}
+// NewHandler builds a Handler from a populated Deps struct.
+func NewHandler(d Deps) *Handler {
+	root := strings.TrimSpace(d.Config.Paths.ReportsRoot)
+	if root == "" {
+		root = "reports/backtests"
+	}
+	if abs, err := filepath.Abs(root); err == nil {
+		root = abs
+	}
+	return &Handler{
+		cryptoOptions:     d.CryptoOptions,
+		usStocks:          d.USStocks,
+		usOptions:         d.USOptions,
+		infra:             d.Infra,
+		features:          d.Features,
+		indicators:        d.Indicators,
+		strategyBacktests: d.StrategyBacktests,
+		cryptoSpot:        d.CryptoSpot,
+		screener:          d.Screener,
+		strategyCatalog:   d.StrategyCatalog,
+		factors:           d.Factors,
+		polygon:           d.Polygon,
+		reportsRoot:       root,
+	}
 }
 
 // handleServiceError maps service-level errors to appropriate HTTP responses.
@@ -182,7 +216,7 @@ func decorateBacktestRunStatus(resp *dto.StrategyBacktestRunStatus) *dto.Strateg
 	return &copy
 }
 
-func resolveStrategyBacktestReportPath(status *dto.StrategyBacktestRunStatus, reportID string) (string, error) {
+func (h *Handler) resolveStrategyBacktestReportPath(status *dto.StrategyBacktestRunStatus, reportID string) (string, error) {
 	if status == nil {
 		return "", dto.NewNotFoundError("backtest run not found")
 	}
@@ -190,33 +224,65 @@ func resolveStrategyBacktestReportPath(status *dto.StrategyBacktestRunStatus, re
 		return "", dto.NewNotFoundError("backtest report is not ready")
 	}
 	trimmed := strings.TrimSpace(reportID)
-	if trimmed == "" {
+	var candidate string
+	switch {
+	case trimmed == "":
 		if strings.TrimSpace(status.Result.OverviewHTMLPath) != "" {
-			return status.Result.OverviewHTMLPath, nil
+			candidate = status.Result.OverviewHTMLPath
+		} else if len(status.Result.Summaries) > 0 {
+			candidate = strings.TrimSpace(status.Result.Summaries[0].HTMLPath)
 		}
-		if len(status.Result.Summaries) == 0 || strings.TrimSpace(status.Result.Summaries[0].HTMLPath) == "" {
+		if candidate == "" {
 			return "", dto.NewNotFoundError("backtest report is not ready")
 		}
-		return status.Result.Summaries[0].HTMLPath, nil
-	}
-	if strings.EqualFold(trimmed, "overview") {
-		if strings.TrimSpace(status.Result.OverviewHTMLPath) == "" {
+	case strings.EqualFold(trimmed, "overview"):
+		candidate = strings.TrimSpace(status.Result.OverviewHTMLPath)
+		if candidate == "" {
 			return "", dto.NewNotFoundError("overview report is not available")
 		}
-		return status.Result.OverviewHTMLPath, nil
+	default:
+		index, err := strconv.Atoi(trimmed)
+		if err != nil || index < 1 || index > len(status.Result.Summaries) {
+			return "", dto.NewNotFoundError("backtest report %q not found", reportID)
+		}
+		candidate = strings.TrimSpace(status.Result.Summaries[index-1].HTMLPath)
+		if candidate == "" {
+			return "", dto.NewNotFoundError("backtest report %q not found", reportID)
+		}
 	}
-	index, err := strconv.Atoi(trimmed)
-	if err != nil || index < 1 || index > len(status.Result.Summaries) {
-		return "", dto.NewNotFoundError("backtest report %q not found", reportID)
-	}
-	path := strings.TrimSpace(status.Result.Summaries[index-1].HTMLPath)
-	if path == "" {
-		return "", dto.NewNotFoundError("backtest report %q not found", reportID)
-	}
-	return path, nil
+	return h.containReportPath(candidate)
 }
 
-func writeBacktestReportResponse(c *gin.Context, status *dto.StrategyBacktestRunStatus, reportID string) {
+// containReportPath returns an absolute path that is guaranteed to live
+// inside the configured reports root, defending against path traversal
+// in service-layer-supplied report locations.
+func (h *Handler) containReportPath(candidate string) (string, error) {
+	absCandidate, err := filepath.Abs(candidate)
+	if err != nil {
+		return "", dto.NewNotFoundError("backtest report not found")
+	}
+	absCandidate = filepath.Clean(absCandidate)
+	root := h.reportsRoot
+	if root == "" {
+		// No root configured - refuse rather than risk traversal.
+		return "", dto.NewNotFoundError("backtest report not found")
+	}
+	rootAbs, err := filepath.Abs(root)
+	if err != nil {
+		return "", dto.NewNotFoundError("backtest report not found")
+	}
+	rootAbs = filepath.Clean(rootAbs)
+	rel, err := filepath.Rel(rootAbs, absCandidate)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		slog.Warn("rejecting backtest report path outside reports root",
+			"path", absCandidate,
+			"root", rootAbs)
+		return "", dto.NewNotFoundError("backtest report not found")
+	}
+	return absCandidate, nil
+}
+
+func writeBacktestReportResponse(c *gin.Context, h *Handler, status *dto.StrategyBacktestRunStatus, reportID string) {
 	decorated := decorateBacktestRunStatus(status)
 	if decorated == nil {
 		c.JSON(http.StatusNotFound, dto.ErrorResponse{Error: "backtest run not found"})
@@ -234,7 +300,7 @@ func writeBacktestReportResponse(c *gin.Context, status *dto.StrategyBacktestRun
 		c.JSON(http.StatusConflict, dto.ErrorResponse{Error: message})
 		return
 	}
-	reportPath, err := resolveStrategyBacktestReportPath(status, reportID)
+	reportPath, err := h.resolveStrategyBacktestReportPath(status, reportID)
 	if err != nil {
 		handleServiceError(c, err)
 		return
@@ -932,7 +998,7 @@ func (h *Handler) GetStrategyBacktestReport(c *gin.Context) {
 		handleServiceError(c, err)
 		return
 	}
-	writeBacktestReportResponse(c, status, "")
+	writeBacktestReportResponse(c, h, status, "")
 }
 
 // GetStrategyBacktestNamedReport handles GET /api/v1/backtests/runs/:runID/reports/:reportID.
@@ -960,7 +1026,7 @@ func (h *Handler) GetStrategyBacktestNamedReport(c *gin.Context) {
 		handleServiceError(c, err)
 		return
 	}
-	writeBacktestReportResponse(c, status, c.Param("reportID"))
+	writeBacktestReportResponse(c, h, status, c.Param("reportID"))
 }
 
 // StreamStrategyBacktestEvents handles GET /api/v1/backtests/runs/:runID/events.
@@ -981,12 +1047,9 @@ func (h *Handler) StreamStrategyBacktestEvents(c *gin.Context) {
 	}
 
 	runID := c.Param("runID")
-	status, err := h.strategyBacktests.GetStrategyBacktestRun(c.Request.Context(), runID)
-	if err != nil {
-		handleServiceError(c, err)
-		return
-	}
 
+	// Subscribe BEFORE fetching the snapshot status, so we cannot lose
+	// any event published in the gap between the two calls.
 	stream, unsubscribe, err := h.strategyBacktests.SubscribeStrategyBacktest(c.Request.Context(), runID)
 	if err != nil {
 		handleServiceError(c, err)
@@ -994,16 +1057,30 @@ func (h *Handler) StreamStrategyBacktestEvents(c *gin.Context) {
 	}
 	defer unsubscribe()
 
+	status, err := h.strategyBacktests.GetStrategyBacktestRun(c.Request.Context(), runID)
+	if err != nil {
+		handleServiceError(c, err)
+		return
+	}
+
 	if status.Status != "completed" && status.Status != "failed" {
 		if err := writeSSEEvent(c, "status", status); err != nil {
 			return
 		}
 	}
 
+	keepalive := time.NewTicker(sseKeepaliveInterval)
+	defer keepalive.Stop()
+
 	for {
 		select {
 		case <-c.Request.Context().Done():
 			return
+		case <-keepalive.C:
+			if _, err := c.Writer.WriteString(": keepalive\n\n"); err != nil {
+				return
+			}
+			c.Writer.Flush()
 		case event, ok := <-stream:
 			if !ok {
 				return

@@ -21,7 +21,9 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -39,13 +41,25 @@ import (
 	_ "github.com/Cyvadra/toktik/pkg/dsl/catalog"
 	"github.com/Cyvadra/toktik/pkg/feeds"
 	_ "github.com/Cyvadra/toktik/pkg/feeds/dvol"
+	"github.com/gin-gonic/gin"
 )
 
 func main() {
+	if err := run(); err != nil {
+		slog.Error("fatal", "error", err)
+		os.Exit(1)
+	}
+}
+
+// run is the real entrypoint. Returning errors instead of calling
+// os.Exit allows deferred Close() calls to run cleanly on every path.
+func run() error {
+	appCli.SetupLogger(true, slog.LevelInfo)
+	gin.SetMode(gin.ReleaseMode)
+
 	runtimeCfg, err := config.LoadRuntime()
 	if err != nil {
-		slog.Error("load runtime config", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("load runtime config: %w", err)
 	}
 
 	dsn := flag.String("clickhouse-dsn", runtimeCfg.ClickHouse.DSN, "ClickHouse DSN")
@@ -53,12 +67,9 @@ func main() {
 	schemaFile := flag.String("schema", "", "Path to DDL SQL file (auto-detected if empty)")
 	flag.Parse()
 
-	appCli.SetupLogger(true, slog.LevelInfo)
-
 	ddlFile, err := appCli.ResolveSchemaFile(*schemaFile, appCli.CryptoOptionsSchemaFile)
 	if err != nil {
-		slog.Error("resolve schema", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("resolve schema: %w", err)
 	}
 
 	ctx := context.Background()
@@ -70,14 +81,12 @@ func main() {
 		ChainCache: true,
 	})
 	if err != nil {
-		slog.Error("connect clickhouse", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("connect clickhouse: %w", err)
 	}
 
 	factorStore, err := feeds.NewStore(ctx, *dsn)
 	if err != nil {
-		slog.Error("connect factor store", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("connect factor store: %w", err)
 	}
 	defer func() {
 		if closeErr := factorStore.Close(); closeErr != nil {
@@ -85,19 +94,6 @@ func main() {
 		}
 	}()
 
-	repo := chrepo.NewRepo(conn)
-
-	svc := service.NewCryptoOptionsService(repo)
-	usStocksSvc := service.NewUSStocksService(repo)
-	usOptionsSvc := service.NewUSOptionsService(repo)
-	infraSvc := service.NewInfraService(repo)
-	featureSvc := service.NewFeatureService(repo)
-	indicatorSvc := service.NewIndicatorService(repo)
-	strategyBacktestSvc := service.NewPortfolioBacktestService(repo, factorStore)
-	cryptoSpotSvc := service.NewCryptoSpotService(repo)
-	screenerSvc := service.NewScreenerService(repo)
-	strategyCatalogSvc := service.NewStrategyCatalogService()
-	factorSvc := service.NewFactorService(factorStore)
 	cacheStore, err := cache.NewStore(ctx, runtimeCfg)
 	if err != nil {
 		slog.Warn("init cache backend failed, falling back to memory cache", "error", err)
@@ -109,16 +105,34 @@ func main() {
 		}
 	}()
 
-	var polygonSvc api.PolygonProvider
-	polygonService, err := service.NewPolygonServiceFromConfig(runtimeCfg, cacheStore)
-	if err != nil {
-		slog.Error("init polygon service", "error", err)
-		os.Exit(1)
-	} else {
-		polygonSvc = polygonService
+	repo := chrepo.NewRepo(conn)
+
+	deps := api.Deps{
+		Config:            runtimeCfg,
+		CryptoOptions:     service.NewCryptoOptionsService(repo),
+		USStocks:          service.NewUSStocksService(repo),
+		USOptions:         service.NewUSOptionsService(repo),
+		Infra:             service.NewInfraService(repo),
+		Features:          service.NewFeatureService(repo),
+		Indicators:        service.NewIndicatorService(repo),
+		StrategyBacktests: service.NewPortfolioBacktestService(repo, factorStore),
+		CryptoSpot:        service.NewCryptoSpotService(repo),
+		Screener:          service.NewScreenerService(repo),
+		StrategyCatalog:   service.NewStrategyCatalogService(),
+		Factors:           service.NewFactorService(factorStore),
 	}
 
-	router := api.NewRouter(svc, usStocksSvc, usOptionsSvc, infraSvc, featureSvc, indicatorSvc, strategyBacktestSvc, cryptoSpotSvc, screenerSvc, strategyCatalogSvc, factorSvc, polygonSvc)
+	polygonSvc, err := service.NewPolygonServiceFromConfig(runtimeCfg, cacheStore)
+	if err != nil {
+		return fmt.Errorf("init polygon service: %w", err)
+	}
+	deps.Polygon = polygonSvc
+
+	stop := make(chan struct{})
+	defer close(stop)
+	deps.Stop = stop
+
+	router := api.NewRouterFromDeps(deps)
 
 	srv := &http.Server{
 		Addr:              *addr,
@@ -129,26 +143,34 @@ func main() {
 		IdleTimeout:       runtimeCfg.APIServerIdleTimeout(),
 	}
 
-	// Start server in background
+	serverErr := make(chan error, 1)
 	go func() {
 		slog.Info("starting API server", "addr", *addr)
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			slog.Error("server error", "error", err)
-			os.Exit(1)
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			serverErr <- err
+			return
 		}
+		serverErr <- nil
 	}()
 
-	// Wait for interrupt signal
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-	<-quit
-	slog.Info("shutting down server")
+
+	select {
+	case sig := <-quit:
+		slog.Info("shutting down server", "signal", sig.String())
+	case err := <-serverErr:
+		if err != nil {
+			return fmt.Errorf("server error: %w", err)
+		}
+		return nil
+	}
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
-		slog.Error("server forced to shutdown", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("server forced to shutdown: %w", err)
 	}
 	slog.Info("server exited")
+	return nil
 }

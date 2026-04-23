@@ -558,7 +558,28 @@ func resolveHTMLTargetDir(path string) string {
 }
 
 func clearHTMLFiles(dir string) error {
-	return clearBacktestDataFiles(dir)
+	if strings.TrimSpace(dir) == "" {
+		return nil
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		if strings.ToLower(filepath.Ext(entry.Name())) != ".html" {
+			continue
+		}
+		if err := os.Remove(filepath.Join(dir, entry.Name())); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func resolveHTMLOutputPath(base, strategyName, asset, interval string, from, to time.Time, index, total int) string {

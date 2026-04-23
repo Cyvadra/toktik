@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Cyvadra/toktik/internal/backtest"
+	"github.com/Cyvadra/toktik/internal/config"
 	"github.com/Cyvadra/toktik/internal/dto"
 	polygonpkg "github.com/Cyvadra/toktik/pkg/polygon"
 	"github.com/gin-gonic/gin"
@@ -1595,7 +1596,8 @@ func TestGetStrategyBacktestReportRoutePending(t *testing.T) {
 
 func TestGetStrategyBacktestReportRouteCompleted(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	tempFile, err := os.CreateTemp(t.TempDir(), "report-*.html")
+	tempDir := t.TempDir()
+	tempFile, err := os.CreateTemp(tempDir, "report-*.html")
 	if err != nil {
 		t.Fatalf("create temp file: %v", err)
 	}
@@ -1607,14 +1609,16 @@ func TestGetStrategyBacktestReportRouteCompleted(t *testing.T) {
 		t.Fatalf("close temp file: %v", err)
 	}
 
-	r := NewRouter(
-		&mockQuerier{},
-		&mockUSStocksQuerier{},
-		&mockUSOptionsQuerier{},
-		&mockInfra{},
-		&mockFeature{},
-		nil,
-		&mockStrategyBacktests{statusResp: &dto.StrategyBacktestRunStatus{
+	cfg := config.DefaultRuntime()
+	cfg.Paths.ReportsRoot = tempDir
+	r := NewRouterFromDeps(Deps{
+		Config:        cfg,
+		CryptoOptions: &mockQuerier{},
+		USStocks:      &mockUSStocksQuerier{},
+		USOptions:     &mockUSOptionsQuerier{},
+		Infra:         &mockInfra{},
+		Features:      &mockFeature{},
+		StrategyBacktests: &mockStrategyBacktests{statusResp: &dto.StrategyBacktestRunStatus{
 			RunID:     "run-123",
 			Status:    "completed",
 			Request:   dto.StrategyBacktestRunRequest{Asset: "BTC", From: "2026-01-01", To: "2026-02-01", Capital: 5},
@@ -1622,8 +1626,7 @@ func TestGetStrategyBacktestReportRouteCompleted(t *testing.T) {
 			UpdatedAt: time.Date(2026, 4, 7, 8, 0, 1, 0, time.UTC),
 			Result:    &dto.StrategyBacktestRunResult{Summaries: []dto.StrategyBacktestSummary{{StrategyName: "demo", HTMLPath: tempFile.Name()}}},
 		}},
-		nil, nil, nil, nil, nil,
-	)
+	})
 
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest("GET", "/api/v1/backtests/runs/run-123/report", nil)
@@ -1642,7 +1645,8 @@ func TestGetStrategyBacktestReportRouteCompleted(t *testing.T) {
 
 func TestGetStrategyBacktestNamedReportRouteOverview(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	tempFile, err := os.CreateTemp(t.TempDir(), "overview-*.html")
+	tempDir := t.TempDir()
+	tempFile, err := os.CreateTemp(tempDir, "overview-*.html")
 	if err != nil {
 		t.Fatalf("create temp file: %v", err)
 	}
@@ -1654,14 +1658,16 @@ func TestGetStrategyBacktestNamedReportRouteOverview(t *testing.T) {
 		t.Fatalf("close temp file: %v", err)
 	}
 
-	r := NewRouter(
-		&mockQuerier{},
-		&mockUSStocksQuerier{},
-		&mockUSOptionsQuerier{},
-		&mockInfra{},
-		&mockFeature{},
-		nil,
-		&mockStrategyBacktests{statusResp: &dto.StrategyBacktestRunStatus{
+	cfg := config.DefaultRuntime()
+	cfg.Paths.ReportsRoot = tempDir
+	r := NewRouterFromDeps(Deps{
+		Config:        cfg,
+		CryptoOptions: &mockQuerier{},
+		USStocks:      &mockUSStocksQuerier{},
+		USOptions:     &mockUSOptionsQuerier{},
+		Infra:         &mockInfra{},
+		Features:      &mockFeature{},
+		StrategyBacktests: &mockStrategyBacktests{statusResp: &dto.StrategyBacktestRunStatus{
 			RunID:     "run-123",
 			Status:    "completed",
 			Request:   dto.StrategyBacktestRunRequest{Asset: "BTC", From: "2026-01-01", To: "2026-02-01", Capital: 5},
@@ -1672,8 +1678,7 @@ func TestGetStrategyBacktestNamedReportRouteOverview(t *testing.T) {
 				Summaries:        []dto.StrategyBacktestSummary{{StrategyName: "demo", HTMLPath: tempFile.Name()}},
 			},
 		}},
-		nil, nil, nil, nil, nil,
-	)
+	})
 
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest("GET", "/api/v1/backtests/runs/run-123/reports/overview", nil)

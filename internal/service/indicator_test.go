@@ -89,7 +89,7 @@ func TestBuildIndicatorDSLSourceRejectsUnknownPreset(t *testing.T) {
 
 func TestListIndicatorPresets(t *testing.T) {
 	svc := &IndicatorService{}
-	resp, err := svc.ListIndicatorPresets(nil)
+	resp, err := svc.ListIndicatorPresets(t.Context())
 	if err != nil {
 		t.Fatalf("ListIndicatorPresets returned error: %v", err)
 	}

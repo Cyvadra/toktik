@@ -353,7 +353,12 @@ func (s *PortfolioBacktestService) runBacktest(ctx context.Context, run *portfol
 	}
 
 	runDir := filepath.Join(defaultBacktestHTMLDir, defaultAPIRunHTMLSubdir, run.id)
-	htmlBase := strings.TrimSpace(req.HTMLOutput)
+	// Intentionally ignore req.HTMLOutput for API runs: a user-controlled
+	// path would let the API write reports anywhere on disk and would
+	// later be served back by the report endpoint, opening a path
+	// traversal / arbitrary file read vector. API runs are pinned to
+	// runDir; the CLI binary still honours its own --output-html flag.
+	htmlBase := ""
 	htmlMeta := report.HTMLMeta{Asset: plan.asset, Interval: plan.interval, GeneratedAt: s.now()}
 	resultSet := make([]dto.StrategyBacktestSummary, 0, len(plan.resolved))
 	overviewItems := make([]report.OverviewItem, 0, len(plan.resolved))
