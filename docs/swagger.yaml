@@ -3693,9 +3693,9 @@ paths:
       description: Proxies Polygon stock snapshot data. This endpoint bypasses the
         platform database and is intended for realtime client reads.
       parameters:
-      - description: Stock ticker symbol
+      - description: 'Stock ticker symbol (alias: symbol)'
         in: query
-        name: symbol
+        name: ticker
         required: true
         type: string
       produces:

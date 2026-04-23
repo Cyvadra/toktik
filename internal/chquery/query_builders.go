@@ -1,6 +1,9 @@
 package chquery
 
-import "fmt"
+import (
+	"fmt"
+	"time"
+)
 
 // validAdHocIntervals maps user-facing interval strings to ClickHouse INTERVAL
 // expressions. Only values in this map are accepted, preventing SQL injection.
@@ -23,66 +26,72 @@ var validAdHocIntervals = map[string]string{
 	"1w":  "1 week",
 }
 
-// BuildOptionBarSubquery returns a SQL subquery for option bars using
-// ClickHouse named parameters: {symbol_id:UInt64}, {from:String}, {to:String}.
-func BuildOptionBarSubquery(interval string) (string, error) {
+// BuildOptionBarSubquery returns a SQL subquery for option bars with literal values.
+func BuildOptionBarSubquery(interval string, symbolID uint64, fromT, toT time.Time) (string, error) {
+	symIDLit := UInt64Literal(symbolID)
+	fromLit := QuotedDateTime(fromT)
+	toLit := QuotedDateTime(toT)
+
 	if interval == "1m" {
 		return fmt.Sprintf(`SELECT
     %s
 FROM crypto_options_bar_1m
-WHERE symbol_id = {symbol_id:UInt64}
-  AND timestamp >= toDateTime({from:String}, 'UTC')
-  AND timestamp < toDateTime({to:String}, 'UTC')`, OptionBarColumns), nil
+WHERE symbol_id = %s
+  AND timestamp >= toDateTime(%s, 'UTC')
+  AND timestamp < toDateTime(%s, 'UTC')`, OptionBarColumns, symIDLit, fromLit, toLit), nil
 	}
 
 	if viewName, ok := CryptoOptionsIntervals[interval]; ok {
 		return fmt.Sprintf(`SELECT
     %s
 FROM %s
-WHERE symbol_id = {symbol_id:UInt64}
-  AND timestamp >= toDateTime({from:String}, 'UTC')
-  AND timestamp < toDateTime({to:String}, 'UTC')`, OptionBarColumns, viewName), nil
+WHERE symbol_id = %s
+  AND timestamp >= toDateTime(%s, 'UTC')
+  AND timestamp < toDateTime(%s, 'UTC')`, OptionBarColumns, viewName, symIDLit, fromLit, toLit), nil
 	}
 
-	return QueryTimeAggregationSQL(interval)
+	return QueryTimeAggregationSQL(interval, symbolID, fromT, toT)
 }
 
-// BuildSpotBarSubquery returns a SQL subquery for spot bars using
-// ClickHouse named parameters: {symbol:String}, {from:String}, {to:String}.
-func BuildSpotBarSubquery(interval string) (string, error) {
+// BuildSpotBarSubquery returns a SQL subquery for spot bars with literal values.
+func BuildSpotBarSubquery(interval string, symbol string, fromT, toT time.Time) (string, error) {
+	symLit := QuotedString(symbol)
+	fromLit := QuotedDateTime(fromT)
+	toLit := QuotedDateTime(toT)
+
 	if interval == "1m" {
 		return fmt.Sprintf(`SELECT
     %s
 FROM crypto_spot_bar_1m
-WHERE symbol = {symbol:String}
-  AND timestamp >= toDateTime({from:String}, 'UTC')
-  AND timestamp < toDateTime({to:String}, 'UTC')`, SpotBarColumns), nil
+WHERE symbol = %s
+  AND timestamp >= toDateTime(%s, 'UTC')
+  AND timestamp < toDateTime(%s, 'UTC')`, SpotBarColumns, symLit, fromLit, toLit), nil
 	}
 
 	if viewName, ok := CryptoSpotIntervals[interval]; ok {
 		return fmt.Sprintf(`SELECT
     %s
 FROM %s
-WHERE symbol = {symbol:String}
-  AND timestamp >= toDateTime({from:String}, 'UTC')
-  AND timestamp < toDateTime({to:String}, 'UTC')`, SpotBarColumns, viewName), nil
+WHERE symbol = %s
+  AND timestamp >= toDateTime(%s, 'UTC')
+  AND timestamp < toDateTime(%s, 'UTC')`, SpotBarColumns, viewName, symLit, fromLit, toLit), nil
 	}
 
-	return QuerySpotAggregationSQL(interval)
+	return QuerySpotAggregationSQL(interval, symbol, fromT, toT)
 }
 
 // QueryTimeAggregationSQL returns a SQL query that aggregates 1-minute option bars
 // into the requested interval on the fly. This is the fallback for ad-hoc
 // intervals that lack pre-computed materialized views.
-//
-// The returned query expects ClickHouse named parameters:
-//
-//	{symbol_id:UInt64}, {from:String}, {to:String}
-func QueryTimeAggregationSQL(interval string) (string, error) {
+func QueryTimeAggregationSQL(interval string, symbolID uint64, fromT, toT time.Time) (string, error) {
 	chInterval, ok := validAdHocIntervals[interval]
 	if !ok {
 		return "", fmt.Errorf("unsupported interval: %q", interval)
 	}
+
+	symIDLit := UInt64Literal(symbolID)
+	fromLit := QuotedDateTime(fromT)
+	toLit := QuotedDateTime(toT)
 
 	return fmt.Sprintf(`SELECT
     toStartOfInterval(timestamp, INTERVAL %s) AS timestamp,
@@ -117,23 +126,27 @@ func QueryTimeAggregationSQL(interval string) (string, error) {
     argMax(open_interest, timestamp)          AS open_interest,
     sum(tick_count)                           AS tick_count
 FROM crypto_options_bar_1m
-WHERE symbol_id = {symbol_id:UInt64}
-    AND timestamp >= toDateTime({from:String}, 'UTC')
-    AND timestamp < toDateTime({to:String}, 'UTC')
+WHERE symbol_id = %s
+    AND timestamp >= toDateTime(%s, 'UTC')
+    AND timestamp < toDateTime(%s, 'UTC')
 GROUP BY
     toStartOfInterval(timestamp, INTERVAL %s),
     symbol_id,
     base_asset
-ORDER BY timestamp`, chInterval, chInterval), nil
+ORDER BY timestamp`, chInterval, symIDLit, fromLit, toLit, chInterval), nil
 }
 
 // QuerySpotAggregationSQL returns a SQL query that aggregates 1-minute spot bars
 // into the requested interval on the fly.
-func QuerySpotAggregationSQL(interval string) (string, error) {
+func QuerySpotAggregationSQL(interval string, symbol string, fromT, toT time.Time) (string, error) {
 	chInterval, ok := validAdHocIntervals[interval]
 	if !ok {
 		return "", fmt.Errorf("unsupported interval: %q", interval)
 	}
+
+	symLit := QuotedString(symbol)
+	fromLit := QuotedDateTime(fromT)
+	toLit := QuotedDateTime(toT)
 
 	return fmt.Sprintf(`SELECT
     toStartOfInterval(timestamp, INTERVAL %s) AS timestamp,
@@ -148,11 +161,11 @@ func QuerySpotAggregationSQL(interval string) (string, error) {
     sum(volume_base)                          AS volume_base,
     sum(volume_quote)                         AS volume_quote
 FROM crypto_spot_bar_1m
-WHERE symbol = {symbol:String}
-    AND timestamp >= toDateTime({from:String}, 'UTC')
-    AND timestamp < toDateTime({to:String}, 'UTC')
+WHERE symbol = %s
+    AND timestamp >= toDateTime(%s, 'UTC')
+    AND timestamp < toDateTime(%s, 'UTC')
 GROUP BY
     toStartOfInterval(timestamp, INTERVAL %s),
     symbol
-ORDER BY timestamp`, chInterval, chInterval), nil
+ORDER BY timestamp`, chInterval, symLit, fromLit, toLit, chInterval), nil
 }

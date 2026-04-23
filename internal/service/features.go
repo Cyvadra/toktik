@@ -225,13 +225,17 @@ func (s *FeatureService) QueryTermStructureSnapshot(ctx context.Context, req dto
 	if err != nil {
 		return nil, err
 	}
-	if market != "us-options" {
+	if market != "us-options" && market != "crypto-options" {
 		return nil, dto.NewValidationError("unsupported term structure market %q", market)
 	}
 	if precomputed, ok, err := s.queryPrecomputedTermStructureSnapshot(ctx, market, underlying, minDTE, maxDTE); err != nil {
 		return nil, err
 	} else if ok {
 		return precomputed, nil
+	}
+	// On-the-fly computation is currently only available for US options.
+	if market != "us-options" {
+		return &dto.FeatureTermStructureSnapshotResponse{Market: market, Underlying: underlying, Data: []dto.FeatureTermStructureSnapshotRow{}}, nil
 	}
 	asOf, hasData, err := s.latestUSOptionsFeatureDate(ctx, underlying)
 	if err != nil {
@@ -255,13 +259,17 @@ func (s *FeatureService) QuerySkewSnapshot(ctx context.Context, req dto.FeatureS
 	if err != nil {
 		return nil, err
 	}
-	if market != "us-options" {
+	if market != "us-options" && market != "crypto-options" {
 		return nil, dto.NewValidationError("unsupported skew market %q", market)
 	}
 	if precomputed, ok, err := s.queryPrecomputedSkewSnapshot(ctx, market, underlying, minDTE, maxDTE); err != nil {
 		return nil, err
 	} else if ok {
 		return precomputed, nil
+	}
+	// On-the-fly computation is currently only available for US options.
+	if market != "us-options" {
+		return &dto.FeatureSkewSnapshotResponse{Market: market, Underlying: underlying, Data: []dto.FeatureSkewSnapshotRow{}}, nil
 	}
 	asOf, hasData, err := s.latestUSOptionsFeatureDate(ctx, underlying)
 	if err != nil {

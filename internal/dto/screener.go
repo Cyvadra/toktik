@@ -46,7 +46,7 @@ type ScreenUnderlyingResponse struct {
 // ScreenOptionRequest defines filters for the options screener.
 type ScreenOptionRequest struct {
 	Market            string   `form:"market" binding:"required"`
-	Underlying        string   `form:"underlying" binding:"required"`
+	Underlying        string   `form:"underlying" binding:"omitempty"`
 	OptionType        string   `form:"option_type" binding:"omitempty"`
 	MinDTE            *int     `form:"min_dte" binding:"omitempty"`
 	MaxDTE            *int     `form:"max_dte" binding:"omitempty"`

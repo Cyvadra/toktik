@@ -2793,8 +2793,8 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Stock ticker symbol",
-                        "name": "symbol",
+                        "description": "Stock ticker symbol (alias: symbol)",
+                        "name": "ticker",
                         "in": "query",
                         "required": true
                     }

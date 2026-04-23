@@ -11,8 +11,8 @@ WHERE database = currentDatabase()
   AND name = {relation:String}`
 
 // RelationLastTimestamp returns the most recent timestamp in a relation.
-// Requires fmt.Sprintf with (timeField, tableName).
-func RelationLastTimestamp(timeField, relation string) string {
+// Arguments are (relation, timeField) to mirror "FROM relation" / "max(timeField)" reading order.
+func RelationLastTimestamp(relation, timeField string) string {
 	return fmt.Sprintf(
 		`SELECT ifNull(toDateTime(maxOrNull(%s), 'UTC'), toDateTime(0, 'UTC')) AS last_ts FROM %s`,
 		timeField, relation,

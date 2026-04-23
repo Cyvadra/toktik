@@ -64,6 +64,7 @@ LIMIT %s`, clickhouseUInt32Literal(limit+1))
 		if err := rows.Scan(&row.Symbol, &row.Underlying, &row.OptionType, &row.Expiration, &row.Strike); err != nil {
 			return nil, fmt.Errorf("scan US option symbol row: %w", err)
 		}
+		row.Expiration = dateAsUTC(row.Expiration)
 		symbols = append(symbols, row)
 	}
 	if err := rows.Err(); err != nil {
@@ -172,6 +173,8 @@ LIMIT %s`, tableName, clickhouseStringLiteral(req.Symbol), clickhouseDateTimeLit
 		); err != nil {
 			return nil, fmt.Errorf("scan US option bar row: %w", err)
 		}
+		row.Timestamp = row.Timestamp.UTC()
+		row.Expiration = dateAsUTC(row.Expiration)
 		row.Strike = sanitizeFloat64(row.Strike)
 		row.Open = sanitizeFloat32(row.Open)
 		row.High = sanitizeFloat32(row.High)
@@ -285,6 +288,8 @@ LIMIT %s`, tableName, clickhouseStringLiteral(req.Symbol), clickhouseDateTimeLit
 		); err != nil {
 			return nil, fmt.Errorf("scan US option greeks row: %w", err)
 		}
+		row.Timestamp = row.Timestamp.UTC()
+		row.Expiration = dateAsUTC(row.Expiration)
 		row.Strike = sanitizeFloat64(row.Strike)
 		row.UnderlyingClose = sanitizeFloat32(row.UnderlyingClose)
 		row.ImpliedVolatility = sanitizeFloat32(row.ImpliedVolatility)

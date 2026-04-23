@@ -164,3 +164,14 @@ func sanitizeFloat64(value float64) float64 {
 	}
 	return value
 }
+
+// dateAsUTC reinterprets a date-only time.Time (which the ClickHouse driver returns
+// in the server's local timezone) as the same calendar date at 00:00 UTC.
+// This avoids accidental day shifts when the local TZ is not UTC.
+func dateAsUTC(t time.Time) time.Time {
+	if t.IsZero() {
+		return t
+	}
+	y, m, d := t.Date()
+	return time.Date(y, m, d, 0, 0, 0, 0, time.UTC)
+}

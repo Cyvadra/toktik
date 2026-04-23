@@ -1,6 +1,9 @@
 package chquery
 
-import "fmt"
+import (
+	"fmt"
+	"time"
+)
 
 // CryptoOptionsImpliedVolatilityExpr returns the reusable bar-level IV
 // expression for crypto option queries.
@@ -23,7 +26,7 @@ FROM crypto_options_symbol_meta FINAL`
 
 // CryptoOptionsBarsWithUnderlyingSQL returns a query that JOINs option bars
 // with spot bars, given option and spot subqueries.
-func CryptoOptionsBarsWithUnderlyingSQL(barSourceSQL, spotSourceSQL string) string {
+func CryptoOptionsBarsWithUnderlyingSQL(barSourceSQL, spotSourceSQL string, limit int) string {
 	return fmt.Sprintf(`SELECT
     b.timestamp, b.symbol_id, b.base_asset,
     b.mark_open, b.mark_high, b.mark_low, b.mark_close,
@@ -44,12 +47,12 @@ FROM (%s) AS b
 LEFT JOIN (%s) AS u
     ON u.timestamp = b.timestamp AND u.symbol = b.base_asset
 ORDER BY b.timestamp
-LIMIT {limit:UInt32}`, CryptoOptionsImpliedVolatilityExpr("b"), barSourceSQL, spotSourceSQL)
+LIMIT %d`, CryptoOptionsImpliedVolatilityExpr("b"), barSourceSQL, spotSourceSQL, limit)
 }
 
 // CryptoOptionsGreeksSQL returns a query for greeks time series,
 // given option and spot subqueries.
-func CryptoOptionsGreeksSQL(barSourceSQL, spotSourceSQL string) string {
+func CryptoOptionsGreeksSQL(barSourceSQL, spotSourceSQL string, limit int) string {
 	return fmt.Sprintf(`SELECT
     b.timestamp, b.symbol_id,
     b.delta, b.gamma, b.vega, b.theta, b.rho,
@@ -64,41 +67,75 @@ FROM (%s) AS b
 LEFT JOIN (%s) AS u
     ON u.timestamp = b.timestamp AND u.symbol = b.base_asset
 ORDER BY b.timestamp
-LIMIT {limit:UInt32}`, CryptoOptionsImpliedVolatilityExpr("b"), barSourceSQL, spotSourceSQL)
+LIMIT %d`, CryptoOptionsImpliedVolatilityExpr("b"), barSourceSQL, spotSourceSQL, limit)
 }
 
-// CryptoOptionsChainSQL returns a query for crypto option chain snapshots
-// given a precomputed chain view name.
-func CryptoOptionsChainSQL(chainView string) string {
+// CryptoOptionsChainSQL returns a query for crypto option chain snapshots.
+// chainView is the precomputed chain view (arrays per row); spotTable is the
+// matching spot kline table used to populate underlying_close.
+func CryptoOptionsChainSQL(chainView, spotTable, baseAsset string, fromT, toT time.Time, limit int) string {
 	return fmt.Sprintf(`
 SELECT
-    c.timestamp,
+    e.timestamp,
     m.symbol_id,
     m.symbol,
     m.option_type,
     m.expiration,
     m.strike_price,
-    c.mark_close,
-    c.bid_close,
-    c.ask_close,
-    c.mark_iv,
-    c.delta,
-    c.gamma,
-    c.vega,
-    c.theta,
-    c.rho,
-	c.volume,
-    c.open_interest,
-    c.tick_count,
-    c.underlying_close
-FROM %s AS c
-INNER JOIN crypto_options_symbol_meta FINAL AS m ON m.symbol_id = c.symbol_id
-WHERE c.base_asset = {base_asset:String}
-  AND c.timestamp >= {from:DateTime('UTC')}
-  AND c.timestamp <= {to:DateTime('UTC')}
-ORDER BY c.timestamp ASC, m.strike_price ASC
-LIMIT {limit:UInt32}
-`, chainView)
+    e.mark_price        AS mark_close,
+    e.bid_price         AS bid_close,
+    e.ask_price         AS ask_close,
+    e.mark_iv,
+    e.delta,
+    e.gamma,
+    e.vega,
+    e.theta,
+    e.rho,
+    e.volume,
+    e.open_interest,
+    toUInt16(e.tick_count) AS tick_count,
+    ifNull(s.close, toFloat32(0)) AS underlying_close
+FROM (
+    SELECT
+        timestamp,
+        base_asset,
+        sid AS symbol_id,
+        d   AS delta,
+        g   AS gamma,
+        v   AS vega,
+        t   AS theta,
+        r   AS rho,
+        bp  AS bid_price,
+        ap  AS ask_price,
+        mp  AS mark_price,
+        mi  AS mark_iv,
+        vol AS volume,
+        tc  AS tick_count,
+        oi  AS open_interest
+    FROM %s
+    ARRAY JOIN
+        symbol_ids     AS sid,
+        deltas         AS d,
+        gammas         AS g,
+        vegas          AS v,
+        thetas         AS t,
+        rhos           AS r,
+        bid_prices     AS bp,
+        ask_prices     AS ap,
+        mark_prices    AS mp,
+        mark_ivs       AS mi,
+        volumes        AS vol,
+        tick_counts    AS tc,
+        open_interests AS oi
+    WHERE base_asset = %s
+      AND timestamp >= toDateTime(%s, 'UTC')
+      AND timestamp <= toDateTime(%s, 'UTC')
+) AS e
+INNER JOIN (SELECT * FROM crypto_options_symbol_meta FINAL) AS m ON m.symbol_id = e.symbol_id
+LEFT JOIN %s AS s ON s.timestamp = e.timestamp AND s.symbol = e.base_asset
+ORDER BY e.timestamp ASC, m.strike_price ASC
+LIMIT %d
+`, chainView, QuotedString(baseAsset), QuotedDateTime(fromT), QuotedDateTime(toT), spotTable, limit)
 }
 
 // CryptoOptionsSymbolCollisions returns a query for checking symbol ID collisions.

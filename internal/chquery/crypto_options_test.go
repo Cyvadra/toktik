@@ -6,7 +6,7 @@ import (
 )
 
 func TestCryptoOptionsBarsWithUnderlyingSQLIncludesImpliedVolatility(t *testing.T) {
-	query := CryptoOptionsBarsWithUnderlyingSQL("SELECT 1", "SELECT 2")
+	query := CryptoOptionsBarsWithUnderlyingSQL("SELECT 1", "SELECT 2", 1001)
 	if !strings.Contains(query, "AS implied_volatility") {
 		t.Fatalf("expected implied_volatility projection, got %q", query)
 	}
@@ -16,7 +16,7 @@ func TestCryptoOptionsBarsWithUnderlyingSQLIncludesImpliedVolatility(t *testing.
 }
 
 func TestCryptoOptionsGreeksSQLIncludesImpliedVolatility(t *testing.T) {
-	query := CryptoOptionsGreeksSQL("SELECT 1", "SELECT 2")
+	query := CryptoOptionsGreeksSQL("SELECT 1", "SELECT 2", 1001)
 	if !strings.Contains(query, "AS implied_volatility") {
 		t.Fatalf("expected implied_volatility projection, got %q", query)
 	}

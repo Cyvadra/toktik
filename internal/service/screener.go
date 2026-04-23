@@ -101,6 +101,7 @@ func (s *ScreenerService) ScreenUnderlyings(ctx context.Context, req dto.ScreenU
 		); err != nil {
 			return nil, fmt.Errorf("scan screened underlying: %w", err)
 		}
+		r.AsOfDate = dateAsUTC(r.AsOfDate)
 		volumeInt := int(volume)
 		r.Volume = &volumeInt
 		sanitizeUnderlyingResult(&r)
@@ -319,6 +320,7 @@ WHERE chain.timestamp = latest.ts
 		); err != nil {
 			return nil, fmt.Errorf("scan screened option: %w", err)
 		}
+		r.Expiration = dateAsUTC(r.Expiration)
 		r.DaysToExpiry = int(daysToExpiry)
 		sanitizeOptionResult(&r)
 		results = append(results, r)

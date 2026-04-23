@@ -13,7 +13,7 @@ import (
 // @Description  Proxies Polygon stock snapshot data. This endpoint bypasses the platform database and is intended for realtime client reads.
 // @Tags         Polygon
 // @Produce      json
-// @Param        symbol  query     string  true  "Stock ticker symbol"
+// @Param        ticker  query     string  true  "Stock ticker symbol (alias: symbol)"
 // @Success      200     {object}  dto.PolygonStockSnapshotResponse
 // @Failure      400     {object}  dto.ErrorResponse
 // @Failure      500     {object}  dto.ErrorResponse
@@ -22,6 +22,13 @@ func (h *Handler) GetPolygonStockSnapshot(c *gin.Context) {
 	var req dto.PolygonStockSnapshotRequest
 	if err := c.ShouldBindQuery(&req); err != nil {
 		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: err.Error()})
+		return
+	}
+	if req.Ticker == "" {
+		req.Ticker = req.Symbol
+	}
+	if req.Ticker == "" {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: "ticker is required"})
 		return
 	}
 	if h.polygon == nil {

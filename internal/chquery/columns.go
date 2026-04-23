@@ -1,6 +1,10 @@
 package chquery
 
-import "time"
+import (
+	"strconv"
+	"strings"
+	"time"
+)
 
 // ----- Standard column lists -----
 
@@ -25,4 +29,24 @@ func TimeParam(t time.Time) string {
 // DateParam formats a timestamp as a date string for ClickHouse.
 func DateParam(t time.Time) string {
 	return t.UTC().Format("2006-01-02")
+}
+
+// QuotedString escapes a string value as a ClickHouse single-quoted literal.
+func QuotedString(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
+}
+
+// QuotedDateTime formats a timestamp as a single-quoted ClickHouse datetime literal.
+func QuotedDateTime(t time.Time) string {
+	return QuotedString(t.UTC().Format("2006-01-02 15:04:05"))
+}
+
+// UInt64Literal formats a uint64 as a plain decimal string for embedding in SQL.
+func UInt64Literal(n uint64) string {
+	return strconv.FormatUint(n, 10)
+}
+
+// IntLiteral formats an int as a plain decimal string for embedding in SQL.
+func IntLiteral(n int) string {
+	return strconv.Itoa(n)
 }

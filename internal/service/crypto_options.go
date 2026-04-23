@@ -7,7 +7,6 @@ import (
 	"strconv"
 	"time"
 
-	clickhouse "github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/Cyvadra/toktik/internal/chquery"
 	"github.com/Cyvadra/toktik/internal/chrepo"
@@ -55,24 +54,18 @@ func (s *CryptoOptionsService) QueryBars(ctx context.Context, req dto.BarRequest
 
 	interval := req.Interval
 
-	barSourceSQL, err := chquery.BuildOptionBarSubquery(interval)
+	barSourceSQL, err := chquery.BuildOptionBarSubquery(interval, symbolID, fromT, toT)
 	if err != nil {
 		return nil, dto.NewValidationError("unsupported interval %q", interval)
 	}
-	spotSourceSQL, err := chquery.BuildSpotBarSubquery(interval)
+	spotSourceSQL, err := chquery.BuildSpotBarSubquery(interval, baseAsset, fromT, toT)
 	if err != nil {
 		return nil, dto.NewValidationError("unsupported interval %q", interval)
 	}
 
-	query := chquery.CryptoOptionsBarsWithUnderlyingSQL(barSourceSQL, spotSourceSQL)
+	query := chquery.CryptoOptionsBarsWithUnderlyingSQL(barSourceSQL, spotSourceSQL, limit+1)
 
-	rows, err := s.repo.Query(ctx, query,
-		clickhouse.Named("symbol_id", symbolID),
-		clickhouse.Named("symbol", baseAsset),
-		clickhouse.Named("from", chquery.TimeParam(fromT)),
-		clickhouse.Named("to", chquery.TimeParam(toT)),
-		clickhouse.Named("limit", limit+1),
-	)
+	rows, err := s.repo.Query(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("query bars: %w", err)
 	}
@@ -104,23 +97,19 @@ func (s *CryptoOptionsService) QuerySymbols(ctx context.Context, req dto.SymbolR
 FROM crypto_options_symbol_meta FINAL`
 
 	var conditions []string
-	var args []interface{}
 
 	if req.BaseAsset != "" {
-		conditions = append(conditions, "base_asset = {base_asset:String}")
-		args = append(args, clickhouse.Named("base_asset", req.BaseAsset))
+		conditions = append(conditions, fmt.Sprintf("base_asset = %s", clickhouseStringLiteral(req.BaseAsset)))
 	}
 	if req.Search != "" {
-		conditions = append(conditions, "symbol ILIKE {search:String}")
-		args = append(args, clickhouse.Named("search", "%"+req.Search+"%"))
+		conditions = append(conditions, fmt.Sprintf("symbol ILIKE %s", clickhouseStringLiteral("%"+req.Search+"%")))
 	}
 	if req.Cursor != "" {
 		cursorID, err := decodeCursorUint64(req.Cursor)
 		if err != nil {
 			return nil, invalidCursorError(err)
 		}
-		conditions = append(conditions, "symbol_id > {cursor_id:UInt64}")
-		args = append(args, clickhouse.Named("cursor_id", cursorID))
+		conditions = append(conditions, fmt.Sprintf("symbol_id > %s", chquery.UInt64Literal(cursorID)))
 	}
 
 	if len(conditions) > 0 {
@@ -133,10 +122,9 @@ FROM crypto_options_symbol_meta FINAL`
 		}
 	}
 
-	query += " ORDER BY symbol_id LIMIT {limit:UInt32}"
-	args = append(args, clickhouse.Named("limit", limit+1))
+	query += fmt.Sprintf(" ORDER BY symbol_id LIMIT %d", limit+1)
 
-	rows, err := s.repo.Query(ctx, query, args...)
+	rows, err := s.repo.Query(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("query symbols: %w", err)
 	}
@@ -192,24 +180,18 @@ func (s *CryptoOptionsService) QueryGreeks(ctx context.Context, req dto.GreeksRe
 		}
 	}
 
-	barSourceSQL, err := chquery.BuildOptionBarSubquery(interval)
+	barSourceSQL, err := chquery.BuildOptionBarSubquery(interval, symbolID, fromT, toT)
 	if err != nil {
 		return nil, dto.NewValidationError("unsupported interval %q", interval)
 	}
-	spotSourceSQL, err := chquery.BuildSpotBarSubquery(interval)
+	spotSourceSQL, err := chquery.BuildSpotBarSubquery(interval, baseAsset, fromT, toT)
 	if err != nil {
 		return nil, dto.NewValidationError("unsupported interval %q", interval)
 	}
 
-	query := chquery.CryptoOptionsGreeksSQL(barSourceSQL, spotSourceSQL)
+	query := chquery.CryptoOptionsGreeksSQL(barSourceSQL, spotSourceSQL, limit+1)
 
-	rows, err := s.repo.Query(ctx, query,
-		clickhouse.Named("symbol_id", symbolID),
-		clickhouse.Named("symbol", baseAsset),
-		clickhouse.Named("from", chquery.TimeParam(fromT)),
-		clickhouse.Named("to", chquery.TimeParam(toT)),
-		clickhouse.Named("limit", limit+1),
-	)
+	rows, err := s.repo.Query(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("query greeks: %w", err)
 	}
@@ -335,42 +317,10 @@ func (s *CryptoOptionsService) QueryChain(ctx context.Context, req dto.CryptoOpt
 		from = cursorTime.Add(time.Nanosecond)
 	}
 
-	query := fmt.Sprintf(`
-SELECT
-    c.timestamp,
-    m.symbol_id,
-    m.symbol,
-    m.option_type,
-    m.expiration,
-    m.strike_price,
-    c.mark_close,
-    c.bid_close,
-    c.ask_close,
-    c.mark_iv,
-    c.delta,
-    c.gamma,
-    c.vega,
-    c.theta,
-    c.rho,
-	c.volume,
-    c.open_interest,
-    c.tick_count,
-    c.underlying_close
-FROM %s AS c
-INNER JOIN crypto_options_symbol_meta FINAL AS m ON m.symbol_id = c.symbol_id
-WHERE c.base_asset = {base_asset:String}
-  AND c.timestamp >= {from:DateTime('UTC')}
-  AND c.timestamp <= {to:DateTime('UTC')}
-ORDER BY c.timestamp ASC, m.strike_price ASC
-LIMIT {limit:UInt32}
-`, chainView)
+	spotTable := fmt.Sprintf("crypto_spot_bar_%s", interval)
+	query := chquery.CryptoOptionsChainSQL(chainView, spotTable, req.BaseAsset, from, to, limit+1)
 
-	rows, err := s.repo.Query(ctx, query,
-		clickhouse.Named("base_asset", req.BaseAsset),
-		clickhouse.DateNamed("from", from, clickhouse.NanoSeconds),
-		clickhouse.DateNamed("to", to, clickhouse.NanoSeconds),
-		clickhouse.Named("limit", uint32(limit+1)),
-	)
+	rows, err := s.repo.Query(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("query crypto option chain: %w", err)
 	}

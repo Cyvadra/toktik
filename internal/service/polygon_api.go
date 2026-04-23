@@ -9,7 +9,7 @@ import (
 const polygonOptionChainMaxLimit = 250
 
 func (s *PolygonService) QueryStockSnapshot(ctx context.Context, req dto.PolygonStockSnapshotRequest) (*dto.PolygonStockSnapshotResponse, error) {
-	data, err := s.StockSnapshot(ctx, req.Symbol)
+	data, err := s.StockSnapshot(ctx, req.Ticker)
 	if err != nil {
 		return nil, err
 	}

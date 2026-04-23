@@ -3,7 +3,8 @@ package dto
 import polygonpkg "github.com/Cyvadra/toktik/pkg/polygon"
 
 type PolygonStockSnapshotRequest struct {
-	Symbol string `form:"symbol" binding:"required"`
+	Ticker string `form:"ticker"`
+	Symbol string `form:"symbol" swaggerignore:"true"`
 }
 
 type PolygonAggregateRequest struct {
