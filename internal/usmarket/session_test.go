@@ -91,6 +91,19 @@ func TestUSMarketHolidays(t *testing.T) {
 	}
 }
 
+func TestUSMarketHolidaysIncludesJimmyCarterMourningDay(t *testing.T) {
+	h := usMarketHolidays(2025)
+	if !h["2025-01-09"] {
+		t.Error("2025-01-09 should be a holiday due to the national day of mourning for President Jimmy Carter")
+	}
+	if h["2025-01-08"] {
+		t.Error("2025-01-08 should remain a trading day")
+	}
+	if h["2025-01-10"] {
+		t.Error("2025-01-10 should remain a trading day")
+	}
+}
+
 func TestClassifyTimestamp(t *testing.T) {
 	sessions := GenerateSessionCalendar(2024, 2024)
 	sm := make(SessionMap)

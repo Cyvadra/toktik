@@ -134,6 +134,12 @@ func usMarketHolidays(year int) map[string]bool {
 	// Christmas
 	add(observedDate(time.Date(year, 12, 25, 0, 0, 0, 0, time.UTC)))
 
+	// National Day of Mourning for President Jimmy Carter.
+	// NYSE/Nasdaq and listed options markets were closed for the state funeral.
+	if year == 2025 {
+		add(time.Date(2025, 1, 9, 0, 0, 0, 0, time.UTC))
+	}
+
 	return h
 }
 
