@@ -1384,6 +1384,305 @@ const docTemplate = `{
                 }
             }
         },
+        "/fundamentals/factors": {
+            "get": {
+                "description": "Returns active symbol-bound fundamental factors and their metadata.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Fundamentals"
+                ],
+                "summary": "List fundamental factor catalog",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Market filter (us-stocks | crypto-spot)",
+                        "name": "market",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.FundamentalFactorCatalogResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/fundamentals/freshness": {
+            "get": {
+                "description": "Returns latest known_at per factor and (when SLA configured) staleness flags.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Fundamentals"
+                ],
+                "summary": "Get fundamental dataset freshness",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Market filter",
+                        "name": "market",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Factor code filter",
+                        "name": "factor",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.FundamentalFreshnessResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/fundamentals/panel": {
+            "get": {
+                "description": "Returns latest known values per (symbol, factor) at as_of.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Fundamentals"
+                ],
+                "summary": "Get fundamental panel across symbols",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Market (us-stocks | crypto-spot)",
+                        "name": "market",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        },
+                        "collectionFormat": "csv",
+                        "description": "Symbols (repeat or comma-separated)",
+                        "name": "symbol",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        },
+                        "collectionFormat": "csv",
+                        "description": "Factor codes (repeat or comma-separated)",
+                        "name": "factor",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Point-in-time cutoff (defaults to now UTC)",
+                        "name": "as_of",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.FundamentalPanelResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/fundamentals/series": {
+            "get": {
+                "description": "Returns event/as_of/filled series for one (market, symbol, factor). Point-in-time enforced via known_at.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Fundamentals"
+                ],
+                "summary": "Get fundamental factor series",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Market (us-stocks | crypto-spot)",
+                        "name": "market",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Symbol",
+                        "name": "symbol",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Factor code (e.g., pe, pb)",
+                        "name": "factor",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Start time (RFC3339 or YYYY-MM-DD)",
+                        "name": "from",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "End time (RFC3339 or YYYY-MM-DD)",
+                        "name": "to",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "event | as_of | filled (default filled)",
+                        "name": "mode",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Point-in-time cutoff (defaults to to)",
+                        "name": "as_of",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.FundamentalSeriesResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/fundamentals/snapshot": {
+            "get": {
+                "description": "Returns latest known value per factor for one (market, symbol) at as_of.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Fundamentals"
+                ],
+                "summary": "Get fundamental snapshot for one symbol",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Market (us-stocks | crypto-spot)",
+                        "name": "market",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Symbol",
+                        "name": "symbol",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        },
+                        "collectionFormat": "csv",
+                        "description": "Factor codes (repeat or comma-separated)",
+                        "name": "factor",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Point-in-time cutoff (defaults to now UTC)",
+                        "name": "as_of",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.FundamentalSnapshotResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/indicators/presets": {
             "get": {
                 "description": "Returns the built-in indicator preset bundles and the plotted expressions each preset expands to.",
@@ -1412,7 +1711,7 @@ const docTemplate = `{
         },
         "/indicators/series": {
             "post": {
-                "description": "Evaluates either a full DSL script, one or more built-in presets[], or a simplified indicators[] expression list over market bars and returns aligned series arrays.",
+                "description": "Evaluates either a full DSL script or a simplified indicators[] expression list over market bars and returns aligned series arrays.",
                 "consumes": [
                     "application/json"
                 ],
@@ -1753,7 +2052,7 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Option contract symbol (Polygon OPRA ticker or raw OCC payload without O: prefix)",
+                        "description": "Option contract symbol",
                         "name": "symbol",
                         "in": "query",
                         "required": true
@@ -1778,12 +2077,6 @@ const docTemplate = `{
                         "name": "to",
                         "in": "query",
                         "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Session filter (1m only: regular, all, extended)",
-                        "name": "session",
-                        "in": "query"
                     },
                     {
                         "type": "integer",
@@ -1822,7 +2115,7 @@ const docTemplate = `{
         },
         "/markets/us-options/chain": {
             "get": {
-                "description": "Returns option chain snapshots for a US underlying. If from/to are omitted, the latest available snapshot is returned.",
+                "description": "Returns an option chain snapshot for a US underlying, grouped by expiration and strike.",
                 "produces": [
                     "application/json"
                 ],
@@ -1840,35 +2133,14 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "Filter contracts by expiration date (YYYY-MM-DD)",
+                        "description": "Filter by expiration date",
                         "name": "expiration",
                         "in": "query"
                     },
                     {
                         "type": "string",
-                        "description": "Snapshot window start (RFC3339 or YYYY-MM-DD); defaults to latest available snapshot",
-                        "name": "from",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "Snapshot window end (RFC3339 or YYYY-MM-DD); defaults to latest available snapshot",
-                        "name": "to",
-                        "in": "query"
-                    },
-                    {
-                        "enum": [
-                            "5m",
-                            "15m",
-                            "30m",
-                            "1h",
-                            "2h",
-                            "4h",
-                            "1d"
-                        ],
-                        "type": "string",
-                        "description": "Chain interval (default 1d)",
-                        "name": "interval",
+                        "description": "Filter by option type (call, put)",
+                        "name": "type",
                         "in": "query"
                     },
                     {
@@ -1919,7 +2191,7 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Option contract symbol (Polygon OPRA ticker or raw OCC payload without O: prefix)",
+                        "description": "Option contract symbol",
                         "name": "symbol",
                         "in": "query",
                         "required": true
@@ -1943,12 +2215,6 @@ const docTemplate = `{
                         "name": "to",
                         "in": "query",
                         "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Session filter (1m only: regular, all, extended)",
-                        "name": "session",
-                        "in": "query"
                     },
                     {
                         "type": "integer",
@@ -1998,13 +2264,7 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Filter by underlying ticker symbol",
-                        "name": "underlying",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "Legacy alias for underlying",
+                        "description": "Filter by root symbol",
                         "name": "root",
                         "in": "query"
                     },
@@ -2359,7 +2619,7 @@ const docTemplate = `{
                     },
                     {
                         "type": "integer",
-                        "description": "Page size (max 250)",
+                        "description": "Page size",
                         "name": "limit",
                         "in": "query"
                     }
@@ -2793,8 +3053,8 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Stock ticker symbol (alias: symbol)",
-                        "name": "ticker",
+                        "description": "Stock ticker symbol",
+                        "name": "symbol",
                         "in": "query",
                         "required": true
                     }
@@ -4239,6 +4499,230 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "underlying": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_Cyvadra_toktik_internal_dto.FundamentalFactorCatalogEntry": {
+            "type": "object",
+            "properties": {
+                "active": {
+                    "type": "boolean"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "display_name": {
+                    "type": "string"
+                },
+                "factor_code": {
+                    "type": "string"
+                },
+                "fill_max_days": {
+                    "type": "integer"
+                },
+                "fill_policy": {
+                    "type": "string"
+                },
+                "market": {
+                    "type": "string"
+                },
+                "metadata": {
+                    "type": "string"
+                },
+                "point_in_time": {
+                    "type": "boolean"
+                },
+                "preferred_frequency": {
+                    "type": "string"
+                },
+                "sla_hours": {
+                    "type": "integer"
+                },
+                "source": {
+                    "type": "string"
+                },
+                "unit": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "value_type": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_Cyvadra_toktik_internal_dto.FundamentalFactorCatalogResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.FundamentalFactorCatalogEntry"
+                    }
+                }
+            }
+        },
+        "github_com_Cyvadra_toktik_internal_dto.FundamentalFreshnessEntry": {
+            "type": "object",
+            "properties": {
+                "factor": {
+                    "type": "string"
+                },
+                "last_known_at": {
+                    "type": "string"
+                },
+                "market": {
+                    "type": "string"
+                },
+                "sla_hours": {
+                    "type": "integer"
+                },
+                "stale": {
+                    "type": "boolean"
+                },
+                "stale_hours": {
+                    "type": "number"
+                }
+            }
+        },
+        "github_com_Cyvadra_toktik_internal_dto.FundamentalFreshnessResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.FundamentalFreshnessEntry"
+                    }
+                }
+            }
+        },
+        "github_com_Cyvadra_toktik_internal_dto.FundamentalPanelResponse": {
+            "type": "object",
+            "properties": {
+                "as_of": {
+                    "type": "string"
+                },
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.FundamentalPanelRow"
+                    }
+                },
+                "market": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_Cyvadra_toktik_internal_dto.FundamentalPanelRow": {
+            "type": "object",
+            "properties": {
+                "event_ts": {
+                    "type": "string"
+                },
+                "factor": {
+                    "type": "string"
+                },
+                "known_at": {
+                    "type": "string"
+                },
+                "symbol": {
+                    "type": "string"
+                },
+                "value": {
+                    "type": "number"
+                }
+            }
+        },
+        "github_com_Cyvadra_toktik_internal_dto.FundamentalSeriesPoint": {
+            "type": "object",
+            "properties": {
+                "event_ts": {
+                    "type": "string"
+                },
+                "filled": {
+                    "type": "boolean"
+                },
+                "known_at": {
+                    "type": "string"
+                },
+                "revision": {
+                    "type": "integer"
+                },
+                "source": {
+                    "type": "string"
+                },
+                "value": {
+                    "type": "number"
+                }
+            }
+        },
+        "github_com_Cyvadra_toktik_internal_dto.FundamentalSeriesResponse": {
+            "type": "object",
+            "properties": {
+                "as_of": {
+                    "type": "string"
+                },
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.FundamentalSeriesPoint"
+                    }
+                },
+                "factor": {
+                    "type": "string"
+                },
+                "fill_policy": {
+                    "type": "string"
+                },
+                "market": {
+                    "type": "string"
+                },
+                "mode": {
+                    "type": "string"
+                },
+                "symbol": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_Cyvadra_toktik_internal_dto.FundamentalSnapshotEntry": {
+            "type": "object",
+            "properties": {
+                "event_ts": {
+                    "type": "string"
+                },
+                "factor": {
+                    "type": "string"
+                },
+                "known_at": {
+                    "type": "string"
+                },
+                "source": {
+                    "type": "string"
+                },
+                "value": {
+                    "type": "number"
+                }
+            }
+        },
+        "github_com_Cyvadra_toktik_internal_dto.FundamentalSnapshotResponse": {
+            "type": "object",
+            "properties": {
+                "as_of": {
+                    "type": "string"
+                },
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.FundamentalSnapshotEntry"
+                    }
+                },
+                "market": {
+                    "type": "string"
+                },
+                "symbol": {
                     "type": "string"
                 }
             }
@@ -5893,7 +6377,7 @@ var SwaggerInfo = &swag.Spec{
 	BasePath:         "/api/v1",
 	Schemes:          []string{},
 	Title:            "Toktik Options Platform API",
-	Description:      "Backend data services for multi-market options analytics, including market data retrieval, feature/factor queries, screening, strategy catalog, and backtesting.",
+	Description:      "Backend data services for multi-market analytics, including market data retrieval, feature/factor/fundamental queries, screening, strategy catalog, and backtesting.",
 	InfoInstanceName: "swagger",
 	SwaggerTemplate:  docTemplate,
 }

@@ -76,6 +76,16 @@ var sections = []sectionSpec{
 		},
 	},
 	{
+		Title: "Fundamentals",
+		Endpoints: []endpointSpec{
+			{Method: "GET", Path: "/fundamentals/factors", Label: "Fundamental factor catalog"},
+			{Method: "GET", Path: "/fundamentals/series", Label: "Fundamental factor series"},
+			{Method: "GET", Path: "/fundamentals/snapshot", Label: "Fundamental snapshot"},
+			{Method: "GET", Path: "/fundamentals/panel", Label: "Fundamental panel"},
+			{Method: "GET", Path: "/fundamentals/freshness", Label: "Fundamental freshness"},
+		},
+	},
+	{
 		Title: "Feature Store Analytics",
 		Endpoints: []endpointSpec{
 			{Method: "GET", Path: "/features/volatility-snapshot", Label: "Volatility snapshot"},
@@ -191,7 +201,7 @@ func renderMarkdown(doc *swaggerDoc, inputPath string, title string) (string, er
 	builder.WriteString(time.Now().UTC().Format(time.RFC3339))
 	builder.WriteString("`\n\n")
 	builder.WriteString("## Scope\n\n")
-	builder.WriteString("This document exports the database-backed market data, technical indicator, feature-store analytics, and screener APIs. It intentionally excludes external proxy endpoints such as Polygon, and also excludes backtest and other non-query operational endpoints.\n\n")
+	builder.WriteString("This document exports the database-backed market data, technical indicator, feature-store analytics, symbol-bound fundamentals, and screener APIs. It intentionally excludes external proxy endpoints such as Polygon, and also excludes backtest and other non-query operational endpoints.\n\n")
 	builder.WriteString("## Contents\n\n")
 	for _, section := range sections {
 		builder.WriteString("- [")

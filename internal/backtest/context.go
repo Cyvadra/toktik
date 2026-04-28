@@ -85,6 +85,25 @@ func (sc *SetupContext) AddFactor(name, interval string) FactorRef {
 	return ref
 }
 
+// AddSymbolFactor requests an external symbol-bound factor series (e.g.,
+// a fundamental like PE for one symbol). The same registered FactorFeed may
+// service many symbols by inspecting FactorRequest.Market/Symbol.
+func (sc *SetupContext) AddSymbolFactor(name, market, symbol, interval string) FactorRef {
+	ref := FactorRef{
+		Name:     name,
+		Interval: interval,
+		Market:   market,
+		Symbol:   symbol,
+		Index:    sc.nextFacIdx,
+	}
+	sc.nextFacIdx++
+	sc.factors = append(sc.factors, factorRegistration{
+		ref:  ref,
+		inds: make(map[string]Indicator),
+	})
+	return ref
+}
+
 // RegisterFactor adds an indicator on a specific external factor series.
 func (sc *SetupContext) RegisterFactor(ref FactorRef, name string, ind Indicator) {
 	for i := range sc.factors {

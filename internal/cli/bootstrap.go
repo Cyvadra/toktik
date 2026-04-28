@@ -115,6 +115,11 @@ func FeatureStoreSchemaFile() (string, error) {
 	return FindSchemaFile(schemaCandidates("feature_store.sql"))
 }
 
+// FundamentalsSchemaFile returns the path to the fundamentals DDL file.
+func FundamentalsSchemaFile() (string, error) {
+	return FindSchemaFile(schemaCandidates("fundamentals.sql"))
+}
+
 // EnvOrDefault returns the value of an environment variable, or the fallback
 // if the variable is empty or unset.
 func EnvOrDefault(key, fallback string) string {

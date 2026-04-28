@@ -1,0 +1,7 @@
+- Fundamentals live in their own domain, separate from OHLCV bars and separate from feature_* snapshot tables.
+- ClickHouse tables: fundamental_factor_catalog (control plane) and fundamental_observation (tall sparse point-in-time facts).
+- Backtest-safe time filter is known_at, not event_ts; delayed publication and revisions must never leak through queries.
+- API routes live under /api/v1/fundamentals/{factors,series,snapshot,panel,freshness}.
+- Backtest integration uses SetupContext.AddSymbolFactor(...) and internal/datafeed/FundamentalsFactorFeed; one feed registration can serve many symbols by inspecting FactorRequest.Market/Symbol.
+- Current supported markets are us-stocks and crypto-spot.
+- Keep raw ingest sparse first; only add materialized wide panels for proven hot query paths.

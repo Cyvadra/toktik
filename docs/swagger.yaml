@@ -730,6 +730,152 @@ definitions:
       underlying:
         type: string
     type: object
+  github_com_Cyvadra_toktik_internal_dto.FundamentalFactorCatalogEntry:
+    properties:
+      active:
+        type: boolean
+      description:
+        type: string
+      display_name:
+        type: string
+      factor_code:
+        type: string
+      fill_max_days:
+        type: integer
+      fill_policy:
+        type: string
+      market:
+        type: string
+      metadata:
+        type: string
+      point_in_time:
+        type: boolean
+      preferred_frequency:
+        type: string
+      sla_hours:
+        type: integer
+      source:
+        type: string
+      unit:
+        type: string
+      updated_at:
+        type: string
+      value_type:
+        type: string
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.FundamentalFactorCatalogResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.FundamentalFactorCatalogEntry'
+        type: array
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.FundamentalFreshnessEntry:
+    properties:
+      factor:
+        type: string
+      last_known_at:
+        type: string
+      market:
+        type: string
+      sla_hours:
+        type: integer
+      stale:
+        type: boolean
+      stale_hours:
+        type: number
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.FundamentalFreshnessResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.FundamentalFreshnessEntry'
+        type: array
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.FundamentalPanelResponse:
+    properties:
+      as_of:
+        type: string
+      data:
+        items:
+          $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.FundamentalPanelRow'
+        type: array
+      market:
+        type: string
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.FundamentalPanelRow:
+    properties:
+      event_ts:
+        type: string
+      factor:
+        type: string
+      known_at:
+        type: string
+      symbol:
+        type: string
+      value:
+        type: number
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.FundamentalSeriesPoint:
+    properties:
+      event_ts:
+        type: string
+      filled:
+        type: boolean
+      known_at:
+        type: string
+      revision:
+        type: integer
+      source:
+        type: string
+      value:
+        type: number
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.FundamentalSeriesResponse:
+    properties:
+      as_of:
+        type: string
+      data:
+        items:
+          $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.FundamentalSeriesPoint'
+        type: array
+      factor:
+        type: string
+      fill_policy:
+        type: string
+      market:
+        type: string
+      mode:
+        type: string
+      symbol:
+        type: string
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.FundamentalSnapshotEntry:
+    properties:
+      event_ts:
+        type: string
+      factor:
+        type: string
+      known_at:
+        type: string
+      source:
+        type: string
+      value:
+        type: number
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.FundamentalSnapshotResponse:
+    properties:
+      as_of:
+        type: string
+      data:
+        items:
+          $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.FundamentalSnapshotEntry'
+        type: array
+      market:
+        type: string
+      symbol:
+        type: string
+    type: object
   github_com_Cyvadra_toktik_internal_dto.GreeksResponse:
     properties:
       data:
@@ -1808,9 +1954,9 @@ info:
     email: dev@toktik.dev
     name: Toktik Dev Team
     url: https://toktik.dev
-  description: Backend data services for multi-market options analytics, including
-    market data retrieval, feature/factor queries, screening, strategy catalog, and
-    backtesting.
+  description: Backend data services for multi-market analytics, including market
+    data retrieval, feature/factor/fundamental queries, screening, strategy catalog,
+    and backtesting.
   license:
     name: Proprietary
     url: https://toktik.dev/license
@@ -2738,6 +2884,209 @@ paths:
       summary: Get volatility snapshot
       tags:
       - Features
+  /fundamentals/factors:
+    get:
+      description: Returns active symbol-bound fundamental factors and their metadata.
+      parameters:
+      - description: Market filter (us-stocks | crypto-spot)
+        in: query
+        name: market
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.FundamentalFactorCatalogResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+      summary: List fundamental factor catalog
+      tags:
+      - Fundamentals
+  /fundamentals/freshness:
+    get:
+      description: Returns latest known_at per factor and (when SLA configured) staleness
+        flags.
+      parameters:
+      - description: Market filter
+        in: query
+        name: market
+        type: string
+      - description: Factor code filter
+        in: query
+        name: factor
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.FundamentalFreshnessResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+      summary: Get fundamental dataset freshness
+      tags:
+      - Fundamentals
+  /fundamentals/panel:
+    get:
+      description: Returns latest known values per (symbol, factor) at as_of.
+      parameters:
+      - description: Market (us-stocks | crypto-spot)
+        in: query
+        name: market
+        required: true
+        type: string
+      - collectionFormat: csv
+        description: Symbols (repeat or comma-separated)
+        in: query
+        items:
+          type: string
+        name: symbol
+        required: true
+        type: array
+      - collectionFormat: csv
+        description: Factor codes (repeat or comma-separated)
+        in: query
+        items:
+          type: string
+        name: factor
+        type: array
+      - description: Point-in-time cutoff (defaults to now UTC)
+        in: query
+        name: as_of
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.FundamentalPanelResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+      summary: Get fundamental panel across symbols
+      tags:
+      - Fundamentals
+  /fundamentals/series:
+    get:
+      description: Returns event/as_of/filled series for one (market, symbol, factor).
+        Point-in-time enforced via known_at.
+      parameters:
+      - description: Market (us-stocks | crypto-spot)
+        in: query
+        name: market
+        required: true
+        type: string
+      - description: Symbol
+        in: query
+        name: symbol
+        required: true
+        type: string
+      - description: Factor code (e.g., pe, pb)
+        in: query
+        name: factor
+        required: true
+        type: string
+      - description: Start time (RFC3339 or YYYY-MM-DD)
+        in: query
+        name: from
+        required: true
+        type: string
+      - description: End time (RFC3339 or YYYY-MM-DD)
+        in: query
+        name: to
+        required: true
+        type: string
+      - description: event | as_of | filled (default filled)
+        in: query
+        name: mode
+        type: string
+      - description: Point-in-time cutoff (defaults to to)
+        in: query
+        name: as_of
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.FundamentalSeriesResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+      summary: Get fundamental factor series
+      tags:
+      - Fundamentals
+  /fundamentals/snapshot:
+    get:
+      description: Returns latest known value per factor for one (market, symbol)
+        at as_of.
+      parameters:
+      - description: Market (us-stocks | crypto-spot)
+        in: query
+        name: market
+        required: true
+        type: string
+      - description: Symbol
+        in: query
+        name: symbol
+        required: true
+        type: string
+      - collectionFormat: csv
+        description: Factor codes (repeat or comma-separated)
+        in: query
+        items:
+          type: string
+        name: factor
+        type: array
+      - description: Point-in-time cutoff (defaults to now UTC)
+        in: query
+        name: as_of
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.FundamentalSnapshotResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+      summary: Get fundamental snapshot for one symbol
+      tags:
+      - Fundamentals
   /indicators/presets:
     get:
       description: Returns the built-in indicator preset bundles and the plotted expressions
@@ -2760,9 +3109,8 @@ paths:
     post:
       consumes:
       - application/json
-      description: Evaluates either a full DSL script, one or more built-in presets[],
-        or a simplified indicators[] expression list over market bars and returns
-        aligned series arrays.
+      description: Evaluates either a full DSL script or a simplified indicators[]
+        expression list over market bars and returns aligned series arrays.
       parameters:
       - description: Indicator query
         in: body
@@ -2987,8 +3335,7 @@ paths:
     get:
       description: Returns OHLCV bars for a US listed option contract.
       parameters:
-      - description: 'Option contract symbol (Polygon OPRA ticker or raw OCC payload
-          without O: prefix)'
+      - description: Option contract symbol
         in: query
         name: symbol
         required: true
@@ -3007,10 +3354,6 @@ paths:
         in: query
         name: to
         required: true
-        type: string
-      - description: 'Session filter (1m only: regular, all, extended)'
-        in: query
-        name: session
         type: string
       - description: Max rows (default 1000)
         in: query
@@ -3040,39 +3383,21 @@ paths:
       - USOptions
   /markets/us-options/chain:
     get:
-      description: Returns option chain snapshots for a US underlying. If from/to
-        are omitted, the latest available snapshot is returned.
+      description: Returns an option chain snapshot for a US underlying, grouped by
+        expiration and strike.
       parameters:
       - description: Underlying ticker symbol
         in: query
         name: underlying
         required: true
         type: string
-      - description: Filter contracts by expiration date (YYYY-MM-DD)
+      - description: Filter by expiration date
         in: query
         name: expiration
         type: string
-      - description: Snapshot window start (RFC3339 or YYYY-MM-DD); defaults to latest
-          available snapshot
+      - description: Filter by option type (call, put)
         in: query
-        name: from
-        type: string
-      - description: Snapshot window end (RFC3339 or YYYY-MM-DD); defaults to latest
-          available snapshot
-        in: query
-        name: to
-        type: string
-      - description: Chain interval (default 1d)
-        enum:
-        - 5m
-        - 15m
-        - 30m
-        - 1h
-        - 2h
-        - 4h
-        - 1d
-        in: query
-        name: interval
+        name: type
         type: string
       - description: Max contracts (default 100)
         in: query
@@ -3104,8 +3429,7 @@ paths:
     get:
       description: Returns Greeks snapshots over time for a US listed option contract.
       parameters:
-      - description: 'Option contract symbol (Polygon OPRA ticker or raw OCC payload
-          without O: prefix)'
+      - description: Option contract symbol
         in: query
         name: symbol
         required: true
@@ -3123,10 +3447,6 @@ paths:
         in: query
         name: to
         required: true
-        type: string
-      - description: 'Session filter (1m only: regular, all, extended)'
-        in: query
-        name: session
         type: string
       - description: Max rows (default 1000)
         in: query
@@ -3158,11 +3478,7 @@ paths:
     get:
       description: Returns available US listed option contract symbols.
       parameters:
-      - description: Filter by underlying ticker symbol
-        in: query
-        name: underlying
-        type: string
-      - description: Legacy alias for underlying
+      - description: Filter by root symbol
         in: query
         name: root
         type: string
@@ -3401,7 +3717,7 @@ paths:
         in: query
         name: sort
         type: string
-      - description: Page size (max 250)
+      - description: Page size
         in: query
         name: limit
         type: integer
@@ -3693,9 +4009,9 @@ paths:
       description: Proxies Polygon stock snapshot data. This endpoint bypasses the
         platform database and is intended for realtime client reads.
       parameters:
-      - description: 'Stock ticker symbol (alias: symbol)'
+      - description: Stock ticker symbol
         in: query
-        name: ticker
+        name: symbol
         required: true
         type: string
       produces:

@@ -1,6 +1,6 @@
 // @title           Toktik Options Platform API
 // @version         1.0
-// @description     Backend data services for multi-market options analytics, including market data retrieval, feature/factor queries, screening, strategy catalog, and backtesting.
+// @description     Backend data services for multi-market analytics, including market data retrieval, feature/factor/fundamental queries, screening, strategy catalog, and backtesting.
 // @termsOfService  https://toktik.dev/terms
 
 // @contact.name   Toktik Dev Team
@@ -120,6 +120,7 @@ func run() error {
 		Screener:          service.NewScreenerService(repo),
 		StrategyCatalog:   service.NewStrategyCatalogService(),
 		Factors:           service.NewFactorService(factorStore),
+		Fundamentals:      service.NewFundamentalsService(repo),
 	}
 
 	polygonSvc, err := service.NewPolygonServiceFromConfig(runtimeCfg, cacheStore)

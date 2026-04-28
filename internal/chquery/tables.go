@@ -22,6 +22,14 @@ const (
 	FeatureDailyPanelDaily            = "feature_daily_panel_daily"
 )
 
+// FundamentalsSupportedMarkets enumerates which markets the fundamentals
+// domain accepts symbols from. Keep narrow until ingest pipelines exist for
+// other markets.
+var FundamentalsSupportedMarkets = map[string]bool{
+	"us-stocks":   true,
+	"crypto-spot": true,
+}
+
 // ----- Interval → table maps -----
 
 // CryptoOptionsIntervals maps interval suffixes to precomputed option bar view names.

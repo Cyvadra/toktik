@@ -7,15 +7,16 @@
 - Source Swagger: `docs/swagger.json`
 - API title: `Toktik Options Platform API`
 - API version: `1.0`
-- Generated at: `2026-04-23T07:34:44Z`
+- Generated at: `2026-04-28T13:03:02Z`
 
 ## Scope
 
-This document exports the database-backed market data, technical indicator, feature-store analytics, and screener APIs. It intentionally excludes external proxy endpoints such as Polygon, and also excludes backtest and other non-query operational endpoints.
+This document exports the database-backed market data, technical indicator, feature-store analytics, symbol-bound fundamentals, and screener APIs. It intentionally excludes external proxy endpoints such as Polygon, and also excludes backtest and other non-query operational endpoints.
 
 ## Contents
 
 - [Technical Indicators](#technical-indicators)
+- [Fundamentals](#fundamentals)
 - [Feature Store Analytics](#feature-store-analytics)
 - [Crypto Options Market Data](#crypto-options-market-data)
 - [Crypto Spot Market Data](#crypto-spot-market-data)
@@ -51,7 +52,7 @@ No parameters.
 - Consumes: `application/json`
 - Produces: `application/json`
 - Summary: Run indicator series query
-- Description: Evaluates either a full DSL script, one or more built-in presets[], or a simplified indicators[] expression list over market bars and returns aligned series arrays.
+- Description: Evaluates either a full DSL script or a simplified indicators[] expression list over market bars and returns aligned series arrays.
 
 #### Parameters
 
@@ -182,6 +183,131 @@ No parameters.
 | Status | Schema | Description |
 | --- | --- | --- |
 | 200 | github_com_Cyvadra_toktik_internal_dto.FactorBarResponse | OK |
+| 400 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Bad Request |
+| 500 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Internal Server Error |
+
+## Fundamentals
+
+### Fundamental factor catalog
+
+- Endpoint: `GET /api/v1/fundamentals/factors`
+- Tags: `Fundamentals`
+- Produces: `application/json`
+- Summary: List fundamental factor catalog
+- Description: Returns active symbol-bound fundamental factors and their metadata.
+
+#### Parameters
+
+| Name | In | Type | Required | Description |
+| --- | --- | --- | --- | --- |
+| market | query | string | no | Market filter (us-stocks \| crypto-spot) |
+
+#### Responses
+
+| Status | Schema | Description |
+| --- | --- | --- |
+| 200 | github_com_Cyvadra_toktik_internal_dto.FundamentalFactorCatalogResponse | OK |
+| 400 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Bad Request |
+| 500 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Internal Server Error |
+
+### Fundamental factor series
+
+- Endpoint: `GET /api/v1/fundamentals/series`
+- Tags: `Fundamentals`
+- Produces: `application/json`
+- Summary: Get fundamental factor series
+- Description: Returns event/as_of/filled series for one (market, symbol, factor). Point-in-time enforced via known_at.
+
+#### Parameters
+
+| Name | In | Type | Required | Description |
+| --- | --- | --- | --- | --- |
+| market | query | string | yes | Market (us-stocks \| crypto-spot) |
+| symbol | query | string | yes | Symbol |
+| factor | query | string | yes | Factor code (e.g., pe, pb) |
+| from | query | string | yes | Start time (RFC3339 or YYYY-MM-DD) |
+| to | query | string | yes | End time (RFC3339 or YYYY-MM-DD) |
+| mode | query | string | no | event \| as_of \| filled (default filled) |
+| as_of | query | string | no | Point-in-time cutoff (defaults to to) |
+
+#### Responses
+
+| Status | Schema | Description |
+| --- | --- | --- |
+| 200 | github_com_Cyvadra_toktik_internal_dto.FundamentalSeriesResponse | OK |
+| 400 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Bad Request |
+| 500 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Internal Server Error |
+
+### Fundamental snapshot
+
+- Endpoint: `GET /api/v1/fundamentals/snapshot`
+- Tags: `Fundamentals`
+- Produces: `application/json`
+- Summary: Get fundamental snapshot for one symbol
+- Description: Returns latest known value per factor for one (market, symbol) at as_of.
+
+#### Parameters
+
+| Name | In | Type | Required | Description |
+| --- | --- | --- | --- | --- |
+| market | query | string | yes | Market (us-stocks \| crypto-spot) |
+| symbol | query | string | yes | Symbol |
+| factor | query | array<string> | no | Factor codes (repeat or comma-separated) |
+| as_of | query | string | no | Point-in-time cutoff (defaults to now UTC) |
+
+#### Responses
+
+| Status | Schema | Description |
+| --- | --- | --- |
+| 200 | github_com_Cyvadra_toktik_internal_dto.FundamentalSnapshotResponse | OK |
+| 400 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Bad Request |
+| 500 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Internal Server Error |
+
+### Fundamental panel
+
+- Endpoint: `GET /api/v1/fundamentals/panel`
+- Tags: `Fundamentals`
+- Produces: `application/json`
+- Summary: Get fundamental panel across symbols
+- Description: Returns latest known values per (symbol, factor) at as_of.
+
+#### Parameters
+
+| Name | In | Type | Required | Description |
+| --- | --- | --- | --- | --- |
+| market | query | string | yes | Market (us-stocks \| crypto-spot) |
+| symbol | query | array<string> | yes | Symbols (repeat or comma-separated) |
+| factor | query | array<string> | no | Factor codes (repeat or comma-separated) |
+| as_of | query | string | no | Point-in-time cutoff (defaults to now UTC) |
+
+#### Responses
+
+| Status | Schema | Description |
+| --- | --- | --- |
+| 200 | github_com_Cyvadra_toktik_internal_dto.FundamentalPanelResponse | OK |
+| 400 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Bad Request |
+| 500 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Internal Server Error |
+
+### Fundamental freshness
+
+- Endpoint: `GET /api/v1/fundamentals/freshness`
+- Tags: `Fundamentals`
+- Produces: `application/json`
+- Summary: Get fundamental dataset freshness
+- Description: Returns latest known_at per factor and (when SLA configured) staleness flags.
+
+#### Parameters
+
+| Name | In | Type | Required | Description |
+| --- | --- | --- | --- | --- |
+| market | query | string | no | Market filter |
+| factor | query | string | no | Factor code filter |
+
+#### Responses
+
+| Status | Schema | Description |
+| --- | --- | --- |
+| 200 | github_com_Cyvadra_toktik_internal_dto.FundamentalFreshnessResponse | OK |
 | 400 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Bad Request |
 | 500 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Internal Server Error |
 
@@ -697,11 +823,10 @@ No parameters.
 
 | Name | In | Type | Required | Description |
 | --- | --- | --- | --- | --- |
-| symbol | query | string | yes | Option contract symbol (Polygon OPRA ticker or raw OCC payload without O: prefix) |
+| symbol | query | string | yes | Option contract symbol |
 | interval | query | string | yes | Bar interval |
 | from | query | string | yes | Start time (RFC3339 or YYYY-MM-DD) |
 | to | query | string | yes | End time (RFC3339 or YYYY-MM-DD) |
-| session | query | string | no | Session filter (1m only: regular, all, extended) |
 | limit | query | integer | no | Max rows (default 1000) |
 | cursor | query | string | no | Pagination cursor |
 
@@ -725,8 +850,7 @@ No parameters.
 
 | Name | In | Type | Required | Description |
 | --- | --- | --- | --- | --- |
-| underlying | query | string | no | Filter by underlying ticker symbol |
-| root | query | string | no | Legacy alias for underlying |
+| root | query | string | no | Filter by root symbol |
 | search | query | string | no | Substring match filter |
 | limit | query | integer | no | Max rows (default 100) |
 | cursor | query | string | no | Pagination cursor |
@@ -751,11 +875,10 @@ No parameters.
 
 | Name | In | Type | Required | Description |
 | --- | --- | --- | --- | --- |
-| symbol | query | string | yes | Option contract symbol (Polygon OPRA ticker or raw OCC payload without O: prefix) |
+| symbol | query | string | yes | Option contract symbol |
 | interval | query | string | no | Bar interval (default 1h) |
 | from | query | string | yes | Start time (RFC3339 or YYYY-MM-DD) |
 | to | query | string | yes | End time (RFC3339 or YYYY-MM-DD) |
-| session | query | string | no | Session filter (1m only: regular, all, extended) |
 | limit | query | integer | no | Max rows (default 1000) |
 | cursor | query | string | no | Pagination cursor |
 
@@ -773,17 +896,15 @@ No parameters.
 - Tags: `USOptions`
 - Produces: `application/json`
 - Summary: Get US option chain
-- Description: Returns option chain snapshots for a US underlying. If from/to are omitted, the latest available snapshot is returned.
+- Description: Returns an option chain snapshot for a US underlying, grouped by expiration and strike.
 
 #### Parameters
 
 | Name | In | Type | Required | Description |
 | --- | --- | --- | --- | --- |
 | underlying | query | string | yes | Underlying ticker symbol |
-| expiration | query | string | no | Filter contracts by expiration date (YYYY-MM-DD) |
-| from | query | string | no | Snapshot window start (RFC3339 or YYYY-MM-DD); defaults to latest available snapshot |
-| to | query | string | no | Snapshot window end (RFC3339 or YYYY-MM-DD); defaults to latest available snapshot |
-| interval | query | string | no | Chain interval (default 1d) |
+| expiration | query | string | no | Filter by expiration date |
+| type | query | string | no | Filter by option type (call, put) |
 | limit | query | integer | no | Max contracts (default 100) |
 | cursor | query | string | no | Pagination cursor |
 

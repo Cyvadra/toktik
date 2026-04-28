@@ -1,6 +1,6 @@
 # toktik
 
-Unified multi-market quantitative trading platform for crypto and US equity options, built in Go. Provides a full data pipeline (tick → Parquet → ClickHouse OHLCV), an event-driven backtesting engine, a feature store, and a REST API.
+Unified multi-market quantitative trading platform for crypto and US equity options, built in Go. Provides a full data pipeline (tick → Parquet → ClickHouse OHLCV), an event-driven backtesting engine, a feature store, a symbol-bound fundamentals domain, and a REST API.
 
 ## Features
 
@@ -9,6 +9,7 @@ Unified multi-market quantitative trading platform for crypto and US equity opti
 - **Unified infra API** — Query market data through shared `/api/v1/markets/{market}` routes while preserving legacy `/api/v1/crypto-options/*` compatibility
 - **Infra observability** — Inspect readiness, market catalog, dataset row counts, latest timestamps, freshness, and dataset summary aggregates
 - **Feature-store APIs** — Read volatility snapshots/history, `us-options` term-structure/skew, cross-market liquidity history, and merged daily feature panels from explicit infra endpoints, with precomputed-read preference where available
+- **Fundamentals APIs** — Read symbol-bound point-in-time factor catalog, sparse/as-of/filled series, latest snapshots, multi-symbol panels, and freshness for low-frequency factors such as PE/PB
 - **Event-window APIs** — Read early-close and holiday-proximity flags as both latest snapshots and daily history from the US market-session calendar
 - **Options spread strategies** — Built-in bull put / bear call spread strategies with MA deviation signals
 - **Strategy reuse helpers** — Shared `pkg/strategies/optutil` mixins and helpers for options strategy development
@@ -47,6 +48,7 @@ Unified multi-market quantitative trading platform for crypto and US equity opti
                │  us_options_bar_1m           │
                │  us_stocks_bar_1m            │
                │  feature_*_snapshot_daily    │
+               │  fundamental_*               │
                │  + materialized K-line views │
                └──────────────────────────────┘
 ```
@@ -56,9 +58,9 @@ Unified multi-market quantitative trading platform for crypto and US equity opti
 | Package | Layer | Purpose |
 |---------|-------|---------|
 | `internal/backtest` | Engine | Event-driven backtester: Strategy interface, Engine orchestrator, Broker (fills/commissions/slippage), columnar DataSet, Indicator DAG, OptionsChain, SpreadGroup lifecycle |
-| `internal/api` | HTTP | Gin router and handlers for `/api/v1/*` (bars, symbols, greeks, backtest, infra, features) |
+| `internal/api` | HTTP | Gin router and handlers for `/api/v1/*` (bars, symbols, greeks, backtest, infra, features, fundamentals) |
 | `internal/service` | Business | DTO-driven service layer backed by ClickHouse queries — zero direct DB access from handlers |
-| `internal/datafeed` | Adapter | DataFeed implementations that load ClickHouse data into columnar DataSets for the backtest engine |
+| `internal/datafeed` | Adapter | DataFeed implementations that load ClickHouse data into columnar DataSets for the backtest engine, including symbol-bound fundamentals factor bridges |
 | `internal/cryptooptions` | Domain | Crypto options: CSV/Parquet parsing, tick→1m aggregation, symbol hashing, chain cache, ClickHouse queries |
 | `internal/usmarket` | Domain | US market: Polygon CSV import, session-aware K-line aggregation (DST + holidays), Black-Scholes greeks |
 | `internal/dto` | Schema | API request/response types with validation and time parsing |
@@ -111,6 +113,8 @@ Key design decisions:
 | `feature_skew_snapshot_daily` | US | OTM call/put IV skew |
 | `feature_liquidity_snapshot_daily` | Both | Bid/ask spreads, relative spread, OI, tradability/activity ratio |
 | `feature_daily_panel_daily` | Both | Merged daily feature panel (all above combined) |
+| `fundamental_factor_catalog` | US stocks, Crypto spot | Factor control plane: metadata, preferred frequency, fill policy, SLA, source |
+| `fundamental_observation` | US stocks, Crypto spot | Tall sparse symbol-bound observations with `event_ts`, `known_at`, revision, and point-in-time query semantics |
 | Materialized K-line views | Both | 5m, 15m, 30m, 1h, 2h, 3h, 4h, 6h, 8h, 12h, 1d auto-aggregated from 1m |
 
 ### API Route Map
@@ -138,6 +142,11 @@ Key design decisions:
 | `/api/v1/features/event-window-snapshot` | GET | Early-close / holiday flags |
 | `/api/v1/features/event-window-history` | GET | Historical market events |
 | `/api/v1/features/daily-feature-panel` | GET | Merged daily features |
+| `/api/v1/fundamentals/factors` | GET | List symbol-bound fundamental factors and metadata |
+| `/api/v1/fundamentals/series` | GET | Query sparse, as-of, or filled point-in-time series for one symbol/factor |
+| `/api/v1/fundamentals/snapshot` | GET | Latest known values for one symbol across many factors |
+| `/api/v1/fundamentals/panel` | GET | Latest known values across many symbols/factors |
+| `/api/v1/fundamentals/freshness` | GET | Latest `known_at` and SLA-based freshness per factor |
 
 All list endpoints support cursor-based pagination (`cursor` / `next_cursor`). Supported intervals: `1m` through `1w`.
 
@@ -156,7 +165,7 @@ Built-in strategies: `golden-cross`, `delta-filter`, `bull-put-spread`, `bear-ca
 ## Infra Progress
 
 - Phase 1: unified market API and infra dataset/market inspection — **implemented**.
-- Phase 2: feature-store APIs — **in progress**; volatility, liquidity, event-window, daily panel, and `us-options` surface features available.
+- Phase 2: feature-store and fundamentals APIs — **in progress**; volatility, liquidity, event-window, daily panel, `us-options` surface features, and symbol-bound fundamentals endpoints are available.
 - Phase 3: reference-data APIs — planned.
 - Phase 4: production scheduling/run-state APIs — planned (readiness and freshness inspection already in place).
 

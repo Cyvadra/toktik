@@ -90,6 +90,16 @@ type FactorProvider interface {
 	QueryFactorBars(ctx context.Context, req dto.FactorBarRequest) (*dto.FactorBarResponse, error)
 }
 
+// FundamentalsProvider exposes symbol-bound fundamental factor queries
+// (catalog, point-in-time series, snapshots, panels, freshness).
+type FundamentalsProvider interface {
+	ListFactors(ctx context.Context, req dto.FundamentalFactorCatalogRequest) (*dto.FundamentalFactorCatalogResponse, error)
+	QuerySeries(ctx context.Context, req dto.FundamentalSeriesRequest) (*dto.FundamentalSeriesResponse, error)
+	QuerySnapshot(ctx context.Context, req dto.FundamentalSnapshotRequest) (*dto.FundamentalSnapshotResponse, error)
+	QueryPanel(ctx context.Context, req dto.FundamentalPanelRequest) (*dto.FundamentalPanelResponse, error)
+	QueryFreshness(ctx context.Context, req dto.FundamentalFreshnessRequest) (*dto.FundamentalFreshnessResponse, error)
+}
+
 type PolygonProvider interface {
 	QueryStockSnapshot(ctx context.Context, req dto.PolygonStockSnapshotRequest) (*dto.PolygonStockSnapshotResponse, error)
 	QueryStockAggregates(ctx context.Context, req dto.PolygonAggregateRequest) (*dto.PolygonAggregateResponse, error)

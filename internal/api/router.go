@@ -25,6 +25,7 @@ type Deps struct {
 	Screener          ScreenerProvider
 	StrategyCatalog   StrategyCatalogProvider
 	Factors           FactorProvider
+	Fundamentals      FundamentalsProvider
 	Polygon           PolygonProvider // optional
 
 	// Stop is closed when the server shuts down. Long-lived middleware
@@ -178,6 +179,13 @@ func registerRoutes(v1 *gin.RouterGroup, h *Handler) {
 	factorsGroup := v1.Group("/factors")
 	factorsGroup.GET("", h.ListFactors)
 	factorsGroup.GET("/bars", h.GetFactorBars)
+
+	fundamentalsGroup := v1.Group("/fundamentals")
+	fundamentalsGroup.GET("/factors", h.ListFundamentalFactors)
+	fundamentalsGroup.GET("/series", h.GetFundamentalSeries)
+	fundamentalsGroup.GET("/snapshot", h.GetFundamentalSnapshot)
+	fundamentalsGroup.GET("/panel", h.GetFundamentalPanel)
+	fundamentalsGroup.GET("/freshness", h.GetFundamentalFreshness)
 
 	polygonGroup := v1.Group("/polygon")
 	polygonStocks := polygonGroup.Group("/stocks")

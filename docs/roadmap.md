@@ -92,6 +92,21 @@ The platform is designed to support various markets beyond crypto options:
 
 ---
 
+## Phase 7: Symbol-Bound Fundamentals Domain
+
+Status: Initial implementation complete
+
+Add a dedicated low-frequency, point-in-time domain for symbol-bound numeric factors such as PE, PB, dividend yield, market cap, and future valuation signals.
+
+- **Storage model**: Tall sparse fact table `fundamental_observation` keyed by `(market, symbol, factor_code, event_ts, known_at)` plus a catalog table `fundamental_factor_catalog`
+- **Point-in-time semantics**: Every backtestable query filters by `known_at <= as_of`, so delayed publication and revisions do not leak future information
+- **Cadence support**: Daily, monthly, quarterly, and occasional intraday updates all share the same observation store; they are not coerced into bar-shaped ingest tables
+- **API surface**: `/api/v1/fundamentals/{factors,series,snapshot,panel,freshness}`
+- **Backtest bridge**: `SetupContext.AddSymbolFactor(...)` plus `internal/datafeed/FundamentalsFactorFeed` let a single registered feed serve many symbols while reusing the existing indicator/runtime stack
+- **Future optimization path**: Keep ingest raw and sparse first; add hot-path materialized panels only if repeated query shapes justify them
+
+---
+
 ## Architecture Notes
 
 ### Current Status

@@ -34,6 +34,7 @@ type Handler struct {
 	screener          ScreenerProvider
 	strategyCatalog   StrategyCatalogProvider
 	factors           FactorProvider
+	fundamentals      FundamentalsProvider
 	polygon           PolygonProvider
 
 	// reportsRoot is the directory on disk under which all backtest
@@ -64,6 +65,7 @@ func NewHandler(d Deps) *Handler {
 		screener:          d.Screener,
 		strategyCatalog:   d.StrategyCatalog,
 		factors:           d.Factors,
+		fundamentals:      d.Fundamentals,
 		polygon:           d.Polygon,
 		reportsRoot:       root,
 	}
