@@ -56,6 +56,7 @@ const (
 	ivPercentileColumn     = "iv_pr_200_12h"
 	ivThresholdColumn      = "iv_q66_200_12h"
 	dvolBarIndexColumn     = "dvol_12h_bar_index"
+	smooth12hIndicatorsKey = "smooth_12h_indicators"
 )
 
 type signalType int
@@ -109,6 +110,8 @@ type strategy struct {
 	signals      []signalEvent
 	ref12h       backtest.SecurityRef
 	dvolRef      backtest.FactorRef
+	dvolLiveRef  backtest.FactorRef
+	primaryTF    string
 	activeGroups []activeGroup
 }
 
@@ -147,6 +150,7 @@ func (s *strategy) ReportColumns() []backtest.ReportColumn {
 
 func (s *strategy) Init(ctx *backtest.SetupContext) error {
 	primary := ctx.PrimaryRef()
+	s.primaryTF = primary.Interval
 	s.ref12h = ctx.AddSecurity(primary.Market, primary.Symbol, interval12h)
 
 	ctx.RegisterOn(s.ref12h, volStdBaseColumn, optutil.RollingStdDevIndicator("close", volStdPeriod))
@@ -155,11 +159,13 @@ func (s *strategy) Init(ctx *backtest.SetupContext) error {
 	ctx.RegisterOn(s.ref12h, volStdPercentileColumn, optutil.PercentileRank(volStdValueColumn, volStdLookback))
 
 	s.dvolRef = ctx.AddFactor("dvol", interval12h)
+	s.dvolLiveRef = ctx.AddFactor("dvol", primary.Interval)
 	ctx.RegisterFactor(s.dvolRef, ivPercentileColumn, optutil.PercentileRank("close", ivPercentileLookback))
 
 	ctx.SetWarmup(120 * 24 * time.Hour)
 	ctx.SetParam("amount_base", amountBase)
 	ctx.SetParam("signal_count", float64(len(s.signals)))
+	ctx.SetParam(smooth12hIndicatorsKey, true)
 	return nil
 }
 
@@ -232,6 +238,15 @@ func (s *strategy) Preload(ctx *backtest.PreloadContext) error {
 		}
 		if err := primary.SetColumn(name, aligned); err != nil {
 			return err
+		}
+	}
+
+	if smoothingEnabled(ctx.Param(smooth12hIndicatorsKey)) {
+		dvolLive := ctx.Factor(s.dvolLiveRef)
+		if dvolLive != nil && dvolLive.Len() > 0 {
+			if err := s.apply12HSmoothing(ctx, primary, htf, dvol, dvolLive); err != nil {
+				return err
+			}
 		}
 	}
 

@@ -111,3 +111,58 @@ func TestSelectEligibleCallsUsesLowIVFallbackTarget40(t *testing.T) {
 		t.Fatalf("first fallback DTE = %.0f, want 52", got)
 	}
 }
+
+func TestBuildHTFProgressUsesPrimaryCloseTime(t *testing.T) {
+	base := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	primaryTimes := make([]time.Time, 14)
+	for i := range primaryTimes {
+		primaryTimes[i] = base.Add(time.Duration(i) * time.Hour)
+	}
+	higherTimes := []time.Time{base, base.Add(12 * time.Hour), base.Add(24 * time.Hour)}
+
+	indices, weights, err := buildHTFProgress(primaryTimes, "1h", higherTimes, "12h")
+	if err != nil {
+		t.Fatalf("buildHTFProgress failed: %v", err)
+	}
+	if indices[0] != 0 || math.Abs(weights[0]-1.0/12.0) > 1e-12 {
+		t.Fatalf("bar0 = (%d, %.6f), want (0, %.6f)", indices[0], weights[0], 1.0/12.0)
+	}
+	if indices[10] != 0 || math.Abs(weights[10]-11.0/12.0) > 1e-12 {
+		t.Fatalf("bar10 = (%d, %.6f), want (0, %.6f)", indices[10], weights[10], 11.0/12.0)
+	}
+	if indices[11] != 0 || math.Abs(weights[11]-1) > 1e-12 {
+		t.Fatalf("bar11 = (%d, %.6f), want (0, 1)", indices[11], weights[11])
+	}
+	if indices[12] != 1 || math.Abs(weights[12]-1.0/12.0) > 1e-12 {
+		t.Fatalf("bar12 = (%d, %.6f), want (1, %.6f)", indices[12], weights[12], 1.0/12.0)
+	}
+}
+
+func TestEstimateVolStdRatioUsesEstimatedCurrentClose(t *testing.T) {
+	confirmedClose := make([]float64, 40)
+	for i := range confirmedClose {
+		confirmedClose[i] = float64(i + 1)
+	}
+	confirmedStd := optutil.RollingStdDev(confirmedClose, volStdPeriod)
+	estimated := estimateVolStdRatio(40, 50, confirmedClose, confirmedStd)
+	if math.IsNaN(estimated) {
+		t.Fatal("estimated ratio is NaN")
+	}
+	seriesWithEstimate := append(append([]float64(nil), confirmedClose...), 50)
+	stdWithEstimate := optutil.RollingStdDev(seriesWithEstimate, volStdPeriod)
+	smaWithEstimate := backtest.SMA("std", volStdSMAPeriod).Compute(map[string][]float64{"std": stdWithEstimate})
+	want := stdWithEstimate[len(stdWithEstimate)-1] / smaWithEstimate[len(smaWithEstimate)-1]
+	if diff := math.Abs(estimated - want); diff > 1e-12 {
+		t.Fatalf("estimated ratio = %.12f, want %.12f", estimated, want)
+	}
+}
+
+func TestBlendEstimatedValue(t *testing.T) {
+	got := blendEstimatedValue(20, 80, 0.25)
+	if math.Abs(got-35) > 1e-12 {
+		t.Fatalf("blendEstimatedValue = %.12f, want 35", got)
+	}
+	if got := blendEstimatedValue(math.NaN(), 80, 0.25); got != 80 {
+		t.Fatalf("blend with NaN confirmed = %.12f, want 80", got)
+	}
+}
