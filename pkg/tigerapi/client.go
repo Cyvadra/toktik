@@ -47,6 +47,61 @@ type KlineBar struct {
 	Close  float64 `json:"close"`
 	Volume float64 `json:"volume"`
 	Amount float64 `json:"amount"`
+	// Fundamentals preserves extra bar-level fields such as turnover_rate or ttm_pe_rate
+	// when Tiger returns them via with_fundamental.
+	Fundamentals map[string]any `json:"-"`
+}
+
+func (b *KlineBar) UnmarshalJSON(data []byte) error {
+	type base KlineBar
+	var decoded base
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	*b = KlineBar(decoded)
+
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	delete(raw, "symbol")
+	delete(raw, "time")
+	delete(raw, "open")
+	delete(raw, "high")
+	delete(raw, "low")
+	delete(raw, "close")
+	delete(raw, "volume")
+	delete(raw, "amount")
+	if len(raw) == 0 {
+		b.Fundamentals = nil
+		return nil
+	}
+	b.Fundamentals = make(map[string]any, len(raw))
+	for key, value := range raw {
+		var decodedValue any
+		if err := json.Unmarshal(value, &decodedValue); err != nil {
+			return fmt.Errorf("decode tiger kline field %s: %w", key, err)
+		}
+		b.Fundamentals[key] = decodedValue
+	}
+	return nil
+}
+
+func (b KlineBar) MarshalJSON() ([]byte, error) {
+	encoded := map[string]any{
+		"symbol": b.Symbol,
+		"time":   b.Time,
+		"open":   b.Open,
+		"high":   b.High,
+		"low":    b.Low,
+		"close":  b.Close,
+		"volume": b.Volume,
+		"amount": b.Amount,
+	}
+	for key, value := range b.Fundamentals {
+		encoded[key] = value
+	}
+	return json.Marshal(encoded)
 }
 
 type TimelinePoint struct {
@@ -99,8 +154,18 @@ type OptionQuote struct {
 }
 
 type StockKlineRequest struct {
-	Symbol string
-	Period string
+	Symbol          string
+	Period          string
+	BeginTime       string
+	EndTime         string
+	Limit           int
+	PageToken       string
+	WithFundamental bool
+}
+
+type KlinePage struct {
+	Bars          []KlineBar
+	NextPageToken string
 }
 
 type OptionKlineRequest struct {
@@ -114,8 +179,9 @@ type optionExpirationEnvelope struct {
 }
 
 type klineEnvelope struct {
-	Symbol string     `json:"symbol"`
-	Items  []KlineBar `json:"items"`
+	Symbol        string     `json:"symbol"`
+	NextPageToken string     `json:"nextPageToken"`
+	Items         []KlineBar `json:"items"`
 }
 
 type optionChainEnvelope struct {
@@ -226,21 +292,48 @@ func (c *Client) StockQuotes(symbols []string) ([]StockQuote, error) {
 }
 
 func (c *Client) StockKlines(req StockKlineRequest) ([]KlineBar, error) {
+	page, err := c.StockKlinesPage(req)
+	if err != nil {
+		return nil, err
+	}
+	return page.Bars, nil
+}
+
+func (c *Client) StockKlinesPage(req StockKlineRequest) (KlinePage, error) {
 	symbol := strings.ToUpper(strings.TrimSpace(req.Symbol))
 	period := strings.TrimSpace(req.Period)
 	if symbol == "" {
-		return nil, fmt.Errorf("symbol is required")
+		return KlinePage{}, fmt.Errorf("symbol is required")
 	}
 	if period == "" {
-		return nil, fmt.Errorf("period is required")
+		return KlinePage{}, fmt.Errorf("period is required")
 	}
-	data, err := c.quoteClient.Kline(symbol, period)
-	if err != nil {
-		return nil, fmt.Errorf("query tiger kline: %w", err)
+	bizParams := map[string]any{
+		"symbols": []string{symbol},
+		"period":  period,
 	}
-	out, err := decodeKlineBars(data)
+	if beginTime := strings.TrimSpace(req.BeginTime); beginTime != "" {
+		bizParams["begin_time"] = beginTime
+	}
+	if endTime := strings.TrimSpace(req.EndTime); endTime != "" {
+		bizParams["end_time"] = endTime
+	}
+	if req.Limit > 0 {
+		bizParams["limit"] = req.Limit
+	}
+	if pageToken := strings.TrimSpace(req.PageToken); pageToken != "" {
+		bizParams["page_token"] = pageToken
+	}
+	if req.WithFundamental {
+		bizParams["with_fundamental"] = true
+	}
+	data, err := c.execute("kline", bizParams)
 	if err != nil {
-		return nil, fmt.Errorf("decode tiger kline response: %w", err)
+		return KlinePage{}, fmt.Errorf("query tiger kline: %w", err)
+	}
+	out, err := decodeKlinePage(data)
+	if err != nil {
+		return KlinePage{}, fmt.Errorf("decode tiger kline response: %w", err)
 	}
 	return out, nil
 }
@@ -358,11 +451,11 @@ func (c *Client) OptionKlines(req OptionKlineRequest) ([]KlineBar, error) {
 	if err != nil {
 		return nil, fmt.Errorf("query tiger option_kline: %w", err)
 	}
-	out, err := decodeKlineBars(data)
+	page, err := decodeKlinePage(data)
 	if err != nil {
 		return nil, fmt.Errorf("decode tiger option_kline response: %w", err)
 	}
-	return out, nil
+	return page.Bars, nil
 }
 
 func (c *Client) Execute(method string, bizParams any, out any) error {
@@ -475,15 +568,19 @@ func decodeOptionExpirations(data json.RawMessage) ([]string, error) {
 	return out, nil
 }
 
-func decodeKlineBars(data json.RawMessage) ([]KlineBar, error) {
+func decodeKlinePage(data json.RawMessage) (KlinePage, error) {
 	trimmed := strings.TrimSpace(string(data))
 	if strings.Contains(trimmed, `"items"`) {
 		var envelopes []klineEnvelope
 		if err := decodeJSON(data, &envelopes); err != nil {
-			return nil, err
+			return KlinePage{}, err
 		}
 		out := make([]KlineBar, 0)
+		nextPageToken := ""
 		for _, envelope := range envelopes {
+			if nextPageToken == "" {
+				nextPageToken = strings.TrimSpace(envelope.NextPageToken)
+			}
 			for _, item := range envelope.Items {
 				if item.Symbol == "" {
 					item.Symbol = envelope.Symbol
@@ -491,14 +588,14 @@ func decodeKlineBars(data json.RawMessage) ([]KlineBar, error) {
 				out = append(out, item)
 			}
 		}
-		return out, nil
+		return KlinePage{Bars: out, NextPageToken: nextPageToken}, nil
 	}
 
 	var direct []KlineBar
 	if err := decodeJSON(data, &direct); err == nil && len(direct) > 0 {
-		return direct, nil
+		return KlinePage{Bars: direct}, nil
 	}
-	return nil, nil
+	return KlinePage{}, nil
 }
 
 func decodeOptionChainContracts(data json.RawMessage) ([]OptionContract, error) {

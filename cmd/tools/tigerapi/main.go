@@ -131,13 +131,14 @@ func (a app) runStockKline(client tigerService, args []string) int {
 	fs.SetOutput(a.stderr)
 	symbol := fs.String("symbol", "", "Stock symbol, e.g. AAPL")
 	period := fs.String("period", "day", "Kline period, e.g. day, week, month")
+	withFundamental := fs.Bool("with-fundamental", false, "Include bar-level fundamentals such as PE ratio and turnover rate when Tiger provides them")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
 	if strings.TrimSpace(*symbol) == "" {
 		return a.failf("stock-kline: --symbol is required")
 	}
-	data, err := client.StockKlines(tigerapi.StockKlineRequest{Symbol: *symbol, Period: *period})
+	data, err := client.StockKlines(tigerapi.StockKlineRequest{Symbol: *symbol, Period: *period, WithFundamental: *withFundamental})
 	if err != nil {
 		return a.failf("stock-kline failed: %v", err)
 	}

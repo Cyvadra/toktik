@@ -111,7 +111,7 @@ func TestNewFromEnvAndQueries(t *testing.T) {
 	responses := map[string]any{
 		"market_state":      []map[string]any{{"market": "US", "status": "Trading"}},
 		"quote_real_time":   []map[string]any{{"symbol": "AAPL", "latestPrice": 197.12}},
-		"kline":             []map[string]any{{"symbol": "AAPL", "items": []map[string]any{{"time": 1712534400000, "open": 190.0, "high": 198.0, "low": 189.5, "close": 197.12, "volume": 1000.0}}}},
+		"kline":             []map[string]any{{"symbol": "AAPL", "nextPageToken": "next-token-1", "items": []map[string]any{{"time": 1712534400000, "open": 190.0, "high": 198.0, "low": 189.5, "close": 197.12, "volume": 1000.0, "turnoverRate": 0.12, "ttmPeRate": 31.8}}}},
 		"timeline":          []map[string]any{{"symbol": "AAPL", "time": 1712534400000, "price": 197.12, "avgPrice": 196.8, "volume": 1000.0}},
 		"trade_tick":        []map[string]any{{"symbol": "AAPL", "time": 1712534400000, "price": 197.12, "size": 10.0, "direction": "BUY"}},
 		"quote_depth":       map[string]any{"symbol": "AAPL", "bids": [][]float64{{197.1, 100}}, "asks": [][]float64{{197.2, 200}}},
@@ -187,9 +187,34 @@ func TestNewFromEnvAndQueries(t *testing.T) {
 		t.Fatalf("StockQuotes failed: %#v, err=%v", quotes, err)
 	}
 
-	stockBars, err := client.StockKlines(StockKlineRequest{Symbol: "AAPL", Period: "day"})
+	stockBars, err := client.StockKlines(StockKlineRequest{Symbol: "AAPL", Period: "day", WithFundamental: true})
 	if err != nil || len(stockBars) != 1 || stockBars[0].Close != 197.12 {
 		t.Fatalf("StockKlines failed: %#v, err=%v", stockBars, err)
+	}
+	if got := stockBars[0].Fundamentals["turnoverRate"]; got != 0.12 {
+		t.Fatalf("expected turnoverRate fundamental, got %#v", stockBars[0].Fundamentals)
+	}
+	if got := stockBars[0].Fundamentals["ttmPeRate"]; got != 31.8 {
+		t.Fatalf("expected ttmPeRate fundamental, got %#v", stockBars[0].Fundamentals)
+	}
+
+	stockPage, err := client.StockKlinesPage(StockKlineRequest{
+		Symbol:          "AAPL",
+		Period:          "day",
+		BeginTime:       "2024-01-01",
+		EndTime:         "2024-12-31",
+		Limit:           200,
+		PageToken:       "token-0",
+		WithFundamental: true,
+	})
+	if err != nil {
+		t.Fatalf("StockKlinesPage failed: %v", err)
+	}
+	if stockPage.NextPageToken != "next-token-1" {
+		t.Fatalf("expected next page token, got %q", stockPage.NextPageToken)
+	}
+	if len(stockPage.Bars) != 1 || stockPage.Bars[0].Symbol != "AAPL" {
+		t.Fatalf("unexpected StockKlinesPage payload: %#v", stockPage)
 	}
 
 	timeline, err := client.StockTimeline([]string{"AAPL"})
@@ -247,7 +272,8 @@ func TestNewFromEnvAndQueries(t *testing.T) {
 	defer mu.Unlock()
 	assertRecordedMethod(t, records, "market_state", map[string]any{"market": "US"})
 	assertRecordedMethod(t, records, "quote_real_time", map[string]any{"symbols": []any{"AAPL"}})
-	assertRecordedMethod(t, records, "kline", map[string]any{"symbols": []any{"AAPL"}, "period": "day"})
+	assertRecordedMethod(t, records, "kline", map[string]any{"symbols": []any{"AAPL"}, "period": "day", "with_fundamental": true})
+	assertRecordedMethodWithKey(t, records, "kline", "page_token", map[string]any{"symbols": []any{"AAPL"}, "period": "day", "begin_time": "2024-01-01", "end_time": "2024-12-31", "limit": float64(200), "page_token": "token-0", "with_fundamental": true})
 	assertRecordedMethod(t, records, "option_expiration", map[string]any{"symbols": []any{"AAPL"}})
 	assertRecordedMethod(t, records, "option_chain", map[string]any{})
 	assertRecordedMethod(t, records, "option_brief", map[string]any{})
@@ -316,4 +342,27 @@ func assertRecordedMethod(t *testing.T, records []recordedRequest, method string
 		return
 	}
 	t.Fatalf("method %s was not recorded", method)
+}
+
+func assertRecordedMethodWithKey(t *testing.T, records []recordedRequest, method string, requiredKey string, expected map[string]any) {
+	t.Helper()
+	for _, item := range records {
+		if item.Method != method {
+			continue
+		}
+		if _, ok := item.BizContent[requiredKey]; !ok {
+			continue
+		}
+		for key, value := range expected {
+			got, ok := item.BizContent[key]
+			if !ok {
+				t.Fatalf("method %s missing key %s in biz_content", method, key)
+			}
+			if fmt.Sprintf("%v", got) != fmt.Sprintf("%v", value) {
+				t.Fatalf("method %s key %s mismatch: got=%v want=%v", method, key, got, value)
+			}
+		}
+		return
+	}
+	t.Fatalf("method %s with key %s was not recorded", method, requiredKey)
 }

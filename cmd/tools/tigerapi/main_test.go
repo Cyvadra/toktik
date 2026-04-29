@@ -85,6 +85,29 @@ func TestRunStockQuote(t *testing.T) {
 	}
 }
 
+func TestRunStockKlineWithFundamental(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cli := app{
+		stdout: &stdout,
+		stderr: &stderr,
+		newClient: func() (tigerService, error) {
+			return stubTigerService{}, nil
+		},
+	}
+
+	exitCode := cli.run([]string{"stock-kline", "--symbol", "AAPL", "--period", "day", "--with-fundamental"})
+	if exitCode != 0 {
+		t.Fatalf("run exit code = %d, stderr=%s", exitCode, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "197.12") {
+		t.Fatalf("expected stock kline output, got %s", stdout.String())
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("expected empty stderr, got %s", stderr.String())
+	}
+}
+
 func TestRunOptionKline(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
