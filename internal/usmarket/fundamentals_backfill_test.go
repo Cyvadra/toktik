@@ -45,15 +45,15 @@ func TestExtractPEObservations(t *testing.T) {
 
 func TestPlanPEObservationInsertsSkipsUnchangedAndRevisesChanged(t *testing.T) {
 	observations := []fundamentalObservationInsert{
-		{Symbol: "AAPL", EventTS: time.UnixMilli(1712534400000).UTC(), KnownAt: time.UnixMilli(1712534400000).UTC(), Value: 31.8},
-		{Symbol: "AAPL", EventTS: time.UnixMilli(1712620800000).UTC(), KnownAt: time.UnixMilli(1712620800000).UTC(), Value: 32.5},
+		{Symbol: "AAPL", FactorCode: usStocksPEFactorCode, EventTS: time.UnixMilli(1712534400000).UTC(), KnownAt: time.UnixMilli(1712534400000).UTC(), Value: 31.8},
+		{Symbol: "AAPL", FactorCode: usStocksPEFactorCode, EventTS: time.UnixMilli(1712620800000).UTC(), KnownAt: time.UnixMilli(1712620800000).UTC(), Value: 32.5},
 	}
 	existing := map[fundamentalObservationKey]existingFundamentalObservation{
-		{EventTS: 1712534400000, KnownAt: 1712534400000}: {Value: 31.8, Revision: 0},
-		{EventTS: 1712620800000, KnownAt: 1712620800000}: {Value: 32.0, Revision: 2},
+		{FactorCode: usStocksPEFactorCode, EventTS: 1712534400000, KnownAt: 1712534400000}: {Value: 31.8, Revision: 0},
+		{FactorCode: usStocksPEFactorCode, EventTS: 1712620800000, KnownAt: 1712620800000}: {Value: 32.0, Revision: 2},
 	}
 
-	planned, skipped := planPEObservationInserts(observations, existing)
+	planned, skipped := planFundamentalObservationInserts(observations, existing)
 	if skipped != 1 {
 		t.Fatalf("expected 1 skipped observation, got %d", skipped)
 	}
@@ -62,5 +62,19 @@ func TestPlanPEObservationInsertsSkipsUnchangedAndRevisesChanged(t *testing.T) {
 	}
 	if planned[0].Revision != 3 {
 		t.Fatalf("expected revision bump to 3, got %d", planned[0].Revision)
+	}
+}
+
+func TestFilterFMPFundamentalSymbolsExcludesUnitsAndWarrants(t *testing.T) {
+	input := []string{"AAPL", "BRK.B", "AAC.U", "AAC.WS", "XYZ.PR", "MSFT"}
+	filtered := filterFMPFundamentalSymbols(input)
+	want := []string{"AAPL", "BRK.B", "MSFT"}
+	if len(filtered) != len(want) {
+		t.Fatalf("expected %d symbols, got %d: %#v", len(want), len(filtered), filtered)
+	}
+	for index := range want {
+		if filtered[index] != want[index] {
+			t.Fatalf("unexpected filtered symbols: want %#v got %#v", want, filtered)
+		}
 	}
 }

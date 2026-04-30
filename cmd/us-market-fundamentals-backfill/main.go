@@ -25,15 +25,18 @@ func main() {
 	date := flag.String("date", "", "Single market date to backfill (YYYY-MM-DD)")
 	startDate := flag.String("start-date", "", "Start market date to backfill (YYYY-MM-DD)")
 	endDate := flag.String("end-date", "", "End market date to backfill (YYYY-MM-DD)")
-	providerName := flag.String("provider", "disabled", "Fundamentals source provider. Default is disabled; Tiger is sealed behind explicit interactive confirmation")
+	providerName := flag.String("provider", "disabled", "Fundamentals source provider. Default is disabled; supported: tiger (sealed), fmp")
 	symbolsFlag := flag.String("symbols", "", "Optional comma-separated symbols to restrict backfill")
 	dsn := flag.String("clickhouse-dsn", runtimeCfg.ClickHouse.DSN, "ClickHouse DSN")
 	workers := flag.Int("workers", 2, "Number of parallel backfill workers")
 	batchSize := flag.Int("batch-size", 1000, "Rows per ClickHouse INSERT batch")
 	pageSize := flag.Int("page-size", 251, "Tiger kline page size per request")
-	qps := flag.Int("qps", 5, "Global Tiger request QPS cap across all workers")
+	qps := flag.Int("qps", 5, "Global request QPS cap across all workers (Tiger ~5, FMP ~5/sec safe)")
 	limitSymbols := flag.Int("limit-symbols", 0, "Optional limit of symbols to process")
 	dryRun := flag.Bool("dry-run", false, "Only report candidate PE rows without writing to ClickHouse")
+	initSchema := flag.Bool("init-schema", true, "Initialize fundamentals schema before backfill")
+	schemaFile := flag.String("schema", "", "Path to fundamentals.sql DDL (auto-detected if empty)")
+	fmpQuarterLimit := flag.Int("fmp-quarter-limit", 40, "FMP provider: max number of historical quarters fetched per symbol")
 	flag.Parse()
 
 	from, to := resolveDateRange(*date, *startDate, *endDate)
@@ -46,8 +49,17 @@ func main() {
 	if err != nil {
 		log.Fatalf("connect ClickHouse: %v", err)
 	}
+	if *initSchema {
+		ddlFile, err := appCli.ResolveSchemaFile(*schemaFile, appCli.FundamentalsSchemaFile)
+		if err != nil {
+			log.Fatalf("resolve fundamentals.sql schema: %v", err)
+		}
+		if err := usmarket.InitFundamentalsSchema(ctx, conn, ddlFile); err != nil {
+			log.Fatalf("initialize fundamentals schema: %v", err)
+		}
+	}
 
-	provider, err := resolveBackfillProvider(runtimeCfg, *providerName, os.Stdin, os.Stderr)
+	provider, err := resolveBackfillProvider(runtimeCfg, *providerName, *fmpQuarterLimit, os.Stdin, os.Stderr)
 	if err != nil {
 		log.Fatalf("resolve fundamentals provider: %v", err)
 	}
@@ -67,10 +79,10 @@ func main() {
 		DryRun:       *dryRun,
 	})
 	if err != nil {
-		log.Fatalf("backfill US PE fundamentals: %v", err)
+		log.Fatalf("backfill US fundamentals: %v", err)
 	}
 
-	log.Printf("US PE backfill complete: processed_symbols=%d failed_symbols=%d scanned_bars=%d candidate_rows=%d inserted_rows=%d skipped_rows=%d dry_run=%v",
+	log.Printf("US fundamentals backfill complete: processed_symbols=%d failed_symbols=%d scanned_bars=%d candidate_rows=%d inserted_rows=%d skipped_rows=%d dry_run=%v",
 		result.ProcessedSymbols,
 		result.FailedSymbols,
 		result.ScannedBars,
@@ -79,12 +91,22 @@ func main() {
 		result.SkippedRows,
 		*dryRun,
 	)
+	if strings.EqualFold(*providerName, "fmp") {
+		log.Printf("FMP fundamentals diagnostics: filtered_symbols=%d decode_errors=%d no_quarter_inputs=%d missing_price=%d missing_ttm_eps=%d missing_book_value=%d",
+			result.FilteredSymbols,
+			result.DecodeErrors,
+			result.NoQuarterInputs,
+			result.MissingPrice,
+			result.MissingTTMEPS,
+			result.MissingBookValue,
+		)
+	}
 }
 
-func resolveBackfillProvider(runtimeCfg config.Runtime, providerName string, in io.Reader, out io.Writer) (usmarket.PEBackfillProvider, error) {
+func resolveBackfillProvider(runtimeCfg config.Runtime, providerName string, fmpQuarterLimit int, in io.Reader, out io.Writer) (usmarket.PEBackfillProvider, error) {
 	switch strings.ToLower(strings.TrimSpace(providerName)) {
 	case "", "disabled", "none":
-		return nil, fmt.Errorf("no provider enabled; Tiger is sealed by default because its API is quota-limited and usually requires a higher-volume subscribed account")
+		return nil, fmt.Errorf("no provider enabled; pick one of: tiger (sealed), fmp")
 	case "tiger":
 		if err := confirmTigerProviderUsage(in, out); err != nil {
 			return nil, err
@@ -94,8 +116,17 @@ func resolveBackfillProvider(runtimeCfg config.Runtime, providerName string, in 
 			return nil, fmt.Errorf("load Tiger config: %w", err)
 		}
 		return usmarket.NewTigerPEBackfillProvider(cfg), nil
+	case "fmp":
+		fmpAPIKey, err := runtimeCfg.FMPAPIKey()
+		if err != nil {
+			return nil, fmt.Errorf("load FMP config: %w", err)
+		}
+		if strings.TrimSpace(fmpAPIKey) == "" {
+			return nil, fmt.Errorf("fmp.api_key or FMP_API_KEY is required when --provider=fmp")
+		}
+		return usmarket.NewFMPPEBackfillProvider(fmpAPIKey, fmpQuarterLimit), nil
 	default:
-		return nil, fmt.Errorf("unsupported provider %q; available values: disabled, tiger", providerName)
+		return nil, fmt.Errorf("unsupported provider %q; available values: disabled, tiger, fmp", providerName)
 	}
 }
 

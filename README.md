@@ -1096,7 +1096,7 @@ Notes:
 - This command writes all currently supported feature-store snapshot tables.
 - Volatility snapshots are written for `crypto-options` and `us-options`.
 - Term-structure and skew snapshots are written for `us-options`.
-- Liquidity snapshots are written for both `crypto-options` and `us-options`, with `us-options` currently exposing activity-style metrics from volume and transaction coverage.
+- Liquidity snapshots are written for both `crypto-options` and `us-options`; when US daily bars include bid/ask closes, quote-based tradability metrics are materialized alongside activity metrics.
 - Daily feature panels are written for both `crypto-options` and `us-options` using the requested `lookback_days` and DTE bounds as materialization keys.
 - Summary output includes counts for written, skipped, empty, replaced, and failed scopes.
 - When `ContinueOnError` is active, per-scope failure lines are printed to stderr before the final summary.

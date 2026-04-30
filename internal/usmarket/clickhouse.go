@@ -49,6 +49,22 @@ func ConnectClickHouse(ctx context.Context, dsn string) (driver.Conn, error) {
 
 // InitSchema reads and executes a DDL SQL file.
 func InitSchema(ctx context.Context, conn driver.Conn, ddlPath string) error {
+	if err := execSchemaFile(ctx, conn, ddlPath); err != nil {
+		return err
+	}
+	if err := ensureMarketVolumeColumns(ctx, conn); err != nil {
+		return err
+	}
+	return nil
+}
+
+// InitFundamentalsSchema reads and executes the fundamentals DDL without
+// applying us_market-specific compatibility migrations.
+func InitFundamentalsSchema(ctx context.Context, conn driver.Conn, ddlPath string) error {
+	return execSchemaFile(ctx, conn, ddlPath)
+}
+
+func execSchemaFile(ctx context.Context, conn driver.Conn, ddlPath string) error {
 	data, err := os.ReadFile(ddlPath)
 	if err != nil {
 		return fmt.Errorf("read DDL file %s: %w", ddlPath, err)
@@ -57,6 +73,9 @@ func InitSchema(ctx context.Context, conn driver.Conn, ddlPath string) error {
 	lines := strings.Split(string(data), "\n")
 	filtered := make([]string, 0, len(lines))
 	for _, line := range lines {
+		if commentIndex := strings.Index(line, "--"); commentIndex >= 0 {
+			line = line[:commentIndex]
+		}
 		trimmed := strings.TrimSpace(line)
 		if strings.HasPrefix(trimmed, "--") {
 			continue
@@ -73,9 +92,6 @@ func InitSchema(ctx context.Context, conn driver.Conn, ddlPath string) error {
 		if err := conn.Exec(ctx, stmt); err != nil {
 			return fmt.Errorf("exec DDL: %w\nStatement: %s", err, stmt)
 		}
-	}
-	if err := ensureMarketVolumeColumns(ctx, conn); err != nil {
-		return err
 	}
 	return nil
 }

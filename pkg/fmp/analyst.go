@@ -8,28 +8,53 @@ import (
 	"net/url"
 )
 
-
 // PriceTargetSummary is a row returned by the FMP PriceTargetSummary endpoint.
 type PriceTargetSummary struct {
-	Symbol string `json:"symbol"`
-	LastMonthCount int64 `json:"lastMonthCount"`
-	LastMonthAvgPriceTarget float64 `json:"lastMonthAvgPriceTarget"`
-	LastQuarterCount int64 `json:"lastQuarterCount"`
+	Symbol                    string  `json:"symbol"`
+	LastMonthCount            int64   `json:"lastMonthCount"`
+	LastMonthAvgPriceTarget   float64 `json:"lastMonthAvgPriceTarget"`
+	LastQuarterCount          int64   `json:"lastQuarterCount"`
 	LastQuarterAvgPriceTarget float64 `json:"lastQuarterAvgPriceTarget"`
-	LastYearCount int64 `json:"lastYearCount"`
-	LastYearAvgPriceTarget float64 `json:"lastYearAvgPriceTarget"`
-	AllTimeCount int64 `json:"allTimeCount"`
-	AllTimeAvgPriceTarget float64 `json:"allTimeAvgPriceTarget"`
-	Publishers string `json:"publishers"`
+	LastYearCount             int64   `json:"lastYearCount"`
+	LastYearAvgPriceTarget    float64 `json:"lastYearAvgPriceTarget"`
+	AllTimeCount              int64   `json:"allTimeCount"`
+	AllTimeAvgPriceTarget     float64 `json:"allTimeAvgPriceTarget"`
+	Publishers                string  `json:"publishers"`
 }
 
 // PriceTargetConsensus is a row returned by the FMP PriceTargetConsensus endpoint.
 type PriceTargetConsensus struct {
-	Symbol string `json:"symbol"`
-	TargetHigh int64 `json:"targetHigh"`
-	TargetLow int64 `json:"targetLow"`
+	Symbol          string  `json:"symbol"`
+	TargetHigh      int64   `json:"targetHigh"`
+	TargetLow       int64   `json:"targetLow"`
 	TargetConsensus float64 `json:"targetConsensus"`
-	TargetMedian int64 `json:"targetMedian"`
+	TargetMedian    int64   `json:"targetMedian"`
+}
+
+// AnalystEstimate is a row returned by the FMP AnalystEstimates endpoint.
+type AnalystEstimate struct {
+	Symbol             string  `json:"symbol"`
+	Date               string  `json:"date"`
+	RevenueLow         int64   `json:"revenueLow"`
+	RevenueHigh        int64   `json:"revenueHigh"`
+	RevenueAvg         int64   `json:"revenueAvg"`
+	EBITDALow          int64   `json:"ebitdaLow"`
+	EBITDAHigh         int64   `json:"ebitdaHigh"`
+	EBITDAAvg          int64   `json:"ebitdaAvg"`
+	EBITLow            int64   `json:"ebitLow"`
+	EBITHigh           int64   `json:"ebitHigh"`
+	EBITAvg            int64   `json:"ebitAvg"`
+	NetIncomeLow       int64   `json:"netIncomeLow"`
+	NetIncomeHigh      int64   `json:"netIncomeHigh"`
+	NetIncomeAvg       int64   `json:"netIncomeAvg"`
+	SGAExpenseLow      int64   `json:"sgaExpenseLow"`
+	SGAExpenseHigh     int64   `json:"sgaExpenseHigh"`
+	SGAExpenseAvg      int64   `json:"sgaExpenseAvg"`
+	EPSAvg             float64 `json:"epsAvg"`
+	EPSHigh            float64 `json:"epsHigh"`
+	EPSLow             float64 `json:"epsLow"`
+	NumAnalystsRevenue int64   `json:"numAnalystsRevenue"`
+	NumAnalystsEPS     int64   `json:"numAnalystsEps"`
 }
 
 // PriceTargetSummary PriceTargetSummary returns aggregated analyst price target statistics.
@@ -62,4 +87,24 @@ func (c *Client) PriceTargetConsensus(ctx context.Context, symbol string) (*Pric
 		return nil, fmt.Errorf("fmp: no result for PriceTargetConsensus")
 	}
 	return &out[0], nil
+}
+
+// AnalystEstimates returns forward consensus estimates for revenue, earnings, and EPS.
+// Valid period values include annual and quarter.
+func (c *Client) AnalystEstimates(ctx context.Context, symbol, period string, limit int) ([]AnalystEstimate, error) {
+	params := url.Values{}
+	if symbol != "" {
+		params.Set("symbol", symbol)
+	}
+	if period != "" {
+		params.Set("period", period)
+	}
+	if limit > 0 {
+		params.Set("limit", fmt.Sprintf("%d", limit))
+	}
+	var out []AnalystEstimate
+	if err := c.get(ctx, "/analyst-estimates", params, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
 }

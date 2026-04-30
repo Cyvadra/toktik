@@ -50,6 +50,9 @@ polygon:
   trace: false
   pagination: true
 
+fmp:
+  api_key: ""
+
 redis:
   enabled: false
   addr: "127.0.0.1:6379"

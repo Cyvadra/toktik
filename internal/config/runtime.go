@@ -23,6 +23,7 @@ const (
 	EnvRateLimitRPS          = "RATE_LIMIT_RPS"
 	EnvSchemaDir             = "TOKTIK_SCHEMA_DIR"
 	EnvDeribitBaseURL        = "DERIBIT_BASE_URL"
+	EnvFMPAPIKey             = "FMP_API_KEY"
 	EnvTigerID               = "TIGEROPEN_TIGER_ID"
 	EnvTigerPrivateKey       = "TIGEROPEN_PRIVATE_KEY"
 	EnvTigerAccount          = "TIGEROPEN_ACCOUNT"
@@ -64,6 +65,7 @@ type Runtime struct {
 	Deribit    Deribit    `yaml:"deribit"`
 	Tiger      Tiger      `yaml:"tiger"`
 	Polygon    Polygon    `yaml:"polygon"`
+	FMP        FMP        `yaml:"fmp"`
 	Redis      Redis      `yaml:"redis"`
 	AESKey     string     `yaml:"aes_key"`
 
@@ -132,6 +134,10 @@ type Polygon struct {
 	flatFilesSecretKey string
 }
 
+type FMP struct {
+	apiKey string
+}
+
 func (t *Tiger) UnmarshalYAML(value *yaml.Node) error {
 	type rawTiger struct {
 		TigerID             string `yaml:"tiger_id"`
@@ -198,6 +204,18 @@ func (p *Polygon) UnmarshalYAML(value *yaml.Node) error {
 	return nil
 }
 
+func (f *FMP) UnmarshalYAML(value *yaml.Node) error {
+	type rawFMP struct {
+		APIKey string `yaml:"api_key"`
+	}
+	var raw rawFMP
+	if err := value.Decode(&raw); err != nil {
+		return err
+	}
+	f.apiKey = raw.APIKey
+	return nil
+}
+
 type Redis struct {
 	Enabled             bool   `yaml:"enabled"`
 	Addr                string `yaml:"addr"`
@@ -242,6 +260,7 @@ func DefaultRuntime() Runtime {
 			TimeoutSeconds:   defaultPolygonTimeoutSec,
 			Pagination:       true,
 		},
+		FMP: FMP{},
 		Redis: Redis{
 			Addr:                defaultRedisAddr,
 			KeyPrefix:           defaultRedisKeyPrefix,
@@ -354,6 +373,9 @@ func (c *Runtime) applyEnvOverrides() {
 	if value := strings.TrimSpace(os.Getenv(EnvTigerDeviceID)); value != "" {
 		c.Tiger.DeviceID = value
 	}
+	if value := strings.TrimSpace(os.Getenv(EnvFMPAPIKey)); value != "" {
+		c.SetFMPAPIKey(value)
+	}
 	if value := strings.TrimSpace(os.Getenv(EnvRedisEnabled)); value != "" {
 		if parsed, err := strconv.ParseBool(value); err == nil {
 			c.Redis.Enabled = parsed
@@ -419,6 +441,7 @@ func (c *Runtime) sealCredentials() error {
 	c.Polygon.apiKey = seal("polygon.api_key", c.Polygon.apiKey)
 	c.Polygon.flatFilesAccessKey = seal("polygon.flat_files_access_key", c.Polygon.flatFilesAccessKey)
 	c.Polygon.flatFilesSecretKey = seal("polygon.flat_files_secret_key", c.Polygon.flatFilesSecretKey)
+	c.FMP.apiKey = seal("fmp.api_key", c.FMP.apiKey)
 	c.Redis.Password = seal("redis.password", c.Redis.Password)
 	c.AESKey = "" // don't retain the key itself
 	return nil
@@ -492,6 +515,7 @@ func (c *Runtime) normalize() {
 	if c.Polygon.TimeoutSeconds <= 0 {
 		c.Polygon.TimeoutSeconds = defaultPolygonTimeoutSec
 	}
+	c.FMP.apiKey = strings.TrimSpace(c.FMP.apiKey)
 	if strings.TrimSpace(c.Redis.Addr) == "" {
 		c.Redis.Addr = defaultRedisAddr
 	}
@@ -542,6 +566,10 @@ func (c Runtime) PolygonFlatFilesSecretKey() (string, error) {
 	return c.secretValue("polygon.flat_files_secret_key", c.Polygon.flatFilesSecretKey)
 }
 
+func (c Runtime) FMPAPIKey() (string, error) {
+	return c.secretValue("fmp.api_key", c.FMP.apiKey)
+}
+
 func (c *Runtime) SetTigerPrivateKey(value string) {
 	if c == nil {
 		return
@@ -575,6 +603,13 @@ func (c *Runtime) SetPolygonFlatFilesSecretKey(value string) {
 		return
 	}
 	c.setSecretValue("polygon.flat_files_secret_key", &c.Polygon.flatFilesSecretKey, value)
+}
+
+func (c *Runtime) SetFMPAPIKey(value string) {
+	if c == nil {
+		return
+	}
+	c.setSecretValue("fmp.api_key", &c.FMP.apiKey, value)
 }
 
 func (c Runtime) secretValue(field, fallback string) (string, error) {

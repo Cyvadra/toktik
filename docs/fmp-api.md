@@ -117,7 +117,7 @@ Legend: ✅ implemented · ⚠️ accessible (endpoint verified) but not yet wra
 | Individual price targets | `GET /price-target` | ⚠️ | — |
 | Analyst stock grades | `GET /grades` | ⚠️ | — |
 | Analyst grade consensus | `GET /grades-consensus` | ⚠️ | — |
-| Analyst estimates | `GET /analyst-estimates` | ⚠️ | — |
+| Analyst estimates | `GET /analyst-estimates` | ✅ | `AnalystEstimates(ctx, symbol, period, limit)` |
 
 ---
 
@@ -190,7 +190,7 @@ Legend: ✅ implemented · ⚠️ accessible (endpoint verified) but not yet wra
 |---|---|---|---|
 | US Treasury yield curve | `GET /treasury-rates` | ✅ | `TreasuryRates(ctx, from, to)` |
 | Economic indicators (GDP, CPI, etc.) | `GET /economic-indicators` | ✅ | `EconomicIndicators(ctx, name, limit)` |
-| Economic calendar | `GET /economic-calendar` | ⚠️ | — |
+| Economic calendar | `GET /economic-calendar` | ✅ | `EconomicCalendar(ctx, from, to, country)` |
 
 ---
 

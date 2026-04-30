@@ -1302,11 +1302,16 @@ func (s *FeatureService) queryUSOptionsLiquidityAggregates(ctx context.Context, 
 	toDate(timestamp) AS as_of_date,
 	expiration,
 	dateDiff('day', toDate(timestamp), expiration) AS dte_days,
+	CAST(NULL, 'Nullable(Float64)') AS avg_bid_close,
+	CAST(NULL, 'Nullable(Float64)') AS avg_ask_close,
 	nullIf(avgIf(toFloat64(close), close > 0), 0) AS avg_mark_close,
+	CAST(NULL, 'Nullable(Float64)') AS relative_spread,
+	CAST(NULL, 'Nullable(Float64)') AS open_interest,
 	toUInt64(sum(volume)) AS total_volume,
 	toUInt64(sum(transactions)) AS total_transactions,
 	toUInt32(count()) AS contract_count,
-	toUInt32(countIf(volume > 0 OR transactions > 0)) AS active_contract_count
+	toUInt32(countIf(volume > 0 OR transactions > 0)) AS active_contract_count,
+	toUInt32(0) AS tradable_contract_count
 FROM us_options_bar_1d
 WHERE underlying = {underlying:String}
   AND expiration >= toDate(timestamp)`
@@ -1356,14 +1361,16 @@ ORDER BY as_of_date ASC, expiration ASC`
 	aggregates := make([]cryptoLiquidityAggregateRow, 0)
 	for rows.Next() {
 		var (
-			row                 cryptoLiquidityAggregateRow
-			daysToExpiry        int64
-			volume              uint64
-			transactions        uint64
-			contractCount       uint32
-			activeContractCount uint32
+			row                   cryptoLiquidityAggregateRow
+			daysToExpiry          int64
+			openInterest          *float64
+			volume                uint64
+			transactions          uint64
+			contractCount         uint32
+			activeContractCount   uint32
+			tradableContractCount uint32
 		)
-		if err := rows.Scan(&row.AsOfDate, &row.Expiration, &daysToExpiry, &row.AvgMarkClose, &volume, &transactions, &contractCount, &activeContractCount); err != nil {
+		if err := rows.Scan(&row.AsOfDate, &row.Expiration, &daysToExpiry, &row.AvgBidClose, &row.AvgAskClose, &row.AvgMarkClose, &row.RelativeSpread, &openInterest, &volume, &transactions, &contractCount, &activeContractCount, &tradableContractCount); err != nil {
 			return nil, fmt.Errorf("scan us-options liquidity aggregate row: %w", err)
 		}
 		row.AsOfDate = row.AsOfDate.UTC()
@@ -1373,7 +1380,12 @@ ORDER BY as_of_date ASC, expiration ASC`
 		row.Transactions = int(transactions)
 		row.ContractCount = int(contractCount)
 		row.ActiveContractCount = int(activeContractCount)
+		row.TradableContractCount = int(tradableContractCount)
+		row.AvgBidClose = sanitizeF64Ptr(row.AvgBidClose)
+		row.AvgAskClose = sanitizeF64Ptr(row.AvgAskClose)
 		row.AvgMarkClose = sanitizeF64Ptr(row.AvgMarkClose)
+		row.RelativeSpread = sanitizeF64Ptr(row.RelativeSpread)
+		row.OpenInterest = sanitizeF64Ptr(openInterest)
 		aggregates = append(aggregates, row)
 	}
 	if err := rows.Err(); err != nil {

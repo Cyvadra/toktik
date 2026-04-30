@@ -44,7 +44,9 @@ func TestLoadRuntimeFromPathYAML(t *testing.T) {
 		"  flat_files_tool: \"mc\"\n" +
 		"  flat_files_cache_dir: \"/srv/toktik/polygon-cache\"\n" +
 		"  flat_files_access_key: \"flat-access\"\n" +
-		"  flat_files_secret_key: \"flat-secret\"\n")
+		"  flat_files_secret_key: \"flat-secret\"\n" +
+		"fmp:\n" +
+		"  api_key: \"fmp-runtime-key\"\n")
 	if err := os.WriteFile(configPath, content, 0o644); err != nil {
 		t.Fatalf("WriteFile(%q) failed: %v", configPath, err)
 	}
@@ -102,6 +104,13 @@ func TestLoadRuntimeFromPathYAML(t *testing.T) {
 	if cfg.Polygon.FlatFilesTool != "mc" || cfg.Polygon.FlatFilesCacheDir != "/srv/toktik/polygon-cache" || polygonAccessKey != "flat-access" || polygonSecretKey != "flat-secret" {
 		t.Fatalf("unexpected polygon flatfile config: %#v", cfg.Polygon)
 	}
+	fmpAPIKey, err := cfg.FMPAPIKey()
+	if err != nil {
+		t.Fatalf("FMPAPIKey failed: %v", err)
+	}
+	if fmpAPIKey != "fmp-runtime-key" {
+		t.Fatalf("unexpected FMP api key: %q", fmpAPIKey)
+	}
 }
 
 func TestLoadRuntimeFromPathEnvOverrides(t *testing.T) {
@@ -125,6 +134,7 @@ func TestLoadRuntimeFromPathEnvOverrides(t *testing.T) {
 	t.Setenv(EnvTigerTokenFile, "/tmp/env-tiger-token.properties")
 	t.Setenv(EnvTigerServerURL, "https://tiger-env.example")
 	t.Setenv(EnvTigerDeviceID, "env-device")
+	t.Setenv(EnvFMPAPIKey, "env-fmp-key")
 
 	cfg, err := LoadRuntimeFromPath(filepath.Join(t.TempDir(), "missing.yaml"))
 	if err != nil {
@@ -168,6 +178,13 @@ func TestLoadRuntimeFromPathEnvOverrides(t *testing.T) {
 	if cfg.Polygon != DefaultRuntime().Polygon {
 		t.Fatalf("unexpected polygon override from environment: %#v", cfg.Polygon)
 	}
+	fmpAPIKey, err := cfg.FMPAPIKey()
+	if err != nil {
+		t.Fatalf("FMPAPIKey failed: %v", err)
+	}
+	if fmpAPIKey != "env-fmp-key" {
+		t.Fatalf("unexpected FMP env override: %q", fmpAPIKey)
+	}
 }
 
 func TestRuntimeSecretAccessors(t *testing.T) {
@@ -177,6 +194,7 @@ func TestRuntimeSecretAccessors(t *testing.T) {
 	cfg.SetPolygonAPIKey(" polygon-key ")
 	cfg.SetPolygonFlatFilesAccessKey(" access-key ")
 	cfg.SetPolygonFlatFilesSecretKey(" secret-key ")
+	cfg.SetFMPAPIKey(" fmp-key ")
 
 	tigerPrivateKey, err := cfg.TigerPrivateKey()
 	if err != nil {
@@ -198,8 +216,12 @@ func TestRuntimeSecretAccessors(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PolygonFlatFilesSecretKey failed: %v", err)
 	}
+	fmpAPIKey, err := cfg.FMPAPIKey()
+	if err != nil {
+		t.Fatalf("FMPAPIKey failed: %v", err)
+	}
 
-	if tigerPrivateKey != "private-key" || tigerToken != "token" || polygonAPIKey != "polygon-key" || polygonAccessKey != "access-key" || polygonSecretKey != "secret-key" {
+	if tigerPrivateKey != "private-key" || tigerToken != "token" || polygonAPIKey != "polygon-key" || polygonAccessKey != "access-key" || polygonSecretKey != "secret-key" || fmpAPIKey != "fmp-key" {
 		t.Fatalf("unexpected secret accessor values")
 	}
 }

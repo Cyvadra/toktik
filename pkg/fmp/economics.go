@@ -8,19 +8,18 @@ import (
 	"net/url"
 )
 
-
 // TreasuryRate is a row returned by the FMP TreasuryRate endpoint.
 type TreasuryRate struct {
-	Date string `json:"date"`
+	Date   string  `json:"date"`
 	Month1 float64 `json:"month1"`
 	Month2 float64 `json:"month2"`
 	Month3 float64 `json:"month3"`
 	Month6 float64 `json:"month6"`
-	Year1 float64 `json:"year1"`
-	Year2 float64 `json:"year2"`
-	Year3 float64 `json:"year3"`
-	Year5 float64 `json:"year5"`
-	Year7 float64 `json:"year7"`
+	Year1  float64 `json:"year1"`
+	Year2  float64 `json:"year2"`
+	Year3  float64 `json:"year3"`
+	Year5  float64 `json:"year5"`
+	Year7  float64 `json:"year7"`
 	Year10 float64 `json:"year10"`
 	Year20 float64 `json:"year20"`
 	Year30 float64 `json:"year30"`
@@ -28,9 +27,24 @@ type TreasuryRate struct {
 
 // EconomicIndicator is a row returned by the FMP EconomicIndicator endpoint.
 type EconomicIndicator struct {
-	Name string `json:"name"`
-	Date string `json:"date"`
+	Name  string  `json:"name"`
+	Date  string  `json:"date"`
 	Value float64 `json:"value"`
+}
+
+// EconomicCalendarEvent is a row returned by the FMP EconomicCalendar endpoint.
+type EconomicCalendarEvent struct {
+	Date             string   `json:"date"`
+	Country          string   `json:"country"`
+	Event            string   `json:"event"`
+	Currency         string   `json:"currency"`
+	Previous         *float64 `json:"previous"`
+	Estimate         *float64 `json:"estimate"`
+	Actual           *float64 `json:"actual"`
+	Change           *float64 `json:"change"`
+	Impact           string   `json:"impact"`
+	ChangePercentage float64  `json:"changePercentage"`
+	Unit             string   `json:"unit"`
 }
 
 // TreasuryRates TreasuryRates returns US Treasury yield curve rates.
@@ -60,6 +74,26 @@ func (c *Client) EconomicIndicators(ctx context.Context, name string, limit int)
 	}
 	var out []EconomicIndicator
 	if err := c.get(ctx, "/economic-indicators", params, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// EconomicCalendar returns macro events in the requested date range.
+// Optional filters currently supported by FMP include country.
+func (c *Client) EconomicCalendar(ctx context.Context, from, to, country string) ([]EconomicCalendarEvent, error) {
+	params := url.Values{}
+	if from != "" {
+		params.Set("from", from)
+	}
+	if to != "" {
+		params.Set("to", to)
+	}
+	if country != "" {
+		params.Set("country", country)
+	}
+	var out []EconomicCalendarEvent
+	if err := c.get(ctx, "/economic-calendar", params, &out); err != nil {
 		return nil, err
 	}
 	return out, nil

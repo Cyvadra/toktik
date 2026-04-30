@@ -21,6 +21,7 @@ import (
 const (
 	usStocksFundamentalsMarket = "us-stocks"
 	usStocksPEFactorCode       = "pe"
+	usStocksPBFactorCode       = "pb"
 	usStocksPECatalogSource    = "external_fundamentals_provider"
 	tigerKlineFundamentalSrc   = "tiger_kline_fundamental"
 	tigerTTMPEField            = "ttmPeRate"
@@ -53,6 +54,14 @@ type PEFetchResult struct {
 	Observations   []fundamentalObservationInsert
 	ProviderName   string
 	ProviderSource string
+	Diagnostics    PEFetchDiagnostics
+}
+
+type PEFetchDiagnostics struct {
+	NoQuarterInputs  int
+	MissingPrice     int
+	MissingTTMEPS    int
+	MissingBookValue int
 }
 
 // TigerPEBackfillProvider seals Tiger-specific fetch logic behind the generic
@@ -123,6 +132,12 @@ type USFundamentalsBackfillResult struct {
 	CandidateRows    int64
 	InsertedRows     int64
 	SkippedRows      int64
+	FilteredSymbols  int64
+	DecodeErrors     int64
+	NoQuarterInputs  int64
+	MissingPrice     int64
+	MissingTTMEPS    int64
+	MissingBookValue int64
 }
 
 type usFundamentalsBackfillStats struct {
@@ -130,11 +145,13 @@ type usFundamentalsBackfillStats struct {
 	CandidateRows int
 	InsertedRows  int
 	SkippedRows   int
+	Diagnostics   PEFetchDiagnostics
 }
 
 type fundamentalObservationKey struct {
-	EventTS int64
-	KnownAt int64
+	FactorCode string
+	EventTS    int64
+	KnownAt    int64
 }
 
 type existingFundamentalObservation struct {
@@ -222,21 +239,30 @@ func BackfillUSStockPE(ctx context.Context, cfg USFundamentalsBackfillConfig) (U
 		return USFundamentalsBackfillResult{}, fmt.Errorf("end date must be on or after start date")
 	}
 
-	symbols, err := resolveUSFundamentalsSymbols(ctx, cfg.Conn, cfg.Symbols, cfg.LimitSymbols)
+	symbols, err := ResolveUSStockSymbols(ctx, cfg.Conn, cfg.Symbols, cfg.LimitSymbols)
 	if err != nil {
 		return USFundamentalsBackfillResult{}, err
 	}
+	filteredSymbols := int64(0)
+	if strings.EqualFold(cfg.Provider.Name(), "fmp") {
+		originalCount := len(symbols)
+		symbols = filterFMPFundamentalSymbols(symbols)
+		if dropped := originalCount - len(symbols); dropped > 0 {
+			filteredSymbols = int64(dropped)
+			log.Printf("Filtered %d non-common-share symbols from FMP fundamentals universe", dropped)
+		}
+	}
 	if len(symbols) == 0 {
-		return USFundamentalsBackfillResult{}, nil
+		return USFundamentalsBackfillResult{FilteredSymbols: filteredSymbols}, nil
 	}
 
 	if !cfg.DryRun {
-		if err := ensurePEFactorCatalogRow(ctx, cfg.Conn); err != nil {
+		if err := ensureFundamentalFactorCatalogRows(ctx, cfg.Conn); err != nil {
 			return USFundamentalsBackfillResult{}, err
 		}
 	}
 
-	log.Printf("Found %d US symbols to backfill PE between %s and %s using provider=%s", len(symbols), cfg.StartDate.Format("2006-01-02"), cfg.EndDate.Format("2006-01-02"), cfg.Provider.Name())
+	log.Printf("Found %d US symbols to backfill fundamentals between %s and %s using provider=%s", len(symbols), cfg.StartDate.Format("2006-01-02"), cfg.EndDate.Format("2006-01-02"), cfg.Provider.Name())
 
 	taskCh := make(chan string)
 	limiter := newRequestLimiter(cfg.QPS)
@@ -248,6 +274,11 @@ func BackfillUSStockPE(ctx context.Context, cfg USFundamentalsBackfillConfig) (U
 		candidateRows    int64
 		insertedRows     int64
 		skippedRows      int64
+		decodeErrors     int64
+		noQuarterInputs  int64
+		missingPrice     int64
+		missingTTMEPS    int64
+		missingBookValue int64
 	)
 
 	for i := 0; i < cfg.Workers; i++ {
@@ -274,6 +305,9 @@ func BackfillUSStockPE(ctx context.Context, cfg USFundamentalsBackfillConfig) (U
 				if err != nil {
 					log.Printf("[ERROR] %s: %v", symbol, err)
 					atomic.AddInt64(&failedSymbols, 1)
+					if strings.Contains(strings.ToLower(err.Error()), "decode response") {
+						atomic.AddInt64(&decodeErrors, 1)
+					}
 					continue
 				}
 
@@ -282,6 +316,10 @@ func BackfillUSStockPE(ctx context.Context, cfg USFundamentalsBackfillConfig) (U
 				atomic.AddInt64(&candidateRows, int64(stats.CandidateRows))
 				atomic.AddInt64(&insertedRows, int64(stats.InsertedRows))
 				atomic.AddInt64(&skippedRows, int64(stats.SkippedRows))
+				atomic.AddInt64(&noQuarterInputs, int64(stats.Diagnostics.NoQuarterInputs))
+				atomic.AddInt64(&missingPrice, int64(stats.Diagnostics.MissingPrice))
+				atomic.AddInt64(&missingTTMEPS, int64(stats.Diagnostics.MissingTTMEPS))
+				atomic.AddInt64(&missingBookValue, int64(stats.Diagnostics.MissingBookValue))
 
 				mode := "BACKFILLED"
 				if cfg.DryRun {
@@ -312,6 +350,12 @@ func BackfillUSStockPE(ctx context.Context, cfg USFundamentalsBackfillConfig) (U
 		CandidateRows:    candidateRows,
 		InsertedRows:     insertedRows,
 		SkippedRows:      skippedRows,
+		FilteredSymbols:  filteredSymbols,
+		DecodeErrors:     decodeErrors,
+		NoQuarterInputs:  noQuarterInputs,
+		MissingPrice:     missingPrice,
+		MissingTTMEPS:    missingTTMEPS,
+		MissingBookValue: missingBookValue,
 	}
 	if failedSymbols > 0 {
 		return result, fmt.Errorf("US PE backfill finished with %d failed symbols", failedSymbols)
@@ -319,10 +363,11 @@ func BackfillUSStockPE(ctx context.Context, cfg USFundamentalsBackfillConfig) (U
 	return result, nil
 }
 
-// resolveUSFundamentalsSymbols uses the local stock bar table as the current
-// symbol universe. This keeps backfill scope aligned with symbols already
-// present in ClickHouse.
-func resolveUSFundamentalsSymbols(ctx context.Context, conn driver.Conn, symbols []string, limit int) ([]string, error) {
+// ResolveUSStockSymbols uses the local stock bar table as the current symbol
+// universe. This keeps bulk sync scope aligned with symbols already present in
+// ClickHouse. When symbols is non-empty it simply normalizes/deduplicates the
+// provided values.
+func ResolveUSStockSymbols(ctx context.Context, conn driver.Conn, symbols []string, limit int) ([]string, error) {
 	if len(symbols) > 0 {
 		return normalizeFundamentalSymbols(symbols), nil
 	}
@@ -337,7 +382,7 @@ ORDER BY symbol`
 
 	rows, err := conn.Query(ctx, query)
 	if err != nil {
-		return nil, fmt.Errorf("query US stock symbols for fundamentals: %w", err)
+		return nil, fmt.Errorf("query US stock symbols: %w", err)
 	}
 	defer rows.Close()
 
@@ -345,12 +390,12 @@ ORDER BY symbol`
 	for rows.Next() {
 		var symbol string
 		if err := rows.Scan(&symbol); err != nil {
-			return nil, fmt.Errorf("scan US stock symbol for fundamentals: %w", err)
+			return nil, fmt.Errorf("scan US stock symbol: %w", err)
 		}
 		out = append(out, strings.ToUpper(strings.TrimSpace(symbol)))
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate US stock symbols for fundamentals: %w", err)
+		return nil, fmt.Errorf("iterate US stock symbols: %w", err)
 	}
 	return out, nil
 }
@@ -373,27 +418,80 @@ func normalizeFundamentalSymbols(symbols []string) []string {
 	return out
 }
 
-func ensurePEFactorCatalogRow(ctx context.Context, conn driver.Conn) error {
+func filterFMPFundamentalSymbols(symbols []string) []string {
+	filtered := make([]string, 0, len(symbols))
+	for _, symbol := range symbols {
+		if isFMPFundamentalSymbolSupported(symbol) {
+			filtered = append(filtered, symbol)
+		}
+	}
+	return filtered
+}
+
+func isFMPFundamentalSymbolSupported(symbol string) bool {
+	normalized := strings.ToUpper(strings.TrimSpace(symbol))
+	if normalized == "" {
+		return false
+	}
+	unsupportedSuffixes := []string{
+		".U", ".UN", ".UT", ".WS", ".W", ".WT", ".R", ".RT",
+		".RIGHT", ".P", ".PR", ".CVR",
+	}
+	for _, suffix := range unsupportedSuffixes {
+		if strings.HasSuffix(normalized, suffix) {
+			return false
+		}
+	}
+	return true
+}
+
+func ensureFundamentalFactorCatalogRows(ctx context.Context, conn driver.Conn) error {
+	factors := []struct {
+		Code        string
+		DisplayName string
+		Description string
+	}{
+		{
+			Code:        usStocksPEFactorCode,
+			DisplayName: "Price-to-Earnings",
+			Description: "Trailing twelve month PE from an external fundamentals provider",
+		},
+		{
+			Code:        usStocksPBFactorCode,
+			DisplayName: "Price-to-Book",
+			Description: "Price-to-book ratio from an external fundamentals provider",
+		},
+	}
+
+	for _, factor := range factors {
+		if err := ensureFundamentalFactorCatalogRow(ctx, conn, factor.Code, factor.DisplayName, factor.Description); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func ensureFundamentalFactorCatalogRow(ctx context.Context, conn driver.Conn, factorCode, displayName, description string) error {
 	rows, err := conn.Query(ctx,
 		`SELECT count()
 		FROM fundamental_factor_catalog
 		WHERE market = {market:String} AND factor_code = {factor:String}`,
 		clickhouse.Named("market", usStocksFundamentalsMarket),
-		clickhouse.Named("factor", usStocksPEFactorCode),
+		clickhouse.Named("factor", factorCode),
 	)
 	if err != nil {
-		return fmt.Errorf("query PE factor catalog presence: %w", err)
+		return fmt.Errorf("query %s factor catalog presence: %w", factorCode, err)
 	}
 	defer rows.Close()
 
 	var count uint64
 	if rows.Next() {
 		if err := rows.Scan(&count); err != nil {
-			return fmt.Errorf("scan PE factor catalog presence: %w", err)
+			return fmt.Errorf("scan %s factor catalog presence: %w", factorCode, err)
 		}
 	}
 	if err := rows.Err(); err != nil {
-		return fmt.Errorf("iterate PE factor catalog presence: %w", err)
+		return fmt.Errorf("iterate %s factor catalog presence: %w", factorCode, err)
 	}
 	if count > 0 {
 		return nil
@@ -405,16 +503,16 @@ func ensurePEFactorCatalogRow(ctx context.Context, conn driver.Conn) error {
 		source, active, sla_hours, metadata
 	)`)
 	if err != nil {
-		return fmt.Errorf("prepare PE factor catalog insert: %w", err)
+		return fmt.Errorf("prepare %s factor catalog insert: %w", factorCode, err)
 	}
 	if err := batch.Append(
 		usStocksFundamentalsMarket,
-		usStocksPEFactorCode,
-		"Price-to-Earnings",
-		"Trailing twelve month PE from an external fundamentals provider",
+		factorCode,
+		displayName,
+		description,
 		"ratio",
 		"",
-		"daily",
+		"quarterly",
 		"forward_fill",
 		uint16(0),
 		uint8(1),
@@ -423,10 +521,10 @@ func ensurePEFactorCatalogRow(ctx context.Context, conn driver.Conn) error {
 		uint32(24),
 		`{"notes":"provider-specific raw field mapping lives inside each provider adapter"}`,
 	); err != nil {
-		return fmt.Errorf("append PE factor catalog row: %w", err)
+		return fmt.Errorf("append %s factor catalog row: %w", factorCode, err)
 	}
 	if err := batch.Send(); err != nil {
-		return fmt.Errorf("insert PE factor catalog row: %w", err)
+		return fmt.Errorf("insert %s factor catalog row: %w", factorCode, err)
 	}
 	return nil
 }
@@ -438,17 +536,21 @@ func backfillUSStockSymbolPE(ctx context.Context, conn driver.Conn, worker PEBac
 	}
 
 	observations := fetched.Observations
-	stats := usFundamentalsBackfillStats{ScannedBars: fetched.ScannedBars, SkippedRows: fetched.ScannedBars - len(observations)}
+	stats := usFundamentalsBackfillStats{ScannedBars: fetched.ScannedBars}
+	stats.Diagnostics = fetched.Diagnostics
+	if len(observations) < fetched.ScannedBars {
+		stats.SkippedRows = fetched.ScannedBars - len(observations)
+	}
 	if len(observations) == 0 {
 		return stats, nil
 	}
 
-	existing, err := loadExistingPEObservations(ctx, conn, symbol, observations[0].Source, startDate, endDate.AddDate(0, 0, 1))
+	existing, err := loadExistingFundamentalObservations(ctx, conn, symbol, observations[0].Source, startDate, endDate.AddDate(0, 0, 1))
 	if err != nil {
 		return stats, err
 	}
 
-	planned, skippedExisting := planPEObservationInserts(observations, existing)
+	planned, skippedExisting := planFundamentalObservationInserts(observations, existing)
 	stats.CandidateRows = len(planned)
 	stats.SkippedRows += skippedExisting
 	if dryRun || len(planned) == 0 {
@@ -581,56 +683,55 @@ func numericAnyToFloat64(value any) (float64, bool) {
 	}
 }
 
-func loadExistingPEObservations(ctx context.Context, conn driver.Conn, symbol string, source string, startDate, endDate time.Time) (map[fundamentalObservationKey]existingFundamentalObservation, error) {
+func loadExistingFundamentalObservations(ctx context.Context, conn driver.Conn, symbol string, source string, startDate, endDate time.Time) (map[fundamentalObservationKey]existingFundamentalObservation, error) {
 	rows, err := conn.Query(ctx,
-		`SELECT event_ts, known_at, value, revision
+		`SELECT factor_code, event_ts, known_at, value, revision
 		FROM fundamental_observation
 		WHERE market = {market:String}
 		  AND symbol = {symbol:String}
-		  AND factor_code = {factor:String}
 		  AND source = {source:String}
-		  AND known_at >= toDateTime({from:String}, 'UTC')
-		  AND known_at < toDateTime({to:String}, 'UTC')
-		ORDER BY event_ts, known_at, revision`,
+		  AND event_ts >= toDateTime({from:String}, 'UTC')
+		  AND event_ts < toDateTime({to:String}, 'UTC')
+		ORDER BY factor_code, event_ts, known_at, revision`,
 		clickhouse.Named("market", usStocksFundamentalsMarket),
 		clickhouse.Named("symbol", symbol),
-		clickhouse.Named("factor", usStocksPEFactorCode),
 		clickhouse.Named("source", source),
-		clickhouse.Named("from", normalizeDateOnly(startDate).Format(time.RFC3339)),
-		clickhouse.Named("to", normalizeDateOnly(endDate).Format(time.RFC3339)),
+		clickhouse.Named("from", normalizeDateOnly(startDate).Format("2006-01-02 15:04:05")),
+		clickhouse.Named("to", normalizeDateOnly(endDate).Format("2006-01-02 15:04:05")),
 	)
 	if err != nil {
-		return nil, fmt.Errorf("query existing PE observations: %w", err)
+		return nil, fmt.Errorf("query existing fundamental observations: %w", err)
 	}
 	defer rows.Close()
 
 	out := make(map[fundamentalObservationKey]existingFundamentalObservation)
 	for rows.Next() {
 		var (
-			eventTS  time.Time
-			knownAt  time.Time
-			value    float64
-			revision uint32
+			factorCode string
+			eventTS    time.Time
+			knownAt    time.Time
+			value      float64
+			revision   uint32
 		)
-		if err := rows.Scan(&eventTS, &knownAt, &value, &revision); err != nil {
-			return nil, fmt.Errorf("scan existing PE observation: %w", err)
+		if err := rows.Scan(&factorCode, &eventTS, &knownAt, &value, &revision); err != nil {
+			return nil, fmt.Errorf("scan existing fundamental observation: %w", err)
 		}
-		key := fundamentalObservationKey{EventTS: eventTS.UTC().UnixMilli(), KnownAt: knownAt.UTC().UnixMilli()}
+		key := fundamentalObservationKey{FactorCode: factorCode, EventTS: eventTS.UTC().UnixMilli(), KnownAt: knownAt.UTC().UnixMilli()}
 		if current, ok := out[key]; !ok || revision >= current.Revision {
 			out[key] = existingFundamentalObservation{Value: value, Revision: revision}
 		}
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate existing PE observations: %w", err)
+		return nil, fmt.Errorf("iterate existing fundamental observations: %w", err)
 	}
 	return out, nil
 }
 
-func planPEObservationInserts(observations []fundamentalObservationInsert, existing map[fundamentalObservationKey]existingFundamentalObservation) ([]fundamentalObservationInsert, int) {
+func planFundamentalObservationInserts(observations []fundamentalObservationInsert, existing map[fundamentalObservationKey]existingFundamentalObservation) ([]fundamentalObservationInsert, int) {
 	planned := make([]fundamentalObservationInsert, 0, len(observations))
 	skipped := 0
 	for _, observation := range observations {
-		key := fundamentalObservationKey{EventTS: observation.EventTS.UTC().UnixMilli(), KnownAt: observation.KnownAt.UTC().UnixMilli()}
+		key := fundamentalObservationKey{FactorCode: observation.FactorCode, EventTS: observation.EventTS.UTC().UnixMilli(), KnownAt: observation.KnownAt.UTC().UnixMilli()}
 		current, ok := existing[key]
 		if ok && almostEqualFloat(current.Value, observation.Value) {
 			skipped++

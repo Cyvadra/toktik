@@ -177,6 +177,38 @@ func TestBuildLiquiditySnapshotRows(t *testing.T) {
 	}
 }
 
+func TestBuildLiquiditySnapshotRowsWithoutQuoteSupport(t *testing.T) {
+	rows := buildLiquiditySnapshotRows([]cryptoLiquidityAggregateRow{{
+		AsOfDate:            time.Date(2026, 4, 3, 0, 0, 0, 0, time.UTC),
+		Expiration:          time.Date(2026, 4, 26, 0, 0, 0, 0, time.UTC),
+		DaysToExpiry:        23,
+		AvgMarkClose:        floatPtr(12.75),
+		Volume:              144,
+		Transactions:        21,
+		ContractCount:       12,
+		ActiveContractCount: 10,
+	}})
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(rows))
+	}
+	if rows[0].TradableContractCount != 0 {
+		t.Fatalf("expected zero tradable contracts when quote support is absent, got %d", rows[0].TradableContractCount)
+	}
+	if rows[0].TradabilityRatio == nil || *rows[0].TradabilityRatio != 0 {
+		t.Fatalf("expected zero tradability ratio in generic snapshot rows, got %+v", rows[0].TradabilityRatio)
+	}
+	if rows[0].AvgBidClose != nil || rows[0].AvgAskClose != nil || rows[0].RelativeSpread != nil || rows[0].OpenInterest != nil {
+		t.Fatalf("expected quote-derived fields to stay nil without quote support, got %+v", rows[0])
+	}
+	if rows[0].ActivityRatio == nil || *rows[0].ActivityRatio != (10.0/12.0) {
+		t.Fatalf("unexpected activity ratio: %+v", rows[0].ActivityRatio)
+	}
+}
+
+func floatPtr(value float64) *float64 {
+	return &value
+}
+
 func TestTradabilityRatioValue(t *testing.T) {
 	value := tradabilityRatioValue(3, 4)
 	if value == nil || *value != 0.75 {
@@ -196,6 +228,20 @@ func TestLiquidityTradabilityRatioValueReturnsNilForUSWithoutQuotes(t *testing.T
 	value = liquidityTradabilityRatioValue("crypto-options", cryptoLiquidityAggregateRow{ContractCount: 12})
 	if value == nil || *value != 0 {
 		t.Fatalf("expected zero tradability ratio for crypto rows with zero tradable contracts, got %+v", value)
+	}
+}
+
+func TestLiquidityTradabilityRatioValueReturnsZeroForUSWithQuotes(t *testing.T) {
+	bid := 1.2
+	ask := 1.4
+	value := liquidityTradabilityRatioValue("us-options", cryptoLiquidityAggregateRow{
+		ContractCount:         12,
+		TradableContractCount: 0,
+		AvgBidClose:           &bid,
+		AvgAskClose:           &ask,
+	})
+	if value == nil || *value != 0 {
+		t.Fatalf("expected zero tradability ratio for US rows with bid/ask quotes, got %+v", value)
 	}
 }
 
