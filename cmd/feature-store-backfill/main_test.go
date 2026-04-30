@@ -73,3 +73,40 @@ func TestFormatBackfillSummary(t *testing.T) {
 		}
 	}
 }
+
+func TestFormatBackfillProgress(t *testing.T) {
+	progress := formatBackfillProgress(service.FeatureBackfillProgress{
+		Market:          "us-options",
+		MarketIndex:     1,
+		MarketCount:     2,
+		Underlying:      "AAPL",
+		UnderlyingIndex: 12,
+		UnderlyingCount: 7905,
+		Scope:           "surface",
+		Stage:           "compute-surface",
+		Phase:           "end",
+		Outcome:         "written",
+		RowsWritten:     56,
+		ScopesReplaced:  2,
+		Elapsed:         2500 * time.Millisecond,
+	})
+
+	checks := []string{
+		"market=us-options",
+		"market_index=1/2",
+		"underlying=AAPL",
+		"underlying_index=12/7905",
+		"scope=surface",
+		"stage=compute-surface",
+		"phase=end",
+		"outcome=written",
+		"rows_written=56",
+		"scopes_replaced=2",
+		"elapsed=2.5s",
+	}
+	for _, check := range checks {
+		if !strings.Contains(progress, check) {
+			t.Fatalf("progress missing %q: %s", check, progress)
+		}
+	}
+}

@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"log/slog"
 	"os"
 	"sort"
 	"strings"
@@ -62,6 +63,9 @@ func main() {
 		MaxDaysToExpiry: *maxDaysToExpiry,
 		Replace:         *replace,
 		ContinueOnError: true,
+		Progress: func(progress service.FeatureBackfillProgress) {
+			slog.Info(formatBackfillProgress(progress))
+		},
 	})
 	for _, failure := range stats.Failures {
 		fmt.Fprintf(os.Stderr, "feature-store-backfill failure: market=%s underlying=%s stage=%s error=%s\n", failure.Market, failure.Underlying, failure.Stage, failure.Error)
@@ -160,6 +164,49 @@ func formatBackfillSummary(stats service.FeatureBackfillStats, startedAt, finish
 	}
 	if !to.IsZero() {
 		parts = append(parts, fmt.Sprintf("to=%s", to.AddDate(0, 0, -1).Format("2006-01-02")))
+	}
+	return strings.Join(parts, " ")
+}
+
+func formatBackfillProgress(progress service.FeatureBackfillProgress) string {
+	parts := []string{"feature-store-backfill progress:"}
+	if progress.Market != "" {
+		parts = append(parts, fmt.Sprintf("market=%s", progress.Market))
+	}
+	if progress.MarketCount > 0 {
+		parts = append(parts, fmt.Sprintf("market_index=%d/%d", progress.MarketIndex, progress.MarketCount))
+	}
+	if progress.Underlying != "" {
+		parts = append(parts, fmt.Sprintf("underlying=%s", progress.Underlying))
+	}
+	if progress.UnderlyingCount > 0 && progress.UnderlyingIndex > 0 {
+		parts = append(parts, fmt.Sprintf("underlying_index=%d/%d", progress.UnderlyingIndex, progress.UnderlyingCount))
+	} else if progress.UnderlyingCount > 0 {
+		parts = append(parts, fmt.Sprintf("underlyings=%d", progress.UnderlyingCount))
+	}
+	if progress.Scope != "" {
+		parts = append(parts, fmt.Sprintf("scope=%s", progress.Scope))
+	}
+	if progress.Stage != "" {
+		parts = append(parts, fmt.Sprintf("stage=%s", progress.Stage))
+	}
+	if progress.Phase != "" {
+		parts = append(parts, fmt.Sprintf("phase=%s", progress.Phase))
+	}
+	if progress.Outcome != "" {
+		parts = append(parts, fmt.Sprintf("outcome=%s", progress.Outcome))
+	}
+	if progress.RowsWritten > 0 {
+		parts = append(parts, fmt.Sprintf("rows_written=%d", progress.RowsWritten))
+	}
+	if progress.ScopesReplaced > 0 {
+		parts = append(parts, fmt.Sprintf("scopes_replaced=%d", progress.ScopesReplaced))
+	}
+	if progress.Elapsed > 0 {
+		parts = append(parts, fmt.Sprintf("elapsed=%s", progress.Elapsed.Round(time.Millisecond)))
+	}
+	if progress.Error != "" {
+		parts = append(parts, fmt.Sprintf("error=%s", progress.Error))
 	}
 	return strings.Join(parts, " ")
 }

@@ -95,6 +95,24 @@ type featureLiquidityPanelSummary struct {
 	TradabilityRatio  *float64
 }
 
+// FeatureBackfillProgress describes one observable backfill step.
+type FeatureBackfillProgress struct {
+	Market          string
+	MarketIndex     int
+	MarketCount     int
+	Underlying      string
+	UnderlyingIndex int
+	UnderlyingCount int
+	Scope           string
+	Stage           string
+	Phase           string
+	Outcome         string
+	RowsWritten     int
+	ScopesReplaced  int
+	Error           string
+	Elapsed         time.Duration
+}
+
 // FeatureBackfillOptions controls precomputed volatility snapshot generation.
 type FeatureBackfillOptions struct {
 	Markets         []string
@@ -106,6 +124,7 @@ type FeatureBackfillOptions struct {
 	MaxDaysToExpiry int
 	Replace         bool
 	ContinueOnError bool
+	Progress        func(FeatureBackfillProgress)
 }
 
 // FeatureBackfillFailure captures one failed backfill scope.
@@ -607,7 +626,7 @@ func (s *FeatureService) BackfillFeatureSnapshots(ctx context.Context, opts Feat
 	}
 	stats := FeatureBackfillStats{MarketsProcessed: len(markets), LookbackDays: lookbackDays}
 
-	for _, market := range markets {
+	for marketIndex, market := range markets {
 		underlyings := normalizeUnderlyingList(opts.Underlyings)
 		if len(underlyings) == 0 {
 			underlyings, err = s.listFeatureUnderlyings(ctx, market)
@@ -615,14 +634,74 @@ func (s *FeatureService) BackfillFeatureSnapshots(ctx context.Context, opts Feat
 				return FeatureBackfillStats{}, err
 			}
 		}
-		for _, underlying := range underlyings {
+		emitFeatureBackfillProgress(opts, FeatureBackfillProgress{
+			Market:          market,
+			MarketIndex:     marketIndex + 1,
+			MarketCount:     len(markets),
+			UnderlyingCount: len(underlyings),
+			Scope:           "market",
+			Phase:           "start",
+		})
+		for underlyingIndex, underlying := range underlyings {
 			stats.UnderlyingsConsidered++
 			wroteAny := false
 			allSkipped := true
 			allEmpty := true
 			failureCountBefore := len(stats.Failures)
+			emitFeatureBackfillProgress(opts, FeatureBackfillProgress{
+				Market:          market,
+				MarketIndex:     marketIndex + 1,
+				MarketCount:     len(markets),
+				Underlying:      underlying,
+				UnderlyingIndex: underlyingIndex + 1,
+				UnderlyingCount: len(underlyings),
+				Scope:           "underlying",
+				Phase:           "start",
+			})
 
-			volatilityResult, err := s.backfillVolatilityScope(ctx, market, underlying, opts.From, opts.To, lookbackDays, opts.Replace)
+			runScope := func(scope string, fn func() (featureScopeResult, error)) (featureScopeResult, error) {
+				emitFeatureBackfillProgress(opts, FeatureBackfillProgress{
+					Market:          market,
+					MarketIndex:     marketIndex + 1,
+					MarketCount:     len(markets),
+					Underlying:      underlying,
+					UnderlyingIndex: underlyingIndex + 1,
+					UnderlyingCount: len(underlyings),
+					Scope:           scope,
+					Phase:           "start",
+				})
+				startedAt := time.Now()
+				result, runErr := fn()
+				progress := FeatureBackfillProgress{
+					Market:          market,
+					MarketIndex:     marketIndex + 1,
+					MarketCount:     len(markets),
+					Underlying:      underlying,
+					UnderlyingIndex: underlyingIndex + 1,
+					UnderlyingCount: len(underlyings),
+					Scope:           scope,
+					Phase:           "end",
+					Elapsed:         time.Since(startedAt),
+					RowsWritten:     result.RowsWritten,
+					ScopesReplaced:  result.ScopesReplaced,
+					Outcome:         result.Status,
+				}
+				if runErr != nil {
+					progress.Outcome = "failed"
+					if scopeErr, ok := runErr.(featureBackfillScopeError); ok {
+						progress.Stage = scopeErr.Stage
+						progress.Error = scopeErr.Err.Error()
+					} else {
+						progress.Error = runErr.Error()
+					}
+				}
+				emitFeatureBackfillProgress(opts, progress)
+				return result, runErr
+			}
+
+			volatilityResult, err := runScope("volatility", func() (featureScopeResult, error) {
+				return s.backfillVolatilityScope(ctx, market, underlying, opts.From, opts.To, lookbackDays, opts.Replace)
+			})
 			if err != nil {
 				if opts.ContinueOnError {
 					stats.Failures = append(stats.Failures, toFeatureBackfillFailure(market, underlying, err))
@@ -634,7 +713,9 @@ func (s *FeatureService) BackfillFeatureSnapshots(ctx context.Context, opts Feat
 			}
 
 			if market == "us-options" {
-				surfaceResult, err := s.backfillUSOptionsSurfaceScope(ctx, underlying, opts.From, opts.To, opts.Replace)
+				surfaceResult, err := runScope("surface", func() (featureScopeResult, error) {
+					return s.backfillUSOptionsSurfaceScope(ctx, underlying, opts.From, opts.To, opts.Replace)
+				})
 				if err != nil {
 					if opts.ContinueOnError {
 						stats.Failures = append(stats.Failures, toFeatureBackfillFailure(market, underlying, err))
@@ -644,7 +725,9 @@ func (s *FeatureService) BackfillFeatureSnapshots(ctx context.Context, opts Feat
 				} else {
 					applyFeatureScopeResult(&stats, &wroteAny, &allSkipped, &allEmpty, surfaceResult)
 				}
-				liquidityResult, err := s.backfillUSOptionsLiquidityScope(ctx, underlying, opts.From, opts.To, opts.Replace)
+				liquidityResult, err := runScope("liquidity", func() (featureScopeResult, error) {
+					return s.backfillUSOptionsLiquidityScope(ctx, underlying, opts.From, opts.To, opts.Replace)
+				})
 				if err != nil {
 					if opts.ContinueOnError {
 						stats.Failures = append(stats.Failures, toFeatureBackfillFailure(market, underlying, err))
@@ -654,7 +737,9 @@ func (s *FeatureService) BackfillFeatureSnapshots(ctx context.Context, opts Feat
 				} else {
 					applyFeatureScopeResult(&stats, &wroteAny, &allSkipped, &allEmpty, liquidityResult)
 				}
-				panelResult, err := s.backfillDailyPanelScope(ctx, market, underlying, opts.From, opts.To, lookbackDays, minDTE, maxDTE, opts.Replace)
+				panelResult, err := runScope("daily-panel", func() (featureScopeResult, error) {
+					return s.backfillDailyPanelScope(ctx, market, underlying, opts.From, opts.To, lookbackDays, minDTE, maxDTE, opts.Replace)
+				})
 				if err != nil {
 					if opts.ContinueOnError {
 						stats.Failures = append(stats.Failures, toFeatureBackfillFailure(market, underlying, err))
@@ -666,7 +751,9 @@ func (s *FeatureService) BackfillFeatureSnapshots(ctx context.Context, opts Feat
 				}
 			}
 			if market == "crypto-options" {
-				liquidityResult, err := s.backfillCryptoOptionsLiquidityScope(ctx, underlying, opts.From, opts.To, opts.Replace)
+				liquidityResult, err := runScope("liquidity", func() (featureScopeResult, error) {
+					return s.backfillCryptoOptionsLiquidityScope(ctx, underlying, opts.From, opts.To, opts.Replace)
+				})
 				if err != nil {
 					if opts.ContinueOnError {
 						stats.Failures = append(stats.Failures, toFeatureBackfillFailure(market, underlying, err))
@@ -676,7 +763,9 @@ func (s *FeatureService) BackfillFeatureSnapshots(ctx context.Context, opts Feat
 				} else {
 					applyFeatureScopeResult(&stats, &wroteAny, &allSkipped, &allEmpty, liquidityResult)
 				}
-				panelResult, err := s.backfillDailyPanelScope(ctx, market, underlying, opts.From, opts.To, lookbackDays, minDTE, maxDTE, opts.Replace)
+				panelResult, err := runScope("daily-panel", func() (featureScopeResult, error) {
+					return s.backfillDailyPanelScope(ctx, market, underlying, opts.From, opts.To, lookbackDays, minDTE, maxDTE, opts.Replace)
+				})
 				if err != nil {
 					if opts.ContinueOnError {
 						stats.Failures = append(stats.Failures, toFeatureBackfillFailure(market, underlying, err))
@@ -687,6 +776,26 @@ func (s *FeatureService) BackfillFeatureSnapshots(ctx context.Context, opts Feat
 					applyFeatureScopeResult(&stats, &wroteAny, &allSkipped, &allEmpty, panelResult)
 				}
 			}
+
+			finalOutcome := "empty"
+			if wroteAny {
+				finalOutcome = "written"
+			} else if len(stats.Failures) > failureCountBefore {
+				finalOutcome = "failed"
+			} else if allSkipped {
+				finalOutcome = "skipped"
+			}
+			emitFeatureBackfillProgress(opts, FeatureBackfillProgress{
+				Market:          market,
+				MarketIndex:     marketIndex + 1,
+				MarketCount:     len(markets),
+				Underlying:      underlying,
+				UnderlyingIndex: underlyingIndex + 1,
+				UnderlyingCount: len(underlyings),
+				Scope:           "underlying",
+				Phase:           "end",
+				Outcome:         finalOutcome,
+			})
 
 			if wroteAny {
 				stats.UnderlyingsWritten++
@@ -708,6 +817,12 @@ func (s *FeatureService) BackfillFeatureSnapshots(ctx context.Context, opts Feat
 		return stats, fmt.Errorf("%d feature-store backfill scopes failed", len(stats.Failures))
 	}
 	return stats, nil
+}
+
+func emitFeatureBackfillProgress(opts FeatureBackfillOptions, progress FeatureBackfillProgress) {
+	if opts.Progress != nil {
+		opts.Progress(progress)
+	}
 }
 
 // BackfillVolatilitySnapshots computes and stores daily volatility feature rows.
@@ -2921,6 +3036,193 @@ func summarizeUSOptionsSurfaceHistory(rows []usOptionsSurfaceAggregateRow) map[s
 	return result
 }
 
+func mergeFeatureSurfacePanelSummaries(base, overlay map[string]featureSurfacePanelSummary) map[string]featureSurfacePanelSummary {
+	if len(base) == 0 && len(overlay) == 0 {
+		return map[string]featureSurfacePanelSummary{}
+	}
+	result := make(map[string]featureSurfacePanelSummary, len(base)+len(overlay))
+	for key, value := range base {
+		result[key] = value
+	}
+	for key, value := range overlay {
+		current := result[key]
+		if value.Expiration != nil {
+			current.Expiration = value.Expiration
+		}
+		if value.DaysToExpiry != nil {
+			current.DaysToExpiry = value.DaysToExpiry
+		}
+		if value.ATMIV != nil {
+			current.ATMIV = value.ATMIV
+		}
+		if value.PutCallSkew != nil {
+			current.PutCallSkew = value.PutCallSkew
+		}
+		if value.ContractCount != nil {
+			current.ContractCount = value.ContractCount
+		}
+		result[key] = current
+	}
+	return result
+}
+
+func (s *FeatureService) queryPrecomputedPanelTermStructureSummary(ctx context.Context, market, underlying string, from, to time.Time, minDTE, maxDTE int32) (map[string]featureSurfacePanelSummary, bool, error) {
+	exists, err := s.featureStoreRelationExists(ctx, featureTermStructureTable)
+	if err != nil || !exists {
+		return nil, false, err
+	}
+	query := fmt.Sprintf(`SELECT
+	as_of_date,
+	expiration,
+	days_to_expiry,
+	atm_iv,
+	contract_count
+FROM %s
+WHERE market = {market:String}
+  AND underlying = {underlying:String}
+  AND days_to_expiry >= {min_dte:Int32}
+  AND days_to_expiry <= {max_dte:Int32}`, featureTermStructureTable)
+	args := []interface{}{
+		clickhouse.Named("market", market),
+		clickhouse.Named("underlying", underlying),
+		clickhouse.Named("min_dte", minDTE),
+		clickhouse.Named("max_dte", maxDTE),
+	}
+	if !from.IsZero() {
+		query += `
+  AND as_of_date >= toDate({from:String})`
+		args = append(args, clickhouse.Named("from", from.UTC().Format("2006-01-02")))
+	}
+	if !to.IsZero() {
+		query += `
+  AND as_of_date < toDate({to:String})`
+		args = append(args, clickhouse.Named("to", to.UTC().Format("2006-01-02")))
+	}
+	query += `
+ORDER BY as_of_date ASC, expiration ASC`
+	rows, err := s.repo.Query(ctx, query, args...)
+	if err != nil {
+		return nil, false, fmt.Errorf("query precomputed panel term structure summary: %w", err)
+	}
+	defer rows.Close()
+
+	result := make(map[string]featureSurfacePanelSummary)
+	for rows.Next() {
+		var (
+			asOfDate      time.Time
+			expiration    time.Time
+			daysToExpiry  uint16
+			atmIV         *float64
+			contractCount uint32
+		)
+		if err := rows.Scan(&asOfDate, &expiration, &daysToExpiry, &atmIV, &contractCount); err != nil {
+			return nil, false, fmt.Errorf("scan precomputed panel term structure summary row: %w", err)
+		}
+		key := asOfDate.UTC().Format("2006-01-02")
+		if _, exists := result[key]; exists {
+			continue
+		}
+		expiration = expiration.UTC()
+		dte := int(daysToExpiry)
+		contracts := int(contractCount)
+		result[key] = featureSurfacePanelSummary{
+			Expiration:    &expiration,
+			DaysToExpiry:  &dte,
+			ATMIV:         sanitizeF64Ptr(atmIV),
+			ContractCount: &contracts,
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, fmt.Errorf("iterate precomputed panel term structure summary rows: %w", err)
+	}
+	return result, len(result) > 0, nil
+}
+
+func (s *FeatureService) queryPrecomputedPanelSkewSummary(ctx context.Context, market, underlying string, from, to time.Time, minDTE, maxDTE int32) (map[string]featureSurfacePanelSummary, bool, error) {
+	exists, err := s.featureStoreRelationExists(ctx, featureSkewTable)
+	if err != nil || !exists {
+		return nil, false, err
+	}
+	query := fmt.Sprintf(`SELECT
+	as_of_date,
+	put_call_skew,
+	contract_count,
+	expiration
+FROM %s
+WHERE market = {market:String}
+  AND underlying = {underlying:String}
+  AND days_to_expiry >= {min_dte:Int32}
+  AND days_to_expiry <= {max_dte:Int32}`, featureSkewTable)
+	args := []interface{}{
+		clickhouse.Named("market", market),
+		clickhouse.Named("underlying", underlying),
+		clickhouse.Named("min_dte", minDTE),
+		clickhouse.Named("max_dte", maxDTE),
+	}
+	if !from.IsZero() {
+		query += `
+  AND as_of_date >= toDate({from:String})`
+		args = append(args, clickhouse.Named("from", from.UTC().Format("2006-01-02")))
+	}
+	if !to.IsZero() {
+		query += `
+  AND as_of_date < toDate({to:String})`
+		args = append(args, clickhouse.Named("to", to.UTC().Format("2006-01-02")))
+	}
+	query += `
+ORDER BY as_of_date ASC, expiration ASC`
+	rows, err := s.repo.Query(ctx, query, args...)
+	if err != nil {
+		return nil, false, fmt.Errorf("query precomputed panel skew summary: %w", err)
+	}
+	defer rows.Close()
+
+	result := make(map[string]featureSurfacePanelSummary)
+	for rows.Next() {
+		var (
+			asOfDate      time.Time
+			putCallSkew   *float64
+			contractCount uint32
+			expiration    time.Time
+		)
+		if err := rows.Scan(&asOfDate, &putCallSkew, &contractCount, &expiration); err != nil {
+			return nil, false, fmt.Errorf("scan precomputed panel skew summary row: %w", err)
+		}
+		key := asOfDate.UTC().Format("2006-01-02")
+		if _, exists := result[key]; exists {
+			continue
+		}
+		contracts := int(contractCount)
+		result[key] = featureSurfacePanelSummary{
+			PutCallSkew:   sanitizeF64Ptr(putCallSkew),
+			ContractCount: &contracts,
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, fmt.Errorf("iterate precomputed panel skew summary rows: %w", err)
+	}
+	return result, len(result) > 0, nil
+}
+
+func (s *FeatureService) loadPanelUSOptionsSurfaceSummary(ctx context.Context, underlying string, from, to time.Time, minDTE, maxDTE int32) (map[string]featureSurfacePanelSummary, error) {
+	termSummary, termFound, err := s.queryPrecomputedPanelTermStructureSummary(ctx, "us-options", underlying, from, to, minDTE, maxDTE)
+	if err != nil {
+		return nil, err
+	}
+	skewSummary, skewFound, err := s.queryPrecomputedPanelSkewSummary(ctx, "us-options", underlying, from, to, minDTE, maxDTE)
+	if err != nil {
+		return nil, err
+	}
+	if termFound || skewFound {
+		return mergeFeatureSurfacePanelSummaries(termSummary, skewSummary), nil
+	}
+	aggregates, err := s.queryUSOptionsSurfaceAggregates(ctx, underlying, from, to, time.Time{}, minDTE, maxDTE)
+	if err != nil {
+		return nil, err
+	}
+	return summarizeUSOptionsSurfaceHistory(aggregates), nil
+}
+
 func (s *FeatureService) loadPanelVolatilityHistory(ctx context.Context, market, underlying string, from, to time.Time, lookbackDays int) ([]dto.FeatureVolatilityHistoryRow, error) {
 	if precomputed, ok, err := s.queryPrecomputedVolatilityHistory(ctx, market, underlying, from, to, lookbackDays); err != nil {
 		return nil, err
@@ -2968,11 +3270,10 @@ func (s *FeatureService) buildDailyFeaturePanelRows(ctx context.Context, market,
 	}
 	surfaceSummary := make(map[string]featureSurfacePanelSummary)
 	if market == "us-options" {
-		aggregates, err := s.queryUSOptionsSurfaceAggregates(ctx, underlying, from, to, time.Time{}, minDTE, maxDTE)
+		surfaceSummary, err = s.loadPanelUSOptionsSurfaceSummary(ctx, underlying, from, to, minDTE, maxDTE)
 		if err != nil {
 			return nil, err
 		}
-		surfaceSummary = summarizeUSOptionsSurfaceHistory(aggregates)
 	}
 	return mergeDailyFeaturePanelRows(volHistory, liquidityHistory, surfaceSummary, eventHistory), nil
 }
