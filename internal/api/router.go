@@ -18,6 +18,7 @@ type Deps struct {
 	USStocks          USStocksQuerier
 	USOptions         USOptionsQuerier
 	Infra             InfraProvider
+	DataBrowser       DataBrowserProvider
 	Features          FeatureProvider
 	Indicators        IndicatorSeriesProvider
 	StrategyBacktests StrategyBacktestProvider
@@ -96,6 +97,7 @@ func NewRouter(
 		USStocks:          usStocks,
 		USOptions:         usOptions,
 		Infra:             infra,
+		DataBrowser:       nil,
 		Features:          features,
 		Indicators:        indicators,
 		StrategyBacktests: strategyBacktests,
@@ -125,6 +127,16 @@ func registerRoutes(v1 *gin.RouterGroup, h *Handler) {
 	infraGroup := v1.Group("/infra")
 	infraGroup.GET("/markets", h.GetMarkets)
 	infraGroup.GET("/datasets", h.GetDatasets)
+
+	browserGroup := v1.Group("/browser")
+	browserGroup.GET("/presets", h.ListBrowserPresets)
+	browserDatasets := browserGroup.Group("/datasets/:dataset")
+	browserDatasets.GET("/schema", h.GetBrowserDatasetSchema)
+	browserDatasets.GET("/preview", h.GetBrowserDatasetPreview)
+	browserDatasets.GET("/coverage", h.GetBrowserDatasetCoverage)
+	browserDatasets.GET("/field-profile", h.GetBrowserFieldProfile)
+	browserDatasets.GET("/valid-count", h.GetBrowserValidCount)
+	browserDatasets.GET("/symbols", h.GetBrowserDatasetValues)
 
 	featuresGroup := v1.Group("/features")
 	featuresGroup.GET("/volatility-snapshot", h.GetVolatilitySnapshot)

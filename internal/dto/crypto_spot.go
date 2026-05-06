@@ -21,7 +21,7 @@ type CryptoSpotBarRow struct {
 	Low       float32   `json:"low"`
 	Close     float32   `json:"close"`
 	Volume    float64   `json:"volume"`
-	TickCount uint16    `json:"tick_count"`
+	TickCount uint64    `json:"tick_count"`
 }
 
 // CryptoSpotBarResponse wraps paginated crypto spot bars.

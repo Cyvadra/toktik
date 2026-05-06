@@ -53,6 +53,19 @@ type mockInfra struct {
 	err          error
 }
 
+type mockDataBrowser struct {
+	presetsResp    *dto.BrowserPresetResponse
+	schemaResp     *dto.BrowserSchemaResponse
+	previewResp    *dto.BrowserPreviewResponse
+	coverageResp   *dto.BrowserCoverageResponse
+	profileResp    *dto.BrowserFieldProfileResponse
+	validCountResp *dto.BrowserValidCountResponse
+	valuesResp     *dto.BrowserValueListResponse
+	previewReq     dto.BrowserPreviewRequest
+	valuesReq      dto.BrowserValueListRequest
+	err            error
+}
+
 type mockFeature struct {
 	volResp             *dto.FeatureVolatilitySnapshotResponse
 	historyResp         *dto.FeatureVolatilityHistoryResponse
@@ -154,6 +167,36 @@ func (m *mockInfra) ListMarkets(_ context.Context) (*dto.MarketCatalogResponse, 
 
 func (m *mockInfra) ListDatasets(_ context.Context, _ dto.DatasetQueryRequest) (*dto.DatasetCatalogResponse, error) {
 	return m.datasetsResp, m.err
+}
+
+func (m *mockDataBrowser) ListBrowserPresets(_ context.Context) (*dto.BrowserPresetResponse, error) {
+	return m.presetsResp, m.err
+}
+
+func (m *mockDataBrowser) QueryDatasetSchema(_ context.Context, _ dto.BrowserSchemaRequest) (*dto.BrowserSchemaResponse, error) {
+	return m.schemaResp, m.err
+}
+
+func (m *mockDataBrowser) QueryDatasetPreview(_ context.Context, req dto.BrowserPreviewRequest) (*dto.BrowserPreviewResponse, error) {
+	m.previewReq = req
+	return m.previewResp, m.err
+}
+
+func (m *mockDataBrowser) QueryDatasetCoverage(_ context.Context, _ dto.BrowserCoverageRequest) (*dto.BrowserCoverageResponse, error) {
+	return m.coverageResp, m.err
+}
+
+func (m *mockDataBrowser) QueryFieldProfile(_ context.Context, _ dto.BrowserFieldProfileRequest) (*dto.BrowserFieldProfileResponse, error) {
+	return m.profileResp, m.err
+}
+
+func (m *mockDataBrowser) QueryValidCount(_ context.Context, _ dto.BrowserValidCountRequest) (*dto.BrowserValidCountResponse, error) {
+	return m.validCountResp, m.err
+}
+
+func (m *mockDataBrowser) QueryDatasetValues(_ context.Context, req dto.BrowserValueListRequest) (*dto.BrowserValueListResponse, error) {
+	m.valuesReq = req
+	return m.valuesResp, m.err
 }
 
 func (m *mockFeature) QueryVolatilitySnapshot(_ context.Context, _ dto.FeatureVolatilitySnapshotRequest) (*dto.FeatureVolatilitySnapshotResponse, error) {
@@ -746,6 +789,57 @@ func TestDatasetCatalogEndpointWithFilters(t *testing.T) {
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestBrowserPresetsEndpoint(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	browser := &mockDataBrowser{presetsResp: &dto.BrowserPresetResponse{Datasets: []dto.BrowserDatasetDescriptor{{Name: "us-stocks-bars", Market: "us-stocks"}}}}
+	r := NewRouterFromDeps(Deps{Config: config.DefaultRuntime(), DataBrowser: browser})
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/api/v1/browser/presets", nil)
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp dto.BrowserPresetResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(resp.Datasets) != 1 || resp.Datasets[0].Name != "us-stocks-bars" {
+		t.Fatalf("unexpected presets response: %+v", resp.Datasets)
+	}
+}
+
+func TestBrowserPreviewEndpointBindsParams(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	browser := &mockDataBrowser{previewResp: &dto.BrowserPreviewResponse{Dataset: dto.BrowserDatasetDescriptor{Name: "us-stocks-bars"}, Columns: []string{"timestamp", "close"}, Data: []map[string]any{{"close": 100.0}}}}
+	r := NewRouterFromDeps(Deps{Config: config.DefaultRuntime(), DataBrowser: browser})
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/api/v1/browser/datasets/us-stocks-bars/preview?symbol=AAPL&from=2025-01-01&to=2025-01-02&columns=timestamp,close&limit=5", nil)
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if browser.previewReq.Dataset != "us-stocks-bars" || browser.previewReq.Symbol != "AAPL" || browser.previewReq.Columns != "timestamp,close" || browser.previewReq.Limit != 5 {
+		t.Fatalf("unexpected bound preview request: %+v", browser.previewReq)
+	}
+}
+
+func TestBrowserEndpointWithoutProvider(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := NewRouterFromDeps(Deps{Config: config.DefaultRuntime()})
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/api/v1/browser/presets", nil)
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotImplemented {
+		t.Fatalf("expected 501, got %d: %s", w.Code, w.Body.String())
 	}
 }
 

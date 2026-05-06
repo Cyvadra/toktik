@@ -39,6 +39,17 @@ type InfraProvider interface {
 	ListDatasets(ctx context.Context, req dto.DatasetQueryRequest) (*dto.DatasetCatalogResponse, error)
 }
 
+// DataBrowserProvider exposes server-approved database inspection queries.
+type DataBrowserProvider interface {
+	ListBrowserPresets(ctx context.Context) (*dto.BrowserPresetResponse, error)
+	QueryDatasetSchema(ctx context.Context, req dto.BrowserSchemaRequest) (*dto.BrowserSchemaResponse, error)
+	QueryDatasetPreview(ctx context.Context, req dto.BrowserPreviewRequest) (*dto.BrowserPreviewResponse, error)
+	QueryDatasetCoverage(ctx context.Context, req dto.BrowserCoverageRequest) (*dto.BrowserCoverageResponse, error)
+	QueryFieldProfile(ctx context.Context, req dto.BrowserFieldProfileRequest) (*dto.BrowserFieldProfileResponse, error)
+	QueryValidCount(ctx context.Context, req dto.BrowserValidCountRequest) (*dto.BrowserValidCountResponse, error)
+	QueryDatasetValues(ctx context.Context, req dto.BrowserValueListRequest) (*dto.BrowserValueListResponse, error)
+}
+
 // FeatureProvider describes derived infra feature endpoints.
 type FeatureProvider interface {
 	QueryVolatilitySnapshot(ctx context.Context, req dto.FeatureVolatilitySnapshotRequest) (*dto.FeatureVolatilitySnapshotResponse, error)

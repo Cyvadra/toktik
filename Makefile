@@ -3,7 +3,7 @@ BUILD_DIR := bin
 GOFLAGS := -trimpath
 LDFLAGS := -s -w
 
-`.PHONY: build-convert build-import build-missing-days build-kline-backfill build-kline-migrate-utc build-symbol-id-migrate build-volume-migrate build-api build-backtest-example build-backtest-portfolio build-backtest-btc-portfolio build-us-market-import build-feature-store-backfill swagger-docs export-market-api-md refresh-api-docs build-all build-win-arm clean
+`.PHONY: build-convert build-import build-missing-days build-kline-backfill build-kline-migrate-utc build-symbol-id-migrate build-volume-migrate build-api build-backtest-example build-backtest-portfolio build-backtest-btc-portfolio build-us-market-import build-feature-store-backfill web-install web-dev web-build swagger-docs export-market-api-md refresh-api-docs build-all build-win-arm clean
 
 build-all: build-convert build-import build-missing-days build-kline-backfill build-kline-migrate-utc build-symbol-id-migrate build-volume-migrate build-api build-backtest-example build-backtest-portfolio build-us-market-import build-feature-store-backfill
 
@@ -56,6 +56,15 @@ build-us-market-import:
 build-feature-store-backfill:
 	@mkdir -p $(BUILD_DIR)
 	go build $(GOFLAGS) -ldflags '$(LDFLAGS)' -o $(BUILD_DIR)/feature-store-backfill ./cmd/feature-store-backfill
+
+web-install:
+	npm --prefix web/data-browser install
+
+web-dev:
+	npm --prefix web/data-browser run dev
+
+web-build:
+	npm --prefix web/data-browser run build
 
 swagger-docs:
 	go run github.com/swaggo/swag/cmd/swag@v1.8.12 init --parseDependency --parseInternal --exclude tmp -g cmd/api-server/main.go -o docs

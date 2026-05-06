@@ -18,6 +18,7 @@ dist/
 
 # Vendor and dependency directories
 vendor/
+node_modules/
 data/
 
 # IDEs and editors
@@ -44,8 +45,18 @@ docs/swagger.json
 docs/swagger.yaml
 
 *.json
+!web/data-browser/package.json
+!web/data-browser/package-lock.json
+!web/data-browser/tsconfig.json
+!web/data-browser/tsconfig.node.json
 *.csv
 *.npy
+
+# Frontend build/typecheck artifacts
+*.tsbuildinfo
+web/data-browser/dist/
+web/data-browser/vite.config.d.ts
+web/data-browser/vite.config.js
 
 signal-list/
 

@@ -96,7 +96,7 @@ func (s *CryptoSpotService) QueryBars(ctx context.Context, req dto.CryptoSpotBar
     low,
     close,
 	volume,
-    tick_count
+	    toUInt64(tick_count) AS tick_count
 FROM %s
 WHERE symbol = %s
   AND timestamp >= toDateTime(%s, 'UTC')

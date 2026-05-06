@@ -113,6 +113,7 @@ func run() error {
 		USStocks:          service.NewUSStocksService(repo),
 		USOptions:         service.NewUSOptionsService(repo),
 		Infra:             service.NewInfraService(repo),
+		DataBrowser:       service.NewDataBrowserService(repo),
 		Features:          service.NewFeatureService(repo),
 		Indicators:        service.NewIndicatorService(repo),
 		StrategyBacktests: service.NewPortfolioBacktestService(repo, factorStore),

@@ -11,7 +11,7 @@ import (
 func TestSummarizeDatasets(t *testing.T) {
 	summary := summarizeDatasets([]dto.DatasetDescriptor{
 		{Name: "crypto-options-bars", Market: "crypto-options", Status: "ready"},
-		{Name: "crypto-spot-bars", Market: "crypto-options", Status: "stale"},
+		{Name: "crypto-spot-bars", Market: "crypto-spot", Status: "stale"},
 		{Name: "us-options-bars", Market: "us-options", Status: "missing"},
 		{Name: "us-options-chain", Market: "us-options", Status: "empty"},
 		{Name: "feature-volatility-snapshots", Market: "feature-store", Status: "ready"},
@@ -20,8 +20,8 @@ func TestSummarizeDatasets(t *testing.T) {
 	if summary.Total != 5 || summary.Ready != 2 || summary.Stale != 1 || summary.Missing != 1 || summary.Empty != 1 {
 		t.Fatalf("unexpected summary: %+v", summary)
 	}
-	if len(summary.Markets) != 3 {
-		t.Fatalf("expected 3 market summaries, got %d", len(summary.Markets))
+	if len(summary.Markets) != 4 {
+		t.Fatalf("expected 4 market summaries, got %d", len(summary.Markets))
 	}
 }
 

@@ -120,6 +120,132 @@ definitions:
       volume:
         type: number
     type: object
+  github_com_Cyvadra_toktik_internal_dto.BrowserColumn:
+    properties:
+      codec_expression:
+        type: string
+      comment:
+        type: string
+      default_expression:
+        type: string
+      default_kind:
+        type: string
+      is_nullable:
+        type: boolean
+      name:
+        type: string
+      position:
+        type: integer
+      type:
+        type: string
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.BrowserCoverageResponse:
+    properties:
+      daily:
+        items:
+          $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.BrowserDailyCoverage'
+        type: array
+      dataset:
+        $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.BrowserDatasetDescriptor'
+      first_timestamp:
+        type: string
+      last_timestamp:
+        type: string
+      row_count:
+        type: integer
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.BrowserDailyCoverage:
+    properties:
+      date:
+        type: string
+      row_count:
+        type: integer
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.BrowserDatasetDescriptor:
+    properties:
+      checks:
+        items:
+          type: string
+        type: array
+      fields:
+        items:
+          type: string
+        type: array
+      market:
+        type: string
+      name:
+        type: string
+      relation:
+        type: string
+      symbol_field:
+        type: string
+      time_field:
+        type: string
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.BrowserFieldProfileResponse:
+    properties:
+      dataset:
+        $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.BrowserDatasetDescriptor'
+      distinct_count:
+        type: integer
+      empty_count:
+        type: integer
+      field:
+        type: string
+      max: {}
+      min: {}
+      null_count:
+        type: integer
+      row_count:
+        type: integer
+      type:
+        type: string
+      zero_count:
+        type: integer
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.BrowserPresetResponse:
+    properties:
+      datasets:
+        items:
+          $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.BrowserDatasetDescriptor'
+        type: array
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.BrowserPreviewResponse:
+    properties:
+      columns:
+        items:
+          type: string
+        type: array
+      data:
+        items:
+          additionalProperties: {}
+          type: object
+        type: array
+      dataset:
+        $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.BrowserDatasetDescriptor'
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.BrowserSchemaResponse:
+    properties:
+      columns:
+        items:
+          $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.BrowserColumn'
+        type: array
+      dataset:
+        $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.BrowserDatasetDescriptor'
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.BrowserValidCountResponse:
+    properties:
+      check:
+        type: string
+      dataset:
+        $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.BrowserDatasetDescriptor'
+      invalid_count:
+        type: integer
+      row_count:
+        type: integer
+      valid_count:
+        type: integer
+    type: object
   github_com_Cyvadra_toktik_internal_dto.CryptoOptionChainContract:
     properties:
       ask_close:
@@ -2158,6 +2284,228 @@ paths:
       summary: Validate a strategy backtest request
       tags:
       - Backtests
+  /browser/datasets/{dataset}/coverage:
+    get:
+      description: Returns first/last timestamps and daily row counts for a server-approved
+        browser dataset.
+      parameters:
+      - description: Dataset preset name
+        in: path
+        name: dataset
+        required: true
+        type: string
+      - description: Symbol filter
+        in: query
+        name: symbol
+        type: string
+      - description: Underlying filter
+        in: query
+        name: underlying
+        type: string
+      - description: Start time
+        in: query
+        name: from
+        type: string
+      - description: End time
+        in: query
+        name: to
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.BrowserCoverageResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+      summary: Get dataset time coverage
+      tags:
+      - DataBrowser
+  /browser/datasets/{dataset}/field-profile:
+    get:
+      description: Returns simple null/zero/empty/distinct/min/max stats for an approved
+        field.
+      parameters:
+      - description: Dataset preset name
+        in: path
+        name: dataset
+        required: true
+        type: string
+      - description: Field name
+        in: query
+        name: field
+        required: true
+        type: string
+      - description: Start time
+        in: query
+        name: from
+        type: string
+      - description: End time
+        in: query
+        name: to
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.BrowserFieldProfileResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+      summary: Profile a dataset field
+      tags:
+      - DataBrowser
+  /browser/datasets/{dataset}/preview:
+    get:
+      description: Returns a bounded row sample for a server-approved browser dataset.
+      parameters:
+      - description: Dataset preset name
+        in: path
+        name: dataset
+        required: true
+        type: string
+      - description: Symbol filter
+        in: query
+        name: symbol
+        type: string
+      - description: Underlying filter
+        in: query
+        name: underlying
+        type: string
+      - description: Start time
+        in: query
+        name: from
+        type: string
+      - description: End time
+        in: query
+        name: to
+        type: string
+      - description: Comma-separated approved columns
+        in: query
+        name: columns
+        type: string
+      - description: Max rows, capped at 1000
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.BrowserPreviewResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+      summary: Preview dataset rows
+      tags:
+      - DataBrowser
+  /browser/datasets/{dataset}/schema:
+    get:
+      description: Returns ClickHouse column metadata for a server-approved browser
+        dataset.
+      parameters:
+      - description: Dataset preset name
+        in: path
+        name: dataset
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.BrowserSchemaResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+      summary: Get dataset schema
+      tags:
+      - DataBrowser
+  /browser/datasets/{dataset}/valid-count:
+    get:
+      description: Counts valid and invalid rows using a server-approved validity
+        check.
+      parameters:
+      - description: Dataset preset name
+        in: path
+        name: dataset
+        required: true
+        type: string
+      - description: Validity check name
+        in: query
+        name: check
+        type: string
+      - description: Start time
+        in: query
+        name: from
+        type: string
+      - description: End time
+        in: query
+        name: to
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.BrowserValidCountResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+      summary: Count valid rows
+      tags:
+      - DataBrowser
+  /browser/presets:
+    get:
+      description: Returns server-approved datasets and checks available to the internal
+        data browser.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.BrowserPresetResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+      summary: List data browser presets
+      tags:
+      - DataBrowser
   /crypto-options/backtest:
     post:
       consumes:
@@ -3109,8 +3457,9 @@ paths:
     post:
       consumes:
       - application/json
-      description: Evaluates either a full DSL script or a simplified indicators[]
-        expression list over market bars and returns aligned series arrays.
+      description: Evaluates either a full DSL script, one or more built-in presets[],
+        or a simplified indicators[] expression list over market bars and returns
+        aligned series arrays.
       parameters:
       - description: Indicator query
         in: body
@@ -3335,7 +3684,8 @@ paths:
     get:
       description: Returns OHLCV bars for a US listed option contract.
       parameters:
-      - description: Option contract symbol
+      - description: 'Option contract symbol (Polygon OPRA ticker or raw OCC payload
+          without O: prefix)'
         in: query
         name: symbol
         required: true
@@ -3354,6 +3704,10 @@ paths:
         in: query
         name: to
         required: true
+        type: string
+      - description: 'Session filter (1m only: regular, all, extended)'
+        in: query
+        name: session
         type: string
       - description: Max rows (default 1000)
         in: query
@@ -3383,21 +3737,39 @@ paths:
       - USOptions
   /markets/us-options/chain:
     get:
-      description: Returns an option chain snapshot for a US underlying, grouped by
-        expiration and strike.
+      description: Returns option chain snapshots for a US underlying. If from/to
+        are omitted, the latest available snapshot is returned.
       parameters:
       - description: Underlying ticker symbol
         in: query
         name: underlying
         required: true
         type: string
-      - description: Filter by expiration date
+      - description: Filter contracts by expiration date (YYYY-MM-DD)
         in: query
         name: expiration
         type: string
-      - description: Filter by option type (call, put)
+      - description: Snapshot window start (RFC3339 or YYYY-MM-DD); defaults to latest
+          available snapshot
         in: query
-        name: type
+        name: from
+        type: string
+      - description: Snapshot window end (RFC3339 or YYYY-MM-DD); defaults to latest
+          available snapshot
+        in: query
+        name: to
+        type: string
+      - description: Chain interval (default 1d)
+        enum:
+        - 5m
+        - 15m
+        - 30m
+        - 1h
+        - 2h
+        - 4h
+        - 1d
+        in: query
+        name: interval
         type: string
       - description: Max contracts (default 100)
         in: query
@@ -3429,7 +3801,8 @@ paths:
     get:
       description: Returns Greeks snapshots over time for a US listed option contract.
       parameters:
-      - description: Option contract symbol
+      - description: 'Option contract symbol (Polygon OPRA ticker or raw OCC payload
+          without O: prefix)'
         in: query
         name: symbol
         required: true
@@ -3447,6 +3820,10 @@ paths:
         in: query
         name: to
         required: true
+        type: string
+      - description: 'Session filter (1m only: regular, all, extended)'
+        in: query
+        name: session
         type: string
       - description: Max rows (default 1000)
         in: query
@@ -3478,7 +3855,11 @@ paths:
     get:
       description: Returns available US listed option contract symbols.
       parameters:
-      - description: Filter by root symbol
+      - description: Filter by underlying ticker symbol
+        in: query
+        name: underlying
+        type: string
+      - description: Legacy alias for underlying
         in: query
         name: root
         type: string
@@ -3717,7 +4098,7 @@ paths:
         in: query
         name: sort
         type: string
-      - description: Page size
+      - description: Page size (max 250)
         in: query
         name: limit
         type: integer
@@ -4009,9 +4390,9 @@ paths:
       description: Proxies Polygon stock snapshot data. This endpoint bypasses the
         platform database and is intended for realtime client reads.
       parameters:
-      - description: Stock ticker symbol
+      - description: 'Stock ticker symbol (alias: symbol)'
         in: query
-        name: symbol
+        name: ticker
         required: true
         type: string
       produces:

@@ -311,6 +311,334 @@ const docTemplate = `{
                 }
             }
         },
+        "/browser/datasets/{dataset}/coverage": {
+            "get": {
+                "description": "Returns first/last timestamps and daily row counts for a server-approved browser dataset.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "DataBrowser"
+                ],
+                "summary": "Get dataset time coverage",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Dataset preset name",
+                        "name": "dataset",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Symbol filter",
+                        "name": "symbol",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Underlying filter",
+                        "name": "underlying",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Start time",
+                        "name": "from",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "End time",
+                        "name": "to",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.BrowserCoverageResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/browser/datasets/{dataset}/field-profile": {
+            "get": {
+                "description": "Returns simple null/zero/empty/distinct/min/max stats for an approved field.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "DataBrowser"
+                ],
+                "summary": "Profile a dataset field",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Dataset preset name",
+                        "name": "dataset",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Field name",
+                        "name": "field",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Start time",
+                        "name": "from",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "End time",
+                        "name": "to",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.BrowserFieldProfileResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/browser/datasets/{dataset}/preview": {
+            "get": {
+                "description": "Returns a bounded row sample for a server-approved browser dataset.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "DataBrowser"
+                ],
+                "summary": "Preview dataset rows",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Dataset preset name",
+                        "name": "dataset",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Symbol filter",
+                        "name": "symbol",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Underlying filter",
+                        "name": "underlying",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Start time",
+                        "name": "from",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "End time",
+                        "name": "to",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Comma-separated approved columns",
+                        "name": "columns",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Max rows, capped at 1000",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.BrowserPreviewResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/browser/datasets/{dataset}/schema": {
+            "get": {
+                "description": "Returns ClickHouse column metadata for a server-approved browser dataset.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "DataBrowser"
+                ],
+                "summary": "Get dataset schema",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Dataset preset name",
+                        "name": "dataset",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.BrowserSchemaResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/browser/datasets/{dataset}/valid-count": {
+            "get": {
+                "description": "Counts valid and invalid rows using a server-approved validity check.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "DataBrowser"
+                ],
+                "summary": "Count valid rows",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Dataset preset name",
+                        "name": "dataset",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Validity check name",
+                        "name": "check",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Start time",
+                        "name": "from",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "End time",
+                        "name": "to",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.BrowserValidCountResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/browser/presets": {
+            "get": {
+                "description": "Returns server-approved datasets and checks available to the internal data browser.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "DataBrowser"
+                ],
+                "summary": "List data browser presets",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.BrowserPresetResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/crypto-options/backtest": {
             "post": {
                 "description": "Runs a synchronous backtest on a crypto options strategy. Deprecated: use POST /backtests/runs instead.",
@@ -1711,7 +2039,7 @@ const docTemplate = `{
         },
         "/indicators/series": {
             "post": {
-                "description": "Evaluates either a full DSL script or a simplified indicators[] expression list over market bars and returns aligned series arrays.",
+                "description": "Evaluates either a full DSL script, one or more built-in presets[], or a simplified indicators[] expression list over market bars and returns aligned series arrays.",
                 "consumes": [
                     "application/json"
                 ],
@@ -2052,7 +2380,7 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Option contract symbol",
+                        "description": "Option contract symbol (Polygon OPRA ticker or raw OCC payload without O: prefix)",
                         "name": "symbol",
                         "in": "query",
                         "required": true
@@ -2077,6 +2405,12 @@ const docTemplate = `{
                         "name": "to",
                         "in": "query",
                         "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Session filter (1m only: regular, all, extended)",
+                        "name": "session",
+                        "in": "query"
                     },
                     {
                         "type": "integer",
@@ -2115,7 +2449,7 @@ const docTemplate = `{
         },
         "/markets/us-options/chain": {
             "get": {
-                "description": "Returns an option chain snapshot for a US underlying, grouped by expiration and strike.",
+                "description": "Returns option chain snapshots for a US underlying. If from/to are omitted, the latest available snapshot is returned.",
                 "produces": [
                     "application/json"
                 ],
@@ -2133,14 +2467,35 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "Filter by expiration date",
+                        "description": "Filter contracts by expiration date (YYYY-MM-DD)",
                         "name": "expiration",
                         "in": "query"
                     },
                     {
                         "type": "string",
-                        "description": "Filter by option type (call, put)",
-                        "name": "type",
+                        "description": "Snapshot window start (RFC3339 or YYYY-MM-DD); defaults to latest available snapshot",
+                        "name": "from",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Snapshot window end (RFC3339 or YYYY-MM-DD); defaults to latest available snapshot",
+                        "name": "to",
+                        "in": "query"
+                    },
+                    {
+                        "enum": [
+                            "5m",
+                            "15m",
+                            "30m",
+                            "1h",
+                            "2h",
+                            "4h",
+                            "1d"
+                        ],
+                        "type": "string",
+                        "description": "Chain interval (default 1d)",
+                        "name": "interval",
                         "in": "query"
                     },
                     {
@@ -2191,7 +2546,7 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Option contract symbol",
+                        "description": "Option contract symbol (Polygon OPRA ticker or raw OCC payload without O: prefix)",
                         "name": "symbol",
                         "in": "query",
                         "required": true
@@ -2215,6 +2570,12 @@ const docTemplate = `{
                         "name": "to",
                         "in": "query",
                         "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Session filter (1m only: regular, all, extended)",
+                        "name": "session",
+                        "in": "query"
                     },
                     {
                         "type": "integer",
@@ -2264,7 +2625,13 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Filter by root symbol",
+                        "description": "Filter by underlying ticker symbol",
+                        "name": "underlying",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Legacy alias for underlying",
                         "name": "root",
                         "in": "query"
                     },
@@ -2619,7 +2986,7 @@ const docTemplate = `{
                     },
                     {
                         "type": "integer",
-                        "description": "Page size",
+                        "description": "Page size (max 250)",
                         "name": "limit",
                         "in": "query"
                     }
@@ -3053,8 +3420,8 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Stock ticker symbol",
-                        "name": "symbol",
+                        "description": "Stock ticker symbol (alias: symbol)",
+                        "name": "ticker",
                         "in": "query",
                         "required": true
                     }
@@ -3569,6 +3936,198 @@ const docTemplate = `{
                 },
                 "volume": {
                     "type": "number"
+                }
+            }
+        },
+        "github_com_Cyvadra_toktik_internal_dto.BrowserColumn": {
+            "type": "object",
+            "properties": {
+                "codec_expression": {
+                    "type": "string"
+                },
+                "comment": {
+                    "type": "string"
+                },
+                "default_expression": {
+                    "type": "string"
+                },
+                "default_kind": {
+                    "type": "string"
+                },
+                "is_nullable": {
+                    "type": "boolean"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "position": {
+                    "type": "integer"
+                },
+                "type": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_Cyvadra_toktik_internal_dto.BrowserCoverageResponse": {
+            "type": "object",
+            "properties": {
+                "daily": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.BrowserDailyCoverage"
+                    }
+                },
+                "dataset": {
+                    "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.BrowserDatasetDescriptor"
+                },
+                "first_timestamp": {
+                    "type": "string"
+                },
+                "last_timestamp": {
+                    "type": "string"
+                },
+                "row_count": {
+                    "type": "integer"
+                }
+            }
+        },
+        "github_com_Cyvadra_toktik_internal_dto.BrowserDailyCoverage": {
+            "type": "object",
+            "properties": {
+                "date": {
+                    "type": "string"
+                },
+                "row_count": {
+                    "type": "integer"
+                }
+            }
+        },
+        "github_com_Cyvadra_toktik_internal_dto.BrowserDatasetDescriptor": {
+            "type": "object",
+            "properties": {
+                "checks": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "fields": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "market": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "relation": {
+                    "type": "string"
+                },
+                "symbol_field": {
+                    "type": "string"
+                },
+                "time_field": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_Cyvadra_toktik_internal_dto.BrowserFieldProfileResponse": {
+            "type": "object",
+            "properties": {
+                "dataset": {
+                    "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.BrowserDatasetDescriptor"
+                },
+                "distinct_count": {
+                    "type": "integer"
+                },
+                "empty_count": {
+                    "type": "integer"
+                },
+                "field": {
+                    "type": "string"
+                },
+                "max": {},
+                "min": {},
+                "null_count": {
+                    "type": "integer"
+                },
+                "row_count": {
+                    "type": "integer"
+                },
+                "type": {
+                    "type": "string"
+                },
+                "zero_count": {
+                    "type": "integer"
+                }
+            }
+        },
+        "github_com_Cyvadra_toktik_internal_dto.BrowserPresetResponse": {
+            "type": "object",
+            "properties": {
+                "datasets": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.BrowserDatasetDescriptor"
+                    }
+                }
+            }
+        },
+        "github_com_Cyvadra_toktik_internal_dto.BrowserPreviewResponse": {
+            "type": "object",
+            "properties": {
+                "columns": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": {}
+                    }
+                },
+                "dataset": {
+                    "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.BrowserDatasetDescriptor"
+                }
+            }
+        },
+        "github_com_Cyvadra_toktik_internal_dto.BrowserSchemaResponse": {
+            "type": "object",
+            "properties": {
+                "columns": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.BrowserColumn"
+                    }
+                },
+                "dataset": {
+                    "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.BrowserDatasetDescriptor"
+                }
+            }
+        },
+        "github_com_Cyvadra_toktik_internal_dto.BrowserValidCountResponse": {
+            "type": "object",
+            "properties": {
+                "check": {
+                    "type": "string"
+                },
+                "dataset": {
+                    "$ref": "#/definitions/github_com_Cyvadra_toktik_internal_dto.BrowserDatasetDescriptor"
+                },
+                "invalid_count": {
+                    "type": "integer"
+                },
+                "row_count": {
+                    "type": "integer"
+                },
+                "valid_count": {
+                    "type": "integer"
                 }
             }
         },
