@@ -60,9 +60,9 @@ ORDER BY event_ts ASC, known_at ASC, revision ASC`, FundamentalObservation)
 func FundamentalSeriesAsOfQuery() string {
 	return fmt.Sprintf(`SELECT
 	event_ts,
-	argMax(known_at, (known_at, revision)) AS known_at,
-	argMax(value,    (known_at, revision)) AS value,
-	argMax(source,   (known_at, revision)) AS source
+	argMax(known_at, (known_at, revision)) AS latest_known_at,
+	argMax(value,    (known_at, revision)) AS latest_value,
+	argMax(source,   (known_at, revision)) AS latest_source
 FROM %s
 WHERE market = {market:String}
   AND symbol = {symbol:String}
@@ -79,10 +79,10 @@ ORDER BY event_ts ASC`, FundamentalObservation)
 func FundamentalSnapshotQuery() string {
 	return fmt.Sprintf(`SELECT
 	factor_code,
-	argMax(event_ts, (known_at, revision))  AS event_ts,
-	argMax(known_at, (known_at, revision))  AS known_at,
-	argMax(value,    (known_at, revision))  AS value,
-	argMax(source,   (known_at, revision))  AS source
+	argMax(event_ts, (known_at, revision))  AS latest_event_ts,
+	argMax(known_at, (known_at, revision))  AS latest_known_at,
+	argMax(value,    (known_at, revision))  AS latest_value,
+	argMax(source,   (known_at, revision))  AS latest_source
 FROM %s
 WHERE market = {market:String}
   AND symbol = {symbol:String}
@@ -99,9 +99,9 @@ func FundamentalPanelQuery() string {
 	return fmt.Sprintf(`SELECT
 	symbol,
 	factor_code,
-	argMax(event_ts, (known_at, revision))  AS event_ts,
-	argMax(known_at, (known_at, revision))  AS known_at,
-	argMax(value,    (known_at, revision))  AS value
+	argMax(event_ts, (known_at, revision))  AS latest_event_ts,
+	argMax(known_at, (known_at, revision))  AS latest_known_at,
+	argMax(value,    (known_at, revision))  AS latest_value
 FROM %s
 WHERE market = {market:String}
   AND has({symbols:Array(String)}, symbol)
