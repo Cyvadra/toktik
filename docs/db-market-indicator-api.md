@@ -7,7 +7,7 @@
 - Source Swagger: `docs/swagger.json`
 - API title: `Toktik Options Platform API`
 - API version: `1.0`
-- Generated at: `2026-05-06T04:02:22Z`
+- Generated at: `2026-05-06T11:04:24Z`
 
 ## Scope
 
@@ -764,7 +764,7 @@ No parameters.
 - Tags: `USStocks`
 - Produces: `application/json`
 - Summary: Get US stock bars
-- Description: Returns OHLCV bars for a US stock symbol.
+- Description: Returns OHLCV bars for a US stock symbol, optionally enriched with point-in-time fundamentals aligned to each bar.
 
 #### Parameters
 
@@ -774,6 +774,7 @@ No parameters.
 | interval | query | string | yes | Bar interval |
 | from | query | string | yes | Start time (RFC3339 or YYYY-MM-DD) |
 | to | query | string | yes | End time (RFC3339 or YYYY-MM-DD) |
+| factor | query | array<string> | no | Optional fundamentals to align onto each bar (repeat or comma-separated, e.g. pe,pb). PE/PB are recomputed from each bar close using the latest known filing-derived denominator. |
 | limit | query | integer | no | Max rows (default 1000) |
 | cursor | query | string | no | Pagination cursor |
 

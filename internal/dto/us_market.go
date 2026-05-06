@@ -4,25 +4,36 @@ import "time"
 
 // USStockBarRequest is the query parameters for the US stock bars endpoint.
 type USStockBarRequest struct {
-	Symbol   string `form:"symbol" binding:"required"`
-	Interval string `form:"interval" binding:"required"`
-	From     string `form:"from" binding:"required"`
-	To       string `form:"to" binding:"required"`
-	Session  string `form:"session" binding:"omitempty"`
-	Limit    int    `form:"limit" binding:"omitempty"`
-	Cursor   string `form:"cursor" binding:"omitempty"`
+	Symbol   string   `form:"symbol" binding:"required"`
+	Interval string   `form:"interval" binding:"required"`
+	From     string   `form:"from" binding:"required"`
+	To       string   `form:"to" binding:"required"`
+	Session  string   `form:"session" binding:"omitempty"`
+	Factors  []string `form:"factor" binding:"omitempty"`
+	Limit    int      `form:"limit" binding:"omitempty"`
+	Cursor   string   `form:"cursor" binding:"omitempty"`
+}
+
+// USStockBarFundamentalValue is one point-in-time factor aligned onto a bar.
+type USStockBarFundamentalValue struct {
+	EventTS time.Time `json:"event_ts"`
+	KnownAt time.Time `json:"known_at"`
+	Value   float64   `json:"value"`
+	Source  string    `json:"source,omitempty"`
+	Filled  bool      `json:"filled,omitempty"`
 }
 
 // USStockBarRow is a single OHLCV bar returned by the US stock bars endpoint.
 type USStockBarRow struct {
-	Timestamp    time.Time `json:"timestamp"`
-	Symbol       string    `json:"symbol"`
-	Open         float32   `json:"open"`
-	High         float32   `json:"high"`
-	Low          float32   `json:"low"`
-	Close        float32   `json:"close"`
-	Volume       float64   `json:"volume"`
-	Transactions uint64    `json:"transactions"`
+	Timestamp    time.Time                             `json:"timestamp"`
+	Symbol       string                                `json:"symbol"`
+	Open         float32                               `json:"open"`
+	High         float32                               `json:"high"`
+	Low          float32                               `json:"low"`
+	Close        float32                               `json:"close"`
+	Volume       float64                               `json:"volume"`
+	Transactions uint64                                `json:"transactions"`
+	Fundamentals map[string]USStockBarFundamentalValue `json:"fundamentals,omitempty"`
 }
 
 // USStockBarResponse wraps paginated US stock bars.

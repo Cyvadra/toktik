@@ -31,6 +31,7 @@ type mockQuerier struct {
 type mockUSStocksQuerier struct {
 	barsResp    *dto.USStockBarResponse
 	symbolsResp *dto.USStockSymbolResponse
+	barsReq     dto.USStockBarRequest
 	err         error
 }
 
@@ -129,7 +130,8 @@ func (m *mockQuerier) QueryChain(_ context.Context, _ dto.CryptoOptionChainReque
 	return nil, m.err
 }
 
-func (m *mockUSStocksQuerier) QueryBars(_ context.Context, _ dto.USStockBarRequest) (*dto.USStockBarResponse, error) {
+func (m *mockUSStocksQuerier) QueryBars(_ context.Context, req dto.USStockBarRequest) (*dto.USStockBarResponse, error) {
+	m.barsReq = req
 	return m.barsResp, m.err
 }
 
@@ -861,9 +863,10 @@ func TestMarketAliasRoute(t *testing.T) {
 
 func TestUSStocksBarsRoute(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+	mock := &mockUSStocksQuerier{barsResp: &dto.USStockBarResponse{Data: []dto.USStockBarRow{{Timestamp: time.Date(2024, 1, 2, 14, 30, 0, 0, time.UTC), Symbol: "AAPL", Close: 192.5}}}}
 	r := NewRouter(
 		&mockQuerier{},
-		&mockUSStocksQuerier{barsResp: &dto.USStockBarResponse{Data: []dto.USStockBarRow{{Timestamp: time.Date(2024, 1, 2, 14, 30, 0, 0, time.UTC), Symbol: "AAPL", Close: 192.5}}}},
+		mock,
 		&mockUSOptionsQuerier{},
 		&mockInfra{},
 		&mockFeature{},
@@ -872,11 +875,14 @@ func TestUSStocksBarsRoute(t *testing.T) {
 	)
 
 	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("GET", "/api/v1/markets/us-stocks/bars?symbol=AAPL&interval=1m&from=2024-01-02&to=2024-01-03", nil)
+	req, _ := http.NewRequest("GET", "/api/v1/markets/us-stocks/bars?symbol=AAPL&interval=1m&from=2024-01-02&to=2024-01-03&factor=pe&factor=pb", nil)
 	r.ServeHTTP(w, req)
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if len(mock.barsReq.Factors) != 2 || mock.barsReq.Factors[0] != "pe" || mock.barsReq.Factors[1] != "pb" {
+		t.Fatalf("expected factor query params to be forwarded, got %#v", mock.barsReq.Factors)
 	}
 }
 

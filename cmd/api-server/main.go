@@ -106,11 +106,12 @@ func run() error {
 	}()
 
 	repo := chrepo.NewRepo(conn)
+	fundamentalsSvc := service.NewFundamentalsService(repo)
 
 	deps := api.Deps{
 		Config:            runtimeCfg,
 		CryptoOptions:     service.NewCryptoOptionsService(repo),
-		USStocks:          service.NewUSStocksService(repo),
+		USStocks:          service.NewUSStocksService(repo, fundamentalsSvc),
 		USOptions:         service.NewUSOptionsService(repo),
 		Infra:             service.NewInfraService(repo),
 		DataBrowser:       service.NewDataBrowserService(repo),
@@ -121,7 +122,7 @@ func run() error {
 		Screener:          service.NewScreenerService(repo),
 		StrategyCatalog:   service.NewStrategyCatalogService(),
 		Factors:           service.NewFactorService(factorStore),
-		Fundamentals:      service.NewFundamentalsService(repo),
+		Fundamentals:      fundamentalsSvc,
 	}
 
 	polygonSvc, err := service.NewPolygonServiceFromConfig(runtimeCfg, cacheStore)

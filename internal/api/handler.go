@@ -1102,13 +1102,14 @@ func (h *Handler) StreamStrategyBacktestEvents(c *gin.Context) {
 // GetUSStockBars handles GET /api/v1/markets/us-stocks/bars.
 //
 // @Summary      Get US stock bars
-// @Description  Returns OHLCV bars for a US stock symbol.
+// @Description  Returns OHLCV bars for a US stock symbol, optionally enriched with point-in-time fundamentals aligned to each bar.
 // @Tags         USStocks
 // @Produce      json
 // @Param        symbol    query     string  true   "Stock ticker symbol"
 // @Param        interval  query     string  true   "Bar interval"
 // @Param        from      query     string  true   "Start time (RFC3339 or YYYY-MM-DD)"
 // @Param        to        query     string  true   "End time (RFC3339 or YYYY-MM-DD)"
+// @Param        factor    query     []string  false  "Optional fundamentals to align onto each bar (repeat or comma-separated, e.g. pe,pb). PE/PB are recomputed from each bar close using the latest known filing-derived denominator."
 // @Param        limit     query     int     false  "Max rows (default 1000)"
 // @Param        cursor    query     string  false  "Pagination cursor"
 // @Success      200       {object}  dto.USStockBarResponse
