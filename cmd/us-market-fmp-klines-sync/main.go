@@ -18,12 +18,13 @@ import (
 func main() {
 	runtimeCfg := appCli.MustLoadRuntime()
 	dsn := flag.String("clickhouse-dsn", runtimeCfg.ClickHouse.DSN, "ClickHouse DSN")
-	symbolsFlag := flag.String("symbols", "", "Comma-separated tickers (e.g. AAPL,MSFT,QQQ); empty means all stored US stock symbols from ClickHouse")
+	symbolsFlag := flag.String("symbols", "", "Comma-separated logical symbols (e.g. AAPL,SPX,BRKB); empty means stored US stock symbols plus supported option-underlying gaps")
 	startDateFlag := flag.String("start-date", "", "Sync start date (YYYY-MM-DD), required")
 	endDateFlag := flag.String("end-date", "", "Sync end date (YYYY-MM-DD); defaults to today UTC")
 	intervalFlag := flag.String("interval", "1min", "FMP intraday interval (1min, 5min, 15min, 30min, 1hour, 4hour)")
 	batchSize := flag.Int("batch-size", 50000, "Rows per ClickHouse INSERT batch")
 	limitSymbols := flag.Int("limit-symbols", 0, "Optional limit when resolving all stored US stock symbols from ClickHouse")
+	includeOptionGapMappings := flag.Bool("include-option-gap-mappings", true, "When --symbols is empty, append deterministic option-underlying gap targets backed by direct/index/fallback mappings")
 	dryRun := flag.Bool("dry-run", false, "Fetch and report without inserting into ClickHouse")
 	schemaFile := flag.String("schema", "", "Path to us_market.sql DDL (auto-detected if empty)")
 	flag.Parse()
@@ -56,20 +57,26 @@ func main() {
 		log.Fatalf("initialize import storage: %v", err)
 	}
 
-	symbols, err := usmarket.ResolveUSStockSymbols(ctx, conn, parseSymbols(*symbolsFlag), *limitSymbols)
+	targets, err := usmarket.ResolveUSStockSyncTargets(ctx, conn, parseSymbols(*symbolsFlag), *limitSymbols, *includeOptionGapMappings)
 	if err != nil {
-		log.Fatalf("resolve US stock symbols: %v", err)
+		log.Fatalf("resolve US stock sync targets: %v", err)
 	}
-	if len(symbols) == 0 {
-		log.Fatal("no US stock symbols resolved; pass --symbols explicitly or seed us_stocks_bar_1m first")
+	if len(targets) == 0 {
+		log.Fatal("no US stock sync targets resolved; pass --symbols explicitly or seed us_stocks_bar_1m first")
 	}
 	if strings.TrimSpace(*symbolsFlag) == "" {
-		log.Printf("Resolved %d stored US stock symbols from ClickHouse", len(symbols))
+		extraTargets := 0
+		for _, target := range targets {
+			if target.Source != "stored-stock" {
+				extraTargets++
+			}
+		}
+		log.Printf("Resolved %d US stock sync targets from ClickHouse (%d stored-stock, %d mapped option-underlying gaps)", len(targets), len(targets)-extraTargets, extraTargets)
 	}
 
 	result, err := usmarket.SyncFMPStockKlines(ctx, conn, usmarket.FMPStockKlineSyncConfig{
 		APIKey:    apiKey,
-		Symbols:   symbols,
+		Targets:   targets,
 		From:      from,
 		To:        to,
 		Interval:  interval,

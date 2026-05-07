@@ -18,6 +18,7 @@ import (
 type FMPStockKlineSyncConfig struct {
 	APIKey    string
 	Symbols   []string
+	Targets   []FMPStockSyncTarget
 	From      time.Time // inclusive UTC date
 	To        time.Time // inclusive UTC date
 	Interval  fmp.IntradayInterval
@@ -42,7 +43,9 @@ func SyncFMPStockKlines(ctx context.Context, conn driver.Conn, cfg FMPStockKline
 		return FMPStockKlineSyncResult{}, fmt.Errorf("FMP API key is required")
 	}
 	if len(cfg.Symbols) == 0 {
-		return FMPStockKlineSyncResult{}, fmt.Errorf("at least one symbol is required")
+		if len(cfg.Targets) == 0 {
+			return FMPStockKlineSyncResult{}, fmt.Errorf("at least one symbol or target is required")
+		}
 	}
 	if cfg.From.IsZero() || cfg.To.IsZero() || cfg.To.Before(cfg.From) {
 		return FMPStockKlineSyncResult{}, fmt.Errorf("from/to must be set and to >= from")
@@ -60,15 +63,26 @@ func SyncFMPStockKlines(ctx context.Context, conn driver.Conn, cfg FMPStockKline
 
 	client := fmp.New(cfg.APIKey)
 	var result FMPStockKlineSyncResult
+	targets := cfg.Targets
+	if len(targets) == 0 {
+		targets = make([]FMPStockSyncTarget, 0, len(cfg.Symbols))
+		for _, symbol := range cfg.Symbols {
+			targets = append(targets, FMPStockSyncTarget{StoreSymbol: symbol, FetchSymbol: symbol, Source: "legacy-symbol"})
+		}
+	}
 
-	for _, raw := range cfg.Symbols {
-		symbol := strings.ToUpper(strings.TrimSpace(raw))
-		if symbol == "" {
+	for _, target := range targets {
+		storeSymbol := strings.ToUpper(strings.TrimSpace(target.StoreSymbol))
+		fetchSymbol := strings.ToUpper(strings.TrimSpace(target.FetchSymbol))
+		if storeSymbol == "" {
 			continue
 		}
-		bars, err := fetchFMPIntradayChunkedStock(ctx, client, symbol, cfg.Interval, cfg.From, cfg.To)
+		if fetchSymbol == "" {
+			fetchSymbol = storeSymbol
+		}
+		bars, err := fetchFMPIntradayChunkedStock(ctx, client, fetchSymbol, cfg.Interval, cfg.From, cfg.To)
 		if err != nil {
-			log.Printf("[ERROR] %s: fetch FMP intraday: %v", symbol, err)
+			log.Printf("[ERROR] %s <= %s: fetch FMP intraday (%s): %v", storeSymbol, fetchSymbol, target.Source, err)
 			result.FailedSymbols++
 			continue
 		}
@@ -76,7 +90,7 @@ func SyncFMPStockKlines(ctx context.Context, conn driver.Conn, cfg FMPStockKline
 
 		if cfg.DryRun || len(bars) == 0 {
 			result.ProcessedSymbols++
-			log.Printf("[%s] %s: fetched=%d inserted=0 dry_run=%v", "DRYRUN-OR-EMPTY", symbol, len(bars), cfg.DryRun)
+			log.Printf("[%s] %s <= %s: fetched=%d inserted=0 dry_run=%v source=%s", "DRYRUN-OR-EMPTY", storeSymbol, fetchSymbol, len(bars), cfg.DryRun, target.Source)
 			continue
 		}
 
@@ -90,7 +104,7 @@ func SyncFMPStockKlines(ctx context.Context, conn driver.Conn, cfg FMPStockKline
 				}
 				stockBar := StockBar1m{
 					Timestamp:    tsUTC,
-					Symbol:       symbol,
+					Symbol:       storeSymbol,
 					Open:         float32(bar.Open),
 					High:         float32(bar.High),
 					Low:          float32(bar.Low),
@@ -106,13 +120,13 @@ func SyncFMPStockKlines(ctx context.Context, conn driver.Conn, cfg FMPStockKline
 
 		inserted, err := InsertStockBars(ctx, conn, ch, cfg.BatchSize)
 		if err != nil {
-			log.Printf("[ERROR] %s: insert stock bars: %v", symbol, err)
+			log.Printf("[ERROR] %s <= %s: insert stock bars (%s): %v", storeSymbol, fetchSymbol, target.Source, err)
 			result.FailedSymbols++
 			continue
 		}
 		result.ProcessedSymbols++
 		result.InsertedRows += inserted
-		log.Printf("[OK] %s: fetched=%d inserted=%d", symbol, len(bars), inserted)
+		log.Printf("[OK] %s <= %s: fetched=%d inserted=%d source=%s", storeSymbol, fetchSymbol, len(bars), inserted, target.Source)
 	}
 	return result, nil
 }
