@@ -290,6 +290,54 @@ plot(close, title="Close")`,
 	}
 }
 
+func TestResolveBacktestPlanLoadsMultipleOptionChainTargets(t *testing.T) {
+	feed := &validationTestFeed{}
+	svc := NewPortfolioBacktestService(nil, nil)
+	svc.engineBuilder = func(cfg backtest.Config, chainProvider backtest.OptionsChainProvider, usesOptions bool) *backtest.Engine {
+		engine := backtest.NewEngine(cfg)
+		engine.RegisterDataFeed(usUnderlyingFeed, feed)
+		return engine
+	}
+	loaded := make([]string, 0, 4)
+	svc.chainLoader = func(_ context.Context, marketName, asset, interval string, from, to time.Time) (backtest.OptionsChainProvider, error) {
+		loaded = append(loaded, marketName+":"+asset)
+		return &stubOptionsChainProvider{}, nil
+	}
+
+	_, err := svc.resolveBacktestPlan(context.Background(), nil, dto.StrategyBacktestRunRequest{
+		Market:  "us",
+		Asset:   "QQQ",
+		Symbols: []string{"MSFT", "AAPL"},
+		Weights: []float64{0.2, 0.1},
+		From:    "2026-01-01",
+		To:      "2026-01-02",
+		Capital: 100000,
+		DSL: `strategy("Multi Chain")
+qqq = options.chain("us", "QQQ")
+msft = options.chain("us", "MSFT")
+plot(close, title="Close")`,
+		DSLProfile: &dto.StrategyBacktestDSLProfile{UsesOptions: ptrBool(true), RegularTrade: "none"},
+	})
+	if err != nil {
+		t.Fatalf("resolveBacktestPlan returned error: %v", err)
+	}
+	if len(loaded) != 3 {
+		t.Fatalf("expected three option chain loads, got %v", loaded)
+	}
+	want := map[string]bool{"us:QQQ": true, "us:MSFT": true, "us:AAPL": true}
+	for _, got := range loaded {
+		if !want[got] {
+			t.Fatalf("unexpected loaded target %q from %v", got, loaded)
+		}
+		delete(want, got)
+	}
+	if len(want) != 0 {
+		t.Fatalf("missing expected targets: %+v", want)
+	}
+}
+
+func ptrBool(v bool) *bool { return &v }
+
 type stubNamedStrategy struct{ name string }
 
 func (s *stubNamedStrategy) Name() string { return s.name }

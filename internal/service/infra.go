@@ -28,6 +28,7 @@ type infraDatasetSpec struct {
 var infraDatasetSpecs = []infraDatasetSpec{
 	{Name: "crypto-options-bars", Market: "crypto-options", Relation: chquery.CryptoOptionsBar1m, TimeField: "timestamp", MaxAge: 96 * time.Hour},
 	{Name: "crypto-spot-bars", Market: "crypto-spot", Relation: chquery.CryptoSpotBar1m, TimeField: "timestamp", MaxAge: 96 * time.Hour},
+	{Name: "forex-bars", Market: "forex", Relation: chquery.ForexBar1m, TimeField: "timestamp", MaxAge: 96 * time.Hour},
 	{Name: "us-stocks-bars", Market: "us-stocks", Relation: chquery.USStocksBar1m, TimeField: "timestamp", MaxAge: 96 * time.Hour},
 	{Name: "us-options-bars", Market: "us-options", Relation: chquery.USOptionsBar1m, TimeField: "timestamp", MaxAge: 96 * time.Hour},
 	{Name: "us-options-chain", Market: "us-options", Relation: chquery.USOptionsChain1d, TimeField: "timestamp", MaxAge: 10 * 24 * time.Hour},
@@ -66,6 +67,11 @@ func (s *InfraService) ListMarkets(_ context.Context) (*dto.MarketCatalogRespons
 				Name:         "us-stocks",
 				Status:       "available",
 				Capabilities: []string{"bars", "symbols", "sessionized-kline"},
+			},
+			{
+				Name:         "forex",
+				Status:       "available",
+				Capabilities: []string{"bars", "symbols", "24x5-kline"},
 			},
 			{
 				Name:         "feature-store",

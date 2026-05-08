@@ -97,6 +97,7 @@ func TestParsePrimaryMarket(t *testing.T) {
 		{name: "default crypto", input: "", want: marketSpec{name: marketCrypto, underlyingFeed: cryptoUnderlyingFeed}},
 		{name: "crypto alias", input: "crypto-underlying", want: marketSpec{name: marketCrypto, underlyingFeed: cryptoUnderlyingFeed}},
 		{name: "us", input: "us", want: marketSpec{name: marketUS, underlyingFeed: usUnderlyingFeed}},
+		{name: "forex", input: "forex", want: marketSpec{name: marketForex, underlyingFeed: forexUnderlyingFeed}},
 		{name: "invalid", input: "hk", wantErr: true},
 	}
 

@@ -41,8 +41,10 @@ type capitalProfile struct {
 const (
 	marketCrypto         = "crypto"
 	marketUS             = "us"
+	marketForex          = "forex"
 	cryptoUnderlyingFeed = "crypto-underlying"
 	usUnderlyingFeed     = "us-underlying"
+	forexUnderlyingFeed  = "forex-underlying"
 
 	instrumentAuto     instrumentScope = "auto"
 	instrumentSpot     instrumentScope = "spot"
@@ -53,7 +55,7 @@ const (
 func main() {
 	runtimeCfg := appCli.MustLoadRuntime()
 	dsn := flag.String("clickhouse-dsn", runtimeCfg.ClickHouse.DSN, "ClickHouse DSN")
-	market := flag.String("market", marketCrypto, "Backtest market: crypto | us")
+	market := flag.String("market", marketCrypto, "Backtest market: crypto | us | forex")
 	instrument := flag.String("instrument", string(instrumentAuto), "Trading scope: auto | spot | contract | mixed (contract currently means option-contract strategies)")
 	baseAsset := flag.String("asset", "BTC", "Underlying symbol or base asset (e.g. BTC, ETH, AAPL)")
 	interval := flag.String("interval", "1h", "Bar interval for the strategy (e.g. 1h)")
@@ -207,6 +209,10 @@ func main() {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
+	if err := validateMarketStrategyCompatibility(primaryMarket, resolved); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
 
 	if *clearPreviousData {
 		if err := clearBacktestDataFiles(defaultBacktestHTMLDir); err != nil {
@@ -241,8 +247,10 @@ func main() {
 			err = runWithTerminalSpinner(os.Stderr, chainLabel, func() error {
 				if primaryMarket.name == marketUS {
 					chainProvider, err = datafeed.NewUSOptionsChainProvider(ctx, conn, underlyingSymbol, *interval, from, to)
-				} else {
+				} else if primaryMarket.name == marketCrypto {
 					chainProvider, err = datafeed.NewCryptoOptionsChainProvider(ctx, conn, underlyingSymbol, *interval, from, to)
+				} else {
+					err = fmt.Errorf("market %s does not support option chain loading", primaryMarket.name)
 				}
 				return err
 			})
@@ -250,8 +258,10 @@ func main() {
 			log.Printf("%s...", chainLabel)
 			if primaryMarket.name == marketUS {
 				chainProvider, err = datafeed.NewUSOptionsChainProvider(ctx, conn, underlyingSymbol, *interval, from, to)
-			} else {
+			} else if primaryMarket.name == marketCrypto {
 				chainProvider, err = datafeed.NewCryptoOptionsChainProvider(ctx, conn, underlyingSymbol, *interval, from, to)
+			} else {
+				err = fmt.Errorf("market %s does not support option chain loading", primaryMarket.name)
 			}
 		}
 		if err != nil {
@@ -351,6 +361,7 @@ func newEngine(cfg backtest.Config, conn driver.Conn, factorStore *feeds.Store, 
 	engine := backtest.NewEngine(cfg)
 	engine.RegisterDataFeed(cryptoUnderlyingFeed, datafeed.NewCryptoUnderlyingDataFeed(conn))
 	engine.RegisterDataFeed(usUnderlyingFeed, datafeed.NewUSUnderlyingDataFeed(conn))
+	engine.RegisterDataFeed(forexUnderlyingFeed, datafeed.NewForexUnderlyingDataFeed(conn))
 	engine.RegisterFactorFeed("dvol", datafeed.NewFeedFactorBridge("dvol", factorStore))
 	if usesOptions && chainProvider != nil {
 		engine.SetOptionsChainProvider(chainProvider)
@@ -364,8 +375,10 @@ func parsePrimaryMarket(raw string) (marketSpec, error) {
 		return marketSpec{name: marketCrypto, underlyingFeed: cryptoUnderlyingFeed}, nil
 	case marketUS, usUnderlyingFeed:
 		return marketSpec{name: marketUS, underlyingFeed: usUnderlyingFeed}, nil
+	case marketForex, forexUnderlyingFeed:
+		return marketSpec{name: marketForex, underlyingFeed: forexUnderlyingFeed}, nil
 	default:
-		return marketSpec{}, fmt.Errorf("--market %q is invalid; want crypto|us", raw)
+		return marketSpec{}, fmt.Errorf("--market %q is invalid; want crypto|us|forex", raw)
 	}
 }
 
@@ -435,6 +448,13 @@ func resolveCapitalProfile(market marketSpec, profile strategies.StrategyProfile
 			note: note,
 		}
 	}
+	if market.name == marketForex {
+		note := "该策略在外汇市场运行，-capital 按 USD 计价。"
+		if profile.UsesSignalOnlyRegularTrades() {
+			note = "该策略在外汇市场运行，且现货腿仅用于信号跟踪；-capital 按 USD 计价。"
+		}
+		return capitalProfile{mode: "usd", unit: "USD", note: note}
+	}
 	note := fmt.Sprintf("该策略包含期权合约逻辑；在加密市场，-capital 按 %s 计价。", underlyingSymbol)
 	if profile.UsesSignalOnlyRegularTrades() {
 		note = fmt.Sprintf("该策略包含期权合约逻辑，且现货腿仅用于信号跟踪；在加密市场，-capital 按 %s 计价。", underlyingSymbol)
@@ -453,6 +473,23 @@ func strategiesNeedOptions(items []strategies.ResolvedStrategy) bool {
 		}
 	}
 	return false
+}
+
+func validateMarketStrategyCompatibility(market marketSpec, items []strategies.ResolvedStrategy) error {
+	if market.name != marketForex {
+		return nil
+	}
+	for _, item := range items {
+		if !item.Profile.UsesOptions {
+			continue
+		}
+		name := strings.TrimSpace(item.CanonicalName)
+		if name == "" {
+			name = "selected strategy"
+		}
+		return fmt.Errorf("--market=forex currently supports spot strategies only; %s requires option-contract data", name)
+	}
+	return nil
 }
 
 func mustParseOptionPriceMode(value, flagName string) backtest.OptionPriceMode {

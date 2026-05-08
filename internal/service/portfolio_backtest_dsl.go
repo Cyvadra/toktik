@@ -40,7 +40,7 @@ func buildDynamicDSLResolvedStrategy(req dto.StrategyBacktestRunRequest, cfg str
 
 	baseOpts := bridge.Options{
 		SignalSource: strings.TrimSpace(req.SignalSource),
-		Config:       backtestDSLConfigMap(cfg),
+		Config:       backtestDSLConfigMap(cfg, req),
 	}
 	parsed := bridge.NewWithOptions(dslSource, baseOpts)
 	if errs := parsed.ParseErrors(); len(errs) > 0 {
@@ -59,7 +59,7 @@ func buildDynamicDSLResolvedStrategy(req dto.StrategyBacktestRunRequest, cfg str
 	strategy := bridge.NewWithOptions(dslSource, bridge.Options{
 		SignalSource: strings.TrimSpace(req.SignalSource),
 		Params:       validatedParams,
-		Config:       backtestDSLConfigMap(cfg),
+		Config:       backtestDSLConfigMap(cfg, req),
 	})
 	if errs := strategy.ParseErrors(); len(errs) > 0 {
 		return strategies.ResolvedStrategy{}, dto.NewValidationError("invalid dsl: %s", strings.Join(errs, "; "))
@@ -501,7 +501,7 @@ func containsAny(source string, needles ...string) bool {
 	return false
 }
 
-func backtestDSLConfigMap(cfg strategies.Config) map[string]interface{} {
+func backtestDSLConfigMap(cfg strategies.Config, req dto.StrategyBacktestRunRequest) map[string]interface{} {
 	config := make(map[string]interface{})
 	if cfg.FastPeriod != 0 {
 		config["fast_period"] = cfg.FastPeriod
@@ -551,6 +551,17 @@ func backtestDSLConfigMap(cfg strategies.Config) map[string]interface{} {
 	config["entry_price_mode"] = int(cfg.EntryPriceMode)
 	config["exit_price_mode"] = int(cfg.ExitPriceMode)
 	config["valuation_price_mode"] = int(cfg.ValuationPriceMode)
+	portfolioSymbols := collectPortfolioSymbols(req, resolvePrimaryBacktestAsset(req))
+	if len(portfolioSymbols) > 0 {
+		config["portfolio_symbols"] = strings.Join(portfolioSymbols, ",")
+	}
+	if len(req.Weights) > 0 {
+		parts := make([]string, 0, len(req.Weights))
+		for _, weight := range req.Weights {
+			parts = append(parts, fmt.Sprintf("%g", weight))
+		}
+		config["portfolio_weights"] = strings.Join(parts, ",")
+	}
 	return config
 }
 

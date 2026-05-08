@@ -32,10 +32,12 @@ type Handler struct {
 	indicators        IndicatorSeriesProvider
 	strategyBacktests StrategyBacktestProvider
 	cryptoSpot        CryptoSpotQuerier
+	forex             ForexQuerier
 	screener          ScreenerProvider
 	strategyCatalog   StrategyCatalogProvider
 	factors           FactorProvider
 	fundamentals      FundamentalsProvider
+	macro             MacroProvider
 	polygon           PolygonProvider
 
 	// reportsRoot is the directory on disk under which all backtest
@@ -64,10 +66,12 @@ func NewHandler(d Deps) *Handler {
 		indicators:        d.Indicators,
 		strategyBacktests: d.StrategyBacktests,
 		cryptoSpot:        d.CryptoSpot,
+		forex:             d.Forex,
 		screener:          d.Screener,
 		strategyCatalog:   d.StrategyCatalog,
 		factors:           d.Factors,
 		fundamentals:      d.Fundamentals,
+		macro:             d.Macro,
 		polygon:           d.Polygon,
 		reportsRoot:       root,
 	}
@@ -1389,6 +1393,75 @@ func (h *Handler) GetCryptoSpotSymbols(c *gin.Context) {
 	}
 
 	resp, err := h.cryptoSpot.QuerySymbols(c.Request.Context(), req)
+	if err != nil {
+		handleServiceError(c, err)
+		return
+	}
+
+	c.JSON(http.StatusOK, resp)
+}
+
+// GetForexBars handles GET /api/v1/markets/forex/bars.
+//
+// @Summary      Get forex bars
+// @Description  Returns OHLCV bars for a forex or metal-linked FX symbol.
+// @Tags         Forex
+// @Produce      json
+// @Param        symbol    query     string  true   "Forex symbol (e.g. EURUSD, USDJPY, XAUUSD)"
+// @Param        interval  query     string  true   "Bar interval"
+// @Param        from      query     string  true   "Start time (RFC3339 or YYYY-MM-DD)"
+// @Param        to        query     string  true   "End time (RFC3339 or YYYY-MM-DD)"
+// @Param        limit     query     int     false  "Max rows (default 1000)"
+// @Param        cursor    query     string  false  "Pagination cursor"
+// @Success      200       {object}  dto.ForexBarResponse
+// @Failure      400       {object}  dto.ErrorResponse
+// @Failure      500       {object}  dto.ErrorResponse
+// @Router       /markets/forex/bars [get]
+func (h *Handler) GetForexBars(c *gin.Context) {
+	var req dto.ForexBarRequest
+	if err := c.ShouldBindQuery(&req); err != nil {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: err.Error()})
+		return
+	}
+	if h.forex == nil {
+		c.JSON(http.StatusNotImplemented, dto.ErrorResponse{Error: "forex provider not configured"})
+		return
+	}
+
+	resp, err := h.forex.QueryBars(c.Request.Context(), req)
+	if err != nil {
+		handleServiceError(c, err)
+		return
+	}
+
+	c.JSON(http.StatusOK, resp)
+}
+
+// GetForexSymbols handles GET /api/v1/markets/forex/symbols.
+//
+// @Summary      List forex symbols
+// @Description  Returns available forex and metal-linked FX symbols.
+// @Tags         Forex
+// @Produce      json
+// @Param        search  query     string  false  "Substring match filter"
+// @Param        limit   query     int     false  "Max rows (default 100)"
+// @Param        cursor  query     string  false  "Pagination cursor"
+// @Success      200     {object}  dto.ForexSymbolResponse
+// @Failure      400     {object}  dto.ErrorResponse
+// @Failure      500     {object}  dto.ErrorResponse
+// @Router       /markets/forex/symbols [get]
+func (h *Handler) GetForexSymbols(c *gin.Context) {
+	var req dto.ForexSymbolRequest
+	if err := c.ShouldBindQuery(&req); err != nil {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: err.Error()})
+		return
+	}
+	if h.forex == nil {
+		c.JSON(http.StatusNotImplemented, dto.ErrorResponse{Error: "forex provider not configured"})
+		return
+	}
+
+	resp, err := h.forex.QuerySymbols(c.Request.Context(), req)
 	if err != nil {
 		handleServiceError(c, err)
 		return

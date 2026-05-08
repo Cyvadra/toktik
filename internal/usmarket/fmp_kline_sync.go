@@ -24,6 +24,10 @@ type FMPStockKlineSyncConfig struct {
 	Interval  fmp.IntradayInterval
 	BatchSize int
 	DryRun    bool
+	// Replace, when true, deletes existing us_stocks_bar_1m rows for each target
+	// symbol within [From, To] before inserting fresh FMP data. This ensures
+	// idempotent re-imports without accumulating duplicate 1m rows.
+	Replace bool
 }
 
 // FMPStockKlineSyncResult summarises a sync run.
@@ -80,6 +84,17 @@ func SyncFMPStockKlines(ctx context.Context, conn driver.Conn, cfg FMPStockKline
 		if fetchSymbol == "" {
 			fetchSymbol = storeSymbol
 		}
+		if cfg.Replace && !cfg.DryRun {
+			// to is the inclusive end date; make it exclusive for the delete scope
+			exclusiveTo := cfg.To.AddDate(0, 0, 1)
+			if err := DeleteStockBarsSymbolScope(ctx, conn, storeSymbol, cfg.From, exclusiveTo); err != nil {
+				log.Printf("[ERROR] %s: delete existing 1m rows for replace: %v", storeSymbol, err)
+				result.FailedSymbols++
+				continue
+			}
+			log.Printf("[REPLACE] %s: cleared 1m rows for %s..%s", storeSymbol, cfg.From.Format("2006-01-02"), cfg.To.Format("2006-01-02"))
+		}
+
 		bars, err := fetchFMPIntradayChunkedStock(ctx, client, fetchSymbol, cfg.Interval, cfg.From, cfg.To)
 		if err != nil {
 			log.Printf("[ERROR] %s <= %s: fetch FMP intraday (%s): %v", storeSymbol, fetchSymbol, target.Source, err)

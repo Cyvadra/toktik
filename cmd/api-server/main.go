@@ -107,6 +107,7 @@ func run() error {
 
 	repo := chrepo.NewRepo(conn)
 	fundamentalsSvc := service.NewFundamentalsService(repo)
+	macroSvc := service.NewMacroService(repo)
 
 	deps := api.Deps{
 		Config:            runtimeCfg,
@@ -119,10 +120,12 @@ func run() error {
 		Indicators:        service.NewIndicatorService(repo),
 		StrategyBacktests: service.NewPortfolioBacktestService(repo, factorStore),
 		CryptoSpot:        service.NewCryptoSpotService(repo),
+		Forex:             service.NewForexService(repo),
 		Screener:          service.NewScreenerService(repo),
 		StrategyCatalog:   service.NewStrategyCatalogService(),
 		Factors:           service.NewFactorService(factorStore),
 		Fundamentals:      fundamentalsSvc,
+		Macro:             macroSvc,
 	}
 
 	polygonSvc, err := service.NewPolygonServiceFromConfig(runtimeCfg, cacheStore)

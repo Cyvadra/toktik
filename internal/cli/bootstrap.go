@@ -110,6 +110,11 @@ func UsMarketSchemaFile() (string, error) {
 	return FindSchemaFile(schemaCandidates("us_market.sql"))
 }
 
+// ForexMarketSchemaFile returns the path to the forex_market DDL file.
+func ForexMarketSchemaFile() (string, error) {
+	return FindSchemaFile(schemaCandidates("forex_market.sql"))
+}
+
 // FeatureStoreSchemaFile returns the path to the feature_store DDL file.
 func FeatureStoreSchemaFile() (string, error) {
 	return FindSchemaFile(schemaCandidates("feature_store.sql"))

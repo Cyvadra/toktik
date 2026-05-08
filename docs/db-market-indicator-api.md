@@ -7,7 +7,7 @@
 - Source Swagger: `docs/swagger.json`
 - API title: `Toktik Options Platform API`
 - API version: `1.0`
-- Generated at: `2026-05-06T11:04:24Z`
+- Generated at: `2026-05-08T09:50:44Z`
 
 ## Scope
 
@@ -17,6 +17,7 @@ This document exports the database-backed market data, technical indicator, feat
 
 - [Technical Indicators](#technical-indicators)
 - [Fundamentals](#fundamentals)
+- [Macro](#macro)
 - [Feature Store Analytics](#feature-store-analytics)
 - [Crypto Options Market Data](#crypto-options-market-data)
 - [Crypto Spot Market Data](#crypto-spot-market-data)
@@ -308,6 +309,60 @@ No parameters.
 | Status | Schema | Description |
 | --- | --- | --- |
 | 200 | github_com_Cyvadra_toktik_internal_dto.FundamentalFreshnessResponse | OK |
+| 400 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Bad Request |
+| 500 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Internal Server Error |
+
+## Macro
+
+### Macro factor catalog
+
+- Endpoint: `GET /api/v1/macro/factors`
+- Tags: `Macro`
+- Produces: `application/json`
+- Summary: List macro factor catalog
+- Description: Returns active macro/weak-binding factor definitions and metadata.
+
+#### Parameters
+
+| Name | In | Type | Required | Description |
+| --- | --- | --- | --- | --- |
+| dataset | query | string | no | Dataset filter (e.g. gurufocus-shiller) |
+
+#### Responses
+
+| Status | Schema | Description |
+| --- | --- | --- |
+| 200 | github_com_Cyvadra_toktik_internal_dto.MacroFactorCatalogResponse | OK |
+| 400 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Bad Request |
+| 500 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Internal Server Error |
+
+### Macro factor series
+
+- Endpoint: `GET /api/v1/macro/series`
+- Tags: `Macro`
+- Produces: `application/json`
+- Summary: Get macro factor series
+- Description: Returns sparse monthly observations or reference-bar-expanded realtime series for weakly-bound macro factors. For dataset=gurufocus-shiller, supported factor codes are: sp500, dividend, earnings, CPI, rate_GS10, real_sp, real_div, real_earnings, pe10, ractual, rexpect, pe_reg, ir10, excess_cape_yield, real_excess_annualized_returns_10y, pe10_live, pe_reg_live, cape_earnings_yield_live, regression_earnings_yield_live.
+
+#### Parameters
+
+| Name | In | Type | Required | Description |
+| --- | --- | --- | --- | --- |
+| dataset | query | string | yes | Dataset (e.g. gurufocus-shiller) |
+| factor | query | array<string> | yes | Factor codes (repeat or comma-separated). For gurufocus-shiller: sp500, dividend, earnings, CPI, rate_GS10, real_sp, real_div, real_earnings, pe10, ractual, rexpect, pe_reg, ir10, excess_cape_yield, real_excess_annualized_returns_10y, pe10_live, pe_reg_live, cape_earnings_yield_live, regression_earnings_yield_live |
+| from | query | string | yes | Start time (RFC3339 or YYYY-MM-DD) |
+| to | query | string | yes | End time (RFC3339 or YYYY-MM-DD) |
+| as_of | query | string | no | Point-in-time cutoff (defaults to to) |
+| interval | query | string | no | event or a US stock interval such as 1m/5m/1h/1d |
+| reference_market | query | string | no | Reference market for expanded realtime queries (currently us-stocks) |
+| reference_symbol | query | string | no | Reference symbol for expanded realtime queries (for example SPX) |
+| limit | query | integer | no | Maximum returned rows |
+
+#### Responses
+
+| Status | Schema | Description |
+| --- | --- | --- |
+| 200 | github_com_Cyvadra_toktik_internal_dto.MacroSeriesResponse | OK |
 | 400 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Bad Request |
 | 500 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Internal Server Error |
 

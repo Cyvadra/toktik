@@ -31,8 +31,10 @@ const (
 	backtestStatusFailed    = "failed"
 	marketCrypto            = "crypto"
 	marketUS                = "us"
+	marketForex             = "forex"
 	cryptoUnderlyingFeed    = "crypto-underlying"
 	usUnderlyingFeed        = "us-underlying"
+	forexUnderlyingFeed     = "forex-underlying"
 	defaultChainProviderTTL = 55 * time.Minute
 	maxChainProviderEntries = 8
 )
@@ -148,6 +150,9 @@ func (s *PortfolioBacktestService) defaultChainLoader(ctx context.Context, marke
 	if marketName == marketUS {
 		return datafeed.NewUSOptionsChainProvider(ctx, s.repo.Conn, asset, interval, from, to)
 	}
+	if marketName != marketCrypto {
+		return nil, dto.NewValidationError("market %q does not support option chain loading", marketName)
+	}
 	return datafeed.NewCryptoOptionsChainProvider(ctx, s.repo.Conn, asset, interval, from, to)
 }
 
@@ -165,6 +170,25 @@ func (s *PortfolioBacktestService) loadOptionsChainProvider(ctx context.Context,
 	return s.chainCache.GetOrLoad(ctx, key, func(ctx context.Context) (backtest.OptionsChainProvider, error) {
 		return s.chainLoader(ctx, marketName, asset, interval, from, to)
 	})
+}
+
+func (s *PortfolioBacktestService) loadOptionChainUniverse(ctx context.Context, interval string, from, to time.Time, targets []optionChainTarget) (backtest.OptionsChainProvider, error) {
+	if len(targets) == 0 {
+		return nil, nil
+	}
+	if len(targets) == 1 {
+		target := targets[0]
+		return s.loadOptionsChainProvider(ctx, target.market, target.asset, interval, from, to)
+	}
+	providers := make(map[string]backtest.OptionsChainProvider, len(targets))
+	for _, target := range targets {
+		provider, err := s.loadOptionsChainProvider(ctx, target.market, target.asset, interval, from, to)
+		if err != nil {
+			return nil, err
+		}
+		providers[backtest.ChainLookupKey(target.market, target.asset)] = provider
+	}
+	return backtest.NewMultiOptionsChainProvider(providers), nil
 }
 
 func (c *optionsChainProviderCache) GetOrLoad(ctx context.Context, key string, loader func(context.Context) (backtest.OptionsChainProvider, error)) (backtest.OptionsChainProvider, error) {
@@ -242,8 +266,8 @@ func (c *optionsChainProviderCache) evictOldestLocked() {
 }
 
 func (s *PortfolioBacktestService) StartStrategyBacktest(_ context.Context, req dto.StrategyBacktestRunRequest) (*dto.StrategyBacktestRunAccepted, error) {
-	if strings.TrimSpace(req.Asset) == "" {
-		return nil, dto.NewValidationError("asset is required")
+	if strings.TrimSpace(resolvePrimaryBacktestAsset(req)) == "" {
+		return nil, dto.NewValidationError("asset is required unless portfolio or symbols are provided")
 	}
 	if req.Capital <= 0 {
 		return nil, dto.NewValidationError("capital must be > 0")
@@ -411,6 +435,7 @@ func newPortfolioBacktestEngine(cfg backtest.Config, conn driver.Conn, factorSto
 	engine := backtest.NewEngine(cfg)
 	engine.RegisterDataFeed(cryptoUnderlyingFeed, datafeed.NewCryptoUnderlyingDataFeed(conn))
 	engine.RegisterDataFeed(usUnderlyingFeed, datafeed.NewUSUnderlyingDataFeed(conn))
+	engine.RegisterDataFeed(forexUnderlyingFeed, datafeed.NewForexUnderlyingDataFeed(conn))
 	if factorStore != nil {
 		engine.RegisterFactorFeed("dvol", datafeed.NewFeedFactorBridge("dvol", factorStore))
 	}
@@ -421,6 +446,25 @@ func newPortfolioBacktestEngine(cfg backtest.Config, conn driver.Conn, factorSto
 }
 
 func validateStrategyBacktestRunRequest(req dto.StrategyBacktestRunRequest) error {
+	if strings.TrimSpace(resolvePrimaryBacktestAsset(req)) == "" {
+		return dto.NewValidationError("asset is required unless portfolio or symbols are provided")
+	}
+	if len(req.Weights) > 0 && len(req.Symbols) != len(req.Weights) {
+		return dto.NewValidationError("weights length must match symbols length")
+	}
+	for _, leg := range req.Portfolio {
+		if strings.TrimSpace(leg.Asset) == "" {
+			return dto.NewValidationError("portfolio legs require asset")
+		}
+		if leg.Weight < 0 {
+			return dto.NewValidationError("portfolio leg weight must be >= 0")
+		}
+	}
+	for _, weight := range req.Weights {
+		if weight < 0 {
+			return dto.NewValidationError("weights must be >= 0")
+		}
+	}
 	if req.Capital <= 0 {
 		return dto.NewValidationError("capital must be > 0")
 	}
@@ -538,8 +582,10 @@ func parsePrimaryMarket(raw string) (marketSpec, error) {
 		return marketSpec{name: marketCrypto, underlyingFeed: cryptoUnderlyingFeed}, nil
 	case marketUS, usUnderlyingFeed:
 		return marketSpec{name: marketUS, underlyingFeed: usUnderlyingFeed}, nil
+	case marketForex, forexUnderlyingFeed:
+		return marketSpec{name: marketForex, underlyingFeed: forexUnderlyingFeed}, nil
 	default:
-		return marketSpec{}, dto.NewValidationError("market %q is invalid; want crypto|us", raw)
+		return marketSpec{}, dto.NewValidationError("market %q is invalid; want crypto|us|forex", raw)
 	}
 }
 
@@ -598,6 +644,13 @@ func resolveCapitalProfile(market marketSpec, profile strategies.StrategyProfile
 		note := "该策略包含期权合约逻辑；在美股市场，capital 按 USD 计价。"
 		if profile.UsesSignalOnlyRegularTrades() {
 			note = "该策略包含期权合约逻辑，且现货腿仅用于信号跟踪；在美股市场，capital 按 USD 计价。"
+		}
+		return capitalProfile{mode: "usd", unit: "USD", note: note}
+	}
+	if market.name == marketForex {
+		note := "该策略包含合约逻辑；在外汇市场，capital 按 USD 计价。"
+		if profile.UsesSignalOnlyRegularTrades() {
+			note = "该策略包含合约逻辑，且现货腿仅用于信号跟踪；在外汇市场，capital 按 USD 计价。"
 		}
 		return capitalProfile{mode: "usd", unit: "USD", note: note}
 	}

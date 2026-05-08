@@ -86,6 +86,13 @@ var sections = []sectionSpec{
 		},
 	},
 	{
+		Title: "Macro",
+		Endpoints: []endpointSpec{
+			{Method: "GET", Path: "/macro/factors", Label: "Macro factor catalog"},
+			{Method: "GET", Path: "/macro/series", Label: "Macro factor series"},
+		},
+	},
+	{
 		Title: "Feature Store Analytics",
 		Endpoints: []endpointSpec{
 			{Method: "GET", Path: "/features/volatility-snapshot", Label: "Volatility snapshot"},

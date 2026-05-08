@@ -231,7 +231,7 @@ func (r *Replayer) Replay(prepared *PreparedData, strategy Strategy, params map[
 			clear(contractMap)
 			contracts := r.chainProvider.AvailableContracts(prepared.PrimaryDS.Timestamps[i])
 			for _, c := range contracts {
-				contractMap[c.Symbol] = c
+				contractMap[ContractLookupKey(c.ChainMarket(), c.ChainUnderlying(), c.Symbol)] = c
 			}
 			refreshOpenSpreadContracts(spreadTracker, contractMap)
 		}
@@ -414,8 +414,10 @@ func (r *Replayer) Replay(prepared *PreparedData, strategy Strategy, params map[
 
 // resolveSpreadContract returns the updated contract from the map if available.
 func resolveSpreadContract(contract OptionContract, contractMap map[string]OptionContract) OptionContract {
-	if updated, ok := contractMap[contract.Symbol]; ok {
-		return updated
+	for _, key := range ContractLookupKeys(contract) {
+		if updated, ok := contractMap[key]; ok {
+			return updated
+		}
 	}
 	return contract
 }
@@ -429,8 +431,11 @@ func refreshOpenSpreadContracts(spreadTracker *SpreadTracker, contractMap map[st
 			if sp.Legs[legIndex].Closed {
 				continue
 			}
-			if updated, ok := contractMap[sp.Legs[legIndex].Contract.Symbol]; ok {
-				sp.Legs[legIndex].Contract = updated
+			for _, key := range ContractLookupKeys(sp.Legs[legIndex].Contract) {
+				if updated, ok := contractMap[key]; ok {
+					sp.Legs[legIndex].Contract = updated
+					break
+				}
 			}
 		}
 	}

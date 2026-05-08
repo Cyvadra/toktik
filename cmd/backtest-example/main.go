@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/Cyvadra/toktik/internal/backtest"
@@ -106,7 +107,8 @@ func (s *DeltaFilterStrategy) OnBar(ctx *backtest.BarContext) {
 func main() {
 	runtimeCfg := appCli.MustLoadRuntime()
 	dsn := flag.String("clickhouse-dsn", runtimeCfg.ClickHouse.DSN, "ClickHouse DSN")
-	symbol := flag.String("symbol", "BTC-3JAN25-100000-C", "Option symbol to backtest")
+	market := flag.String("market", "crypto-options", "Backtest market: crypto-options | crypto | us | forex")
+	symbol := flag.String("symbol", "", "Instrument symbol to backtest; defaults depend on --market")
 	interval := flag.String("interval", "15m", "Bar interval")
 	fromStr := flag.String("from", "2024-12-01", "Start date (YYYY-MM-DD)")
 	toStr := flag.String("to", "2025-02-03", "End date (YYYY-MM-DD)")
@@ -131,6 +133,19 @@ func main() {
 	}
 
 	ctx := context.Background()
+	marketName, defaultSymbol, err := parseExampleMarket(*market)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%v\n", err)
+		os.Exit(1)
+	}
+	runSymbol := strings.TrimSpace(*symbol)
+	if runSymbol == "" {
+		runSymbol = defaultSymbol
+	}
+	if *stratName == "delta-filter" && marketName != "crypto-options" {
+		fmt.Fprintf(os.Stderr, "strategy delta-filter requires --market=crypto-options\n")
+		os.Exit(1)
+	}
 
 	conn, err := appCli.ConnectClickHouse(ctx, *dsn, nil)
 	if err != nil {
@@ -147,8 +162,10 @@ func main() {
 		TriggerMode:     mustParseTriggerMode(*triggerMode),
 	})
 
-	feed := datafeed.NewCryptoOptionsDataFeed(conn)
-	engine.RegisterDataFeed("crypto-options", feed)
+	engine.RegisterDataFeed("crypto-options", datafeed.NewCryptoOptionsDataFeed(conn))
+	engine.RegisterDataFeed("crypto", datafeed.NewCryptoUnderlyingDataFeed(conn))
+	engine.RegisterDataFeed("us", datafeed.NewUSUnderlyingDataFeed(conn))
+	engine.RegisterDataFeed("forex", datafeed.NewForexUnderlyingDataFeed(conn))
 
 	var strategy backtest.Strategy
 	switch *stratName {
@@ -161,11 +178,11 @@ func main() {
 		os.Exit(1)
 	}
 
-	log.Printf("Running %s on %s (%s) from %s to %s",
-		strategy.Name(), *symbol, *interval,
+	log.Printf("Running %s on %s/%s (%s) from %s to %s",
+		strategy.Name(), marketName, runSymbol, *interval,
 		from.Format("2006-01-02"), to.Format("2006-01-02"))
 
-	result, err := engine.Run(ctx, "crypto-options", *symbol, *interval, from, to, strategy, nil)
+	result, err := engine.Run(ctx, marketName, runSymbol, *interval, from, to, strategy, nil)
 	if err != nil {
 		log.Fatalf("Backtest failed: %v", err)
 	}
@@ -177,6 +194,21 @@ func main() {
 			log.Fatalf("Export JSON failed: %v", err)
 		}
 		log.Printf("Results exported to %s", *outputJSON)
+	}
+}
+
+func parseExampleMarket(raw string) (string, string, error) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "", "crypto-options":
+		return "crypto-options", "BTC-3JAN25-100000-C", nil
+	case "crypto":
+		return "crypto", "BTC", nil
+	case "us":
+		return "us", "AAPL", nil
+	case "forex":
+		return "forex", "EURUSD", nil
+	default:
+		return "", "", fmt.Errorf("unsupported --market %q; want crypto-options|crypto|us|forex", raw)
 	}
 }
 

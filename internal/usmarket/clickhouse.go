@@ -321,6 +321,31 @@ func ReplaceStockMarketDates(ctx context.Context, conn driver.Conn, marketDates 
 	return nil
 }
 
+// DeleteStockBarsSymbolScope deletes rows from us_stocks_bar_1m for the given
+// symbol within [from, to). Both from and to are optional; to is exclusive.
+// This is used by the FMP kline re-import (--replace) to clear stale 1m rows
+// before re-inserting fresh data from FMP.
+func DeleteStockBarsSymbolScope(ctx context.Context, conn driver.Conn, symbol string, from, to time.Time) error {
+	if strings.TrimSpace(symbol) == "" {
+		return fmt.Errorf("symbol is required")
+	}
+	parts := []string{"symbol = {symbol:String}"}
+	args := []interface{}{clickhouse.Named("symbol", strings.ToUpper(strings.TrimSpace(symbol)))}
+	if !from.IsZero() {
+		parts = append(parts, "market_date >= {from:Date}")
+		args = append(args, clickhouse.Named("from", normalizeUTCDay(from).Format("2006-01-02")))
+	}
+	if !to.IsZero() {
+		parts = append(parts, "market_date < {to:Date}")
+		args = append(args, clickhouse.Named("to", normalizeUTCDay(to).Format("2006-01-02")))
+	}
+	where := "WHERE " + strings.Join(parts, " AND ")
+	if err := conn.Exec(ctx, fmt.Sprintf("ALTER TABLE us_stocks_bar_1m DELETE %s SETTINGS mutations_sync = 1", where), args...); err != nil {
+		return fmt.Errorf("delete stock 1m rows for %s: %w", symbol, err)
+	}
+	return nil
+}
+
 func deleteAggRowsByDates(ctx context.Context, conn driver.Conn, table string, marketDates []string) error {
 	if len(marketDates) == 0 {
 		return nil

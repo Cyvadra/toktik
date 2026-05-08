@@ -48,3 +48,55 @@ ENGINE = ReplacingMergeTree(ingested_at)
 PARTITION BY (market, toYYYYMM(known_at))
 ORDER BY (market, symbol, factor_code, known_at, event_ts, source, revision)
 SETTINGS index_granularity = 8192;
+
+-- Macro fundamentals domain
+-- Weakly symbol-bound or symbol-agnostic macro/fundamental series ingested from
+-- external datasets such as Gurufocus Shiller/CAPE. These remain sparse and
+-- point-in-time safe, while query-time expansion can align them onto high-
+-- frequency reference bars (for example SPX/SPY minute bars).
+
+CREATE TABLE IF NOT EXISTS macro_factor_catalog
+(
+    dataset             LowCardinality(String),
+    factor_code         LowCardinality(String),
+    display_name        String,
+    description         String DEFAULT '',
+    value_type          LowCardinality(String) DEFAULT 'float',
+    unit                LowCardinality(String) DEFAULT '',
+    preferred_frequency LowCardinality(String) DEFAULT 'monthly',
+    fill_policy         LowCardinality(String) DEFAULT 'forward_fill',
+    fill_max_days       UInt16 DEFAULT 0,
+    point_in_time       UInt8 DEFAULT 1,
+    source              LowCardinality(String) DEFAULT '',
+    reference_market    LowCardinality(String) DEFAULT '',
+    reference_symbol    LowCardinality(String) DEFAULT '',
+    realtime_mode       LowCardinality(String) DEFAULT 'forward_fill',  -- forward_fill | price_scaled
+    active              UInt8 DEFAULT 1,
+    sla_hours           UInt32 DEFAULT 0,
+    metadata            String DEFAULT '',
+    updated_at          DateTime('UTC') DEFAULT now()
+)
+ENGINE = ReplacingMergeTree(updated_at)
+ORDER BY (dataset, factor_code)
+SETTINGS index_granularity = 8192;
+
+CREATE TABLE IF NOT EXISTS macro_observation
+(
+    dataset          LowCardinality(String),
+    factor_code      LowCardinality(String),
+    event_ts         DateTime('UTC'),
+    known_at         DateTime('UTC'),
+    period_start     DateTime('UTC') DEFAULT toDateTime(0),
+    period_end       DateTime('UTC') DEFAULT toDateTime(0),
+    source           LowCardinality(String) DEFAULT '',
+    value            Float64,
+    reference_market LowCardinality(String) DEFAULT '',
+    reference_symbol LowCardinality(String) DEFAULT '',
+    anchor_value     Float64 DEFAULT 0,
+    revision         UInt32 DEFAULT 0,
+    ingested_at      DateTime('UTC') DEFAULT now()
+)
+ENGINE = ReplacingMergeTree(ingested_at)
+PARTITION BY (dataset, toYYYYMM(known_at))
+ORDER BY (dataset, factor_code, known_at, event_ts, source, revision)
+SETTINGS index_granularity = 8192;

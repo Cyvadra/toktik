@@ -23,10 +23,12 @@ type Deps struct {
 	Indicators        IndicatorSeriesProvider
 	StrategyBacktests StrategyBacktestProvider
 	CryptoSpot        CryptoSpotQuerier
+	Forex             ForexQuerier
 	Screener          ScreenerProvider
 	StrategyCatalog   StrategyCatalogProvider
 	Factors           FactorProvider
 	Fundamentals      FundamentalsProvider
+	Macro             MacroProvider
 	Polygon           PolygonProvider // optional
 
 	// Stop is closed when the server shuts down. Long-lived middleware
@@ -174,6 +176,10 @@ func registerRoutes(v1 *gin.RouterGroup, h *Handler) {
 	marketCryptoSpot.GET("/bars", h.GetCryptoSpotBars)
 	marketCryptoSpot.GET("/symbols", h.GetCryptoSpotSymbols)
 
+	marketForex := markets.Group("/forex")
+	marketForex.GET("/bars", h.GetForexBars)
+	marketForex.GET("/symbols", h.GetForexSymbols)
+
 	marketUSStocks := markets.Group("/us-stocks")
 	marketUSStocks.GET("/bars", h.GetUSStockBars)
 	marketUSStocks.GET("/symbols", h.GetUSStockSymbols)
@@ -198,6 +204,10 @@ func registerRoutes(v1 *gin.RouterGroup, h *Handler) {
 	fundamentalsGroup.GET("/snapshot", h.GetFundamentalSnapshot)
 	fundamentalsGroup.GET("/panel", h.GetFundamentalPanel)
 	fundamentalsGroup.GET("/freshness", h.GetFundamentalFreshness)
+
+	macroGroup := v1.Group("/macro")
+	macroGroup.GET("/factors", h.ListMacroFactors)
+	macroGroup.GET("/series", h.GetMacroSeries)
 
 	polygonGroup := v1.Group("/polygon")
 	polygonStocks := polygonGroup.Group("/stocks")

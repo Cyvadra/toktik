@@ -32,6 +32,12 @@ type USOptionsQuerier interface {
 	QueryChain(ctx context.Context, req dto.USOptionChainRequest) (*dto.USOptionChainResponse, error)
 }
 
+// ForexQuerier defines the operations needed for low-level forex endpoints.
+type ForexQuerier interface {
+	QueryBars(ctx context.Context, req dto.ForexBarRequest) (*dto.ForexBarResponse, error)
+	QuerySymbols(ctx context.Context, req dto.ForexSymbolRequest) (*dto.ForexSymbolResponse, error)
+}
+
 // InfraProvider describes non-business infrastructure endpoints exposed by the API.
 type InfraProvider interface {
 	Readiness(ctx context.Context) (*dto.ReadinessResponse, error)
@@ -109,6 +115,11 @@ type FundamentalsProvider interface {
 	QuerySnapshot(ctx context.Context, req dto.FundamentalSnapshotRequest) (*dto.FundamentalSnapshotResponse, error)
 	QueryPanel(ctx context.Context, req dto.FundamentalPanelRequest) (*dto.FundamentalPanelResponse, error)
 	QueryFreshness(ctx context.Context, req dto.FundamentalFreshnessRequest) (*dto.FundamentalFreshnessResponse, error)
+}
+
+type MacroProvider interface {
+	ListFactors(ctx context.Context, req dto.MacroFactorCatalogRequest) (*dto.MacroFactorCatalogResponse, error)
+	QuerySeries(ctx context.Context, req dto.MacroSeriesRequest) (*dto.MacroSeriesResponse, error)
 }
 
 type PolygonProvider interface {

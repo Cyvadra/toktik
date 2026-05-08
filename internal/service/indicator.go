@@ -20,6 +20,7 @@ const maxIndicatorBars = 200000
 type IndicatorService struct {
 	cryptoOptions *CryptoOptionsService
 	cryptoSpot    *CryptoSpotService
+	forex         *ForexService
 	usStocks      *USStocksService
 	usOptions     *USOptionsService
 }
@@ -28,6 +29,7 @@ func NewIndicatorService(repo *chrepo.Repo) *IndicatorService {
 	return &IndicatorService{
 		cryptoOptions: NewCryptoOptionsService(repo),
 		cryptoSpot:    NewCryptoSpotService(repo),
+		forex:         NewForexService(repo),
 		usStocks:      NewUSStocksService(repo),
 		usOptions:     NewUSOptionsService(repo),
 	}
@@ -325,6 +327,8 @@ func (s *IndicatorService) loadBars(ctx context.Context, req dto.IndicatorSeries
 		return s.loadCryptoOptionBars(ctx, req.Symbol, interval, req.From, req.To)
 	case "crypto-spot":
 		return s.loadCryptoSpotBars(ctx, req.Symbol, interval, req.From, req.To)
+	case "forex":
+		return s.loadForexBars(ctx, req.Symbol, interval, req.From, req.To)
 	case "us-stocks":
 		return s.loadUSStockBars(ctx, req.Symbol, interval, req.From, req.To, req.Session)
 	case "us-options":
@@ -408,6 +412,28 @@ func (s *IndicatorService) loadCryptoSpotBars(ctx context.Context, symbol, inter
 	return bars, "crypto-spot", interval, nil
 }
 
+func (s *IndicatorService) loadForexBars(ctx context.Context, symbol, interval, from, to string) ([]indicatorBar, string, string, error) {
+	resp, err := s.collectForexBars(ctx, dto.ForexBarRequest{Symbol: symbol, Interval: interval, From: from, To: to})
+	if err != nil {
+		return nil, "", "", err
+	}
+	bars := make([]indicatorBar, 0, len(resp))
+	for _, row := range resp {
+		bars = append(bars, indicatorBar{
+			Timestamp: row.Timestamp,
+			Open:      float64(row.Open),
+			High:      float64(row.High),
+			Low:       float64(row.Low),
+			Close:     float64(row.Close),
+			Volume:    row.Volume,
+			Fields: map[string]float64{
+				"transactions": float64(row.Transactions),
+			},
+		})
+	}
+	return bars, "forex", interval, nil
+}
+
 func (s *IndicatorService) loadUSStockBars(ctx context.Context, symbol, interval, from, to, session string) ([]indicatorBar, string, string, error) {
 	resp, err := s.collectUSStockBars(ctx, dto.USStockBarRequest{Symbol: symbol, Interval: interval, From: from, To: to, Session: session})
 	if err != nil {
@@ -485,6 +511,26 @@ func (s *IndicatorService) collectCryptoSpotBars(ctx context.Context, req dto.Cr
 	out := make([]dto.CryptoSpotBarRow, 0, maxBarLimit)
 	for {
 		resp, err := s.cryptoSpot.QueryBars(ctx, current)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, resp.Data...)
+		if resp.NextCursor == "" {
+			return out, nil
+		}
+		if len(out) > maxIndicatorBars {
+			return nil, dto.NewValidationError("indicator request exceeded max bar count %d", maxIndicatorBars)
+		}
+		current.Cursor = resp.NextCursor
+	}
+}
+
+func (s *IndicatorService) collectForexBars(ctx context.Context, req dto.ForexBarRequest) ([]dto.ForexBarRow, error) {
+	current := req
+	current.Limit = maxBarLimit
+	out := make([]dto.ForexBarRow, 0, maxBarLimit)
+	for {
+		resp, err := s.forex.QueryBars(ctx, current)
 		if err != nil {
 			return nil, err
 		}

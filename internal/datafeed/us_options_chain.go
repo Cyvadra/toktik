@@ -25,6 +25,7 @@ var usOptionPrecomputedIntervals = map[string]string{
 // USOptionsChainProvider implements backtest.OptionsChainProvider for US options.
 // It loads chain snapshots for an underlying symbol into memory before replay.
 type USOptionsChainProvider struct {
+	underlying  string
 	byTimestamp map[int64][]backtest.OptionContract
 	resolution  time.Duration
 }
@@ -62,6 +63,7 @@ func NewUSOptionsChainProvider(ctx context.Context, conn driver.Conn, underlying
 			}
 			if rowCount > 0 {
 				return &USOptionsChainProvider{
+					underlying:  underlying,
 					byTimestamp: byTimestamp,
 					resolution:  resolution,
 				}, nil
@@ -74,6 +76,7 @@ func NewUSOptionsChainProvider(ctx context.Context, conn driver.Conn, underlying
 		return nil, err
 	}
 	return &USOptionsChainProvider{
+		underlying:  underlying,
 		byTimestamp: byTimestamp,
 		resolution:  resolution,
 	}, nil
@@ -82,6 +85,16 @@ func NewUSOptionsChainProvider(ctx context.Context, conn driver.Conn, underlying
 func (p *USOptionsChainProvider) AvailableContracts(t time.Time) []backtest.OptionContract {
 	key := t.UTC().Truncate(p.resolution).Unix()
 	return p.byTimestamp[key]
+}
+
+func (p *USOptionsChainProvider) AvailableContractsFor(t time.Time, market, underlying string) []backtest.OptionContract {
+	if strings.TrimSpace(underlying) != "" && !strings.EqualFold(underlying, p.underlying) {
+		return nil
+	}
+	if strings.TrimSpace(market) != "" && !strings.EqualFold(market, "us") {
+		return nil
+	}
+	return p.AvailableContracts(t)
 }
 
 func parseUSInterval(interval string) (time.Duration, error) {
@@ -183,7 +196,7 @@ WHERE underlying = {underlying:String}
 		contracts := make([]backtest.OptionContract, 0, n)
 		for i := 0; i < n; i++ {
 			contracts = append(contracts, buildUSOptionContract(
-				symbols[i], types[i], expiries[i], strikes[i], closes[i], underCloses[i], ivs[i],
+				underlying, symbols[i], types[i], expiries[i], strikes[i], closes[i], underCloses[i], ivs[i],
 				deltas[i], gammas[i], vegas[i], thetas[i], rhos[i], volumes[i], txs[i],
 			))
 		}
@@ -268,7 +281,7 @@ WHERE underlying = {underlying:String}
 
 		key := ts.UTC().Truncate(resolution).Unix()
 		byTimestamp[key] = append(byTimestamp[key], buildUSOptionContract(
-			symbol, optionType, expiration, strike, close, underlyingClose, iv,
+			underlying, symbol, optionType, expiration, strike, close, underlyingClose, iv,
 			delta, gamma, vega, theta, rho, volume, transactions,
 		))
 	}
@@ -289,7 +302,7 @@ func resolveUSOptionTableName(interval string) (string, error) {
 }
 
 func buildUSOptionContract(
-	symbol, optionType string,
+	underlying, symbol, optionType string,
 	expiration time.Time,
 	strike float64,
 	close, underlyingClose, iv, delta, gamma, vega, theta, rho float32,
@@ -302,22 +315,25 @@ func buildUSOptionContract(
 	}
 	mark := float64(close)
 	return backtest.OptionContract{
-		Symbol:          symbol,
-		Ref:             backtest.SecurityRef{Market: "us-stock-options", Symbol: symbol},
-		Type:            ot,
-		StrikePrice:     strike,
-		Expiration:      expiration,
-		Delta:           float64(delta),
-		Gamma:           float64(gamma),
-		Vega:            float64(vega),
-		Theta:           float64(theta),
-		Rho:             float64(rho),
-		BidPrice:        mark,
-		AskPrice:        mark,
-		MarkPrice:       mark,
-		IV:              float64(iv),
-		UnderlyingPrice: float64(underlyingClose),
-		Volume:          volume,
-		OpenInterest:    0,
+		Symbol:           symbol,
+		Underlying:       underlying,
+		Market:           "us-options",
+		UnderlyingMarket: "us",
+		Ref:              backtest.SecurityRef{Market: "us-options", Symbol: symbol},
+		Type:             ot,
+		StrikePrice:      strike,
+		Expiration:       expiration,
+		Delta:            float64(delta),
+		Gamma:            float64(gamma),
+		Vega:             float64(vega),
+		Theta:            float64(theta),
+		Rho:              float64(rho),
+		BidPrice:         mark,
+		AskPrice:         mark,
+		MarkPrice:        mark,
+		IV:               float64(iv),
+		UnderlyingPrice:  float64(underlyingClose),
+		Volume:           volume,
+		OpenInterest:     0,
 	}
 }

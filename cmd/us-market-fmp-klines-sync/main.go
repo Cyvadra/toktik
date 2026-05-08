@@ -26,6 +26,7 @@ func main() {
 	limitSymbols := flag.Int("limit-symbols", 0, "Optional limit when resolving all stored US stock symbols from ClickHouse")
 	includeOptionGapMappings := flag.Bool("include-option-gap-mappings", true, "When --symbols is empty, append deterministic option-underlying gap targets backed by direct/index/fallback mappings")
 	dryRun := flag.Bool("dry-run", false, "Fetch and report without inserting into ClickHouse")
+	replace := flag.Bool("replace", false, "Delete existing 1m rows for each symbol in the date range before re-inserting, then regenerate all kline aggregates (1d, 4h, etc.) from scratch for the range")
 	schemaFile := flag.String("schema", "", "Path to us_market.sql DDL (auto-detected if empty)")
 	flag.Parse()
 
@@ -82,13 +83,37 @@ func main() {
 		Interval:  interval,
 		BatchSize: *batchSize,
 		DryRun:    *dryRun,
+		Replace:   *replace,
 	})
 	if err != nil {
 		log.Fatalf("sync FMP US stock klines: %v", err)
 	}
 
-	log.Printf("FMP US stock kline sync complete: processed=%d failed=%d fetched=%d inserted=%d dry_run=%v",
-		result.ProcessedSymbols, result.FailedSymbols, result.FetchedBars, result.InsertedRows, *dryRun)
+	log.Printf("FMP US stock kline sync complete: processed=%d failed=%d fetched=%d inserted=%d dry_run=%v replace=%v",
+		result.ProcessedSymbols, result.FailedSymbols, result.FetchedBars, result.InsertedRows, *dryRun, *replace)
+
+	// After a replace-sync, regenerate all kline aggregates (5m → 1d) from the
+	// freshly imported 1m data.  The window [from, to] is inclusive on both ends;
+	// BackfillKlineWindows expects an exclusive upper bound, so add one day.
+	// We intentionally omit an asset filter here so that every symbol whose 1m
+	// data overlaps the window is rebuilt — this fixes any stale partial-state
+	// entries left in the aggregate tables by prior runs.
+	//
+	// Note: bars are aggregated from whatever regular-session 1m rows exist for a
+	// day, so a daily bar is produced whenever >0 bars are available — partial
+	// data (e.g. >50% of intraday bars) is fully sufficient.
+	if *replace && !*dryRun {
+		backfillTo := to.AddDate(0, 0, 1) // exclusive upper bound
+		log.Printf("replace=true: regenerating kline aggregates for %s..%s", from.Format("2006-01-02"), to.Format("2006-01-02"))
+		if err := usmarket.BackfillKlineWindows(ctx, conn, usmarket.KlineBackfillOptions{
+			From:    from,
+			To:      backfillTo,
+			Replace: true,
+		}); err != nil {
+			log.Fatalf("backfill kline windows after replace-sync: %v", err)
+		}
+		log.Printf("kline aggregate regeneration complete")
+	}
 }
 
 func mustParseDateRange(startStr, endStr string) (time.Time, time.Time) {

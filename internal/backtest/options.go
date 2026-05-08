@@ -3,6 +3,7 @@ package backtest
 import (
 	"math"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -105,11 +106,14 @@ func optionPriceValid(value float64) bool {
 
 // OptionContract represents a snapshot of a single option at a point in time.
 type OptionContract struct {
-	Symbol      string
-	Ref         SecurityRef
-	Type        OptionType
-	StrikePrice float64
-	Expiration  time.Time
+	Symbol           string
+	Underlying       string
+	Market           string
+	UnderlyingMarket string
+	Ref              SecurityRef
+	Type             OptionType
+	StrikePrice      float64
+	Expiration       time.Time
 
 	// Greeks
 	Delta float64
@@ -128,6 +132,45 @@ type OptionContract struct {
 	UnderlyingPrice float64
 	Volume          float64
 	OpenInterest    float64
+}
+
+// ChainUnderlying returns the best available logical underlying symbol for the
+// contract. Empty strings are normalized away so callers can reliably use the
+// result as a lookup key.
+func (c OptionContract) ChainUnderlying() string {
+	return strings.TrimSpace(c.Underlying)
+}
+
+// ChainMarket returns the logical market namespace for option-chain lookups.
+// UnderlyingMarket is preferred when available because it reflects the
+// underlying domain (for example "us"), while Market may refer to a concrete
+// feed implementation.
+func (c OptionContract) ChainMarket() string {
+	if market := strings.TrimSpace(c.UnderlyingMarket); market != "" {
+		return market
+	}
+	return strings.TrimSpace(c.Market)
+}
+
+// ChainLookupKey builds a stable key for option-chain scoped lookups.
+func ChainLookupKey(market, underlying string) string {
+	return strings.ToLower(strings.TrimSpace(market)) + "|" + strings.ToUpper(strings.TrimSpace(underlying))
+}
+
+// ContractLookupKey builds a stable key for contract snapshots inside a
+// specific underlying option chain.
+func ContractLookupKey(market, underlying, symbol string) string {
+	return ChainLookupKey(market, underlying) + "|" + strings.TrimSpace(symbol)
+}
+
+// ContractLookupKeys returns the preferred lookup key followed by compatible
+// fallbacks for older call sites that only keyed by symbol.
+func ContractLookupKeys(contract OptionContract) []string {
+	keys := []string{ContractLookupKey(contract.ChainMarket(), contract.ChainUnderlying(), contract.Symbol)}
+	if symbol := strings.TrimSpace(contract.Symbol); symbol != "" {
+		keys = append(keys, symbol)
+	}
+	return keys
 }
 
 // SpreadRatio returns the bid-ask spread quality metric: (ask-bid)/(ask+bid).
@@ -304,6 +347,89 @@ func (ch *OptionsChain) filter(fn func(*OptionContract) bool) *OptionsChain {
 type OptionsChainProvider interface {
 	// AvailableContracts returns all option contracts with data at the given time.
 	AvailableContracts(t time.Time) []OptionContract
+}
+
+// OptionsChainLookupProvider extends OptionsChainProvider with symbol-aware
+// chain selection so one replay can trade multiple option underlyings.
+type OptionsChainLookupProvider interface {
+	OptionsChainProvider
+	AvailableContractsFor(t time.Time, market, underlying string) []OptionContract
+}
+
+// MultiOptionsChainProvider aggregates multiple underlying-scoped providers
+// into a single replay-facing provider.
+type MultiOptionsChainProvider struct {
+	providers map[string]OptionsChainProvider
+}
+
+// NewMultiOptionsChainProvider creates an aggregate provider from a keyed map
+// of (market, underlying) chain providers.
+func NewMultiOptionsChainProvider(providers map[string]OptionsChainProvider) *MultiOptionsChainProvider {
+	cloned := make(map[string]OptionsChainProvider, len(providers))
+	for key, provider := range providers {
+		if provider == nil {
+			continue
+		}
+		cloned[key] = provider
+	}
+	return &MultiOptionsChainProvider{providers: cloned}
+}
+
+func (p *MultiOptionsChainProvider) AvailableContracts(t time.Time) []OptionContract {
+	if p == nil || len(p.providers) == 0 {
+		return nil
+	}
+	out := make([]OptionContract, 0, len(p.providers)*32)
+	for _, provider := range p.providers {
+		out = append(out, provider.AvailableContracts(t)...)
+	}
+	return out
+}
+
+func (p *MultiOptionsChainProvider) AvailableContractsFor(t time.Time, market, underlying string) []OptionContract {
+	if p == nil || len(p.providers) == 0 {
+		return nil
+	}
+	provider, ok := p.providers[ChainLookupKey(market, underlying)]
+	if !ok {
+		return nil
+	}
+	return AvailableContractsFor(provider, t, market, underlying)
+}
+
+// AvailableContractsFor returns the contracts for the requested market and
+// underlying. Providers that only support a single chain fall back to the
+// legacy AvailableContracts method when the request matches or leaves the scope
+// unspecified.
+func AvailableContractsFor(provider OptionsChainProvider, t time.Time, market, underlying string) []OptionContract {
+	if provider == nil {
+		return nil
+	}
+	if lookup, ok := provider.(OptionsChainLookupProvider); ok {
+		return lookup.AvailableContractsFor(t, market, underlying)
+	}
+	contracts := provider.AvailableContracts(t)
+	if strings.TrimSpace(market) == "" && strings.TrimSpace(underlying) == "" {
+		return contracts
+	}
+	filtered := make([]OptionContract, 0, len(contracts))
+	hasScopedContracts := false
+	for _, contract := range contracts {
+		if contract.ChainMarket() != "" || contract.ChainUnderlying() != "" {
+			hasScopedContracts = true
+		}
+		if strings.TrimSpace(market) != "" && !strings.EqualFold(contract.ChainMarket(), market) {
+			continue
+		}
+		if strings.TrimSpace(underlying) != "" && !strings.EqualFold(contract.ChainUnderlying(), underlying) {
+			continue
+		}
+		filtered = append(filtered, contract)
+	}
+	if len(filtered) == 0 && !hasScopedContracts && strings.TrimSpace(market) == "" {
+		return contracts
+	}
+	return filtered
 }
 
 // TradeCustomData stores arbitrary key/value metadata for trade or spread

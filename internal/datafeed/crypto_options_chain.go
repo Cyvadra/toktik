@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"sort"
+	"strings"
 	"time"
 
 	clickhouse "github.com/ClickHouse/clickhouse-go/v2"
@@ -17,6 +18,7 @@ import (
 // pre-loading all option bars for a base asset from ClickHouse, then
 // serving per-timestamp lookups during bar replay.
 type CryptoOptionsChainProvider struct {
+	underlying string
 	// byTimestamp maps truncated timestamps to the contracts available at that time.
 	byTimestamp map[int64][]backtest.OptionContract
 	// resolution is the bar duration used for timestamp bucketing.
@@ -33,6 +35,7 @@ type timeWindow struct {
 
 // symbolMetaRecord holds the immutable metadata fields for a single option contract.
 type symbolMetaRecord struct {
+	baseAsset  string
 	symbol     string
 	optionType string
 	strike     float32
@@ -69,6 +72,7 @@ GROUP BY symbol_id`,
 		if err := rows.Scan(&id, &r.symbol, &r.optionType, &r.strike, &r.expiration); err != nil {
 			return nil, fmt.Errorf("scan symbol meta: %w", err)
 		}
+		r.baseAsset = baseAsset
 		meta[id] = r
 	}
 	return meta, rows.Err()
@@ -202,6 +206,7 @@ func NewCryptoOptionsChainProvider(ctx context.Context, conn driver.Conn, baseAs
 	}
 
 	return &CryptoOptionsChainProvider{
+		underlying:  baseAsset,
 		byTimestamp: byTimestamp,
 		resolution:  resolution,
 	}, nil
@@ -615,23 +620,26 @@ func buildOptionContract(meta symbolMetaRecord, delta, gamma, vega, theta, rho, 
 	}
 
 	return backtest.OptionContract{
-		Symbol:          meta.symbol,
-		Ref:             backtest.SecurityRef{Market: "crypto-options", Symbol: meta.symbol},
-		Type:            ot,
-		StrikePrice:     float64(meta.strike),
-		Expiration:      meta.expiration,
-		Delta:           float64(delta),
-		Gamma:           float64(gamma),
-		Vega:            float64(vega),
-		Theta:           float64(theta),
-		Rho:             float64(rho),
-		BidPrice:        float64(bidClose),
-		AskPrice:        float64(askClose),
-		MarkPrice:       float64(markClose),
-		IV:              float64(markIVClose),
-		UnderlyingPrice: float64(underlyingClose),
-		Volume:          volume,
-		OpenInterest:    float64(openInterest),
+		Symbol:           meta.symbol,
+		Underlying:       meta.baseAsset,
+		Market:           "crypto-options",
+		UnderlyingMarket: "crypto",
+		Ref:              backtest.SecurityRef{Market: "crypto-options", Symbol: meta.symbol},
+		Type:             ot,
+		StrikePrice:      float64(meta.strike),
+		Expiration:       meta.expiration,
+		Delta:            float64(delta),
+		Gamma:            float64(gamma),
+		Vega:             float64(vega),
+		Theta:            float64(theta),
+		Rho:              float64(rho),
+		BidPrice:         float64(bidClose),
+		AskPrice:         float64(askClose),
+		MarkPrice:        float64(markClose),
+		IV:               float64(markIVClose),
+		UnderlyingPrice:  float64(underlyingClose),
+		Volume:           volume,
+		OpenInterest:     float64(openInterest),
 	}
 }
 
@@ -639,6 +647,16 @@ func buildOptionContract(meta symbolMetaRecord, delta, gamma, vega, theta, rho, 
 func (p *CryptoOptionsChainProvider) AvailableContracts(t time.Time) []backtest.OptionContract {
 	key := t.UTC().Truncate(p.resolution).Unix()
 	return p.byTimestamp[key]
+}
+
+func (p *CryptoOptionsChainProvider) AvailableContractsFor(t time.Time, market, underlying string) []backtest.OptionContract {
+	if strings.TrimSpace(underlying) != "" && !strings.EqualFold(underlying, p.underlying) {
+		return nil
+	}
+	if strings.TrimSpace(market) != "" && !strings.EqualFold(market, "crypto") {
+		return nil
+	}
+	return p.AvailableContracts(t)
 }
 
 // parseInterval converts an interval string to a time.Duration.

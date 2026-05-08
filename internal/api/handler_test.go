@@ -47,6 +47,13 @@ type mockUSOptionsQuerier struct {
 	err         error
 }
 
+type mockForexQuerier struct {
+	barsResp    *dto.ForexBarResponse
+	symbolsResp *dto.ForexSymbolResponse
+	barsReq     dto.ForexBarRequest
+	err         error
+}
+
 type mockInfra struct {
 	readyResp    *dto.ReadinessResponse
 	marketsResp  *dto.MarketCatalogResponse
@@ -114,6 +121,13 @@ type mockScreener struct {
 	err             error
 }
 
+type mockMacroProvider struct {
+	factorsResp *dto.MacroFactorCatalogResponse
+	seriesResp  *dto.MacroSeriesResponse
+	seriesReq   dto.MacroSeriesRequest
+	err         error
+}
+
 func (m *mockQuerier) QueryBars(_ context.Context, _ dto.BarRequest) (*dto.BarResponse, error) {
 	return m.barsResp, m.err
 }
@@ -157,6 +171,15 @@ func (m *mockUSOptionsQuerier) QueryGreeks(_ context.Context, req dto.USOptionGr
 func (m *mockUSOptionsQuerier) QueryChain(_ context.Context, req dto.USOptionChainRequest) (*dto.USOptionChainResponse, error) {
 	m.chainReq = req
 	return m.chainResp, m.err
+}
+
+func (m *mockForexQuerier) QueryBars(_ context.Context, req dto.ForexBarRequest) (*dto.ForexBarResponse, error) {
+	m.barsReq = req
+	return m.barsResp, m.err
+}
+
+func (m *mockForexQuerier) QuerySymbols(_ context.Context, _ dto.ForexSymbolRequest) (*dto.ForexSymbolResponse, error) {
+	return m.symbolsResp, m.err
 }
 
 func (m *mockInfra) Readiness(_ context.Context) (*dto.ReadinessResponse, error) {
@@ -219,6 +242,15 @@ func (m *mockFeature) QuerySkewSnapshot(_ context.Context, _ dto.FeatureSurfaceS
 
 func (m *mockFeature) QueryLiquiditySnapshot(_ context.Context, _ dto.FeatureSurfaceSnapshotRequest) (*dto.FeatureLiquiditySnapshotResponse, error) {
 	return m.liquidityResp, m.err
+}
+
+func (m *mockMacroProvider) ListFactors(_ context.Context, _ dto.MacroFactorCatalogRequest) (*dto.MacroFactorCatalogResponse, error) {
+	return m.factorsResp, m.err
+}
+
+func (m *mockMacroProvider) QuerySeries(_ context.Context, req dto.MacroSeriesRequest) (*dto.MacroSeriesResponse, error) {
+	m.seriesReq = req
+	return m.seriesResp, m.err
 }
 
 func (m *mockFeature) QueryLiquidityHistory(_ context.Context, _ dto.FeatureLiquidityHistoryRequest) (*dto.FeatureLiquidityHistoryResponse, error) {
@@ -883,6 +915,29 @@ func TestUSStocksBarsRoute(t *testing.T) {
 	}
 	if len(mock.barsReq.Factors) != 2 || mock.barsReq.Factors[0] != "pe" || mock.barsReq.Factors[1] != "pb" {
 		t.Fatalf("expected factor query params to be forwarded, got %#v", mock.barsReq.Factors)
+	}
+}
+
+func TestForexBarsRoute(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	mock := &mockForexQuerier{barsResp: &dto.ForexBarResponse{Data: []dto.ForexBarRow{{Timestamp: time.Date(2024, 1, 2, 0, 0, 0, 0, time.UTC), Symbol: "EURUSD", Close: 1.101}}}}
+	r := NewRouterFromDeps(Deps{
+		Config:        config.DefaultRuntime(),
+		Forex:         mock,
+		CryptoOptions: &mockQuerier{},
+		USStocks:      &mockUSStocksQuerier{},
+		USOptions:     &mockUSOptionsQuerier{},
+	})
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/api/v1/markets/forex/bars?symbol=EURUSD&interval=1h&from=2024-01-02&to=2024-01-03", nil)
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if mock.barsReq.Symbol != "EURUSD" || mock.barsReq.Interval != "1h" {
+		t.Fatalf("expected forwarded forex request, got %#v", mock.barsReq)
 	}
 }
 
@@ -1789,5 +1844,58 @@ func TestGetStrategyBacktestNamedReportRouteOverview(t *testing.T) {
 	}
 	if w.Body.String() != html {
 		t.Fatalf("unexpected html body: %q", w.Body.String())
+	}
+}
+
+func TestGetMacroSeriesRoute(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	macro := &mockMacroProvider{seriesResp: &dto.MacroSeriesResponse{
+		Dataset:         "gurufocus-shiller",
+		Interval:        "1m",
+		ReferenceMarket: "us-stocks",
+		ReferenceSymbol: "SPX",
+		AsOf:            time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC),
+		Data: []dto.MacroSeriesPoint{{
+			Factor:          "pe10",
+			Timestamp:       time.Date(2026, 4, 30, 19, 59, 0, 0, time.UTC),
+			EventTS:         time.Date(2026, 4, 30, 19, 59, 0, 0, time.UTC),
+			KnownAt:         time.Date(2026, 5, 1, 13, 30, 0, 0, time.UTC),
+			Value:           35.2,
+			Filled:          true,
+			Realtime:        true,
+			ReferenceMarket: "us-stocks",
+			ReferenceSymbol: "SPX",
+		}},
+	}}
+
+	r := NewRouterFromDeps(Deps{
+		Config:        config.DefaultRuntime(),
+		CryptoOptions: &mockQuerier{},
+		USStocks:      &mockUSStocksQuerier{},
+		USOptions:     &mockUSOptionsQuerier{},
+		Infra:         &mockInfra{},
+		Features:      &mockFeature{},
+		Macro:         macro,
+	})
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/api/v1/macro/series?dataset=gurufocus-shiller&factor=pe10&from=2026-04-01&to=2026-05-01&interval=1m&reference_symbol=SPX", nil)
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if macro.seriesReq.Dataset != "gurufocus-shiller" {
+		t.Fatalf("expected dataset to bind, got %+v", macro.seriesReq)
+	}
+	if macro.seriesReq.ReferenceSymbol != "SPX" {
+		t.Fatalf("expected reference symbol to bind, got %+v", macro.seriesReq)
+	}
+	var resp dto.MacroSeriesResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if len(resp.Data) != 1 || resp.Data[0].Factor != "pe10" {
+		t.Fatalf("unexpected response payload: %+v", resp)
 	}
 }

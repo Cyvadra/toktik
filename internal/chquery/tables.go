@@ -6,6 +6,7 @@ const (
 	CryptoOptionsBar1m      = "crypto_options_bar_1m"
 	CryptoSpotBar1m         = "crypto_spot_bar_1m"
 	CryptoOptionsSymbolMeta = "crypto_options_symbol_meta"
+	ForexBar1m              = "forex_bar_1m"
 	USOptionsBar1m          = "us_options_bar_1m"
 	USOptionsChain1d        = "us_options_chain_1d"
 	USStocksBar1m           = "us_stocks_bar_1m"
@@ -61,6 +62,18 @@ var CryptoSpotIntervals = map[string]string{
 	"8h":  "crypto_spot_bar_8h",
 	"12h": "crypto_spot_bar_12h",
 	"1d":  "crypto_spot_bar_1d",
+}
+
+// ForexIntervals maps interval suffixes to precomputed forex bar table names.
+var ForexIntervals = map[string]string{
+	"1m":  ForexBar1m,
+	"5m":  "forex_bar_5m",
+	"15m": "forex_bar_15m",
+	"30m": "forex_bar_30m",
+	"1h":  "forex_bar_1h",
+	"2h":  "forex_bar_2h",
+	"4h":  "forex_bar_4h",
+	"1d":  "forex_bar_1d",
 }
 
 // USOptionIntervals maps interval suffixes to precomputed US option bar table names.

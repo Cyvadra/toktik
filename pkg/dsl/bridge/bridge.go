@@ -59,6 +59,14 @@ type requestSpec struct {
 	Key      string
 }
 
+// ChainRequestSpec describes one constant options.chain(market, symbol)
+// dependency discovered in a DSL program.
+type ChainRequestSpec struct {
+	Market string
+	Symbol string
+	Key    string
+}
+
 // DslStrategy implements backtest.Strategy by interpreting a Toktik DSL script.
 type DslStrategy struct {
 	source  string
@@ -100,6 +108,27 @@ func NewWithOptions(source string, opts Options) *DslStrategy {
 // ParseErrors returns any errors from parsing.
 func (ds *DslStrategy) ParseErrors() []string { return ds.errs }
 
+// OptionChainRequests returns the constant option-chain dependencies that were
+// statically discovered in the DSL source.
+func (ds *DslStrategy) OptionChainRequests() []ChainRequestSpec {
+	if len(ds.meta.Requests) == 0 {
+		return nil
+	}
+	out := make([]ChainRequestSpec, 0, len(ds.meta.Requests))
+	seen := make(map[string]struct{}, len(ds.meta.Requests))
+	for _, req := range ds.meta.Requests {
+		if req.Kind != "option_chain" || req.Key == "" {
+			continue
+		}
+		if _, ok := seen[req.Key]; ok {
+			continue
+		}
+		seen[req.Key] = struct{}{}
+		out = append(out, ChainRequestSpec{Market: req.Market, Symbol: req.Symbol, Key: req.Key})
+	}
+	return out
+}
+
 // Name implements backtest.Strategy.
 func (ds *DslStrategy) Name() string { return ds.name }
 
@@ -131,6 +160,7 @@ func (ds *DslStrategy) Init(ctx *backtest.SetupContext) error {
 	runtime.RegisterEventBuiltins(ds.ip)
 	runtime.RegisterOrderBuiltins(ds.ip)
 	runtime.RegisterConfigBuiltins(ds.ip)
+	runtime.RegisterPortfolioBuiltins(ds.ip)
 	runtime.RegisterRefBuiltins(ds.ip)
 	ds.ip.Init()
 	if ds.opts.InitHook != nil {
@@ -472,6 +502,14 @@ func (b *barContextBridge) OptionsChain() interface{} {
 	return ch
 }
 
+func (b *barContextBridge) OptionsChainFor(market, underlying string) interface{} {
+	ch := b.ctx.OptionsChainFor(market, underlying)
+	if ch == nil || ch.Len() == 0 {
+		return nil
+	}
+	return ch
+}
+
 func (b *barContextBridge) ChainCalls(chain interface{}) interface{} {
 	if ch, ok := chain.(*backtest.OptionsChain); ok {
 		return ch.Calls()
@@ -566,6 +604,20 @@ func (b *barContextBridge) ChainSortByDelta(chain interface{}, targetDelta float
 func (b *barContextBridge) ContractSymbol(c interface{}) string {
 	if oc, ok := c.(*backtest.OptionContract); ok {
 		return oc.Symbol
+	}
+	return ""
+}
+
+func (b *barContextBridge) ContractUnderlying(c interface{}) string {
+	if oc, ok := c.(*backtest.OptionContract); ok {
+		return oc.ChainUnderlying()
+	}
+	return ""
+}
+
+func (b *barContextBridge) ContractMarket(c interface{}) string {
+	if oc, ok := c.(*backtest.OptionContract); ok {
+		return oc.ChainMarket()
 	}
 	return ""
 }
@@ -1115,7 +1167,7 @@ func parseRequestSpec(call *ast.CallExpr) (requestSpec, bool) {
 		return requestSpec{}, false
 	}
 	obj, ok := dot.Object.(*ast.IdentExpr)
-	if !ok || obj.Name != "request" {
+	if !ok {
 		return requestSpec{}, false
 	}
 	get := func(name string, idx int) string {
@@ -1131,6 +1183,9 @@ func parseRequestSpec(call *ast.CallExpr) (requestSpec, bool) {
 	}
 	switch dot.Field {
 	case "security":
+		if obj.Name != "request" {
+			return requestSpec{}, false
+		}
 		market := get("market", 0)
 		symbol := get("symbol", 1)
 		interval := get("interval", 2)
@@ -1139,7 +1194,20 @@ func parseRequestSpec(call *ast.CallExpr) (requestSpec, bool) {
 			return requestSpec{}, false
 		}
 		return requestSpec{Kind: "security", Market: market, Symbol: symbol, Interval: interval, Field: field, Key: requestSecurityKey(market, symbol, interval)}, true
+	case "chain":
+		if obj.Name != "options" {
+			return requestSpec{}, false
+		}
+		market := get("market", 0)
+		symbol := get("symbol", 1)
+		if market == "" || symbol == "" {
+			return requestSpec{}, false
+		}
+		return requestSpec{Kind: "option_chain", Market: market, Symbol: symbol, Key: backtest.ChainLookupKey(market, symbol)}, true
 	case "factor":
+		if obj.Name != "request" {
+			return requestSpec{}, false
+		}
 		name := get("name", 0)
 		interval := get("interval", 1)
 		field := get("field", 2)

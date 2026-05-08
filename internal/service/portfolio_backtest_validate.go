@@ -13,18 +13,25 @@ import (
 )
 
 type resolvedBacktestPlan struct {
-	from            time.Time
-	to              time.Time
-	asset           string
-	interval        string
-	strategyLabel   string
-	profileSource   string
-	warnings        []string
-	primaryMarket   marketSpec
-	tradeScope      instrumentScope
-	resolved        []strategies.ResolvedStrategy
-	commissionModel backtest.CommissionModel
-	chainProvider   backtest.OptionsChainProvider
+	from             time.Time
+	to               time.Time
+	asset            string
+	interval         string
+	portfolioSymbols []string
+	strategyLabel    string
+	profileSource    string
+	warnings         []string
+	primaryMarket    marketSpec
+	tradeScope       instrumentScope
+	resolved         []strategies.ResolvedStrategy
+	commissionModel  backtest.CommissionModel
+	chainProvider    backtest.OptionsChainProvider
+}
+
+type optionChainTarget struct {
+	market string
+	asset  string
+	weight float64
 }
 
 func (s *PortfolioBacktestService) resolveBacktestPlan(ctx context.Context, run *portfolioBacktestRun, req dto.StrategyBacktestRunRequest) (*resolvedBacktestPlan, error) {
@@ -76,13 +83,19 @@ func (s *PortfolioBacktestService) resolveBacktestPlan(ctx context.Context, run 
 	if err != nil {
 		return nil, err
 	}
-	asset := strings.ToUpper(strings.TrimSpace(req.Asset))
+	asset := resolvePrimaryBacktestAsset(req)
+	if asset == "" {
+		return nil, dto.NewValidationError("asset is required unless portfolio or symbols are provided")
+	}
 	interval := defaultString(req.Interval, "1h")
 	resolved, strategyLabel, err := resolveRequestedStrategies(req, strategyCfg, asset)
 	if err != nil {
 		return nil, err
 	}
 	if err := validateInstrumentScope(tradeScope, resolved); err != nil {
+		return nil, err
+	}
+	if err := validateMarketStrategyCompatibility(primaryMarket, resolved); err != nil {
 		return nil, err
 	}
 
@@ -93,37 +106,144 @@ func (s *PortfolioBacktestService) resolveBacktestPlan(ctx context.Context, run 
 
 	var chainProvider backtest.OptionsChainProvider
 	if shouldLoadOptionChain(tradeScope, resolved) {
+		targets, targetSymbols, err := collectOptionChainTargets(req, primaryMarket.name, asset, resolved)
+		if err != nil {
+			return nil, err
+		}
 		if run != nil {
 			run.setProgress(&dto.StrategyBacktestProgress{
 				Phase:     string(backtest.ProgressPhasePrepare),
 				Current:   0,
-				Total:     1,
+				Total:     maxInt(len(targets), 1),
 				Percent:   0,
-				Message:   fmt.Sprintf("loading options chain for %s [%s/%s]", asset, primaryMarket.name, interval),
+				Message:   fmt.Sprintf("loading options chain for %s [%s/%s]", strings.Join(targetSymbols, ","), primaryMarket.name, interval),
 				StartedAt: derefTime(run.startedAt),
 				Timestamp: s.now().UTC(),
 			})
 		}
-		chainProvider, err = s.loadOptionsChainProvider(ctx, primaryMarket.name, asset, interval, from, to)
+		chainProvider, err = s.loadOptionChainUniverse(ctx, interval, from, to, targets)
 		if err != nil {
 			return nil, fmt.Errorf("load options chain: %w", err)
 		}
 	}
 
 	return &resolvedBacktestPlan{
-		from:            from,
-		to:              to,
-		asset:           asset,
-		interval:        interval,
-		strategyLabel:   strategyLabel,
-		profileSource:   validationProfileSource(req),
-		warnings:        validationWarnings(req),
-		primaryMarket:   primaryMarket,
-		tradeScope:      tradeScope,
-		resolved:        resolved,
-		commissionModel: commissionModel,
-		chainProvider:   chainProvider,
+		from:             from,
+		to:               to,
+		asset:            asset,
+		interval:         interval,
+		portfolioSymbols: collectPortfolioSymbols(req, asset),
+		strategyLabel:    strategyLabel,
+		profileSource:    validationProfileSource(req),
+		warnings:         validationWarnings(req),
+		primaryMarket:    primaryMarket,
+		tradeScope:       tradeScope,
+		resolved:         resolved,
+		commissionModel:  commissionModel,
+		chainProvider:    chainProvider,
 	}, nil
+}
+
+func resolvePrimaryBacktestAsset(req dto.StrategyBacktestRunRequest) string {
+	if asset := strings.ToUpper(strings.TrimSpace(req.Asset)); asset != "" {
+		return asset
+	}
+	for _, leg := range req.Portfolio {
+		if asset := strings.ToUpper(strings.TrimSpace(leg.Asset)); asset != "" {
+			return asset
+		}
+	}
+	for _, symbol := range req.Symbols {
+		if symbol = strings.ToUpper(strings.TrimSpace(symbol)); symbol != "" {
+			return symbol
+		}
+	}
+	return ""
+}
+
+func collectPortfolioSymbols(req dto.StrategyBacktestRunRequest, primaryAsset string) []string {
+	seen := make(map[string]struct{})
+	out := make([]string, 0, len(req.Portfolio)+len(req.Symbols)+1)
+	appendSymbol := func(symbol string) {
+		symbol = strings.ToUpper(strings.TrimSpace(symbol))
+		if symbol == "" {
+			return
+		}
+		if _, ok := seen[symbol]; ok {
+			return
+		}
+		seen[symbol] = struct{}{}
+		out = append(out, symbol)
+	}
+	appendSymbol(primaryAsset)
+	for _, leg := range req.Portfolio {
+		appendSymbol(leg.Asset)
+	}
+	for _, symbol := range req.Symbols {
+		appendSymbol(symbol)
+	}
+	return out
+}
+
+func collectOptionChainTargets(req dto.StrategyBacktestRunRequest, primaryMarket, primaryAsset string, resolved []strategies.ResolvedStrategy) ([]optionChainTarget, []string, error) {
+	seen := make(map[string]optionChainTarget)
+	ordered := make([]string, 0, len(req.Portfolio)+len(req.Symbols)+len(resolved)+1)
+	add := func(rawMarket, rawAsset string, weight float64) error {
+		asset := strings.ToUpper(strings.TrimSpace(rawAsset))
+		if asset == "" {
+			return nil
+		}
+		marketName := strings.TrimSpace(rawMarket)
+		if marketName == "" {
+			marketName = primaryMarket
+		}
+		marketSpec, err := parsePrimaryMarket(marketName)
+		if err != nil {
+			return err
+		}
+		key := backtest.ChainLookupKey(marketSpec.name, asset)
+		if _, ok := seen[key]; !ok {
+			ordered = append(ordered, key)
+		}
+		seen[key] = optionChainTarget{market: marketSpec.name, asset: asset, weight: weight}
+		return nil
+	}
+	if err := add(primaryMarket, primaryAsset, 1); err != nil {
+		return nil, nil, err
+	}
+	for _, leg := range req.Portfolio {
+		if err := add(leg.Market, leg.Asset, leg.Weight); err != nil {
+			return nil, nil, err
+		}
+	}
+	for index, symbol := range req.Symbols {
+		weight := 0.0
+		if index < len(req.Weights) {
+			weight = req.Weights[index]
+		}
+		if err := add(primaryMarket, symbol, weight); err != nil {
+			return nil, nil, err
+		}
+	}
+	for _, item := range resolved {
+		dslStrategy, ok := item.Strategy.(*bridge.DslStrategy)
+		if !ok {
+			continue
+		}
+		for _, chainReq := range dslStrategy.OptionChainRequests() {
+			if err := add(chainReq.Market, chainReq.Symbol, 0); err != nil {
+				return nil, nil, err
+			}
+		}
+	}
+	targets := make([]optionChainTarget, 0, len(ordered))
+	symbols := make([]string, 0, len(ordered))
+	for _, key := range ordered {
+		target := seen[key]
+		targets = append(targets, target)
+		symbols = append(symbols, target.asset)
+	}
+	return targets, symbols, nil
 }
 
 func (s *PortfolioBacktestService) preflightBacktestPlan(ctx context.Context, run *portfolioBacktestRun, plan *resolvedBacktestPlan) error {

@@ -31,6 +31,38 @@ func RegisterStrBuiltins(ip *Interpreter) {
 		}
 		return StringVal(strings.ToLower(args[0].Str()))
 	})
+
+	ip.RegisterBuiltinWithParams("str.split", []string{"s", "sep"}, func(args []Value) Value {
+		if len(args) < 1 {
+			return ArrayVal(nil)
+		}
+		s := args[0].Str()
+		sep := argStr(args, 1, ",")
+		parts := strings.Split(s, sep)
+		vals := make([]Value, 0, len(parts))
+		for _, part := range parts {
+			vals = append(vals, StringVal(part))
+		}
+		return ArrayVal(vals)
+	})
+
+	ip.RegisterBuiltinWithParams("str.join", []string{"parts", "sep"}, func(args []Value) Value {
+		if len(args) < 1 || args[0].Tag() != TagArray {
+			return StringVal("")
+		}
+		sep := argStr(args, 1, ",")
+		items := args[0].Array()
+		parts := make([]string, 0, len(items))
+		for _, item := range items {
+			if item.Tag() == TagString {
+				parts = append(parts, item.Str())
+				continue
+			}
+			parts = append(parts, item.String())
+		}
+		return StringVal(strings.Join(parts, sep))
+	})
+
 	ip.RegisterBuiltin("str.tostring", func(args []Value) Value {
 		if len(args) < 1 {
 			return StringVal("")

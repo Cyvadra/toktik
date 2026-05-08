@@ -1,10 +1,14 @@
 package runtime
 
+import "strings"
+
 // OptionsBridge extends Bridge with options trading capabilities.
 // The interpreter checks for this at runtime via type assertion.
 type OptionsBridge interface {
 	// OptionsChain returns the current bar's options chain as an opaque object.
 	OptionsChain() interface{}
+	// OptionsChainFor returns an explicit market/symbol option chain.
+	OptionsChainFor(market, underlying string) interface{}
 	// ChainCalls filters to call options.
 	ChainCalls(chain interface{}) interface{}
 	// ChainPuts filters to put options.
@@ -32,6 +36,8 @@ type OptionsBridge interface {
 
 	// Contract field accessors.
 	ContractSymbol(c interface{}) string
+	ContractUnderlying(c interface{}) string
+	ContractMarket(c interface{}) string
 	ContractType(c interface{}) string // "call" or "put"
 	ContractStrike(c interface{}) float64
 	ContractExpiry(c interface{}) float64
@@ -134,6 +140,9 @@ func RegisterOptionsBuiltins(ip *Interpreter) {
 			return NaVal()
 		}
 		ch := b.OptionsChain()
+		if len(args) >= 2 {
+			ch = b.OptionsChainFor(args[0].Str(), args[1].Str())
+		}
 		if ch == nil {
 			return NaVal()
 		}
@@ -271,6 +280,20 @@ func RegisterOptionsBuiltins(ip *Interpreter) {
 		}
 		return StringVal(b.ContractSymbol(args[0].Obj()))
 	})
+	ip.RegisterBuiltin("contract.underlying", func(args []Value) Value {
+		b := ob()
+		if b == nil || len(args) < 1 {
+			return NaVal()
+		}
+		return StringVal(b.ContractUnderlying(args[0].Obj()))
+	})
+	ip.RegisterBuiltin("contract.market", func(args []Value) Value {
+		b := ob()
+		if b == nil || len(args) < 1 {
+			return NaVal()
+		}
+		return StringVal(b.ContractMarket(args[0].Obj()))
+	})
 	ip.RegisterBuiltin("contract.type", func(args []Value) Value {
 		b := ob()
 		if b == nil || len(args) < 1 {
@@ -389,6 +412,20 @@ func RegisterOptionsBuiltins(ip *Interpreter) {
 		return FloatVal(float64(id))
 	})
 
+	// spread.open_on(market, underlying, legs_array, tag) → spread_id
+	ip.RegisterBuiltinWithParams("spread.open_on", []string{"market", "underlying", "legs", "tag"}, func(args []Value) Value {
+		b := ob()
+		if b == nil || len(args) < 4 {
+			return NaVal()
+		}
+		legs := parseLegInputs(args[2].Array())
+		if len(legs) == 0 || !spreadLegsMatchScope(b, legs, args[0].Str(), args[1].Str()) {
+			return NaVal()
+		}
+		id := b.OpenSpread(legs, args[3].Str())
+		return FloatVal(float64(id))
+	})
+
 	// spread.open_in_group(legs_array, tag, group_id) → spread_id
 	ip.RegisterBuiltin("spread.open_in_group", func(args []Value) Value {
 		b := ob()
@@ -403,6 +440,20 @@ func RegisterOptionsBuiltins(ip *Interpreter) {
 			return NaVal()
 		}
 		id := b.OpenSpreadInGroup(legs, tag, groupID)
+		return FloatVal(float64(id))
+	})
+
+	// spread.open_in_group_on(market, underlying, legs_array, tag, group_id) → spread_id
+	ip.RegisterBuiltinWithParams("spread.open_in_group_on", []string{"market", "underlying", "legs", "tag", "group_id"}, func(args []Value) Value {
+		b := ob()
+		if b == nil || len(args) < 5 {
+			return NaVal()
+		}
+		legs := parseLegInputs(args[2].Array())
+		if len(legs) == 0 || !spreadLegsMatchScope(b, legs, args[0].Str(), args[1].Str()) {
+			return NaVal()
+		}
+		id := b.OpenSpreadInGroup(legs, args[3].Str(), int(args[4].Float()))
 		return FloatVal(float64(id))
 	})
 
@@ -712,4 +763,24 @@ func parseLegInputs(legs []Value) []SpreadLegInput {
 		})
 	}
 	return out
+}
+
+func spreadLegsMatchScope(b OptionsBridge, legs []SpreadLegInput, market, underlying string) bool {
+	targetMarket := strings.TrimSpace(market)
+	targetUnderlying := strings.TrimSpace(underlying)
+	if targetMarket == "" || targetUnderlying == "" {
+		return false
+	}
+	for _, leg := range legs {
+		if leg.Contract == nil {
+			return false
+		}
+		if !strings.EqualFold(strings.TrimSpace(b.ContractMarket(leg.Contract)), targetMarket) {
+			return false
+		}
+		if !strings.EqualFold(strings.TrimSpace(b.ContractUnderlying(leg.Contract)), targetUnderlying) {
+			return false
+		}
+	}
+	return true
 }

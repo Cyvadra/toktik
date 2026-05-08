@@ -17,7 +17,7 @@ Toktik DSL 是一个受 Pine Script 启发的策略语言子集，当前通过�
 - 词法分析器：注释、字符串、数字、关键字、运算符
 - Pratt Parser：表达式优先级、函数调用、点访问、下标、三元表达式
 - 解释器：变量、函数、条件、循环、switch、数组、series 历史引用、`input()` 参数覆盖
-- 内置库：`input.*`、`ta.*`、`math.*`、`str.*`、`strategy.*`、`options.*`、`contract.*`、`spread.*`、`group.*`、`schedule.*`、`request.*`、`alpha.*`
+- 内置库：`input.*`、`ta.*`、`math.*`、`str.*`、`config.*`、`portfolio.*`、`strategy.*`、`options.*`、`contract.*`、`spread.*`、`group.*`、`schedule.*`、`request.*`、`alpha.*`
 - bridge：将 DSL 脚本适配到 Go 回测引擎
 - catalog：可把 DSL 脚本注册成策略目录中的策略
 
@@ -287,8 +287,46 @@ if ta.crossover(fast, slow) {
 - `str.length(s)`
 - `str.upper(s)`
 - `str.lower(s)`
+- `str.split(s, sep)`
+- `str.join(parts, sep)`
 - `str.tostring(x)`
 - `str.format(fmt, ...)`
+
+### `config.*`
+
+用于读取运行时注入的字符串/数值配置。
+
+已实现：
+
+- `config.get(name, defval)`
+- `config.string(name, defval)`
+
+### `portfolio.*`
+
+用于读取回测请求注入的组合信息。当前服务层会把组合 symbol 和 weight 以 CSV 形式注入 DSL config，因此脚本层不需要自己手工解析。
+
+已实现：
+
+- `portfolio.symbols()` 返回 symbol 数组
+- `portfolio.weights()` 返回 weight 数组
+- `portfolio.items()` 返回 `[symbol, weight]` 二元数组
+- `portfolio.len()` 返回组合持仓数
+- `portfolio.symbol(index, defval="")`
+- `portfolio.weight(symbol, defval=0)`
+
+示例：
+
+```toktik
+symbols = portfolio.symbols()
+weights = portfolio.weights()
+
+for item in portfolio.items() {
+  symbol = item[0]
+  weight = item[1]
+}
+
+msft_weight = portfolio.weight("MSFT")
+```
 
 ### `input.*`
 
@@ -352,11 +390,12 @@ if z > 2 and mom > 0 {
 
 ### `options.*`
 
-用于获取和筛选当前 bar 的期权链。
+用于获取和筛选当前 bar 的期权链。默认 `options.chain()` 读取当前主资产上下文；多标的脚本可以通过 `options.chain(market, symbol)` 显式取某个标的的期权链。
 
 已实现：
 
 - `options.chain()`
+- `options.chain(market, symbol)`
 - `options.calls(chain)`
 - `options.puts(chain)`
 - `options.expiry_nearest(chain, target_days)`
@@ -378,6 +417,9 @@ puts = options.puts(chain)
 near_puts = options.expiry_nearest(puts, 30)
 shortlist = options.delta_range(near_puts, -0.35, -0.15)
 best = options.best_spread(shortlist)
+
+qqq_chain = options.chain("us", "QQQ")
+qqq_puts = options.puts(qqq_chain)
 ```
 
 ### `contract.*`
@@ -387,6 +429,8 @@ best = options.best_spread(shortlist)
 已实现：
 
 - `contract.symbol(c)`
+- `contract.underlying(c)`
+- `contract.market(c)`
 - `contract.type(c)`
 - `contract.strike(c)`
 - `contract.dte(c)`
@@ -405,6 +449,8 @@ best = options.best_spread(shortlist)
 
 ```toktik
 symbol = contract.symbol(best)
+underlying = contract.underlying(best)
+market = contract.market(best)
 delta = contract.delta(best)
 mark = contract.mark(best)
 ```
@@ -423,7 +469,9 @@ mark = contract.mark(best)
 已实现：
 
 - `spread.open(legs_array, tag)`
+- `spread.open_on(market, underlying, legs_array, tag)`
 - `spread.open_in_group(legs_array, tag, group_id)`
+- `spread.open_in_group_on(market, underlying, legs_array, tag, group_id)`
 - `spread.close(spread_id, reason?)`
 - `spread.close_leg(spread_id, leg_index, close_price)`
 - `spread.get(spread_id)`
@@ -522,6 +570,26 @@ if chain != na {
     call_leg = leg.sell(sell_call, 1)
     spread_id = spread.open([put_leg, call_leg], "short_strangle")
     schedule.close_spread(24, spread_id)
+  }
+}
+```
+
+### 多标的期权链与组合 helper
+
+```toktik
+strategy("Portfolio Option Scan")
+
+for item in portfolio.items() {
+  symbol = item[0]
+  weight = item[1]
+  chain = options.chain("us", symbol)
+  puts = options.puts(chain)
+  candidates = options.delta_range(puts, -0.35, -0.15)
+
+  if options.len(candidates) > 0 {
+    best_put = options.best_spread(candidates)
+    score = contract.mark(best_put) * weight
+    plot(score, title=str.format("%s_score", symbol), precision=4)
   }
 }
 ```

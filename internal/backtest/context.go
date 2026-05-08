@@ -3,6 +3,7 @@ package backtest
 import (
 	"math"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -690,10 +691,19 @@ func (bc *BarContext) PendingOrders() []Order {
 // OptionsChain returns the current bar's options chain, filtered and queryable.
 // Returns nil if no OptionsChainProvider is configured.
 func (bc *BarContext) OptionsChain() *OptionsChain {
+	return bc.OptionsChainFor("", bc.primaryRef.Symbol)
+}
+
+// OptionsChainFor returns the current bar's options chain for a specific
+// underlying. Empty values fall back to the primary underlying symbol.
+func (bc *BarContext) OptionsChainFor(market, underlying string) *OptionsChain {
 	if bc.chainProvider == nil {
 		return NewOptionsChain(nil, bc.barTime)
 	}
-	contracts := bc.chainProvider.AvailableContracts(bc.barTime)
+	if strings.TrimSpace(underlying) == "" {
+		underlying = bc.primaryRef.Symbol
+	}
+	contracts := AvailableContractsFor(bc.chainProvider, bc.barTime, market, underlying)
 	return NewOptionsChain(contracts, bc.barTime)
 }
 
@@ -839,7 +849,7 @@ func (bc *BarContext) withCurrentCloseDelta(leg *SpreadLeg, items []TradeCustomD
 	if leg == nil || bc.chainProvider == nil {
 		return items
 	}
-	for _, contract := range bc.chainProvider.AvailableContracts(bc.barTime) {
+	for _, contract := range AvailableContractsFor(bc.chainProvider, bc.barTime, leg.Contract.ChainMarket(), leg.Contract.ChainUnderlying()) {
 		if contract.Symbol != leg.Contract.Symbol || math.IsNaN(contract.Delta) || math.IsInf(contract.Delta, 0) {
 			continue
 		}
@@ -1060,7 +1070,7 @@ func (bc *BarContext) spreadUnrealizedEquity() float64 {
 	contractMap := map[string]OptionContract{}
 	if bc.chainProvider != nil {
 		for _, c := range bc.chainProvider.AvailableContracts(bc.barTime) {
-			contractMap[c.Symbol] = c
+			contractMap[ContractLookupKey(c.ChainMarket(), c.ChainUnderlying(), c.Symbol)] = c
 		}
 	}
 
@@ -1072,8 +1082,11 @@ func (bc *BarContext) spreadUnrealizedEquity() float64 {
 			}
 
 			contract := leg.Contract
-			if updated, ok := contractMap[contract.Symbol]; ok {
-				contract = updated
+			for _, key := range ContractLookupKeys(contract) {
+				if updated, ok := contractMap[key]; ok {
+					contract = updated
+					break
+				}
 			}
 
 			markPrice := optionPriceFallback(contract.MarkPrice, optionMidPrice(contract), contract.BidPrice, contract.AskPrice)

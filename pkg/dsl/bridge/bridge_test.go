@@ -60,10 +60,18 @@ type testOptionsChainProvider struct{}
 func (p *testOptionsChainProvider) AvailableContracts(t time.Time) []backtest.OptionContract {
 	expiry := t.Add(30 * 24 * time.Hour)
 	return []backtest.OptionContract{
-		{Symbol: "C-100", Type: backtest.Call, StrikePrice: 100, Expiration: expiry, Delta: 0.50, BidPrice: 5.0, AskPrice: 5.2, MarkPrice: 5.1},
-		{Symbol: "C-105", Type: backtest.Call, StrikePrice: 105, Expiration: expiry, Delta: 0.38, BidPrice: 2.4, AskPrice: 2.6, MarkPrice: 2.5},
-		{Symbol: "C-110", Type: backtest.Call, StrikePrice: 110, Expiration: expiry, Delta: 0.29, BidPrice: 2.0, AskPrice: 2.2, MarkPrice: 2.1},
+		{Symbol: "C-100", Underlying: "TEST", UnderlyingMarket: "test", Type: backtest.Call, StrikePrice: 100, Expiration: expiry, Delta: 0.50, BidPrice: 5.0, AskPrice: 5.2, MarkPrice: 5.1},
+		{Symbol: "C-105", Underlying: "TEST", UnderlyingMarket: "test", Type: backtest.Call, StrikePrice: 105, Expiration: expiry, Delta: 0.38, BidPrice: 2.4, AskPrice: 2.6, MarkPrice: 2.5},
+		{Symbol: "C-110", Underlying: "TEST", UnderlyingMarket: "test", Type: backtest.Call, StrikePrice: 110, Expiration: expiry, Delta: 0.29, BidPrice: 2.0, AskPrice: 2.2, MarkPrice: 2.1},
 	}
+}
+
+func (p *testOptionsChainProvider) AvailableContractsFor(t time.Time, market, underlying string) []backtest.OptionContract {
+	expiry := t.Add(30 * 24 * time.Hour)
+	if strings.EqualFold(market, "test") && strings.EqualFold(underlying, "ALT") {
+		return []backtest.OptionContract{{Symbol: "ALT-C-200", Underlying: "ALT", UnderlyingMarket: "test", Type: backtest.Call, StrikePrice: 200, Expiration: expiry, Delta: 0.41, BidPrice: 6.0, AskPrice: 6.2, MarkPrice: 6.1}}
+	}
+	return p.AvailableContracts(t)
 }
 
 func (f *testFactorFeed) Fields() []string { return []string{"dvol"} }
@@ -328,7 +336,7 @@ if len(contracts) > 0 {
   plot(contract.delta(c), title="delta", precision=4)
   plot(contract.mark(c), title="mark", precision=4)
 }
-`
+	`
 
 	engine := backtest.NewEngine(backtest.Config{InitialCapital: 10000})
 	engine.RegisterDataFeed("test", &testDataFeed{fields: []string{"open", "high", "low", "close", "volume"}})
@@ -357,6 +365,82 @@ if len(contracts) > 0 {
 	}
 	if markSeries[0] != 5.1 {
 		t.Fatalf("unexpected mark series: %#v", markSeries[:1])
+	}
+}
+
+func TestDslStrategyOptionsChainForExplicitSymbol(t *testing.T) {
+	src := `strategy("Explicit Chain")
+chain = options.chain("test", "ALT")
+calls = options.calls(chain)
+if options.len(calls) > 0 {
+  c = options.best_spread(calls)
+  plot(contract.strike(c), title="strike", precision=2)
+}
+`
+
+	engine := backtest.NewEngine(backtest.Config{InitialCapital: 10000})
+	engine.RegisterDataFeed("test", &testDataFeed{fields: []string{"open", "high", "low", "close", "volume"}})
+	engine.SetOptionsChainProvider(&testOptionsChainProvider{})
+
+	from := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	to := from.Add(2 * time.Hour)
+
+	result, err := engine.Run(context.Background(), "test", "TEST", "1h", from, to, New(src), nil)
+	if err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+	strikeSeries := result.Series[result.ReportColumns[0].Source]
+	if strikeSeries[0] != 200 {
+		t.Fatalf("unexpected strike series for explicit symbol chain: %#v", strikeSeries[:1])
+	}
+}
+
+func TestDslStrategyPortfolioBuiltins(t *testing.T) {
+	src := `strategy("Portfolio Helpers")
+symbols = portfolio.symbols()
+weights = portfolio.weights()
+items = portfolio.items()
+
+plot(portfolio.len(), title="count", precision=0)
+plot(portfolio.weight("MSFT"), title="msft_weight", precision=2)
+plot(len(str.split(config.string("portfolio_symbols", ""), ",")), title="split_count", precision=0)
+plot(items[1][1], title="item_weight", precision=2)
+plot(str.length(str.join(symbols, "|")), title="joined_len", precision=0)
+`
+
+	engine := backtest.NewEngine(backtest.Config{InitialCapital: 10000})
+	engine.RegisterDataFeed("test", &testDataFeed{fields: []string{"open", "high", "low", "close", "volume"}})
+
+	from := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	to := from.Add(2 * time.Hour)
+
+	result, err := engine.Run(context.Background(), "test", "TEST", "1h", from, to, NewWithOptions(src, Options{Config: map[string]interface{}{
+		"portfolio_symbols": "QQQ,MSFT,AAPL",
+		"portfolio_weights": "0.2,0.15,0.1",
+	}}), nil)
+	if err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+
+	countSeries := result.Series[result.ReportColumns[0].Source]
+	msftSeries := result.Series[result.ReportColumns[1].Source]
+	splitSeries := result.Series[result.ReportColumns[2].Source]
+	itemSeries := result.Series[result.ReportColumns[3].Source]
+	joinSeries := result.Series[result.ReportColumns[4].Source]
+	if countSeries[0] != 3 {
+		t.Fatalf("unexpected portfolio count: %#v", countSeries[:1])
+	}
+	if msftSeries[0] != 0.15 {
+		t.Fatalf("unexpected MSFT weight: %#v", msftSeries[:1])
+	}
+	if splitSeries[0] != 3 {
+		t.Fatalf("unexpected split count: %#v", splitSeries[:1])
+	}
+	if itemSeries[0] != 0.15 {
+		t.Fatalf("unexpected second item weight: %#v", itemSeries[:1])
+	}
+	if joinSeries[0] != 13 {
+		t.Fatalf("unexpected joined symbol length: %#v", joinSeries[:1])
 	}
 }
 
@@ -442,6 +526,49 @@ if bar_index == 0 {
 	}
 	if amountSeries[0] != 4.5 {
 		t.Fatalf("unexpected decayed amount series: %#v", amountSeries[:1])
+	}
+}
+
+func TestDslSpreadOpenOnValidatesScope(t *testing.T) {
+	src := `strategy("Spread Scope")
+if bar_index == 0 {
+  chain = options.calls(options.chain("test", "ALT"))
+  contracts = options.sort_by_delta(chain, 0.4)
+  if len(contracts) > 0 {
+    legs = [leg.sell(contracts[0], 1)]
+    good = spread.open_on("test", "ALT", legs, "alt-spread")
+    bad = spread.open_on("test", "TEST", legs, "wrong-spread")
+    plot(good, title="good_id", precision=0)
+    plot(bad, title="bad_id", precision=0)
+  }
+}
+`
+
+	engine := backtest.NewEngine(backtest.Config{InitialCapital: 10000})
+	engine.RegisterDataFeed("test", &testDataFeed{fields: []string{"open", "high", "low", "close", "volume"}})
+	engine.SetOptionsChainProvider(&testOptionsChainProvider{})
+
+	from := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	to := from.Add(2 * time.Hour)
+
+	result, err := engine.Run(context.Background(), "test", "TEST", "1h", from, to, New(src), nil)
+	if err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+
+	goodSeries := result.Series[result.ReportColumns[0].Source]
+	badSeries := result.Series[result.ReportColumns[1].Source]
+	if goodSeries[0] != 1 {
+		t.Fatalf("unexpected scoped spread id: %#v", goodSeries[:1])
+	}
+	if !math.IsNaN(badSeries[0]) {
+		t.Fatalf("expected mismatched scoped spread to return na, got %#v", badSeries[:1])
+	}
+	if len(result.SpreadPositions) != 1 {
+		t.Fatalf("unexpected spread positions: %#v", result.SpreadPositions)
+	}
+	if result.SpreadPositions[0].Tag != "alt-spread" {
+		t.Fatalf("unexpected spread tag: got %q want %q", result.SpreadPositions[0].Tag, "alt-spread")
 	}
 }
 
