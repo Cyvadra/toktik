@@ -93,6 +93,7 @@ type CryptoSpotQuerier interface {
 // ScreenerProvider defines operations for underlying and options screening.
 type ScreenerProvider interface {
 	ScreenUnderlyings(ctx context.Context, req dto.ScreenUnderlyingRequest) (*dto.ScreenUnderlyingResponse, error)
+	ScreenUSTurnoverIntersection(ctx context.Context, req dto.ScreenUSTurnoverIntersectionRequest) (*dto.ScreenUSTurnoverIntersectionResponse, error)
 	ScreenOptions(ctx context.Context, req dto.ScreenOptionRequest) (*dto.ScreenOptionResponse, error)
 }
 

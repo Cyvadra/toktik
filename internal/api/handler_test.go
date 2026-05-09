@@ -115,8 +115,10 @@ type mockPolygonProvider struct {
 
 type mockScreener struct {
 	underlyingsResp *dto.ScreenUnderlyingResponse
+	usTurnoverResp  *dto.ScreenUSTurnoverIntersectionResponse
 	optionsResp     *dto.ScreenOptionResponse
 	underlyingsReq  dto.ScreenUnderlyingRequest
+	usTurnoverReq   dto.ScreenUSTurnoverIntersectionRequest
 	optionsReq      dto.ScreenOptionRequest
 	err             error
 }
@@ -350,6 +352,11 @@ func (m *mockPolygonProvider) QueryOptionTrades(_ context.Context, _ dto.Polygon
 func (m *mockScreener) ScreenUnderlyings(_ context.Context, req dto.ScreenUnderlyingRequest) (*dto.ScreenUnderlyingResponse, error) {
 	m.underlyingsReq = req
 	return m.underlyingsResp, m.err
+}
+
+func (m *mockScreener) ScreenUSTurnoverIntersection(_ context.Context, req dto.ScreenUSTurnoverIntersectionRequest) (*dto.ScreenUSTurnoverIntersectionResponse, error) {
+	m.usTurnoverReq = req
+	return m.usTurnoverResp, m.err
 }
 
 func (m *mockScreener) ScreenOptions(_ context.Context, req dto.ScreenOptionRequest) (*dto.ScreenOptionResponse, error) {
@@ -1072,6 +1079,42 @@ func TestScreenOptionsRouteSupportsMinDTEAliases(t *testing.T) {
 	}
 	if mock.optionsReq.MaxDTE == nil || *mock.optionsReq.MaxDTE != 60 {
 		t.Fatalf("expected normalized MaxDTE, got %+v", mock.optionsReq)
+	}
+}
+
+func TestScreenUSTurnoverIntersectionRoute(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	mock := &mockScreener{usTurnoverResp: &dto.ScreenUSTurnoverIntersectionResponse{Data: []dto.ScreenedUSTurnoverIntersectionRow{{Underlying: "AAPL", CombinedTurnoverUSD: 123}}}}
+	r := NewRouter(
+		&mockQuerier{},
+		&mockUSStocksQuerier{},
+		&mockUSOptionsQuerier{},
+		&mockInfra{},
+		&mockFeature{},
+		nil,
+		nil,
+		nil,
+		mock,
+		nil,
+		nil,
+	)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/api/v1/screener/us-underlyings/turnover-intersection?limit=25&lookback_days=30", nil)
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if mock.usTurnoverReq.Limit != 25 || mock.usTurnoverReq.LookbackDays != 30 {
+		t.Fatalf("unexpected request bind: %+v", mock.usTurnoverReq)
+	}
+	var resp dto.ScreenUSTurnoverIntersectionResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(resp.Data) != 1 || resp.Data[0].Underlying != "AAPL" {
+		t.Fatalf("unexpected response: %+v", resp)
 	}
 }
 

@@ -7,7 +7,7 @@
 - Source Swagger: `docs/swagger.json`
 - API title: `Toktik Options Platform API`
 - API version: `1.0`
-- Generated at: `2026-05-08T09:50:44Z`
+- Generated at: `2026-05-09T07:57:45Z`
 
 ## Scope
 
@@ -19,8 +19,6 @@ This document exports the database-backed market data, technical indicator, feat
 - [Fundamentals](#fundamentals)
 - [Macro](#macro)
 - [Feature Store Analytics](#feature-store-analytics)
-- [Crypto Options Market Data](#crypto-options-market-data)
-- [Crypto Spot Market Data](#crypto-spot-market-data)
 - [US Stocks Market Data](#us-stocks-market-data)
 - [US Options Market Data](#us-options-market-data)
 - [Screeners](#screeners)
@@ -53,7 +51,7 @@ No parameters.
 - Consumes: `application/json`
 - Produces: `application/json`
 - Summary: Run indicator series query
-- Description: Evaluates either a full DSL script, one or more built-in presets[], or a simplified indicators[] expression list over market bars and returns aligned series arrays.
+- Description: Evaluates either a full DSL script or a simplified indicators[] expression list over market bars and returns aligned series arrays.
 
 #### Parameters
 
@@ -650,167 +648,6 @@ No parameters.
 | 400 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Bad Request |
 | 500 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Internal Server Error |
 
-## Crypto Options Market Data
-
-### Crypto option bars
-
-- Endpoint: `GET /api/v1/crypto-options/bars`
-- Tags: `CryptoOptions`
-- Produces: `application/json`
-- Summary: Get crypto option bars
-- Description: Returns OHLCV bars with Greeks and IV for a crypto option symbol.
-
-#### Parameters
-
-| Name | In | Type | Required | Description |
-| --- | --- | --- | --- | --- |
-| symbol | query | string | yes | Option symbol |
-| interval | query | string | yes | Bar interval (1m,5m,15m,30m,1h,2h,4h,1d) |
-| from | query | string | yes | Start time (RFC3339 or YYYY-MM-DD) |
-| to | query | string | yes | End time (RFC3339 or YYYY-MM-DD) |
-| limit | query | integer | no | Max rows (default 1000, max 10000) |
-| cursor | query | string | no | Opaque pagination cursor |
-
-#### Responses
-
-| Status | Schema | Description |
-| --- | --- | --- |
-| 200 | github_com_Cyvadra_toktik_internal_dto.BarResponse | OK |
-| 400 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Bad Request |
-| 500 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Internal Server Error |
-
-### Crypto option symbols
-
-- Endpoint: `GET /api/v1/crypto-options/symbols`
-- Tags: `CryptoOptions`
-- Produces: `application/json`
-- Summary: List crypto option symbols
-- Description: Returns available crypto option contract symbols with metadata.
-
-#### Parameters
-
-| Name | In | Type | Required | Description |
-| --- | --- | --- | --- | --- |
-| search | query | string | no | Substring match filter |
-| base_asset | query | string | no | Filter by base asset |
-| limit | query | integer | no | Max rows (default 100, max 1000) |
-| cursor | query | string | no | Opaque pagination cursor |
-
-#### Responses
-
-| Status | Schema | Description |
-| --- | --- | --- |
-| 200 | github_com_Cyvadra_toktik_internal_dto.SymbolResponse | OK |
-| 400 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Bad Request |
-| 500 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Internal Server Error |
-
-### Crypto option greeks
-
-- Endpoint: `GET /api/v1/crypto-options/greeks`
-- Tags: `CryptoOptions`
-- Produces: `application/json`
-- Summary: Get crypto option Greeks time-series
-- Description: Returns Greeks snapshots over time for a crypto option symbol.
-
-#### Parameters
-
-| Name | In | Type | Required | Description |
-| --- | --- | --- | --- | --- |
-| symbol | query | string | yes | Option symbol |
-| interval | query | string | no | Bar interval (default 1m) |
-| from | query | string | yes | Start time (RFC3339 or YYYY-MM-DD) |
-| to | query | string | yes | End time (RFC3339 or YYYY-MM-DD) |
-| limit | query | integer | no | Max rows (default 1000, max 10000) |
-| cursor | query | string | no | Opaque pagination cursor |
-
-#### Responses
-
-| Status | Schema | Description |
-| --- | --- | --- |
-| 200 | github_com_Cyvadra_toktik_internal_dto.GreeksResponse | OK |
-| 400 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Bad Request |
-| 500 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Internal Server Error |
-
-### Crypto option chain
-
-- Endpoint: `GET /api/v1/markets/crypto-options/chain`
-- Tags: `CryptoOptions`
-- Produces: `application/json`
-- Summary: Get crypto option chain snapshots
-- Description: Returns option chain snapshots for a crypto base asset, grouped by timestamp.
-
-#### Parameters
-
-| Name | In | Type | Required | Description |
-| --- | --- | --- | --- | --- |
-| base_asset | query | string | yes | Base asset (e.g. BTC, ETH) |
-| from | query | string | yes | Start time (RFC3339 or YYYY-MM-DD) |
-| to | query | string | yes | End time (RFC3339 or YYYY-MM-DD) |
-| interval | query | string | no | Chain interval (default 1d) |
-| limit | query | integer | no | Max rows (default 1000, max 10000) |
-| cursor | query | string | no | Opaque pagination cursor |
-
-#### Responses
-
-| Status | Schema | Description |
-| --- | --- | --- |
-| 200 | github_com_Cyvadra_toktik_internal_dto.CryptoOptionChainResponse | OK |
-| 400 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Bad Request |
-| 500 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Internal Server Error |
-
-## Crypto Spot Market Data
-
-### Crypto spot bars
-
-- Endpoint: `GET /api/v1/markets/crypto-spot/bars`
-- Tags: `CryptoSpot`
-- Produces: `application/json`
-- Summary: Get crypto spot bars
-- Description: Returns OHLCV bars for a crypto spot pair.
-
-#### Parameters
-
-| Name | In | Type | Required | Description |
-| --- | --- | --- | --- | --- |
-| symbol | query | string | yes | Spot pair symbol (e.g. BTCUSDT) |
-| interval | query | string | yes | Bar interval (15m, 1h, 4h, 1d) |
-| from | query | string | yes | Start time (RFC3339 or YYYY-MM-DD) |
-| to | query | string | yes | End time (RFC3339 or YYYY-MM-DD) |
-| limit | query | integer | no | Max rows (default 1000) |
-| cursor | query | string | no | Pagination cursor |
-
-#### Responses
-
-| Status | Schema | Description |
-| --- | --- | --- |
-| 200 | github_com_Cyvadra_toktik_internal_dto.CryptoSpotBarResponse | OK |
-| 400 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Bad Request |
-| 500 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Internal Server Error |
-
-### Crypto spot symbols
-
-- Endpoint: `GET /api/v1/markets/crypto-spot/symbols`
-- Tags: `CryptoSpot`
-- Produces: `application/json`
-- Summary: List crypto spot symbols
-- Description: Returns available crypto spot pair symbols.
-
-#### Parameters
-
-| Name | In | Type | Required | Description |
-| --- | --- | --- | --- | --- |
-| search | query | string | no | Substring match filter |
-| limit | query | integer | no | Max rows (default 100) |
-| cursor | query | string | no | Pagination cursor |
-
-#### Responses
-
-| Status | Schema | Description |
-| --- | --- | --- |
-| 200 | github_com_Cyvadra_toktik_internal_dto.CryptoSpotSymbolResponse | OK |
-| 400 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Bad Request |
-| 500 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Internal Server Error |
-
 ## US Stocks Market Data
 
 ### US stock bars
@@ -819,7 +656,7 @@ No parameters.
 - Tags: `USStocks`
 - Produces: `application/json`
 - Summary: Get US stock bars
-- Description: Returns OHLCV bars for a US stock symbol, optionally enriched with point-in-time fundamentals aligned to each bar.
+- Description: Returns OHLCV bars for a US stock symbol.
 
 #### Parameters
 
@@ -829,7 +666,6 @@ No parameters.
 | interval | query | string | yes | Bar interval |
 | from | query | string | yes | Start time (RFC3339 or YYYY-MM-DD) |
 | to | query | string | yes | End time (RFC3339 or YYYY-MM-DD) |
-| factor | query | array<string> | no | Optional fundamentals to align onto each bar (repeat or comma-separated, e.g. pe,pb). PE/PB are recomputed from each bar close using the latest known filing-derived denominator. |
 | limit | query | integer | no | Max rows (default 1000) |
 | cursor | query | string | no | Pagination cursor |
 
@@ -879,11 +715,10 @@ No parameters.
 
 | Name | In | Type | Required | Description |
 | --- | --- | --- | --- | --- |
-| symbol | query | string | yes | Option contract symbol (Polygon OPRA ticker or raw OCC payload without O: prefix) |
+| symbol | query | string | yes | Option contract symbol |
 | interval | query | string | yes | Bar interval |
 | from | query | string | yes | Start time (RFC3339 or YYYY-MM-DD) |
 | to | query | string | yes | End time (RFC3339 or YYYY-MM-DD) |
-| session | query | string | no | Session filter (1m only: regular, all, extended) |
 | limit | query | integer | no | Max rows (default 1000) |
 | cursor | query | string | no | Pagination cursor |
 
@@ -907,8 +742,7 @@ No parameters.
 
 | Name | In | Type | Required | Description |
 | --- | --- | --- | --- | --- |
-| underlying | query | string | no | Filter by underlying ticker symbol |
-| root | query | string | no | Legacy alias for underlying |
+| root | query | string | no | Filter by root symbol |
 | search | query | string | no | Substring match filter |
 | limit | query | integer | no | Max rows (default 100) |
 | cursor | query | string | no | Pagination cursor |
@@ -933,11 +767,10 @@ No parameters.
 
 | Name | In | Type | Required | Description |
 | --- | --- | --- | --- | --- |
-| symbol | query | string | yes | Option contract symbol (Polygon OPRA ticker or raw OCC payload without O: prefix) |
+| symbol | query | string | yes | Option contract symbol |
 | interval | query | string | no | Bar interval (default 1h) |
 | from | query | string | yes | Start time (RFC3339 or YYYY-MM-DD) |
 | to | query | string | yes | End time (RFC3339 or YYYY-MM-DD) |
-| session | query | string | no | Session filter (1m only: regular, all, extended) |
 | limit | query | integer | no | Max rows (default 1000) |
 | cursor | query | string | no | Pagination cursor |
 
@@ -955,17 +788,15 @@ No parameters.
 - Tags: `USOptions`
 - Produces: `application/json`
 - Summary: Get US option chain
-- Description: Returns option chain snapshots for a US underlying. If from/to are omitted, the latest available snapshot is returned.
+- Description: Returns an option chain snapshot for a US underlying, grouped by expiration and strike.
 
 #### Parameters
 
 | Name | In | Type | Required | Description |
 | --- | --- | --- | --- | --- |
 | underlying | query | string | yes | Underlying ticker symbol |
-| expiration | query | string | no | Filter contracts by expiration date (YYYY-MM-DD) |
-| from | query | string | no | Snapshot window start (RFC3339 or YYYY-MM-DD); defaults to latest available snapshot |
-| to | query | string | no | Snapshot window end (RFC3339 or YYYY-MM-DD); defaults to latest available snapshot |
-| interval | query | string | no | Chain interval (default 1d) |
+| expiration | query | string | no | Filter by expiration date |
+| type | query | string | no | Filter by option type (call, put) |
 | limit | query | integer | no | Max contracts (default 100) |
 | cursor | query | string | no | Pagination cursor |
 
@@ -1002,6 +833,29 @@ No parameters.
 | Status | Schema | Description |
 | --- | --- | --- |
 | 200 | github_com_Cyvadra_toktik_internal_dto.ScreenUnderlyingResponse | OK |
+| 400 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Bad Request |
+| 500 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Internal Server Error |
+
+### US turnover intersection screener
+
+- Endpoint: `GET /api/v1/screener/us-underlyings/turnover-intersection`
+- Tags: `Screener`
+- Produces: `application/json`
+- Summary: Screen US underlyings by shared turnover
+- Description: Intersects the top US stocks and US options underlyings by trailing turnover, then returns the most liquid shared names.
+
+#### Parameters
+
+| Name | In | Type | Required | Description |
+| --- | --- | --- | --- | --- |
+| limit | query | integer | no | Max rows to return (default 100) |
+| lookback_days | query | integer | no | Trailing trading days to aggregate (default 20) |
+
+#### Responses
+
+| Status | Schema | Description |
+| --- | --- | --- |
+| 200 | github_com_Cyvadra_toktik_internal_dto.ScreenUSTurnoverIntersectionResponse | OK |
 | 400 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Bad Request |
 | 500 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Internal Server Error |
 

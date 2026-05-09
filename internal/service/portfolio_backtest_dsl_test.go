@@ -2,6 +2,9 @@ package service
 
 import (
 	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -244,6 +247,58 @@ plot(ta.sma(close, length), title="SMA")`,
 	}
 	if feed.loads == 0 {
 		t.Fatal("expected prepare preflight to load market data")
+	}
+}
+
+func TestExampleWheelPortfolioRunPayloadIsValid(t *testing.T) {
+	dslPath := filepath.Join("..", "..", "docs", "examples", "wheel-portfolio-us-sell-put.dsl")
+	payloadPath := filepath.Join("..", "..", "docs", "examples", "wheel-portfolio-us-sell-put.run.json")
+
+	dslSrc, err := os.ReadFile(dslPath)
+	if err != nil {
+		t.Fatalf("ReadFile(%q): %v", dslPath, err)
+	}
+	payloadBytes, err := os.ReadFile(payloadPath)
+	if err != nil {
+		t.Fatalf("ReadFile(%q): %v", payloadPath, err)
+	}
+
+	var req dto.StrategyBacktestRunRequest
+	if err := json.Unmarshal(payloadBytes, &req); err != nil {
+		t.Fatalf("json.Unmarshal(%q): %v", payloadPath, err)
+	}
+	if strings.TrimSpace(req.DSL) != strings.TrimSpace(string(dslSrc)) {
+		t.Fatalf("payload DSL does not match example source")
+	}
+	if len(req.Symbols) != 6 || len(req.Weights) != 6 {
+		t.Fatalf("unexpected symbols/weights lengths: %d/%d", len(req.Symbols), len(req.Weights))
+	}
+	if req.Symbols[0] != "QQQ" || req.Weights[0] != 0.2 {
+		t.Fatalf("unexpected first portfolio leg: %q / %v", req.Symbols[0], req.Weights[0])
+	}
+
+	resolved, label, err := resolveRequestedStrategies(req, strategies.DefaultConfig(), resolvePrimaryBacktestAsset(req))
+	if err != nil {
+		t.Fatalf("resolveRequestedStrategies returned error: %v", err)
+	}
+	if label != "weighted-wheel-put-writer" {
+		t.Fatalf("label = %q, want weighted-wheel-put-writer", label)
+	}
+	if len(resolved) != 1 {
+		t.Fatalf("len(resolved) = %d, want 1", len(resolved))
+	}
+	if !resolved[0].Profile.UsesOptions {
+		t.Fatalf("expected options profile, got %+v", resolved[0].Profile)
+	}
+	if resolved[0].Profile.RegularTrade != strategies.RegularTradeNone {
+		t.Fatalf("regular trade = %q, want none", resolved[0].Profile.RegularTrade)
+	}
+	config := backtestDSLConfigMap(strategies.DefaultConfig(), req)
+	if got := config["portfolio_symbols"]; got != "QQQ,GLD,MSFT,AAPL,TSLA,TQQQ" {
+		t.Fatalf("portfolio_symbols = %v, want QQQ,GLD,MSFT,AAPL,TSLA,TQQQ", got)
+	}
+	if got := config["portfolio_weights"]; got != "0.2,0.1,0.15,0.1,0.3,0.15" {
+		t.Fatalf("portfolio_weights = %v, want 0.2,0.1,0.15,0.1,0.3,0.15", got)
 	}
 }
 

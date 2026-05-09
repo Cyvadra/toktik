@@ -1581,6 +1581,38 @@ func (h *Handler) ScreenUnderlyings(c *gin.Context) {
 	c.JSON(http.StatusOK, resp)
 }
 
+// ScreenUSTurnoverIntersection handles GET /api/v1/screener/us-underlyings/turnover-intersection.
+//
+// @Summary      Screen US underlyings by shared turnover
+// @Description  Intersects the top US stocks and US options underlyings by trailing turnover, then returns the most liquid shared names.
+// @Tags         Screener
+// @Produce      json
+// @Param        limit          query     int  false  "Max rows to return (default 100)"
+// @Param        lookback_days  query     int  false  "Trailing trading days to aggregate (default 20)"
+// @Success      200            {object}  dto.ScreenUSTurnoverIntersectionResponse
+// @Failure      400            {object}  dto.ErrorResponse
+// @Failure      500            {object}  dto.ErrorResponse
+// @Router       /screener/us-underlyings/turnover-intersection [get]
+func (h *Handler) ScreenUSTurnoverIntersection(c *gin.Context) {
+	var req dto.ScreenUSTurnoverIntersectionRequest
+	if err := c.ShouldBindQuery(&req); err != nil {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: err.Error()})
+		return
+	}
+	if h.screener == nil {
+		c.JSON(http.StatusNotImplemented, dto.ErrorResponse{Error: "screener provider not configured"})
+		return
+	}
+
+	resp, err := h.screener.ScreenUSTurnoverIntersection(c.Request.Context(), req)
+	if err != nil {
+		handleServiceError(c, err)
+		return
+	}
+
+	c.JSON(http.StatusOK, resp)
+}
+
 // ScreenOptions handles GET /api/v1/screener/options.
 //
 // @Summary      Screen option contracts

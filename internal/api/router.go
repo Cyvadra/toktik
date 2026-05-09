@@ -192,6 +192,7 @@ func registerRoutes(v1 *gin.RouterGroup, h *Handler) {
 
 	screenerGroup := v1.Group("/screener")
 	screenerGroup.GET("/underlyings", h.ScreenUnderlyings)
+	screenerGroup.GET("/us-underlyings/turnover-intersection", h.ScreenUSTurnoverIntersection)
 	screenerGroup.GET("/options", h.ScreenOptions)
 
 	factorsGroup := v1.Group("/factors")

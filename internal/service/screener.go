@@ -2,22 +2,144 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
 	"strings"
+	"time"
 
+	"github.com/Cyvadra/toktik/internal/cache"
 	"github.com/Cyvadra/toktik/internal/chquery"
 	"github.com/Cyvadra/toktik/internal/chrepo"
 	"github.com/Cyvadra/toktik/internal/dto"
 )
 
+const usTurnoverIntersectionCacheTTL = 6 * time.Hour
+
 // ScreenerService provides condition-based screening for underlyings and options.
 type ScreenerService struct {
-	repo *chrepo.Repo
+	repo  *chrepo.Repo
+	cache cache.Store
 }
 
-func NewScreenerService(repo *chrepo.Repo) *ScreenerService {
-	return &ScreenerService{repo: repo}
+func NewScreenerService(repo *chrepo.Repo, cacheStore ...cache.Store) *ScreenerService {
+	service := &ScreenerService{repo: repo}
+	if len(cacheStore) > 0 {
+		service.cache = cacheStore[0]
+	}
+	return service
+}
+
+func (s *ScreenerService) ScreenUSTurnoverIntersection(ctx context.Context, req dto.ScreenUSTurnoverIntersectionRequest) (*dto.ScreenUSTurnoverIntersectionResponse, error) {
+	limit := clamp(req.Limit, defaultSymbolLimit, maxSymbolLimit)
+	lookbackDays := clamp(req.LookbackDays, 20, 252)
+	candidateLimit := turnoverIntersectionCandidateLimit(limit)
+	cacheKey := usTurnoverIntersectionCacheKey(limit, lookbackDays)
+
+	if cached, ok, err := s.loadUSTurnoverIntersectionFromCache(ctx, cacheKey); err == nil && ok {
+		return cached, nil
+	}
+
+	query := fmt.Sprintf(`
+WITH stock_days AS (
+	SELECT market_date
+	FROM (
+		SELECT DISTINCT toDate(timestamp) AS market_date
+		FROM us_stocks_bar_1d
+		ORDER BY market_date DESC
+		LIMIT %d
+	)
+), option_days AS (
+	SELECT market_date
+	FROM (
+		SELECT DISTINCT toDate(timestamp) AS market_date
+		FROM us_options_bar_1d
+		ORDER BY market_date DESC
+		LIMIT %d
+	)
+)
+SELECT
+	stocks.underlying,
+	stocks.stock_turnover_usd,
+	stocks.stock_volume,
+	stocks.stock_trading_days,
+	options.option_turnover_usd,
+	options.option_volume,
+	options.option_trading_days,
+	stocks.stock_turnover_usd + options.option_turnover_usd AS combined_turnover_usd
+FROM (
+	SELECT
+		symbol AS underlying,
+		%s AS join_underlying,
+		sum(toFloat64(close) * toFloat64(volume)) AS stock_turnover_usd,
+		sum(toFloat64(volume)) AS stock_volume,
+		toUInt32(countDistinct(toDate(timestamp))) AS stock_trading_days
+	FROM us_stocks_bar_1d
+	WHERE toDate(timestamp) IN (SELECT market_date FROM stock_days)
+	GROUP BY underlying, join_underlying
+	ORDER BY stock_turnover_usd DESC, underlying ASC
+	LIMIT %d
+) AS stocks
+INNER JOIN (
+	SELECT
+		underlying,
+		underlying AS join_underlying,
+		sum(toFloat64(close) * toFloat64(volume) * 100.0) AS option_turnover_usd,
+		sum(toFloat64(volume)) AS option_volume,
+		toUInt32(countDistinct(toDate(timestamp))) AS option_trading_days
+	FROM us_options_bar_1d
+	WHERE toDate(timestamp) IN (SELECT market_date FROM option_days)
+	GROUP BY underlying, join_underlying
+	ORDER BY option_turnover_usd DESC, underlying ASC
+	LIMIT %d
+) AS options ON stocks.join_underlying = options.join_underlying
+ORDER BY combined_turnover_usd DESC, stocks.underlying ASC
+LIMIT %d`, lookbackDays, lookbackDays, stockUnderlyingOptionAliasExpr("symbol"), candidateLimit, candidateLimit, limit)
+
+	rows, err := s.repo.Query(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("screen us turnover intersection: %w", err)
+	}
+	defer rows.Close()
+
+	results := make([]dto.ScreenedUSTurnoverIntersectionRow, 0, limit)
+	for rows.Next() {
+		var r dto.ScreenedUSTurnoverIntersectionRow
+		var stockTradingDays uint32
+		var optionTradingDays uint32
+		if err := rows.Scan(
+			&r.Underlying,
+			&r.StockTurnoverUSD,
+			&r.StockVolume,
+			&stockTradingDays,
+			&r.OptionTurnoverUSD,
+			&r.OptionVolume,
+			&optionTradingDays,
+			&r.CombinedTurnoverUSD,
+		); err != nil {
+			return nil, fmt.Errorf("scan us turnover intersection row: %w", err)
+		}
+		r.StockTradingDays = int(stockTradingDays)
+		r.OptionTradingDays = int(optionTradingDays)
+		r.StockTurnoverUSD = sanitizeFloatValue(r.StockTurnoverUSD)
+		r.StockVolume = sanitizeFloatValue(r.StockVolume)
+		r.OptionTurnoverUSD = sanitizeFloatValue(r.OptionTurnoverUSD)
+		r.OptionVolume = sanitizeFloatValue(r.OptionVolume)
+		r.CombinedTurnoverUSD = sanitizeFloatValue(r.CombinedTurnoverUSD)
+		results = append(results, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate us turnover intersection rows: %w", err)
+	}
+
+	resp := &dto.ScreenUSTurnoverIntersectionResponse{
+		LookbackDays:   lookbackDays,
+		Limit:          limit,
+		CandidateLimit: candidateLimit,
+		Data:           results,
+	}
+	_ = s.storeUSTurnoverIntersectionInCache(ctx, cacheKey, resp)
+	return resp, nil
 }
 
 func (s *ScreenerService) ScreenUnderlyings(ctx context.Context, req dto.ScreenUnderlyingRequest) (*dto.ScreenUnderlyingResponse, error) {
@@ -393,4 +515,49 @@ func sanitizeFloatValue(value float64) float64 {
 		return 0
 	}
 	return value
+}
+
+func turnoverIntersectionCandidateLimit(limit int) int {
+	if limit <= 0 {
+		return 0
+	}
+	// 1.35 * N
+	return (limit*27 + 19) / 20
+}
+
+func usTurnoverIntersectionCacheKey(limit, lookbackDays int) string {
+	return fmt.Sprintf("screener:us-turnover-intersection:v2:limit=%d:lookback_days=%d", limit, lookbackDays)
+}
+
+func stockUnderlyingOptionAliasExpr(column string) string {
+	return fmt.Sprintf("if(match(%s, '^[A-Z]+\\\\.[ABC]$'), replaceAll(%s, '.', ''), %s)", column, column, column)
+}
+
+func (s *ScreenerService) loadUSTurnoverIntersectionFromCache(ctx context.Context, key string) (*dto.ScreenUSTurnoverIntersectionResponse, bool, error) {
+	if s == nil || s.cache == nil {
+		return nil, false, nil
+	}
+	payload, ok, err := s.cache.Get(ctx, key)
+	if err != nil || !ok {
+		return nil, false, err
+	}
+	var resp dto.ScreenUSTurnoverIntersectionResponse
+	if err := json.Unmarshal(payload, &resp); err != nil {
+		return nil, false, err
+	}
+	if len(resp.Data) == 0 {
+		return nil, false, nil
+	}
+	return &resp, true, nil
+}
+
+func (s *ScreenerService) storeUSTurnoverIntersectionInCache(ctx context.Context, key string, resp *dto.ScreenUSTurnoverIntersectionResponse) error {
+	if s == nil || s.cache == nil || resp == nil || len(resp.Data) == 0 {
+		return nil
+	}
+	payload, err := json.Marshal(resp)
+	if err != nil {
+		return err
+	}
+	return s.cache.Set(ctx, key, payload, usTurnoverIntersectionCacheTTL)
 }

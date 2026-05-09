@@ -745,6 +745,25 @@ SIGNAL_LEVEL=12h go run ./cmd/backtest-portfolio/main.go \
   --clear-previous-data
 ```
 
+**Run the weighted US wheel put-writer DSL example:**
+
+The repository now includes a runnable multi-symbol options DSL example plus a matching API payload:
+
+- `docs/examples/wheel-portfolio-us-sell-put.dsl`
+- `docs/examples/wheel-portfolio-us-sell-put.run.json`
+
+This example targets `QQQ 20% + GLD 10% + MSFT 15% + AAPL 10% + TSLA 30% + TQQQ 15%` and uses the current multi-symbol options runtime to rotate short puts per symbol. It models the put-writing leg of the wheel. Full assignment plus covered-call rotation is not modeled yet in the DSL/runtime, so the example intentionally stops at rolling cash-secured puts.
+
+Use the payload directly:
+
+```bash
+curl -X POST http://localhost:9010/api/v1/backtests/runs \
+  -H 'Content-Type: application/json' \
+  -d @docs/examples/wheel-portfolio-us-sell-put.run.json
+```
+
+Important detail: the example uses request-level `symbols` + `weights` so the service can preload every required option chain and inject `portfolio.items()` / `portfolio.weights()` into the DSL runtime.
+
 策略运行方式：
 - `SIGNAL_LEVEL` 控制读取哪组信号文件，支持 `12h` 和 `1d`。
 - `retracement-ratio-protective-spread-long` 固定读取 `12h_long.csv` / `1d_long.csv`。

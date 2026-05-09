@@ -43,6 +43,33 @@ type ScreenUnderlyingResponse struct {
 	NextCursor string               `json:"next_cursor,omitempty"`
 }
 
+// ScreenUSTurnoverIntersectionRequest defines the query for the US
+// stocks/options turnover intersection screener.
+type ScreenUSTurnoverIntersectionRequest struct {
+	Limit        int `form:"limit" binding:"omitempty"`
+	LookbackDays int `form:"lookback_days" binding:"omitempty"`
+}
+
+// ScreenedUSTurnoverIntersectionRow is one intersected US underlying result.
+type ScreenedUSTurnoverIntersectionRow struct {
+	Underlying          string  `json:"underlying"`
+	StockTurnoverUSD    float64 `json:"stock_turnover_usd"`
+	StockVolume         float64 `json:"stock_volume"`
+	StockTradingDays    int     `json:"stock_trading_days"`
+	OptionTurnoverUSD   float64 `json:"option_turnover_usd"`
+	OptionVolume        float64 `json:"option_volume"`
+	OptionTradingDays   int     `json:"option_trading_days"`
+	CombinedTurnoverUSD float64 `json:"combined_turnover_usd"`
+}
+
+// ScreenUSTurnoverIntersectionResponse wraps the intersected US liquidity set.
+type ScreenUSTurnoverIntersectionResponse struct {
+	LookbackDays   int                                 `json:"lookback_days"`
+	Limit          int                                 `json:"limit"`
+	CandidateLimit int                                 `json:"candidate_limit"`
+	Data           []ScreenedUSTurnoverIntersectionRow `json:"data"`
+}
+
 // ScreenOptionRequest defines filters for the options screener.
 type ScreenOptionRequest struct {
 	Market            string   `form:"market" binding:"required"`

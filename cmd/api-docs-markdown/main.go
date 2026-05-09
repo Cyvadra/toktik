@@ -109,22 +109,6 @@ var sections = []sectionSpec{
 		},
 	},
 	{
-		Title: "Crypto Options Market Data",
-		Endpoints: []endpointSpec{
-			{Method: "GET", Path: "/crypto-options/bars", Label: "Crypto option bars"},
-			{Method: "GET", Path: "/crypto-options/symbols", Label: "Crypto option symbols"},
-			{Method: "GET", Path: "/crypto-options/greeks", Label: "Crypto option greeks"},
-			{Method: "GET", Path: "/markets/crypto-options/chain", Label: "Crypto option chain"},
-		},
-	},
-	{
-		Title: "Crypto Spot Market Data",
-		Endpoints: []endpointSpec{
-			{Method: "GET", Path: "/markets/crypto-spot/bars", Label: "Crypto spot bars"},
-			{Method: "GET", Path: "/markets/crypto-spot/symbols", Label: "Crypto spot symbols"},
-		},
-	},
-	{
 		Title: "US Stocks Market Data",
 		Endpoints: []endpointSpec{
 			{Method: "GET", Path: "/markets/us-stocks/bars", Label: "US stock bars"},
@@ -144,6 +128,7 @@ var sections = []sectionSpec{
 		Title: "Screeners",
 		Endpoints: []endpointSpec{
 			{Method: "GET", Path: "/screener/underlyings", Label: "Underlying screener"},
+			{Method: "GET", Path: "/screener/us-underlyings/turnover-intersection", Label: "US turnover intersection screener"},
 			{Method: "GET", Path: "/screener/options", Label: "Option screener"},
 		},
 	},

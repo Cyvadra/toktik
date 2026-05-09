@@ -121,7 +121,7 @@ func run() error {
 		StrategyBacktests: service.NewPortfolioBacktestService(repo, factorStore),
 		CryptoSpot:        service.NewCryptoSpotService(repo),
 		Forex:             service.NewForexService(repo),
-		Screener:          service.NewScreenerService(repo),
+		Screener:          service.NewScreenerService(repo, cacheStore),
 		StrategyCatalog:   service.NewStrategyCatalogService(),
 		Factors:           service.NewFactorService(factorStore),
 		Fundamentals:      fundamentalsSvc,
