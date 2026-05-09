@@ -6,7 +6,6 @@ import (
 	"math"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	clickhouse "github.com/ClickHouse/clickhouse-go/v2"
@@ -152,22 +151,10 @@ type FeatureBackfillStats struct {
 // FeatureService exposes read-only derived feature APIs.
 type FeatureService struct {
 	repo *chrepo.Repo
-
-	dailyPanelMu       sync.Mutex
-	dailyPanelInflight map[string]*dailyPanelInflightCall
 }
 
 func NewFeatureService(repo *chrepo.Repo) *FeatureService {
-	return &FeatureService{
-		repo:               repo,
-		dailyPanelInflight: make(map[string]*dailyPanelInflightCall),
-	}
-}
-
-type dailyPanelInflightCall struct {
-	done chan struct{}
-	resp *dto.FeatureDailyPanelResponse
-	err  error
+	return &FeatureService{repo: repo}
 }
 
 func (s *FeatureService) QueryVolatilitySnapshot(ctx context.Context, req dto.FeatureVolatilitySnapshotRequest) (*dto.FeatureVolatilitySnapshotResponse, error) {
@@ -459,57 +446,16 @@ func (s *FeatureService) QueryDailyFeaturePanel(ctx context.Context, req dto.Fea
 	if err != nil {
 		return nil, err
 	}
-	key := fmt.Sprintf("%s|%s|%s|%s|%d|%d|%d",
-		market,
-		underlying,
-		fromT.UTC().Format(time.RFC3339Nano),
-		toT.UTC().Format(time.RFC3339Nano),
-		lookbackDays,
-		minDTE,
-		maxDTE,
-	)
-
-	return s.queryDailyFeaturePanelSingleflight(ctx, key, func(runCtx context.Context) (*dto.FeatureDailyPanelResponse, error) {
-		if precomputed, ok, err := s.queryPrecomputedDailyFeaturePanel(runCtx, market, underlying, fromT, toT, lookbackDays, minDTE, maxDTE); err != nil {
-			return nil, err
-		} else if ok {
-			return precomputed, nil
-		}
-		panelRows, err := s.buildDailyFeaturePanelRows(runCtx, market, underlying, fromT, toT, lookbackDays, minDTE, maxDTE)
-		if err != nil {
-			return nil, err
-		}
-		return &dto.FeatureDailyPanelResponse{Market: market, Underlying: underlying, LookbackDays: lookbackDays, Data: panelRows}, nil
-	})
-}
-
-func (s *FeatureService) queryDailyFeaturePanelSingleflight(ctx context.Context, key string, fn func(context.Context) (*dto.FeatureDailyPanelResponse, error)) (*dto.FeatureDailyPanelResponse, error) {
-	s.dailyPanelMu.Lock()
-	if call, ok := s.dailyPanelInflight[key]; ok {
-		done := call.done
-		s.dailyPanelMu.Unlock()
-		select {
-		case <-done:
-			return call.resp, call.err
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		}
+	if precomputed, ok, err := s.queryPrecomputedDailyFeaturePanel(ctx, market, underlying, fromT, toT, lookbackDays, minDTE, maxDTE); err != nil {
+		return nil, err
+	} else if ok {
+		return precomputed, nil
 	}
-
-	call := &dailyPanelInflightCall{done: make(chan struct{})}
-	s.dailyPanelInflight[key] = call
-	s.dailyPanelMu.Unlock()
-
-	resp, err := fn(ctx)
-
-	s.dailyPanelMu.Lock()
-	call.resp = resp
-	call.err = err
-	close(call.done)
-	delete(s.dailyPanelInflight, key)
-	s.dailyPanelMu.Unlock()
-
-	return resp, err
+	panelRows, err := s.buildDailyFeaturePanelRows(ctx, market, underlying, fromT, toT, lookbackDays, minDTE, maxDTE)
+	if err != nil {
+		return nil, err
+	}
+	return &dto.FeatureDailyPanelResponse{Market: market, Underlying: underlying, LookbackDays: lookbackDays, Data: panelRows}, nil
 }
 
 // QueryTermStructureHistory returns a range of pre-computed term structure rows.

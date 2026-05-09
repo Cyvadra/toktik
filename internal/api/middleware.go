@@ -6,8 +6,8 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"log/slog"
+	"net"
 	"net/http"
-	"net/netip"
 	"runtime/debug"
 	"sync"
 	"time"
@@ -95,6 +95,10 @@ type rateBucket struct {
 // bucket rate limit. Keys come from the X-API-Key header and fall back to
 // gin's c.ClientIP() (which honours configured trusted proxies).
 //
+// Loopback, RFC1918/private, and link-local sources bypass the limiter so
+// trusted local callers can fan out inside the LAN without tripping the
+// public-facing protection.
+//
 // The bucket map is bounded; when full, new entries displace the oldest one
 // to prevent memory exhaustion via spoofed identifiers. The eviction
 // goroutine stops when the supplied stop channel is closed.
@@ -130,9 +134,7 @@ func RateLimitMiddleware(cfg config.API, stop <-chan struct{}) gin.HandlerFunc {
 	}()
 
 	return func(c *gin.Context) {
-		if isLocalLANIP(c.ClientIP()) {
-			// Local/LAN callers are trusted for internal usage and skip API
-			// rate limiting to avoid self-throttling under bursty workloads.
+		if isLocalClientIP(c.ClientIP()) {
 			c.Next()
 			return
 		}
@@ -180,18 +182,12 @@ func RateLimitMiddleware(cfg config.API, stop <-chan struct{}) gin.HandlerFunc {
 	}
 }
 
-func isLocalLANIP(clientIP string) bool {
-	addr, err := netip.ParseAddr(clientIP)
-	if err != nil {
+func isLocalClientIP(raw string) bool {
+	ip := net.ParseIP(raw)
+	if ip == nil {
 		return false
 	}
-	if addr.IsLoopback() || addr.IsPrivate() {
-		return true
-	}
-	if addr.IsLinkLocalUnicast() || addr.IsLinkLocalMulticast() {
-		return true
-	}
-	return false
+	return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast()
 }
 
 // SecurityHeadersMiddleware sets baseline response headers that mitigate
