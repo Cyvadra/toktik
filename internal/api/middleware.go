@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"log/slog"
 	"net/http"
+	"net/netip"
 	"runtime/debug"
 	"sync"
 	"time"
@@ -129,6 +130,13 @@ func RateLimitMiddleware(cfg config.API, stop <-chan struct{}) gin.HandlerFunc {
 	}()
 
 	return func(c *gin.Context) {
+		if isLocalLANIP(c.ClientIP()) {
+			// Local/LAN callers are trusted for internal usage and skip API
+			// rate limiting to avoid self-throttling under bursty workloads.
+			c.Next()
+			return
+		}
+
 		key := c.GetHeader("X-API-Key")
 		if key == "" {
 			key = c.ClientIP()
@@ -170,6 +178,20 @@ func RateLimitMiddleware(cfg config.API, stop <-chan struct{}) gin.HandlerFunc {
 		mu.Unlock()
 		c.Next()
 	}
+}
+
+func isLocalLANIP(clientIP string) bool {
+	addr, err := netip.ParseAddr(clientIP)
+	if err != nil {
+		return false
+	}
+	if addr.IsLoopback() || addr.IsPrivate() {
+		return true
+	}
+	if addr.IsLinkLocalUnicast() || addr.IsLinkLocalMulticast() {
+		return true
+	}
+	return false
 }
 
 // SecurityHeadersMiddleware sets baseline response headers that mitigate
