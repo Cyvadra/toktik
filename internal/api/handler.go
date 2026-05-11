@@ -1106,7 +1106,7 @@ func (h *Handler) StreamStrategyBacktestEvents(c *gin.Context) {
 // GetUSStockBars handles GET /api/v1/markets/us-stocks/bars.
 //
 // @Summary      Get US stock bars
-// @Description  Returns OHLCV bars for a US stock symbol, optionally enriched with point-in-time fundamentals aligned to each bar.
+// @Description  Returns OHLCV bars for a US stock symbol, optionally enriched with point-in-time fundamentals aligned to each bar and cached company profile metadata when available.
 // @Tags         USStocks
 // @Produce      json
 // @Param        symbol    query     string  true   "Stock ticker symbol"
@@ -1143,7 +1143,7 @@ func (h *Handler) GetUSStockBars(c *gin.Context) {
 // GetUSStockSymbols handles GET /api/v1/markets/us-stocks/symbols.
 //
 // @Summary      List US stock symbols
-// @Description  Returns available US stock ticker symbols.
+// @Description  Returns available US stock ticker symbols, optionally including cached company profile metadata on each symbol row when available.
 // @Tags         USStocks
 // @Produce      json
 // @Param        search  query     string  false  "Substring match filter"

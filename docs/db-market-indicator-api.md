@@ -7,7 +7,7 @@
 - Source Swagger: `docs/swagger.json`
 - API title: `Toktik Options Platform API`
 - API version: `1.0`
-- Generated at: `2026-05-09T07:57:45Z`
+- Generated at: `2026-05-11T07:28:05Z`
 
 ## Scope
 
@@ -51,7 +51,7 @@ No parameters.
 - Consumes: `application/json`
 - Produces: `application/json`
 - Summary: Run indicator series query
-- Description: Evaluates either a full DSL script or a simplified indicators[] expression list over market bars and returns aligned series arrays.
+- Description: Evaluates either a full DSL script, one or more built-in presets[], or a simplified indicators[] expression list over market bars and returns aligned series arrays.
 
 #### Parameters
 
@@ -656,7 +656,7 @@ No parameters.
 - Tags: `USStocks`
 - Produces: `application/json`
 - Summary: Get US stock bars
-- Description: Returns OHLCV bars for a US stock symbol.
+- Description: Returns OHLCV bars for a US stock symbol, optionally enriched with point-in-time fundamentals aligned to each bar and cached company profile metadata when available.
 
 #### Parameters
 
@@ -666,6 +666,7 @@ No parameters.
 | interval | query | string | yes | Bar interval |
 | from | query | string | yes | Start time (RFC3339 or YYYY-MM-DD) |
 | to | query | string | yes | End time (RFC3339 or YYYY-MM-DD) |
+| factor | query | array<string> | no | Optional fundamentals to align onto each bar (repeat or comma-separated, e.g. pe,pb). PE/PB are recomputed from each bar close using the latest known filing-derived denominator. |
 | limit | query | integer | no | Max rows (default 1000) |
 | cursor | query | string | no | Pagination cursor |
 
@@ -683,7 +684,7 @@ No parameters.
 - Tags: `USStocks`
 - Produces: `application/json`
 - Summary: List US stock symbols
-- Description: Returns available US stock ticker symbols.
+- Description: Returns available US stock ticker symbols, optionally including cached company profile metadata on each symbol row when available.
 
 #### Parameters
 
@@ -715,10 +716,11 @@ No parameters.
 
 | Name | In | Type | Required | Description |
 | --- | --- | --- | --- | --- |
-| symbol | query | string | yes | Option contract symbol |
+| symbol | query | string | yes | Option contract symbol (Polygon OPRA ticker or raw OCC payload without O: prefix) |
 | interval | query | string | yes | Bar interval |
 | from | query | string | yes | Start time (RFC3339 or YYYY-MM-DD) |
 | to | query | string | yes | End time (RFC3339 or YYYY-MM-DD) |
+| session | query | string | no | Session filter (1m only: regular, all, extended) |
 | limit | query | integer | no | Max rows (default 1000) |
 | cursor | query | string | no | Pagination cursor |
 
@@ -742,7 +744,8 @@ No parameters.
 
 | Name | In | Type | Required | Description |
 | --- | --- | --- | --- | --- |
-| root | query | string | no | Filter by root symbol |
+| underlying | query | string | no | Filter by underlying ticker symbol |
+| root | query | string | no | Legacy alias for underlying |
 | search | query | string | no | Substring match filter |
 | limit | query | integer | no | Max rows (default 100) |
 | cursor | query | string | no | Pagination cursor |
@@ -767,10 +770,11 @@ No parameters.
 
 | Name | In | Type | Required | Description |
 | --- | --- | --- | --- | --- |
-| symbol | query | string | yes | Option contract symbol |
+| symbol | query | string | yes | Option contract symbol (Polygon OPRA ticker or raw OCC payload without O: prefix) |
 | interval | query | string | no | Bar interval (default 1h) |
 | from | query | string | yes | Start time (RFC3339 or YYYY-MM-DD) |
 | to | query | string | yes | End time (RFC3339 or YYYY-MM-DD) |
+| session | query | string | no | Session filter (1m only: regular, all, extended) |
 | limit | query | integer | no | Max rows (default 1000) |
 | cursor | query | string | no | Pagination cursor |
 
@@ -788,15 +792,17 @@ No parameters.
 - Tags: `USOptions`
 - Produces: `application/json`
 - Summary: Get US option chain
-- Description: Returns an option chain snapshot for a US underlying, grouped by expiration and strike.
+- Description: Returns option chain snapshots for a US underlying. If from/to are omitted, the latest available snapshot is returned.
 
 #### Parameters
 
 | Name | In | Type | Required | Description |
 | --- | --- | --- | --- | --- |
 | underlying | query | string | yes | Underlying ticker symbol |
-| expiration | query | string | no | Filter by expiration date |
-| type | query | string | no | Filter by option type (call, put) |
+| expiration | query | string | no | Filter contracts by expiration date (YYYY-MM-DD) |
+| from | query | string | no | Snapshot window start (RFC3339 or YYYY-MM-DD); defaults to latest available snapshot |
+| to | query | string | no | Snapshot window end (RFC3339 or YYYY-MM-DD); defaults to latest available snapshot |
+| interval | query | string | no | Chain interval (default 1d) |
 | limit | query | integer | no | Max contracts (default 100) |
 | cursor | query | string | no | Pagination cursor |
 

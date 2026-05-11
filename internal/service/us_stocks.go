@@ -16,6 +16,7 @@ import (
 type USStocksService struct {
 	repo         *chrepo.Repo
 	fundamentals usStockFundamentalsQuerier
+	companyInfo  usStockCompanyProfileProvider
 }
 
 type usStockFundamentalsQuerier interface {
@@ -29,6 +30,14 @@ func NewUSStocksService(repo *chrepo.Repo, fundamentals ...usStockFundamentalsQu
 		svc.fundamentals = fundamentals[0]
 	}
 	return svc
+}
+
+func (s *USStocksService) WithCompanyProfileProvider(provider usStockCompanyProfileProvider) *USStocksService {
+	if s == nil {
+		return nil
+	}
+	s.companyInfo = provider
+	return s
 }
 
 func (s *USStocksService) QuerySymbols(ctx context.Context, req dto.USStockSymbolRequest) (*dto.USStockSymbolResponse, error) {
@@ -77,6 +86,7 @@ LIMIT %s`, clickhouseUInt32Literal(limit+1))
 	} else {
 		resp.Data = symbols
 	}
+	s.attachCompanyProfilesToSymbols(ctx, resp.Data)
 	return resp, nil
 }
 
@@ -159,7 +169,35 @@ LIMIT %s`, tableName, clickhouseStringLiteral(req.Symbol), clickhouseDateTimeLit
 	if err := s.attachFundamentals(ctx, req.Symbol, req.Factors, resp.Data); err != nil {
 		return nil, err
 	}
+	s.attachCompanyProfile(ctx, req.Symbol, resp)
 	return resp, nil
+}
+
+func (s *USStocksService) attachCompanyProfile(ctx context.Context, symbol string, resp *dto.USStockBarResponse) {
+	if s == nil || s.companyInfo == nil || resp == nil {
+		return
+	}
+	profile, err := s.companyInfo.CompanyProfile(ctx, symbol)
+	if err != nil || profile == nil {
+		return
+	}
+	if resp.Meta == nil {
+		resp.Meta = &dto.USStockBarMeta{}
+	}
+	resp.Meta.Profile = profile
+}
+
+func (s *USStocksService) attachCompanyProfilesToSymbols(ctx context.Context, rows []dto.USStockSymbolRow) {
+	if s == nil || s.companyInfo == nil || len(rows) == 0 {
+		return
+	}
+	for i := range rows {
+		profile, err := s.companyInfo.CompanyProfile(ctx, rows[i].Symbol)
+		if err != nil || profile == nil {
+			continue
+		}
+		rows[i].Profile = profile
+	}
 }
 
 func (s *USStocksService) attachFundamentals(ctx context.Context, symbol string, requestedFactors []string, bars []dto.USStockBarRow) error {

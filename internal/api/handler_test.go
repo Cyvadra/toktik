@@ -902,7 +902,7 @@ func TestMarketAliasRoute(t *testing.T) {
 
 func TestUSStocksBarsRoute(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	mock := &mockUSStocksQuerier{barsResp: &dto.USStockBarResponse{Data: []dto.USStockBarRow{{Timestamp: time.Date(2024, 1, 2, 14, 30, 0, 0, time.UTC), Symbol: "AAPL", Close: 192.5}}}}
+	mock := &mockUSStocksQuerier{barsResp: &dto.USStockBarResponse{Data: []dto.USStockBarRow{{Timestamp: time.Date(2024, 1, 2, 14, 30, 0, 0, time.UTC), Symbol: "AAPL", Close: 192.5}}, Meta: &dto.USStockBarMeta{Profile: &dto.USStockCompanyProfile{Symbol: "AAPL", Sector: "Technology", Industry: "Consumer Electronics"}}}}
 	r := NewRouter(
 		&mockQuerier{},
 		mock,
@@ -922,6 +922,9 @@ func TestUSStocksBarsRoute(t *testing.T) {
 	}
 	if len(mock.barsReq.Factors) != 2 || mock.barsReq.Factors[0] != "pe" || mock.barsReq.Factors[1] != "pb" {
 		t.Fatalf("expected factor query params to be forwarded, got %#v", mock.barsReq.Factors)
+	}
+	if !strings.Contains(w.Body.String(), `"meta":{"profile":{"symbol":"AAPL","sector":"Technology","industry":"Consumer Electronics"}}`) {
+		t.Fatalf("expected company profile metadata in response body, got %s", w.Body.String())
 	}
 }
 
@@ -952,7 +955,7 @@ func TestUSStocksSymbolsRoute(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := NewRouter(
 		&mockQuerier{},
-		&mockUSStocksQuerier{symbolsResp: &dto.USStockSymbolResponse{Data: []dto.USStockSymbolRow{{Symbol: "AAPL"}}}},
+		&mockUSStocksQuerier{symbolsResp: &dto.USStockSymbolResponse{Data: []dto.USStockSymbolRow{{Symbol: "AAPL", Profile: &dto.USStockCompanyProfile{Symbol: "AAPL", Sector: "Technology", Industry: "Consumer Electronics"}}}}},
 		&mockUSOptionsQuerier{},
 		&mockInfra{},
 		&mockFeature{},
@@ -966,6 +969,9 @@ func TestUSStocksSymbolsRoute(t *testing.T) {
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), `"profile":{"symbol":"AAPL","sector":"Technology","industry":"Consumer Electronics"}`) {
+		t.Fatalf("expected company profile metadata in symbols response, got %s", w.Body.String())
 	}
 }
 

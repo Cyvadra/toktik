@@ -5,8 +5,31 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Cyvadra/toktik/internal/cache"
 	"github.com/Cyvadra/toktik/internal/dto"
+	"github.com/Cyvadra/toktik/pkg/fmp"
 )
+
+type stubUSStockCompanyProfileProvider struct {
+	profile  *dto.USStockCompanyProfile
+	err      error
+	requests []string
+}
+
+func (s *stubUSStockCompanyProfileProvider) CompanyProfile(_ context.Context, symbol string) (*dto.USStockCompanyProfile, error) {
+	s.requests = append(s.requests, symbol)
+	return s.profile, s.err
+}
+
+type stubFMPCompanyProfiler struct {
+	profile *dto.USStockCompanyProfile
+	count   int
+}
+
+func (s *stubFMPCompanyProfiler) Profile(_ context.Context, symbol string) (*fmp.Profile, error) {
+	s.count++
+	return &fmp.Profile{Symbol: symbol, Sector: s.profile.Sector, Industry: s.profile.Industry}, nil
+}
 
 type stubUSStockFundamentals struct {
 	snapshotReqs []dto.FundamentalSnapshotRequest
@@ -108,5 +131,78 @@ func TestPriceDerivedFundamentalValueUsesCurrentBarCloseForPEAndPB(t *testing.T)
 	}
 	if got := priceDerivedFundamentalValue("market_cap", 250, observation, denominators); got != 20 {
 		t.Fatalf("expected non price-derived factor to keep stored value, got %v", got)
+	}
+}
+
+func TestUSStocksAttachCompanyProfileAddsMeta(t *testing.T) {
+	provider := &stubUSStockCompanyProfileProvider{profile: &dto.USStockCompanyProfile{Symbol: "AAPL", Sector: "Technology", Industry: "Consumer Electronics"}}
+	svc := NewUSStocksService(nil).WithCompanyProfileProvider(provider)
+	resp := &dto.USStockBarResponse{Data: []dto.USStockBarRow{{Symbol: "AAPL"}}}
+
+	svc.attachCompanyProfile(context.Background(), "AAPL", resp)
+
+	if resp.Meta == nil || resp.Meta.Profile == nil {
+		t.Fatalf("expected company profile metadata to be attached, got %#v", resp.Meta)
+	}
+	if resp.Meta.Profile.Sector != "Technology" || resp.Meta.Profile.Industry != "Consumer Electronics" {
+		t.Fatalf("unexpected company profile metadata: %#v", resp.Meta.Profile)
+	}
+	if len(provider.requests) != 1 || provider.requests[0] != "AAPL" {
+		t.Fatalf("expected provider request for AAPL, got %#v", provider.requests)
+	}
+}
+
+func TestUSStocksAttachCompanyProfilesToSymbolsAddsProfilesPerRow(t *testing.T) {
+	provider := &stubUSStockCompanyProfileProvider{profile: &dto.USStockCompanyProfile{Symbol: "AAPL", Sector: "Technology", Industry: "Consumer Electronics"}}
+	svc := NewUSStocksService(nil).WithCompanyProfileProvider(provider)
+	rows := []dto.USStockSymbolRow{{Symbol: "AAPL"}, {Symbol: "MSFT"}}
+
+	svc.attachCompanyProfilesToSymbols(context.Background(), rows)
+
+	if rows[0].Profile == nil || rows[1].Profile == nil {
+		t.Fatalf("expected profiles on all symbol rows, got %#v", rows)
+	}
+	if len(provider.requests) != 2 || provider.requests[0] != "AAPL" || provider.requests[1] != "MSFT" {
+		t.Fatalf("expected provider requests for each symbol, got %#v", provider.requests)
+	}
+}
+
+func TestCachedFMPUSStockCompanyProfileProviderUsesCache(t *testing.T) {
+	store := cache.NewMemoryStore()
+	client := &stubFMPCompanyProfiler{profile: &dto.USStockCompanyProfile{Sector: "Technology", Industry: "Consumer Electronics"}}
+	provider := &cachedFMPUSStockCompanyProfileProvider{
+		client: client,
+		cache:  store,
+		ttlValue: func() time.Duration {
+			return time.Hour
+		},
+	}
+
+	first, err := provider.CompanyProfile(context.Background(), "aapl")
+	if err != nil {
+		t.Fatalf("first CompanyProfile returned error: %v", err)
+	}
+	second, err := provider.CompanyProfile(context.Background(), "AAPL")
+	if err != nil {
+		t.Fatalf("second CompanyProfile returned error: %v", err)
+	}
+
+	if client.count != 1 {
+		t.Fatalf("expected one upstream FMP request, got %d", client.count)
+	}
+	if first == nil || second == nil {
+		t.Fatalf("expected cached company profile, got first=%#v second=%#v", first, second)
+	}
+	if second.Symbol != "AAPL" || second.Sector != "Technology" || second.Industry != "Consumer Electronics" {
+		t.Fatalf("unexpected cached profile: %#v", second)
+	}
+}
+
+func TestRandomUSStockCompanyProfileTTLStaysWithinRequestedWindow(t *testing.T) {
+	for range 64 {
+		ttl := randomUSStockCompanyProfileTTL()
+		if ttl < usStockCompanyProfileTTLMin || ttl > usStockCompanyProfileTTLMax {
+			t.Fatalf("ttl %s out of range [%s, %s]", ttl, usStockCompanyProfileTTLMin, usStockCompanyProfileTTLMax)
+		}
 	}
 }

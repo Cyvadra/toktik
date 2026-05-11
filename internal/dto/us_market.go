@@ -36,10 +36,23 @@ type USStockBarRow struct {
 	Fundamentals map[string]USStockBarFundamentalValue `json:"fundamentals,omitempty"`
 }
 
+// USStockCompanyProfile describes cached company-classification metadata.
+type USStockCompanyProfile struct {
+	Symbol   string `json:"symbol"`
+	Sector   string `json:"sector,omitempty"`
+	Industry string `json:"industry,omitempty"`
+}
+
+// USStockBarMeta wraps optional metadata returned alongside bars.
+type USStockBarMeta struct {
+	Profile *USStockCompanyProfile `json:"profile,omitempty"`
+}
+
 // USStockBarResponse wraps paginated US stock bars.
 type USStockBarResponse struct {
 	Data       []USStockBarRow `json:"data"`
 	NextCursor string          `json:"next_cursor,omitempty"`
+	Meta       *USStockBarMeta `json:"meta,omitempty"`
 }
 
 // USStockSymbolRequest is the query parameters for the US stock symbols endpoint.
@@ -51,7 +64,8 @@ type USStockSymbolRequest struct {
 
 // USStockSymbolRow describes one US stock symbol.
 type USStockSymbolRow struct {
-	Symbol string `json:"symbol"`
+	Symbol  string                 `json:"symbol"`
+	Profile *USStockCompanyProfile `json:"profile,omitempty"`
 }
 
 // USStockSymbolResponse wraps paginated US stock symbols.

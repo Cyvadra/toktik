@@ -108,11 +108,17 @@ func run() error {
 	repo := chrepo.NewRepo(conn)
 	fundamentalsSvc := service.NewFundamentalsService(repo)
 	macroSvc := service.NewMacroService(repo)
+	fmpAPIKey, err := runtimeCfg.FMPAPIKey()
+	if err != nil {
+		return fmt.Errorf("read FMP api key: %w", err)
+	}
+	usStocksSvc := service.NewUSStocksService(repo, fundamentalsSvc).
+		WithCompanyProfileProvider(service.NewCachedFMPUSStockCompanyProfileProvider(fmpAPIKey, cacheStore))
 
 	deps := api.Deps{
 		Config:            runtimeCfg,
 		CryptoOptions:     service.NewCryptoOptionsService(repo),
-		USStocks:          service.NewUSStocksService(repo, fundamentalsSvc),
+		USStocks:          usStocksSvc,
 		USOptions:         service.NewUSOptionsService(repo),
 		Infra:             service.NewInfraService(repo),
 		DataBrowser:       service.NewDataBrowserService(repo),
