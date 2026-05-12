@@ -7,10 +7,10 @@ import (
 
 type mockFeed struct{}
 
-func (m *mockFeed) Name() string         { return "mock" }
-func (m *mockFeed) Fields() []string     { return []string{"open", "high", "low", "close"} }
-func (m *mockFeed) Symbols() []string    { return []string{"BTC"} }
-func (m *mockFeed) SourceWindows() []Window { return []Window{PredefinedWindows[0]} }
+func (m *mockFeed) Name() string                                           { return "mock" }
+func (m *mockFeed) Fields() []string                                       { return []string{"open", "high", "low", "close"} }
+func (m *mockFeed) Symbols() []string                                      { return []string{"BTC"} }
+func (m *mockFeed) SourceWindows() []Window                                { return []Window{PredefinedWindows[0]} }
 func (m *mockFeed) Fetch(_ context.Context, _ FetchRequest) ([]Bar, error) { return nil, nil }
 
 func TestRegisterAndGet(t *testing.T) {

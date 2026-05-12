@@ -190,6 +190,7 @@ func resolveIndicators(registered map[string]Indicator, data map[string][]float6
 
 	return nil
 }
+
 // computeEMA is a helper for vectorized EMA computation compatible with TradingView ta.ema.
 func computeEMA(src []float64, period int) []float64 {
 	n := len(src)

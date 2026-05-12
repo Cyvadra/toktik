@@ -72,12 +72,9 @@ LIMIT %s`, clickhouseUInt32Literal(limit+1))
 	}
 
 	resp := &dto.USOptionSymbolResponse{Data: make([]dto.USOptionSymbolRow, 0)}
-	if len(symbols) > limit {
-		resp.NextCursor = encodeCursorString(symbols[limit-1].Symbol)
-		resp.Data = symbols[:limit]
-	} else {
-		resp.Data = symbols
-	}
+	resp.Data, resp.NextCursor = applySymbolCursorPagination(symbols, limit, func(r dto.USOptionSymbolRow) string {
+		return encodeCursorString(r.Symbol)
+	})
 	return resp, nil
 }
 
@@ -195,12 +192,9 @@ LIMIT %s`, tableName, clickhouseStringLiteral(req.Symbol), clickhouseDateTimeLit
 	}
 
 	resp := &dto.USOptionBarResponse{Data: make([]dto.USOptionBarRow, 0)}
-	if len(bars) > limit {
-		resp.NextCursor = encodeCursor(bars[limit-1].Timestamp)
-		resp.Data = bars[:limit]
-	} else {
-		resp.Data = bars
-	}
+	resp.Data, resp.NextCursor = applyTimeCursorPagination(bars, limit, func(r dto.USOptionBarRow) string {
+		return encodeCursor(r.Timestamp)
+	})
 	return resp, nil
 }
 
@@ -306,12 +300,9 @@ LIMIT %s`, tableName, clickhouseStringLiteral(req.Symbol), clickhouseDateTimeLit
 	}
 
 	resp := &dto.USOptionGreeksResponse{Data: make([]dto.USOptionGreeksRow, 0)}
-	if len(greeks) > limit {
-		resp.NextCursor = encodeCursor(greeks[limit-1].Timestamp)
-		resp.Data = greeks[:limit]
-	} else {
-		resp.Data = greeks
-	}
+	resp.Data, resp.NextCursor = applyTimeCursorPagination(greeks, limit, func(r dto.USOptionGreeksRow) string {
+		return encodeCursor(r.Timestamp)
+	})
 	return resp, nil
 }
 
@@ -468,12 +459,9 @@ LIMIT %s`, viewName, clickhouseStringLiteral(underlying), clickhouseDateTimeLite
 	}
 
 	resp := &dto.USOptionChainResponse{Data: make([]dto.USOptionChainSnapshot, 0)}
-	if len(snapshots) > limit {
-		resp.NextCursor = encodeCursor(snapshots[limit-1].Timestamp)
-		resp.Data = snapshots[:limit]
-	} else {
-		resp.Data = snapshots
-	}
+	resp.Data, resp.NextCursor = applyTimeCursorPagination(snapshots, limit, func(r dto.USOptionChainSnapshot) string {
+		return encodeCursor(r.Timestamp)
+	})
 	return resp, nil
 }
 

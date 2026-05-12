@@ -585,48 +585,49 @@ func TestNewFromEnvAndQueries(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewFromEnv failed: %v", err)
 	}
+	ctx := context.Background()
 
-	snapshot, err := client.StockSnapshot("aapl")
+	snapshot, err := client.StockSnapshot(ctx, "aapl")
 	if err != nil || snapshot == nil || snapshot.Ticker != "AAPL" || snapshot.LastTrade == nil || snapshot.LastTrade.Price != 197.12 {
 		t.Fatalf("StockSnapshot failed: snapshot=%#v err=%v", snapshot, err)
 	}
 
-	stockBars, err := client.StockAggregates(AggregateRequest{Ticker: "AAPL", Multiplier: 1, Timespan: "minute", From: "2025-11-03", To: "2025-11-28", Adjusted: rest.Ptr(true), Sort: "asc", Limit: 2})
+	stockBars, err := client.StockAggregates(ctx, AggregateRequest{Ticker: "AAPL", Multiplier: 1, Timespan: "minute", From: "2025-11-03", To: "2025-11-28", Adjusted: rest.Ptr(true), Sort: "asc", Limit: 2})
 	if err != nil || len(stockBars) != 2 || stockBars[1].Close != 191.2 {
 		t.Fatalf("StockAggregates failed: bars=%#v err=%v", stockBars, err)
 	}
 
-	stockQuotes, err := client.StockQuotes("AAPL", QuoteRequest{Limit: 1, Order: "asc", Sort: "timestamp"})
+	stockQuotes, err := client.StockQuotes(ctx, "AAPL", QuoteRequest{Limit: 1, Order: "asc", Sort: "timestamp"})
 	if err != nil || len(stockQuotes) != 2 || stockQuotes[1].SequenceNumber != 11 {
 		t.Fatalf("StockQuotes failed: quotes=%#v err=%v", stockQuotes, err)
 	}
 
-	stockTrades, err := client.StockTrades("AAPL", TradeRequest{Limit: 1, Order: "asc", Sort: "timestamp"})
+	stockTrades, err := client.StockTrades(ctx, "AAPL", TradeRequest{Limit: 1, Order: "asc", Sort: "timestamp"})
 	if err != nil || len(stockTrades) != 2 || stockTrades[1].ID != "trade-2" {
 		t.Fatalf("StockTrades failed: trades=%#v err=%v", stockTrades, err)
 	}
 
-	contract, err := client.OptionContract("o:spy251219c00650000")
+	contract, err := client.OptionContract(ctx, "o:spy251219c00650000")
 	if err != nil || contract == nil || contract.Ticker != "O:SPY251219C00650000" || contract.StrikePrice != 650 {
 		t.Fatalf("OptionContract failed: contract=%#v err=%v", contract, err)
 	}
 
-	chain, err := client.OptionChain(OptionChainRequest{Underlying: "SPY", ExpirationDate: "2025-12-19", ContractType: "call", Limit: 1})
+	chain, err := client.OptionChain(ctx, OptionChainRequest{Underlying: "SPY", ExpirationDate: "2025-12-19", ContractType: "call", Limit: 1})
 	if err != nil || len(chain) != 2 || chain[0].Contract.Ticker != "O:SPY251219C00650000" || chain[1].Contract.Ticker != "O:SPY251219C00655000" {
 		t.Fatalf("OptionChain failed: chain=%#v err=%v", chain, err)
 	}
 
-	optionBars, err := client.OptionAggregates(AggregateRequest{Ticker: "O:SPY251219C00650000", Multiplier: 1, Timespan: "minute", From: "2025-11-03", To: "2025-11-28", Adjusted: rest.Ptr(true)})
+	optionBars, err := client.OptionAggregates(ctx, AggregateRequest{Ticker: "O:SPY251219C00650000", Multiplier: 1, Timespan: "minute", From: "2025-11-03", To: "2025-11-28", Adjusted: rest.Ptr(true)})
 	if err != nil || len(optionBars) != 1 || optionBars[0].Close != 11.2 {
 		t.Fatalf("OptionAggregates failed: bars=%#v err=%v", optionBars, err)
 	}
 
-	optionQuotes, err := client.OptionQuotes("O:SPY251219C00650000", QuoteRequest{Limit: 1})
+	optionQuotes, err := client.OptionQuotes(ctx, "O:SPY251219C00650000", QuoteRequest{Limit: 1})
 	if err != nil || len(optionQuotes) != 1 || optionQuotes[0].SequenceNumber != 31 {
 		t.Fatalf("OptionQuotes failed: quotes=%#v err=%v", optionQuotes, err)
 	}
 
-	optionTrades, err := client.OptionTrades("O:SPY251219C00650000", TradeRequest{Limit: 1})
+	optionTrades, err := client.OptionTrades(ctx, "O:SPY251219C00650000", TradeRequest{Limit: 1})
 	if err != nil || len(optionTrades) != 1 || optionTrades[0].Price != 11.15 {
 		t.Fatalf("OptionTrades failed: trades=%#v err=%v", optionTrades, err)
 	}
@@ -655,7 +656,7 @@ func TestOptionChainReturnsHTTPStatusErrorOnAPIError(t *testing.T) {
 		t.Fatalf("New failed: %v", err)
 	}
 
-	_, err = client.OptionChain(OptionChainRequest{Underlying: "EWH", Limit: 500})
+	_, err = client.OptionChain(context.Background(), OptionChainRequest{Underlying: "EWH", Limit: 500})
 	if err == nil {
 		t.Fatal("expected option chain error")
 	}

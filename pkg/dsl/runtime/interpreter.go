@@ -44,7 +44,7 @@ type Interpreter struct {
 	seriesMap map[string]*Series
 
 	// Builtins registered at init time.
-	builtins     map[string]Value
+	builtins map[string]Value
 	// propertyFns holds zero-arg native functions that are auto-invoked when
 	// accessed as dot-properties (e.g. strategy.position_size, strategy.equity).
 	propertyFns  map[string]func() Value

@@ -26,15 +26,15 @@ const (
 type polygonClient interface {
 	DownloadStockMinuteAggregates(ctx context.Context, date time.Time, force bool) (string, error)
 	DownloadOptionMinuteAggregates(ctx context.Context, date time.Time, force bool) (string, error)
-	StockSnapshot(symbol string) (*polygonpkg.StockSnapshot, error)
-	StockAggregates(req polygonpkg.AggregateRequest) ([]polygonpkg.AggregateBar, error)
-	StockQuotes(symbol string, req polygonpkg.QuoteRequest) ([]polygonpkg.Quote, error)
-	StockTrades(symbol string, req polygonpkg.TradeRequest) ([]polygonpkg.Trade, error)
-	OptionContract(ticker string) (*polygonpkg.OptionContract, error)
-	OptionChain(req polygonpkg.OptionChainRequest) ([]polygonpkg.OptionChainContract, error)
-	OptionAggregates(req polygonpkg.AggregateRequest) ([]polygonpkg.AggregateBar, error)
-	OptionQuotes(ticker string, req polygonpkg.QuoteRequest) ([]polygonpkg.Quote, error)
-	OptionTrades(ticker string, req polygonpkg.TradeRequest) ([]polygonpkg.Trade, error)
+	StockSnapshot(ctx context.Context, symbol string) (*polygonpkg.StockSnapshot, error)
+	StockAggregates(ctx context.Context, req polygonpkg.AggregateRequest) ([]polygonpkg.AggregateBar, error)
+	StockQuotes(ctx context.Context, symbol string, req polygonpkg.QuoteRequest) ([]polygonpkg.Quote, error)
+	StockTrades(ctx context.Context, symbol string, req polygonpkg.TradeRequest) ([]polygonpkg.Trade, error)
+	OptionContract(ctx context.Context, ticker string) (*polygonpkg.OptionContract, error)
+	OptionChain(ctx context.Context, req polygonpkg.OptionChainRequest) ([]polygonpkg.OptionChainContract, error)
+	OptionAggregates(ctx context.Context, req polygonpkg.AggregateRequest) ([]polygonpkg.AggregateBar, error)
+	OptionQuotes(ctx context.Context, ticker string, req polygonpkg.QuoteRequest) ([]polygonpkg.Quote, error)
+	OptionTrades(ctx context.Context, ticker string, req polygonpkg.TradeRequest) ([]polygonpkg.Trade, error)
 }
 
 type PolygonService struct {
@@ -66,7 +66,7 @@ func (s *PolygonService) DownloadOptionMinuteAggregates(ctx context.Context, dat
 func (s *PolygonService) StockSnapshot(ctx context.Context, symbol string) (*polygonpkg.StockSnapshot, error) {
 	key := s.cacheKey("stock-snapshot", strings.ToUpper(strings.TrimSpace(symbol)))
 	return cacheFetch(ctx, s.cache, key, polygonRealtimeTTL, func() (*polygonpkg.StockSnapshot, error) {
-		return s.client.StockSnapshot(symbol)
+		return s.client.StockSnapshot(ctx, symbol)
 	})
 }
 
@@ -74,7 +74,7 @@ func (s *PolygonService) StockAggregates(ctx context.Context, req polygonpkg.Agg
 	ttl := s.aggregateTTL(req)
 	key := s.cacheKey("stock-aggregates", req)
 	return cacheFetch(ctx, s.cache, key, ttl, func() ([]polygonpkg.AggregateBar, error) {
-		return s.client.StockAggregates(req)
+		return s.client.StockAggregates(ctx, req)
 	})
 }
 
@@ -82,7 +82,7 @@ func (s *PolygonService) StockQuotes(ctx context.Context, symbol string, req pol
 	ttl := s.quoteTradeTTL(req.Timestamp, req.TimestampGte, req.TimestampGt, req.TimestampLte, req.TimestampLt)
 	key := s.cacheKey("stock-quotes", strings.ToUpper(strings.TrimSpace(symbol)), req)
 	return cacheFetch(ctx, s.cache, key, ttl, func() ([]polygonpkg.Quote, error) {
-		return s.client.StockQuotes(symbol, req)
+		return s.client.StockQuotes(ctx, symbol, req)
 	})
 }
 
@@ -90,21 +90,21 @@ func (s *PolygonService) StockTrades(ctx context.Context, symbol string, req pol
 	ttl := s.quoteTradeTTL(req.Timestamp, req.TimestampGte, req.TimestampGt, req.TimestampLte, req.TimestampLt)
 	key := s.cacheKey("stock-trades", strings.ToUpper(strings.TrimSpace(symbol)), req)
 	return cacheFetch(ctx, s.cache, key, ttl, func() ([]polygonpkg.Trade, error) {
-		return s.client.StockTrades(symbol, req)
+		return s.client.StockTrades(ctx, symbol, req)
 	})
 }
 
 func (s *PolygonService) OptionContract(ctx context.Context, ticker string) (*polygonpkg.OptionContract, error) {
 	key := s.cacheKey("option-contract", strings.ToUpper(strings.TrimSpace(ticker)))
 	return cacheFetch(ctx, s.cache, key, polygonContractTTL, func() (*polygonpkg.OptionContract, error) {
-		return s.client.OptionContract(ticker)
+		return s.client.OptionContract(ctx, ticker)
 	})
 }
 
 func (s *PolygonService) OptionChain(ctx context.Context, req polygonpkg.OptionChainRequest) ([]polygonpkg.OptionChainContract, error) {
 	key := s.cacheKey("option-chain", req)
 	return cacheFetch(ctx, s.cache, key, polygonRealtimeTTL, func() ([]polygonpkg.OptionChainContract, error) {
-		return s.client.OptionChain(req)
+		return s.client.OptionChain(ctx, req)
 	})
 }
 
@@ -112,7 +112,7 @@ func (s *PolygonService) OptionAggregates(ctx context.Context, req polygonpkg.Ag
 	ttl := s.aggregateTTL(req)
 	key := s.cacheKey("option-aggregates", req)
 	return cacheFetch(ctx, s.cache, key, ttl, func() ([]polygonpkg.AggregateBar, error) {
-		return s.client.OptionAggregates(req)
+		return s.client.OptionAggregates(ctx, req)
 	})
 }
 
@@ -120,7 +120,7 @@ func (s *PolygonService) OptionQuotes(ctx context.Context, ticker string, req po
 	ttl := s.quoteTradeTTL(req.Timestamp, req.TimestampGte, req.TimestampGt, req.TimestampLte, req.TimestampLt)
 	key := s.cacheKey("option-quotes", strings.ToUpper(strings.TrimSpace(ticker)), req)
 	return cacheFetch(ctx, s.cache, key, ttl, func() ([]polygonpkg.Quote, error) {
-		return s.client.OptionQuotes(ticker, req)
+		return s.client.OptionQuotes(ctx, ticker, req)
 	})
 }
 
@@ -128,7 +128,7 @@ func (s *PolygonService) OptionTrades(ctx context.Context, ticker string, req po
 	ttl := s.quoteTradeTTL(req.Timestamp, req.TimestampGte, req.TimestampGt, req.TimestampLte, req.TimestampLt)
 	key := s.cacheKey("option-trades", strings.ToUpper(strings.TrimSpace(ticker)), req)
 	return cacheFetch(ctx, s.cache, key, ttl, func() ([]polygonpkg.Trade, error) {
-		return s.client.OptionTrades(ticker, req)
+		return s.client.OptionTrades(ctx, ticker, req)
 	})
 }
 

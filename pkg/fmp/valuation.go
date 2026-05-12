@@ -8,12 +8,11 @@ import (
 	"net/url"
 )
 
-
 // DCF is a row returned by the FMP DCF endpoint.
 type DCF struct {
-	Symbol string `json:"symbol"`
-	Date string `json:"date"`
-	DCF float64 `json:"dcf"`
+	Symbol     string  `json:"symbol"`
+	Date       string  `json:"date"`
+	DCF        float64 `json:"dcf"`
 	Stockprice float64 `json:"Stock Price"`
 }
 

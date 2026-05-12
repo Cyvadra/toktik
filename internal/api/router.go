@@ -157,13 +157,6 @@ func registerRoutes(v1 *gin.RouterGroup, h *Handler) {
 	indicatorsGroup.GET("/presets", h.ListIndicatorPresets)
 	indicatorsGroup.POST("/series", h.RunIndicatorSeries)
 
-	co := v1.Group("/crypto-options")
-	co.GET("/bars", h.GetBars)
-	co.GET("/symbols", h.GetSymbols)
-	co.GET("/greeks", h.GetGreeks)
-	co.GET("/chain", h.GetCryptoOptionChain)
-	co.POST("/backtest", h.RunBacktest)
-
 	markets := v1.Group("/markets")
 	marketCryptoOptions := markets.Group("/crypto-options")
 	marketCryptoOptions.GET("/bars", h.GetBars)

@@ -989,8 +989,10 @@ func (s *FeatureService) backfillUSOptionsSurfaceScope(ctx context.Context, unde
 	return featureScopeResult{Status: "written", RowsWritten: rowsWritten, ScopesReplaced: replaced}, nil
 }
 
-func (s *FeatureService) backfillCryptoOptionsLiquidityScope(ctx context.Context, underlying string, from, to time.Time, replace bool) (featureScopeResult, error) {
-	hasRows, err := s.precomputedSurfaceRowsExist(ctx, featureLiquidityTable, "crypto-options", underlying, from, to)
+func (s *FeatureService) backfillLiquidityScope(ctx context.Context, market, underlying string, from, to time.Time, replace bool,
+	computeFn func(context.Context, string, time.Time, time.Time, time.Time, int32, int32) ([]cryptoLiquidityAggregateRow, error),
+) (featureScopeResult, error) {
+	hasRows, err := s.precomputedSurfaceRowsExist(ctx, featureLiquidityTable, market, underlying, from, to)
 	if err != nil {
 		return featureScopeResult{}, featureBackfillScopeError{Stage: "liquidity-check-existing", Err: err}
 	}
@@ -999,50 +1001,30 @@ func (s *FeatureService) backfillCryptoOptionsLiquidityScope(ctx context.Context
 	}
 	replaced := 0
 	if replace && hasRows {
-		if err := s.deletePrecomputedSurfaceRows(ctx, featureLiquidityTable, "crypto-options", underlying, from, to); err != nil {
+		if err := s.deletePrecomputedSurfaceRows(ctx, featureLiquidityTable, market, underlying, from, to); err != nil {
 			return featureScopeResult{}, featureBackfillScopeError{Stage: "liquidity-delete-scope", Err: err}
 		}
 		replaced = 1
 	}
-	aggregates, err := s.queryCryptoOptionsLiquidityAggregates(ctx, underlying, from, to, time.Time{}, 0, 0)
+	aggregates, err := computeFn(ctx, underlying, from, to, time.Time{}, 0, 0)
 	if err != nil {
 		return featureScopeResult{}, featureBackfillScopeError{Stage: "liquidity-compute", Err: err}
 	}
 	if len(aggregates) == 0 {
 		return featureScopeResult{Status: "empty", ScopesReplaced: replaced}, nil
 	}
-	if err := s.insertPrecomputedLiquidityRows(ctx, "crypto-options", underlying, aggregates); err != nil {
+	if err := s.insertPrecomputedLiquidityRows(ctx, market, underlying, aggregates); err != nil {
 		return featureScopeResult{}, featureBackfillScopeError{Stage: "liquidity-insert-rows", Err: err}
 	}
 	return featureScopeResult{Status: "written", RowsWritten: len(aggregates), ScopesReplaced: replaced}, nil
 }
 
+func (s *FeatureService) backfillCryptoOptionsLiquidityScope(ctx context.Context, underlying string, from, to time.Time, replace bool) (featureScopeResult, error) {
+	return s.backfillLiquidityScope(ctx, "crypto-options", underlying, from, to, replace, s.queryCryptoOptionsLiquidityAggregates)
+}
+
 func (s *FeatureService) backfillUSOptionsLiquidityScope(ctx context.Context, underlying string, from, to time.Time, replace bool) (featureScopeResult, error) {
-	hasRows, err := s.precomputedSurfaceRowsExist(ctx, featureLiquidityTable, "us-options", underlying, from, to)
-	if err != nil {
-		return featureScopeResult{}, featureBackfillScopeError{Stage: "liquidity-check-existing", Err: err}
-	}
-	if hasRows && !replace {
-		return featureScopeResult{Status: "skipped"}, nil
-	}
-	replaced := 0
-	if replace && hasRows {
-		if err := s.deletePrecomputedSurfaceRows(ctx, featureLiquidityTable, "us-options", underlying, from, to); err != nil {
-			return featureScopeResult{}, featureBackfillScopeError{Stage: "liquidity-delete-scope", Err: err}
-		}
-		replaced = 1
-	}
-	aggregates, err := s.queryUSOptionsLiquidityAggregates(ctx, underlying, from, to, time.Time{}, 0, 0)
-	if err != nil {
-		return featureScopeResult{}, featureBackfillScopeError{Stage: "liquidity-compute", Err: err}
-	}
-	if len(aggregates) == 0 {
-		return featureScopeResult{Status: "empty", ScopesReplaced: replaced}, nil
-	}
-	if err := s.insertPrecomputedLiquidityRows(ctx, "us-options", underlying, aggregates); err != nil {
-		return featureScopeResult{}, featureBackfillScopeError{Stage: "liquidity-insert-rows", Err: err}
-	}
-	return featureScopeResult{Status: "written", RowsWritten: len(aggregates), ScopesReplaced: replaced}, nil
+	return s.backfillLiquidityScope(ctx, "us-options", underlying, from, to, replace, s.queryUSOptionsLiquidityAggregates)
 }
 
 func (s *FeatureService) backfillDailyPanelScope(ctx context.Context, market, underlying string, from, to time.Time, lookbackDays int, minDTE, maxDTE int32, replace bool) (featureScopeResult, error) {

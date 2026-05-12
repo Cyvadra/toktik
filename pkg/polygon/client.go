@@ -368,13 +368,13 @@ func (c *Client) SDKClient() *gen.ClientWithResponses {
 	return c.sdk
 }
 
-func (c *Client) StockSnapshot(symbol string) (*StockSnapshot, error) {
+func (c *Client) StockSnapshot(ctx context.Context, symbol string) (*StockSnapshot, error) {
 	symbol = normalizeTicker(symbol)
 	if symbol == "" {
 		return nil, fmt.Errorf("symbol is required")
 	}
 
-	resp, err := c.sdk.GetStocksSnapshotTickerWithResponse(context.Background(), symbol)
+	resp, err := c.sdk.GetStocksSnapshotTickerWithResponse(ctx, symbol)
 	if err != nil {
 		return nil, fmt.Errorf("query massive stock snapshot: %w", err)
 	}
@@ -432,7 +432,7 @@ func (c *Client) StockSnapshot(symbol string) (*StockSnapshot, error) {
 	return snapshot, nil
 }
 
-func (c *Client) StockAggregates(req AggregateRequest) ([]AggregateBar, error) {
+func (c *Client) StockAggregates(ctx context.Context, req AggregateRequest) ([]AggregateBar, error) {
 	if err := validateAggregateRequest(req); err != nil {
 		return nil, fmt.Errorf("stock aggregates: %w", err)
 	}
@@ -450,7 +450,7 @@ func (c *Client) StockAggregates(req AggregateRequest) ([]AggregateBar, error) {
 	}
 
 	resp, err := c.sdk.GetStocksAggregatesWithResponse(
-		context.Background(),
+		ctx,
 		normalizeTicker(req.Ticker),
 		normalizedMultiplier(req.Multiplier),
 		gen.GetStocksAggregatesParamsTimespan(strings.ToLower(strings.TrimSpace(req.Timespan))),
@@ -487,7 +487,7 @@ func (c *Client) StockAggregates(req AggregateRequest) ([]AggregateBar, error) {
 		}
 	}
 	if c.config.Pagination && resp.JSON200.NextUrl != nil {
-		pages, err := fetchNextPages[aggregatePageItem](c, *resp.JSON200.NextUrl)
+		pages, err := fetchNextPages[aggregatePageItem](ctx, c, *resp.JSON200.NextUrl)
 		if err != nil {
 			return nil, err
 		}
@@ -510,13 +510,13 @@ func (c *Client) StockAggregates(req AggregateRequest) ([]AggregateBar, error) {
 	return bars, nil
 }
 
-func (c *Client) StockQuotes(symbol string, req QuoteRequest) ([]Quote, error) {
+func (c *Client) StockQuotes(ctx context.Context, symbol string, req QuoteRequest) ([]Quote, error) {
 	symbol = normalizeTicker(symbol)
 	if symbol == "" {
 		return nil, fmt.Errorf("stock quotes: symbol is required")
 	}
 	params := buildStockQuoteParams(req)
-	resp, err := c.sdk.GetStocksQuotesWithResponse(context.Background(), symbol, params)
+	resp, err := c.sdk.GetStocksQuotesWithResponse(ctx, symbol, params)
 	if err != nil {
 		return nil, fmt.Errorf("query massive stock quotes: %w", err)
 	}
@@ -535,7 +535,7 @@ func (c *Client) StockQuotes(symbol string, req QuoteRequest) ([]Quote, error) {
 		}
 	}
 	if c.config.Pagination && resp.JSON200 != nil && resp.JSON200.NextUrl != nil {
-		pages, err := fetchNextPages[quotePageItem](c, *resp.JSON200.NextUrl)
+		pages, err := fetchNextPages[quotePageItem](ctx, c, *resp.JSON200.NextUrl)
 		if err != nil {
 			return nil, err
 		}
@@ -546,13 +546,13 @@ func (c *Client) StockQuotes(symbol string, req QuoteRequest) ([]Quote, error) {
 	return quotes, nil
 }
 
-func (c *Client) StockTrades(symbol string, req TradeRequest) ([]Trade, error) {
+func (c *Client) StockTrades(ctx context.Context, symbol string, req TradeRequest) ([]Trade, error) {
 	symbol = normalizeTicker(symbol)
 	if symbol == "" {
 		return nil, fmt.Errorf("stock trades: symbol is required")
 	}
 	params := buildStockTradeParams(req)
-	resp, err := c.sdk.GetStocksTradesWithResponse(context.Background(), symbol, params)
+	resp, err := c.sdk.GetStocksTradesWithResponse(ctx, symbol, params)
 	if err != nil {
 		return nil, fmt.Errorf("query massive stock trades: %w", err)
 	}
@@ -572,7 +572,7 @@ func (c *Client) StockTrades(symbol string, req TradeRequest) ([]Trade, error) {
 		}
 	}
 	if c.config.Pagination && resp.JSON200 != nil && resp.JSON200.NextUrl != nil {
-		pages, err := fetchNextPages[tradePageItem](c, *resp.JSON200.NextUrl)
+		pages, err := fetchNextPages[tradePageItem](ctx, c, *resp.JSON200.NextUrl)
 		if err != nil {
 			return nil, err
 		}
@@ -583,12 +583,12 @@ func (c *Client) StockTrades(symbol string, req TradeRequest) ([]Trade, error) {
 	return trades, nil
 }
 
-func (c *Client) OptionContract(ticker string) (*OptionContract, error) {
+func (c *Client) OptionContract(ctx context.Context, ticker string) (*OptionContract, error) {
 	ticker = normalizeTicker(ticker)
 	if ticker == "" {
 		return nil, fmt.Errorf("option contract: ticker is required")
 	}
-	resp, err := c.sdk.GetOptionsContractWithResponse(context.Background(), ticker, nil)
+	resp, err := c.sdk.GetOptionsContractWithResponse(ctx, ticker, nil)
 	if err != nil {
 		return nil, fmt.Errorf("query massive option contract: %w", err)
 	}
@@ -613,7 +613,7 @@ func (c *Client) OptionContract(ticker string) (*OptionContract, error) {
 	}, nil
 }
 
-func (c *Client) OptionChain(req OptionChainRequest) ([]OptionChainContract, error) {
+func (c *Client) OptionChain(ctx context.Context, req OptionChainRequest) ([]OptionChainContract, error) {
 	underlying := normalizeTicker(req.Underlying)
 	if underlying == "" {
 		return nil, fmt.Errorf("option chain: underlying is required")
@@ -655,7 +655,7 @@ func (c *Client) OptionChain(req OptionChainRequest) ([]OptionChainContract, err
 		params.Limit = rest.Ptr(req.Limit)
 	}
 
-	resp, err := c.sdk.GetOptionsChainWithResponse(context.Background(), underlying, params)
+	resp, err := c.sdk.GetOptionsChainWithResponse(ctx, underlying, params)
 	if err != nil {
 		return nil, fmt.Errorf("query massive option chain: %w", err)
 	}
@@ -674,7 +674,7 @@ func (c *Client) OptionChain(req OptionChainRequest) ([]OptionChainContract, err
 		}
 	}
 	if c.config.Pagination && resp.JSON200 != nil && resp.JSON200.NextUrl != nil {
-		pages, err := fetchNextPages[optionContractPageItem](c, *resp.JSON200.NextUrl)
+		pages, err := fetchNextPages[optionContractPageItem](ctx, c, *resp.JSON200.NextUrl)
 		if err != nil {
 			return nil, err
 		}
@@ -685,7 +685,7 @@ func (c *Client) OptionChain(req OptionChainRequest) ([]OptionChainContract, err
 	return contracts, nil
 }
 
-func (c *Client) OptionAggregates(req AggregateRequest) ([]AggregateBar, error) {
+func (c *Client) OptionAggregates(ctx context.Context, req AggregateRequest) ([]AggregateBar, error) {
 	if err := validateAggregateRequest(req); err != nil {
 		return nil, fmt.Errorf("option aggregates: %w", err)
 	}
@@ -702,7 +702,7 @@ func (c *Client) OptionAggregates(req AggregateRequest) ([]AggregateBar, error) 
 		params.Limit = rest.Ptr(req.Limit)
 	}
 	resp, err := c.sdk.GetOptionsAggregatesWithResponse(
-		context.Background(),
+		ctx,
 		normalizeTicker(req.Ticker),
 		normalizedMultiplier(req.Multiplier),
 		gen.GetOptionsAggregatesParamsTimespan(strings.ToLower(strings.TrimSpace(req.Timespan))),
@@ -739,13 +739,13 @@ func (c *Client) OptionAggregates(req AggregateRequest) ([]AggregateBar, error) 
 	return bars, nil
 }
 
-func (c *Client) OptionQuotes(ticker string, req QuoteRequest) ([]Quote, error) {
+func (c *Client) OptionQuotes(ctx context.Context, ticker string, req QuoteRequest) ([]Quote, error) {
 	ticker = normalizeTicker(ticker)
 	if ticker == "" {
 		return nil, fmt.Errorf("option quotes: ticker is required")
 	}
 	params := buildOptionQuoteParams(req)
-	resp, err := c.sdk.GetOptionsQuotesWithResponse(context.Background(), ticker, params)
+	resp, err := c.sdk.GetOptionsQuotesWithResponse(ctx, ticker, params)
 	if err != nil {
 		return nil, fmt.Errorf("query massive option quotes: %w", err)
 	}
@@ -763,7 +763,7 @@ func (c *Client) OptionQuotes(ticker string, req QuoteRequest) ([]Quote, error) 
 		}
 	}
 	if c.config.Pagination && resp.JSON200 != nil && resp.JSON200.NextUrl != nil {
-		pages, err := fetchNextPages[quotePageItem](c, *resp.JSON200.NextUrl)
+		pages, err := fetchNextPages[quotePageItem](ctx, c, *resp.JSON200.NextUrl)
 		if err != nil {
 			return nil, err
 		}
@@ -774,13 +774,13 @@ func (c *Client) OptionQuotes(ticker string, req QuoteRequest) ([]Quote, error) 
 	return quotes, nil
 }
 
-func (c *Client) OptionTrades(ticker string, req TradeRequest) ([]Trade, error) {
+func (c *Client) OptionTrades(ctx context.Context, ticker string, req TradeRequest) ([]Trade, error) {
 	ticker = normalizeTicker(ticker)
 	if ticker == "" {
 		return nil, fmt.Errorf("option trades: ticker is required")
 	}
 	params := buildOptionTradeParams(req)
-	resp, err := c.sdk.GetOptionsTradesWithResponse(context.Background(), ticker, params)
+	resp, err := c.sdk.GetOptionsTradesWithResponse(ctx, ticker, params)
 	if err != nil {
 		return nil, fmt.Errorf("query massive option trades: %w", err)
 	}
@@ -798,7 +798,7 @@ func (c *Client) OptionTrades(ticker string, req TradeRequest) ([]Trade, error) 
 		}
 	}
 	if c.config.Pagination && resp.JSON200 != nil && resp.JSON200.NextUrl != nil {
-		pages, err := fetchNextPages[tradePageItem](c, *resp.JSON200.NextUrl)
+		pages, err := fetchNextPages[tradePageItem](ctx, c, *resp.JSON200.NextUrl)
 		if err != nil {
 			return nil, err
 		}
@@ -815,11 +815,11 @@ func (c *Client) addHeaders(_ context.Context, req *http.Request) error {
 	return nil
 }
 
-func fetchNextPages[T any](c *Client, nextURL string) ([]T, error) {
+func fetchNextPages[T any](ctx context.Context, c *Client, nextURL string) ([]T, error) {
 	results := make([]T, 0)
 	current := strings.TrimSpace(nextURL)
 	for c.config.Pagination && current != "" {
-		page, err := fetchPage[T](c, current)
+		page, err := fetchPage[T](ctx, c, current)
 		if err != nil {
 			return nil, err
 		}
@@ -832,12 +832,12 @@ func fetchNextPages[T any](c *Client, nextURL string) ([]T, error) {
 	return results, nil
 }
 
-func fetchPage[T any](c *Client, nextURL string) (*pagedResults[T], error) {
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, nextURL, nil)
+func fetchPage[T any](ctx context.Context, c *Client, nextURL string) (*pagedResults[T], error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, nextURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("build next page request: %w", err)
 	}
-	if err := c.addHeaders(context.Background(), req); err != nil {
+	if err := c.addHeaders(ctx, req); err != nil {
 		return nil, err
 	}
 	resp, err := c.httpClient.Do(req)

@@ -13,6 +13,12 @@ import (
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+	"github.com/Cyvadra/toktik/internal/importledger"
+)
+
+const (
+	stockImporterName  = "us-market-import/stocks"
+	optionImporterName = "us-market-import/options"
 )
 
 type ImportConfig struct {
@@ -44,6 +50,9 @@ func InitializeImportStorage(ctx context.Context, conn driver.Conn, ddlPath stri
 func InitializeImportStorageWithOptions(ctx context.Context, conn driver.Conn, ddlPath string, opts ImportStorageOptions) (SessionMap, error) {
 	if err := InitSchema(ctx, conn, ddlPath); err != nil {
 		return nil, fmt.Errorf("init schema: %w", err)
+	}
+	if err := importledger.EnsureSchema(ctx, conn); err != nil {
+		return nil, fmt.Errorf("ensure import ledger schema: %w", err)
 	}
 	if err := EnsureOptionGreeksColumns(ctx, conn); err != nil {
 		return nil, fmt.Errorf("ensure option greeks columns: %w", err)
@@ -221,10 +230,23 @@ func ImportOptionFile(ctx context.Context, dsn, path string, batchSize int, skip
 	if err != nil {
 		return 0, false, fmt.Errorf("connect: %w", err)
 	}
+	ledger := importledger.New(conn)
+	sourceHash, err := importledger.SourceHash(path)
+	if err != nil {
+		return 0, false, fmt.Errorf("hash source file: %w", err)
+	}
 
 	marketDate, err := ExtractDateFromFilename(path)
 	if err != nil {
 		return 0, false, fmt.Errorf("extract market date: %w", err)
+	}
+	scopeKey := marketDate.Format("2006-01-02")
+	if !replaceDates {
+		if succeeded, err := ledger.AlreadySucceeded(ctx, optionImporterName, sourceHash, scopeKey); err != nil {
+			return 0, false, fmt.Errorf("check import ledger: %w", err)
+		} else if succeeded {
+			return 0, true, nil
+		}
 	}
 
 	if !replaceDates && skipExisting {
@@ -233,13 +255,17 @@ func ImportOptionFile(ctx context.Context, dsn, path string, batchSize int, skip
 			return 0, false, fmt.Errorf("check existing: %w", err)
 		}
 		if count > 0 {
-			return 0, true, nil
+			return 0, false, fmt.Errorf("%d option rows already exist for %s but no successful import ledger entry matches this source; rerun with replace-dates to rebuild safely", count, scopeKey)
 		}
 	}
 	if replaceDates {
 		if err := ReplaceOptionMarketDate(ctx, conn, marketDate); err != nil {
 			return 0, false, fmt.Errorf("replace existing option date: %w", err)
 		}
+	}
+	importID, err := ledger.Start(ctx, importledger.StartRequest{ImporterName: optionImporterName, SourceKey: sourceHash, ScopeKey: scopeKey, SourceHash: sourceHash})
+	if err != nil {
+		return 0, false, fmt.Errorf("start import ledger: %w", err)
 	}
 
 	stockCloses, missingSymbols, err := ValidateOptionStockCoverage(ctx, conn, path, marketDate)
@@ -260,9 +286,11 @@ func ImportOptionFile(ctx context.Context, dsn, path string, batchSize int, skip
 
 	rows, err := InsertOptionBars(ctx, conn, enrichedBarCh, batchSize)
 	if err != nil {
+		_ = ledger.MarkFailed(ctx, importledger.CompletionRequest{ImporterName: optionImporterName, SourceKey: sourceHash, ScopeKey: scopeKey, ImportID: importID, SourceHash: sourceHash, RowsInserted: importledger.NonNegativeRows(rows), ErrorMessage: err.Error()})
 		return rows, false, fmt.Errorf("insert: %w", err)
 	}
 	if *readErr != nil {
+		_ = ledger.MarkFailed(ctx, importledger.CompletionRequest{ImporterName: optionImporterName, SourceKey: sourceHash, ScopeKey: scopeKey, ImportID: importID, SourceHash: sourceHash, RowsInserted: importledger.NonNegativeRows(rows), ErrorMessage: (*readErr).Error()})
 		return rows, false, fmt.Errorf("read: %w", *readErr)
 	}
 	if *enrichWarn != nil {
@@ -270,6 +298,9 @@ func ImportOptionFile(ctx context.Context, dsn, path string, batchSize int, skip
 	}
 
 	log.Printf("[IMPORT] %s: %d option rows with enrichment in %s", baseName, rows, time.Since(fileStart).Round(time.Second))
+	if err := ledger.MarkSuccess(ctx, importledger.CompletionRequest{ImporterName: optionImporterName, SourceKey: sourceHash, ScopeKey: scopeKey, ImportID: importID, SourceHash: sourceHash, RowsInserted: uint64(rows)}); err != nil {
+		return rows, false, fmt.Errorf("mark import success: %w", err)
+	}
 	return rows, false, nil
 }
 
@@ -282,26 +313,40 @@ func ImportStockFile(ctx context.Context, dsn, path string, batchSize int, skipE
 	if err != nil {
 		return 0, false, fmt.Errorf("connect: %w", err)
 	}
+	ledger := importledger.New(conn)
+	sourceHash, err := importledger.SourceHash(path)
+	if err != nil {
+		return 0, false, fmt.Errorf("hash source file: %w", err)
+	}
+	marketDate, err := ExtractDateFromFilename(path)
+	if err != nil {
+		return 0, false, fmt.Errorf("extract market date: %w", err)
+	}
+	scopeKey := marketDate.Format("2006-01-02")
+	if !replaceDates {
+		if succeeded, err := ledger.AlreadySucceeded(ctx, stockImporterName, sourceHash, scopeKey); err != nil {
+			return 0, false, fmt.Errorf("check import ledger: %w", err)
+		} else if succeeded {
+			return 0, true, nil
+		}
+	}
 
 	if replaceDates {
-		marketDate, err := ExtractDateFromFilename(path)
-		if err != nil {
-			return 0, false, fmt.Errorf("extract market date: %w", err)
-		}
 		if err := ReplaceStockMarketDate(ctx, conn, marketDate); err != nil {
 			return 0, false, fmt.Errorf("replace existing stock date: %w", err)
 		}
 	} else if skipExisting {
-		marketDate, err := ExtractDateFromFilename(path)
-		if err == nil {
-			count, err := CountExistingStockBars(ctx, conn, marketDate)
-			if err != nil {
-				return 0, false, fmt.Errorf("check existing: %w", err)
-			}
-			if count > 0 {
-				return 0, true, nil
-			}
+		count, err := CountExistingStockBars(ctx, conn, marketDate)
+		if err != nil {
+			return 0, false, fmt.Errorf("check existing: %w", err)
 		}
+		if count > 0 {
+			return 0, false, fmt.Errorf("%d stock rows already exist for %s but no successful import ledger entry matches this source; rerun with replace-dates to rebuild safely", count, scopeKey)
+		}
+	}
+	importID, err := ledger.Start(ctx, importledger.StartRequest{ImporterName: stockImporterName, SourceKey: sourceHash, ScopeKey: scopeKey, SourceHash: sourceHash})
+	if err != nil {
+		return 0, false, fmt.Errorf("start import ledger: %w", err)
 	}
 
 	barCh, readErr, err := ParseStockCSV(path)
@@ -312,12 +357,17 @@ func ImportStockFile(ctx context.Context, dsn, path string, batchSize int, skipE
 	sessionedBarCh := EnrichStockBarsWithSession(barCh, sessions)
 	rows, err := InsertStockBars(ctx, conn, sessionedBarCh, batchSize)
 	if err != nil {
+		_ = ledger.MarkFailed(ctx, importledger.CompletionRequest{ImporterName: stockImporterName, SourceKey: sourceHash, ScopeKey: scopeKey, ImportID: importID, SourceHash: sourceHash, RowsInserted: importledger.NonNegativeRows(rows), ErrorMessage: err.Error()})
 		return rows, false, fmt.Errorf("insert: %w", err)
 	}
 	if *readErr != nil {
+		_ = ledger.MarkFailed(ctx, importledger.CompletionRequest{ImporterName: stockImporterName, SourceKey: sourceHash, ScopeKey: scopeKey, ImportID: importID, SourceHash: sourceHash, RowsInserted: importledger.NonNegativeRows(rows), ErrorMessage: (*readErr).Error()})
 		return rows, false, fmt.Errorf("read: %w", *readErr)
 	}
 
 	log.Printf("[IMPORT] %s: %d stock rows in %s", baseName, rows, time.Since(fileStart).Round(time.Second))
+	if err := ledger.MarkSuccess(ctx, importledger.CompletionRequest{ImporterName: stockImporterName, SourceKey: sourceHash, ScopeKey: scopeKey, ImportID: importID, SourceHash: sourceHash, RowsInserted: uint64(rows)}); err != nil {
+		return rows, false, fmt.Errorf("mark import success: %w", err)
+	}
 	return rows, false, nil
 }

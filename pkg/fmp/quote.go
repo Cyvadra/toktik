@@ -7,34 +7,33 @@ import (
 	"net/url"
 )
 
-
 // Quote is a row returned by the FMP Quote endpoint.
 type Quote struct {
-	Symbol string `json:"symbol"`
-	Name string `json:"name"`
-	Price float64 `json:"price"`
+	Symbol           string  `json:"symbol"`
+	Name             string  `json:"name"`
+	Price            float64 `json:"price"`
 	ChangePercentage float64 `json:"changePercentage"`
-	Change float64 `json:"change"`
-	Volume int64 `json:"volume"`
-	DayLow float64 `json:"dayLow"`
-	DayHigh float64 `json:"dayHigh"`
-	YearHigh float64 `json:"yearHigh"`
-	YearLow float64 `json:"yearLow"`
-	MarketCap int64 `json:"marketCap"`
-	PriceAvg50 float64 `json:"priceAvg50"`
-	PriceAvg200 float64 `json:"priceAvg200"`
-	Exchange string `json:"exchange"`
-	Open float64 `json:"open"`
-	PreviousClose float64 `json:"previousClose"`
-	Timestamp int64 `json:"timestamp"`
+	Change           float64 `json:"change"`
+	Volume           int64   `json:"volume"`
+	DayLow           float64 `json:"dayLow"`
+	DayHigh          float64 `json:"dayHigh"`
+	YearHigh         float64 `json:"yearHigh"`
+	YearLow          float64 `json:"yearLow"`
+	MarketCap        int64   `json:"marketCap"`
+	PriceAvg50       float64 `json:"priceAvg50"`
+	PriceAvg200      float64 `json:"priceAvg200"`
+	Exchange         string  `json:"exchange"`
+	Open             float64 `json:"open"`
+	PreviousClose    float64 `json:"previousClose"`
+	Timestamp        int64   `json:"timestamp"`
 }
 
 // QuoteShort is a row returned by the FMP QuoteShort endpoint.
 type QuoteShort struct {
-	Symbol string `json:"symbol"`
-	Price float64 `json:"price"`
+	Symbol string  `json:"symbol"`
+	Price  float64 `json:"price"`
 	Change float64 `json:"change"`
-	Volume int64 `json:"volume"`
+	Volume int64   `json:"volume"`
 }
 
 // Quote Quote returns the current real-time quote for a symbol.

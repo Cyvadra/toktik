@@ -1,4 +1,5 @@
-- pkg/tigerapi wraps github.com/tigerfintech/openapi-go-sdk for US stock and US option market data.
+- pkg/tigerapi wraps github.com/tigerfintech/openapi-go-sdk for US stock and US option market data only when built with `-tags tigerapi`.
+- Default builds use pkg/tigerapi/stub.go and do not require the local openapi-go-sdk replace.
 - Preferred tigerapi config source is toktik.yaml under tiger.*; TIGEROPEN_* env vars still override when present.
 - Runtime config now includes tiger_id, private_key, account, license, environment, language, timezone, timeout_seconds, enable_dynamic_domain, token, token_file, server_url, and device_id.
 - pkg/tigerapi also supports TIGEROPEN_TOKEN_FILE and will fall back to SDK-default tiger_openapi_token.properties when token is unset.

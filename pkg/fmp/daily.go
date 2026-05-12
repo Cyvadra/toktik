@@ -57,13 +57,13 @@ func (c *Client) DailyWithFundamentals(ctx context.Context, symbol, from, to str
 	for _, p := range prices {
 		bar := DailyBar{EODPrice: p}
 		if r := findRatio(p.Date); r != nil {
-			bar.RatioDate            = r.Date
-			bar.FiscalYear           = r.FiscalYear
+			bar.RatioDate = r.Date
+			bar.FiscalYear = r.FiscalYear
 			bar.PriceToEarningsRatio = r.PriceToEarningsRatio
-			bar.PriceToBookRatio     = r.PriceToBookRatio
-			bar.PriceToSalesRatio    = r.PriceToSalesRatio
-			bar.EarningsPerShare     = r.NetIncomePerShare
-			bar.BookValuePerShare    = r.BookValuePerShare
+			bar.PriceToBookRatio = r.PriceToBookRatio
+			bar.PriceToSalesRatio = r.PriceToSalesRatio
+			bar.EarningsPerShare = r.NetIncomePerShare
+			bar.BookValuePerShare = r.BookValuePerShare
 		}
 		bars = append(bars, bar)
 	}

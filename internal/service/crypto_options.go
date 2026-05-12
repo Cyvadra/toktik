@@ -48,7 +48,7 @@ func (s *CryptoOptionsService) QueryBars(ctx context.Context, req dto.BarRequest
 			return nil, invalidCursorError(err)
 		}
 		if cursorTime.After(fromT) {
-			fromT = cursorTime
+			fromT = nextCursorTime(cursorTime)
 		}
 	}
 
@@ -80,12 +80,9 @@ func (s *CryptoOptionsService) QueryBars(ctx context.Context, req dto.BarRequest
 	}
 
 	resp := &dto.BarResponse{Data: make([]dto.BarRow, 0)}
-	if len(bars) > limit {
-		resp.NextCursor = encodeCursor(bars[limit-1].Timestamp)
-		resp.Data = bars[:limit]
-	} else {
-		resp.Data = bars
-	}
+	resp.Data, resp.NextCursor = applyTimeCursorPagination(bars, limit, func(r dto.BarRow) string {
+		return encodeCursor(r.Timestamp)
+	})
 	return resp, nil
 }
 
@@ -146,12 +143,9 @@ FROM crypto_options_symbol_meta FINAL`
 	}
 
 	resp := &dto.SymbolResponse{Data: make([]dto.SymbolRow, 0)}
-	if len(symbols) > limit {
-		resp.NextCursor = encodeCursorUint64(symbols[limit-1].SymbolID)
-		resp.Data = symbols[:limit]
-	} else {
-		resp.Data = symbols
-	}
+	resp.Data, resp.NextCursor = applyTimeCursorPagination(symbols, limit, func(r dto.SymbolRow) string {
+		return encodeCursorUint64(r.SymbolID)
+	})
 	return resp, nil
 }
 
@@ -176,7 +170,7 @@ func (s *CryptoOptionsService) QueryGreeks(ctx context.Context, req dto.GreeksRe
 			return nil, invalidCursorError(err)
 		}
 		if cursorTime.After(fromT) {
-			fromT = cursorTime
+			fromT = nextCursorTime(cursorTime)
 		}
 	}
 
@@ -217,12 +211,9 @@ func (s *CryptoOptionsService) QueryGreeks(ctx context.Context, req dto.GreeksRe
 	}
 
 	resp := &dto.GreeksResponse{Data: make([]dto.GreeksRow, 0)}
-	if len(greeks) > limit {
-		resp.NextCursor = encodeCursor(greeks[limit-1].Timestamp)
-		resp.Data = greeks[:limit]
-	} else {
-		resp.Data = greeks
-	}
+	resp.Data, resp.NextCursor = applyTimeCursorPagination(greeks, limit, func(r dto.GreeksRow) string {
+		return encodeCursor(r.Timestamp)
+	})
 	return resp, nil
 }
 
@@ -276,6 +267,10 @@ func decodeCursor(cursor string) (time.Time, error) {
 	return time.Parse(time.RFC3339, string(b))
 }
 
+func nextCursorTime(cursor time.Time) time.Time {
+	return cursor.UTC().Add(time.Second)
+}
+
 func encodeCursorUint64(id uint64) string {
 	return base64.RawURLEncoding.EncodeToString([]byte(strconv.FormatUint(uint64(id), 10)))
 }
@@ -314,7 +309,7 @@ func (s *CryptoOptionsService) QueryChain(ctx context.Context, req dto.CryptoOpt
 		if cerr != nil {
 			return nil, invalidCursorError(cerr)
 		}
-		from = cursorTime.Add(time.Nanosecond)
+		from = nextCursorTime(cursorTime)
 	}
 
 	spotTable := fmt.Sprintf("crypto_spot_bar_%s", interval)

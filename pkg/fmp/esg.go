@@ -8,31 +8,30 @@ import (
 	"net/url"
 )
 
-
 // ESGDisclosure is a row returned by the FMP ESGDisclosure endpoint.
 type ESGDisclosure struct {
-	Date string `json:"date"`
-	AcceptedDate string `json:"acceptedDate"`
-	Symbol string `json:"symbol"`
-	CIK string `json:"cik"`
-	CompanyName string `json:"companyName"`
-	FormType string `json:"formType"`
+	Date               string  `json:"date"`
+	AcceptedDate       string  `json:"acceptedDate"`
+	Symbol             string  `json:"symbol"`
+	CIK                string  `json:"cik"`
+	CompanyName        string  `json:"companyName"`
+	FormType           string  `json:"formType"`
 	EnvironmentalScore float64 `json:"environmentalScore"`
-	SocialScore float64 `json:"socialScore"`
-	GovernanceScore float64 `json:"governanceScore"`
-	ESGScore float64 `json:"ESGScore"`
-	URL string `json:"url"`
+	SocialScore        float64 `json:"socialScore"`
+	GovernanceScore    float64 `json:"governanceScore"`
+	ESGScore           float64 `json:"ESGScore"`
+	URL                string  `json:"url"`
 }
 
 // ESGRating is a row returned by the FMP ESGRating endpoint.
 type ESGRating struct {
-	Symbol string `json:"symbol"`
-	CIK string `json:"cik"`
-	CompanyName string `json:"companyName"`
-	Industry string `json:"industry"`
-	FiscalYear int64 `json:"fiscalYear"`
+	Symbol        string `json:"symbol"`
+	CIK           string `json:"cik"`
+	CompanyName   string `json:"companyName"`
+	Industry      string `json:"industry"`
+	FiscalYear    int64  `json:"fiscalYear"`
 	ESGRiskRating string `json:"ESGRiskRating"`
-	IndustryRank string `json:"industryRank"`
+	IndustryRank  string `json:"industryRank"`
 }
 
 // ESGDisclosures ESGDisclosures returns ESG scores from SEC filings.

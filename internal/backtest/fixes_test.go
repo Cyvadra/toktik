@@ -387,6 +387,27 @@ func TestNotionalOrderWithZeroPriceProducesNoFill(t *testing.T) {
 	}
 }
 
+func TestPostSlippageInvalidFillPriceProducesNoFill(t *testing.T) {
+	ref := SecurityRef{Market: "m", Symbol: "s", Interval: "1h", Index: 0}
+	broker := NewBroker(Config{InitialCapital: 10000, SlippagePct: 2})
+	broker.SetPriceFunc(func(_ SecurityRef) BarPrices {
+		return BarPrices{Open: 100, High: 100, Low: 100, Close: 100}
+	})
+
+	broker.SubmitOrder(Order{Security: ref, Side: Sell, Type: MarketOrder, Qty: 1})
+	fills := broker.ProcessPending(1, time.Unix(3600, 0))
+
+	if len(fills) != 0 {
+		t.Fatalf("expected 0 fills when slippage makes fill price invalid, got %d", len(fills))
+	}
+	if len(broker.Trades()) != 0 {
+		t.Fatalf("expected no trades, got %d", len(broker.Trades()))
+	}
+	if got := broker.Cash(); got != 10000 {
+		t.Fatalf("cash changed after invalid fill: got %v", got)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Fix 9: ProfitFactor is 1.0 when all round trips break even
 // ---------------------------------------------------------------------------

@@ -8,43 +8,42 @@ import (
 	"net/url"
 )
 
-
 // IndexInfo is one row in the full list of tradable indexes.
 type IndexInfo struct {
-	Symbol string `json:"symbol"`
-	Name string `json:"name"`
+	Symbol   string `json:"symbol"`
+	Name     string `json:"name"`
 	Exchange string `json:"exchange"`
 	Currency string `json:"currency"`
 }
 
 // IndexConstituent is a current member of a major index (S&P 500 / Nasdaq-100 / Dow Jones).
 type IndexConstituent struct {
-	Symbol string `json:"symbol"`
-	Name string `json:"name"`
-	Sector string `json:"sector"`
-	SubSector string `json:"subSector"`
-	HeadQuarter string `json:"headQuarter"`
+	Symbol         string `json:"symbol"`
+	Name           string `json:"name"`
+	Sector         string `json:"sector"`
+	SubSector      string `json:"subSector"`
+	HeadQuarter    string `json:"headQuarter"`
 	DateFirstAdded string `json:"dateFirstAdded"`
-	CIK string `json:"cik"`
-	Founded string `json:"founded"`
+	CIK            string `json:"cik"`
+	Founded        string `json:"founded"`
 }
 
 // IndexConstituentChange records an addition or removal from an index.
 type IndexConstituentChange struct {
-	DateAdded string `json:"dateAdded"`
-	AddedSecurity string `json:"addedSecurity"`
-	RemovedTicker string `json:"removedTicker"`
+	DateAdded       string `json:"dateAdded"`
+	AddedSecurity   string `json:"addedSecurity"`
+	RemovedTicker   string `json:"removedTicker"`
 	RemovedSecurity string `json:"removedSecurity"`
-	Date string `json:"date"`
-	Symbol string `json:"symbol"`
-	Reason string `json:"reason"`
+	Date            string `json:"date"`
+	Symbol          string `json:"symbol"`
+	Reason          string `json:"reason"`
 }
 
 // MarketRiskPremium holds equity risk premium data by country.
 type MarketRiskPremium struct {
-	Country string `json:"country"`
-	Continent string `json:"continent"`
-	CountryRiskPremium float64 `json:"countryRiskPremium"`
+	Country                string  `json:"country"`
+	Continent              string  `json:"continent"`
+	CountryRiskPremium     float64 `json:"countryRiskPremium"`
 	TotalEquityRiskPremium float64 `json:"totalEquityRiskPremium"`
 }
 

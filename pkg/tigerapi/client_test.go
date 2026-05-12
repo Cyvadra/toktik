@@ -1,3 +1,5 @@
+//go:build tigerapi
+
 package tigerapi
 
 import (

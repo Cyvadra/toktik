@@ -55,12 +55,9 @@ func (s *CryptoSpotService) QuerySymbols(ctx context.Context, req dto.CryptoSpot
 	}
 
 	resp := &dto.CryptoSpotSymbolResponse{Data: make([]dto.CryptoSpotSymbolRow, 0)}
-	if len(symbols) > limit {
-		resp.NextCursor = encodeCursorString(symbols[limit-1].Symbol)
-		resp.Data = symbols[:limit]
-	} else {
-		resp.Data = symbols
-	}
+	resp.Data, resp.NextCursor = applySymbolCursorPagination(symbols, limit, func(r dto.CryptoSpotSymbolRow) string {
+		return encodeCursorString(r.Symbol)
+	})
 	return resp, nil
 }
 
@@ -136,11 +133,8 @@ LIMIT %d`, tableName,
 	}
 
 	resp := &dto.CryptoSpotBarResponse{Data: make([]dto.CryptoSpotBarRow, 0)}
-	if len(bars) > limit {
-		resp.NextCursor = encodeCursor(bars[limit-1].Timestamp)
-		resp.Data = bars[:limit]
-	} else {
-		resp.Data = bars
-	}
+	resp.Data, resp.NextCursor = applyTimeCursorPagination(bars, limit, func(r dto.CryptoSpotBarRow) string {
+		return encodeCursor(r.Timestamp)
+	})
 	return resp, nil
 }

@@ -7,30 +7,29 @@ import (
 	"net/url"
 )
 
-
 // EODPrice is a row returned by the FMP EODPrice endpoint.
 type EODPrice struct {
-	Symbol string `json:"symbol"`
-	Date string `json:"date"`
-	Open float64 `json:"open"`
-	High float64 `json:"high"`
-	Low float64 `json:"low"`
-	Close float64 `json:"close"`
-	Volume int64 `json:"volume"`
-	Change float64 `json:"change"`
+	Symbol        string  `json:"symbol"`
+	Date          string  `json:"date"`
+	Open          float64 `json:"open"`
+	High          float64 `json:"high"`
+	Low           float64 `json:"low"`
+	Close         float64 `json:"close"`
+	Volume        int64   `json:"volume"`
+	Change        float64 `json:"change"`
 	ChangePercent float64 `json:"changePercent"`
-	Vwap float64 `json:"vwap"`
+	Vwap          float64 `json:"vwap"`
 }
 
 // AdjustedPrice is a row returned by the FMP AdjustedPrice endpoint.
 type AdjustedPrice struct {
-	Symbol string `json:"symbol"`
-	Date string `json:"date"`
-	AdjOpen float64 `json:"adjOpen"`
-	AdjHigh float64 `json:"adjHigh"`
-	AdjLow float64 `json:"adjLow"`
+	Symbol   string  `json:"symbol"`
+	Date     string  `json:"date"`
+	AdjOpen  float64 `json:"adjOpen"`
+	AdjHigh  float64 `json:"adjHigh"`
+	AdjLow   float64 `json:"adjLow"`
 	AdjClose float64 `json:"adjClose"`
-	Volume int64 `json:"volume"`
+	Volume   int64   `json:"volume"`
 }
 
 // HistoricalPrices HistoricalPrices returns daily EOD OHLCV price bars.

@@ -8,53 +8,52 @@ import (
 	"net/url"
 )
 
-
 // NewsArticle is a row returned by the FMP NewsArticle endpoint.
 type NewsArticle struct {
-	Symbol string `json:"symbol"`
+	Symbol        string `json:"symbol"`
 	PublishedDate string `json:"publishedDate"`
-	Publisher string `json:"publisher"`
-	Title string `json:"title"`
-	Image string `json:"image"`
-	Site string `json:"site"`
-	Text string `json:"text"`
-	URL string `json:"url"`
+	Publisher     string `json:"publisher"`
+	Title         string `json:"title"`
+	Image         string `json:"image"`
+	Site          string `json:"site"`
+	Text          string `json:"text"`
+	URL           string `json:"url"`
 }
 
 // ForexNewsArticle is a row returned by the FMP ForexNewsArticle endpoint.
 type ForexNewsArticle struct {
-	Symbol string `json:"symbol"`
+	Symbol        string `json:"symbol"`
 	PublishedDate string `json:"publishedDate"`
-	Publisher string `json:"publisher"`
-	Title string `json:"title"`
-	Image string `json:"image"`
-	Site string `json:"site"`
-	Text string `json:"text"`
-	URL string `json:"url"`
+	Publisher     string `json:"publisher"`
+	Title         string `json:"title"`
+	Image         string `json:"image"`
+	Site          string `json:"site"`
+	Text          string `json:"text"`
+	URL           string `json:"url"`
 }
 
 // CryptoNewsArticle is a row returned by the FMP CryptoNewsArticle endpoint.
 type CryptoNewsArticle struct {
-	Symbol string `json:"symbol"`
-	PublishedDate string `json:"publishedDate"`
-	Publisher string `json:"publisher"`
-	Title string `json:"title"`
-	Image *string `json:"image"`
-	Site string `json:"site"`
-	Text string `json:"text"`
-	URL string `json:"url"`
+	Symbol        string  `json:"symbol"`
+	PublishedDate string  `json:"publishedDate"`
+	Publisher     string  `json:"publisher"`
+	Title         string  `json:"title"`
+	Image         *string `json:"image"`
+	Site          string  `json:"site"`
+	Text          string  `json:"text"`
+	URL           string  `json:"url"`
 }
 
 // PressRelease is a row returned by the FMP PressRelease endpoint.
 type PressRelease struct {
-	Symbol string `json:"symbol"`
+	Symbol        string `json:"symbol"`
 	PublishedDate string `json:"publishedDate"`
-	Publisher string `json:"publisher"`
-	Title string `json:"title"`
-	Image string `json:"image"`
-	Site string `json:"site"`
-	Text string `json:"text"`
-	URL string `json:"url"`
+	Publisher     string `json:"publisher"`
+	Title         string `json:"title"`
+	Image         string `json:"image"`
+	Site          string `json:"site"`
+	Text          string `json:"text"`
+	URL           string `json:"url"`
 }
 
 // StockNews StockNews returns recent news articles for a symbol.

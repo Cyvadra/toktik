@@ -16,11 +16,14 @@ import (
 
 	appCli "github.com/Cyvadra/toktik/internal/cli"
 	"github.com/Cyvadra/toktik/internal/cryptooptions"
+	"github.com/Cyvadra/toktik/internal/importledger"
 )
 
 const (
 	sampleCountPerRegion = 24
 	sampleWindowSize     = 256
+	optionImporterName   = "crypto-options-import/options"
+	spotImporterName     = "crypto-options-import/spot"
 )
 
 func main() {
@@ -55,6 +58,9 @@ func main() {
 	})
 	if err != nil {
 		log.Fatalf("%v", err)
+	}
+	if err := importledger.EnsureSchema(ctx, conn); err != nil {
+		log.Fatalf("ensure import ledger schema: %v", err)
 	}
 	_ = conn // schema-only; workers open their own connections
 
@@ -178,6 +184,17 @@ func importOptionFile(ctx context.Context, dsn, pqPath string, batchSize int) (i
 	if err != nil {
 		return 0, false, fmt.Errorf("connect: %w", err)
 	}
+	ledger := importledger.New(conn)
+	sourceHash, err := importledger.SourceHash(pqPath)
+	if err != nil {
+		return 0, false, fmt.Errorf("hash source file: %w", err)
+	}
+	if succeeded, err := ledger.AlreadySucceeded(ctx, optionImporterName, sourceHash, "default"); err != nil {
+		return 0, false, fmt.Errorf("check import ledger: %w", err)
+	} else if succeeded {
+		log.Printf("[SKIP] %s: source hash already imported successfully", baseName)
+		return 0, true, nil
+	}
 
 	barCh, closer, readErr, err := cryptooptions.ReadParquet(pqPath)
 	if err != nil {
@@ -218,13 +235,17 @@ func importOptionFile(ctx context.Context, dsn, pqPath string, batchSize int) (i
 		return 0, false, fmt.Errorf("check existing bars: %w", err)
 	}
 	if existingSamples > 0 {
-		status := "partially"
-		if existingSamples == len(samples) {
-			status = "fully"
-		}
-		log.Printf("[SKIP] %s: %d/%d sampled bars already exist, file appears %s imported",
-			baseName, existingSamples, len(samples), status)
-		return 0, true, nil
+		return 0, false, fmt.Errorf("%d/%d sampled bars already exist but no successful import ledger entry was found; refusing to append duplicate option rows", existingSamples, len(samples))
+	}
+
+	importID, err := ledger.Start(ctx, importledger.StartRequest{
+		ImporterName: optionImporterName,
+		SourceKey:    sourceHash,
+		ScopeKey:     "default",
+		SourceHash:   sourceHash,
+	})
+	if err != nil {
+		return 0, false, fmt.Errorf("start import ledger: %w", err)
 	}
 
 	symbols := make([]cryptooptions.SymbolMeta, 0, len(symbolMap))
@@ -246,7 +267,11 @@ func importOptionFile(ctx context.Context, dsn, pqPath string, batchSize int) (i
 
 	rowCount, err := cryptooptions.InsertBars(ctx, conn, barSendCh, batchSize)
 	if err != nil {
+		_ = ledger.MarkFailed(ctx, importledger.CompletionRequest{ImporterName: optionImporterName, SourceKey: sourceHash, ScopeKey: "default", ImportID: importID, SourceHash: sourceHash, RowsInserted: importledger.NonNegativeRows(rowCount), ErrorMessage: err.Error()})
 		return rowCount, false, fmt.Errorf("insert bars: %w", err)
+	}
+	if err := ledger.MarkSuccess(ctx, importledger.CompletionRequest{ImporterName: optionImporterName, SourceKey: sourceHash, ScopeKey: "default", ImportID: importID, SourceHash: sourceHash, RowsInserted: uint64(rowCount)}); err != nil {
+		return rowCount, false, fmt.Errorf("mark import success: %w", err)
 	}
 
 	log.Printf("[IMPORT] %s: %d bars, %d symbols in %s",
@@ -263,6 +288,17 @@ func importSpotFile(ctx context.Context, dsn, pqPath string, batchSize int) (int
 	conn, err := cryptooptions.ConnectClickHouse(ctx, dsn)
 	if err != nil {
 		return 0, false, fmt.Errorf("connect: %w", err)
+	}
+	ledger := importledger.New(conn)
+	sourceHash, err := importledger.SourceHash(pqPath)
+	if err != nil {
+		return 0, false, fmt.Errorf("hash source file: %w", err)
+	}
+	if succeeded, err := ledger.AlreadySucceeded(ctx, spotImporterName, sourceHash, "default"); err != nil {
+		return 0, false, fmt.Errorf("check import ledger: %w", err)
+	} else if succeeded {
+		log.Printf("[SKIP] %s: source hash already imported successfully", baseName)
+		return 0, true, nil
 	}
 
 	barCh, closer, readErr, err := cryptooptions.ReadSpotParquet(pqPath)
@@ -291,13 +327,17 @@ func importSpotFile(ctx context.Context, dsn, pqPath string, batchSize int) (int
 		return 0, false, fmt.Errorf("check existing spot bars: %w", err)
 	}
 	if existingSamples > 0 {
-		status := "partially"
-		if existingSamples == len(samples) {
-			status = "fully"
-		}
-		log.Printf("[SKIP] %s: %d/%d sampled spot bars already exist, file appears %s imported",
-			baseName, existingSamples, len(samples), status)
-		return 0, true, nil
+		return 0, false, fmt.Errorf("%d/%d sampled spot bars already exist but no successful import ledger entry was found; refusing to append duplicate spot rows", existingSamples, len(samples))
+	}
+
+	importID, err := ledger.Start(ctx, importledger.StartRequest{
+		ImporterName: spotImporterName,
+		SourceKey:    sourceHash,
+		ScopeKey:     "default",
+		SourceHash:   sourceHash,
+	})
+	if err != nil {
+		return 0, false, fmt.Errorf("start import ledger: %w", err)
 	}
 
 	barSendCh := make(chan cryptooptions.SpotBar1m, 4096)
@@ -310,7 +350,11 @@ func importSpotFile(ctx context.Context, dsn, pqPath string, batchSize int) (int
 
 	rowCount, err := cryptooptions.InsertSpotBars(ctx, conn, barSendCh, batchSize)
 	if err != nil {
+		_ = ledger.MarkFailed(ctx, importledger.CompletionRequest{ImporterName: spotImporterName, SourceKey: sourceHash, ScopeKey: "default", ImportID: importID, SourceHash: sourceHash, RowsInserted: importledger.NonNegativeRows(rowCount), ErrorMessage: err.Error()})
 		return rowCount, false, fmt.Errorf("insert spot bars: %w", err)
+	}
+	if err := ledger.MarkSuccess(ctx, importledger.CompletionRequest{ImporterName: spotImporterName, SourceKey: sourceHash, ScopeKey: "default", ImportID: importID, SourceHash: sourceHash, RowsInserted: uint64(rowCount)}); err != nil {
+		return rowCount, false, fmt.Errorf("mark import success: %w", err)
 	}
 
 	log.Printf("[IMPORT] %s: %d spot bars in %s",

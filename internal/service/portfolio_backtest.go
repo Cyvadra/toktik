@@ -37,6 +37,8 @@ const (
 	forexUnderlyingFeed     = "forex-underlying"
 	defaultChainProviderTTL = 55 * time.Minute
 	maxChainProviderEntries = 8
+	defaultRunTTL           = 2 * time.Hour
+	runEvictionInterval     = 10 * time.Minute
 )
 
 type marketSpec struct {
@@ -66,6 +68,7 @@ type PortfolioBacktestService struct {
 	chainLoader   func(context.Context, string, string, string, time.Time, time.Time) (backtest.OptionsChainProvider, error)
 	engineBuilder func(backtest.Config, backtest.OptionsChainProvider, bool) *backtest.Engine
 	chainCache    *optionsChainProviderCache
+	runTTL        time.Duration
 
 	mu   sync.RWMutex
 	runs map[string]*portfolioBacktestRun
@@ -118,13 +121,39 @@ func NewPortfolioBacktestService(repo *chrepo.Repo, factorStore *feeds.Store) *P
 		factorStore: factorStore,
 		now:         time.Now,
 		runs:        make(map[string]*portfolioBacktestRun),
+		runTTL:      defaultRunTTL,
 	}
 	svc.chainLoader = svc.defaultChainLoader
 	svc.engineBuilder = func(cfg backtest.Config, chainProvider backtest.OptionsChainProvider, usesOptions bool) *backtest.Engine {
 		return newPortfolioBacktestEngine(cfg, svc.repo.Conn, svc.factorStore, chainProvider, usesOptions)
 	}
 	svc.chainCache = newOptionsChainProviderCache(svc.now, defaultChainProviderTTL, maxChainProviderEntries)
+	go svc.evictionLoop()
 	return svc
+}
+
+// evictionLoop runs in the background and removes finished runs older than runTTL.
+func (s *PortfolioBacktestService) evictionLoop() {
+	ticker := time.NewTicker(runEvictionInterval)
+	defer ticker.Stop()
+	for range ticker.C {
+		s.evictOldRuns()
+	}
+}
+
+func (s *PortfolioBacktestService) evictOldRuns() {
+	now := s.now()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for id, run := range s.runs {
+		run.mu.RLock()
+		finished := run.finished
+		updatedAt := run.updatedAt
+		run.mu.RUnlock()
+		if finished && now.Sub(updatedAt) > s.runTTL {
+			delete(s.runs, id)
+		}
+	}
 }
 
 func newOptionsChainProviderCache(now func() time.Time, ttl time.Duration, maxSize int) *optionsChainProviderCache {

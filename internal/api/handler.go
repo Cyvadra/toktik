@@ -714,7 +714,7 @@ func (h *Handler) GetDailyFeaturePanel(c *gin.Context) {
 	c.JSON(http.StatusOK, resp)
 }
 
-// GetBars handles GET /api/v1/crypto-options/bars
+// GetBars handles GET /api/v1/markets/crypto-options/bars
 //
 // @Summary      Get crypto option bars
 // @Description  Returns OHLCV bars with Greeks and IV for a crypto option symbol.
@@ -729,7 +729,7 @@ func (h *Handler) GetDailyFeaturePanel(c *gin.Context) {
 // @Success      200       {object}  dto.BarResponse
 // @Failure      400       {object}  dto.ErrorResponse
 // @Failure      500       {object}  dto.ErrorResponse
-// @Router       /crypto-options/bars [get]
+// @Router       /markets/crypto-options/bars [get]
 func (h *Handler) GetBars(c *gin.Context) {
 	var req dto.BarRequest
 	if err := c.ShouldBindQuery(&req); err != nil {
@@ -746,7 +746,7 @@ func (h *Handler) GetBars(c *gin.Context) {
 	c.JSON(http.StatusOK, resp)
 }
 
-// GetSymbols handles GET /api/v1/crypto-options/symbols
+// GetSymbols handles GET /api/v1/markets/crypto-options/symbols
 //
 // @Summary      List crypto option symbols
 // @Description  Returns available crypto option contract symbols with metadata.
@@ -759,7 +759,7 @@ func (h *Handler) GetBars(c *gin.Context) {
 // @Success      200         {object}  dto.SymbolResponse
 // @Failure      400         {object}  dto.ErrorResponse
 // @Failure      500         {object}  dto.ErrorResponse
-// @Router       /crypto-options/symbols [get]
+// @Router       /markets/crypto-options/symbols [get]
 func (h *Handler) GetSymbols(c *gin.Context) {
 	var req dto.SymbolRequest
 	if err := c.ShouldBindQuery(&req); err != nil {
@@ -832,7 +832,7 @@ func (h *Handler) ListIndicatorPresets(c *gin.Context) {
 	c.JSON(http.StatusOK, resp)
 }
 
-// GetGreeks handles GET /api/v1/crypto-options/greeks
+// GetGreeks handles GET /api/v1/markets/crypto-options/greeks
 //
 // @Summary      Get crypto option Greeks time-series
 // @Description  Returns Greeks snapshots over time for a crypto option symbol.
@@ -847,7 +847,7 @@ func (h *Handler) ListIndicatorPresets(c *gin.Context) {
 // @Success      200       {object}  dto.GreeksResponse
 // @Failure      400       {object}  dto.ErrorResponse
 // @Failure      500       {object}  dto.ErrorResponse
-// @Router       /crypto-options/greeks [get]
+// @Router       /markets/crypto-options/greeks [get]
 func (h *Handler) GetGreeks(c *gin.Context) {
 	var req dto.GreeksRequest
 	if err := c.ShouldBindQuery(&req); err != nil {
@@ -864,7 +864,7 @@ func (h *Handler) GetGreeks(c *gin.Context) {
 	c.JSON(http.StatusOK, resp)
 }
 
-// RunBacktest handles POST /api/v1/crypto-options/backtest
+// RunBacktest handles POST /api/v1/markets/crypto-options/backtest
 //
 // @Summary      Run crypto options backtest (legacy, sync)
 // @Description  Runs a synchronous backtest on a crypto options strategy. Deprecated: use POST /backtests/runs instead.
@@ -876,7 +876,7 @@ func (h *Handler) GetGreeks(c *gin.Context) {
 // @Failure      400   {object}  dto.ErrorResponse
 // @Failure      500   {object}  dto.ErrorResponse
 // @Deprecated
-// @Router       /crypto-options/backtest [post]
+// @Router       /markets/crypto-options/backtest [post]
 func (h *Handler) RunBacktest(c *gin.Context) {
 	var req dto.BacktestRequest
 	if err := c.ShouldBindJSON(&req); err != nil {

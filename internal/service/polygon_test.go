@@ -24,42 +24,42 @@ func (s *stubPolygonClient) DownloadOptionMinuteAggregates(context.Context, time
 	return "", nil
 }
 
-func (s *stubPolygonClient) StockSnapshot(symbol string) (*polygonpkg.StockSnapshot, error) {
+func (s *stubPolygonClient) StockSnapshot(ctx context.Context, symbol string) (*polygonpkg.StockSnapshot, error) {
 	s.stockSnapshotCalls++
 	return &polygonpkg.StockSnapshot{Ticker: symbol}, nil
 }
 
-func (s *stubPolygonClient) StockAggregates(req polygonpkg.AggregateRequest) ([]polygonpkg.AggregateBar, error) {
+func (s *stubPolygonClient) StockAggregates(ctx context.Context, req polygonpkg.AggregateRequest) ([]polygonpkg.AggregateBar, error) {
 	s.stockAggregateCalls++
 	return []polygonpkg.AggregateBar{{Ticker: req.Ticker, Close: 123.4}}, nil
 }
 
-func (s *stubPolygonClient) StockQuotes(symbol string, req polygonpkg.QuoteRequest) ([]polygonpkg.Quote, error) {
+func (s *stubPolygonClient) StockQuotes(ctx context.Context, symbol string, req polygonpkg.QuoteRequest) ([]polygonpkg.Quote, error) {
 	return nil, nil
 }
 
-func (s *stubPolygonClient) StockTrades(symbol string, req polygonpkg.TradeRequest) ([]polygonpkg.Trade, error) {
+func (s *stubPolygonClient) StockTrades(ctx context.Context, symbol string, req polygonpkg.TradeRequest) ([]polygonpkg.Trade, error) {
 	return nil, nil
 }
 
-func (s *stubPolygonClient) OptionContract(ticker string) (*polygonpkg.OptionContract, error) {
+func (s *stubPolygonClient) OptionContract(ctx context.Context, ticker string) (*polygonpkg.OptionContract, error) {
 	return nil, nil
 }
 
-func (s *stubPolygonClient) OptionChain(req polygonpkg.OptionChainRequest) ([]polygonpkg.OptionChainContract, error) {
+func (s *stubPolygonClient) OptionChain(ctx context.Context, req polygonpkg.OptionChainRequest) ([]polygonpkg.OptionChainContract, error) {
 	s.optionChainReq = req
 	return nil, nil
 }
 
-func (s *stubPolygonClient) OptionAggregates(req polygonpkg.AggregateRequest) ([]polygonpkg.AggregateBar, error) {
+func (s *stubPolygonClient) OptionAggregates(ctx context.Context, req polygonpkg.AggregateRequest) ([]polygonpkg.AggregateBar, error) {
 	return nil, nil
 }
 
-func (s *stubPolygonClient) OptionQuotes(ticker string, req polygonpkg.QuoteRequest) ([]polygonpkg.Quote, error) {
+func (s *stubPolygonClient) OptionQuotes(ctx context.Context, ticker string, req polygonpkg.QuoteRequest) ([]polygonpkg.Quote, error) {
 	return nil, nil
 }
 
-func (s *stubPolygonClient) OptionTrades(ticker string, req polygonpkg.TradeRequest) ([]polygonpkg.Trade, error) {
+func (s *stubPolygonClient) OptionTrades(ctx context.Context, ticker string, req polygonpkg.TradeRequest) ([]polygonpkg.Trade, error) {
 	return nil, nil
 }
 

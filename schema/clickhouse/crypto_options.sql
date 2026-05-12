@@ -2,6 +2,24 @@
 -- Crypto Options Schema for ClickHouse
 -- ============================================================
 
+CREATE TABLE IF NOT EXISTS import_ledger
+(
+    importer_name LowCardinality(String),
+    source_key    String,
+    scope_key     String,
+    import_id     String,
+    source_hash   String DEFAULT '',
+    status        Enum8('pending' = 1, 'success' = 2, 'failed' = 3),
+    rows_inserted UInt64 DEFAULT 0,
+    error_message String DEFAULT '',
+    started_at    DateTime64(3, 'UTC'),
+    completed_at  DateTime64(3, 'UTC') DEFAULT toDateTime64(0, 3, 'UTC'),
+    version       UInt64
+)
+ENGINE = ReplacingMergeTree(version)
+ORDER BY (importer_name, source_key, scope_key)
+SETTINGS index_granularity = 8192;
+
 -- Symbol metadata table
 -- Stores unique option contract metadata extracted from symbol strings.
 -- Uses ReplacingMergeTree to deduplicate on repeated imports.

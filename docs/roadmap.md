@@ -25,9 +25,9 @@ Status: Implemented
 Expose market data through a RESTful web API powered by Gin:
 
 - **Endpoints**:
-  - `GET /api/v1/crypto-options/bars` - query bars by symbol, time range, interval
-  - `GET /api/v1/crypto-options/symbols` - list/search option symbols with metadata
-  - `GET /api/v1/crypto-options/greeks` - greeks time series for a symbol
+  - `GET /api/v1/markets/crypto-options/bars` - query bars by symbol, time range, interval
+  - `GET /api/v1/markets/crypto-options/symbols` - list/search option symbols with metadata
+  - `GET /api/v1/markets/crypto-options/greeks` - greeks time series for a symbol
 - **DTO layer**: All business services call the DTO layer, never the database directly
   - `internal/dto/crypto_options.go` - request/response DTOs
   - `internal/service/crypto_options.go` - business logic using DTOs
@@ -134,5 +134,5 @@ Phase 5+: Planned
 
 - **Tables**: `{market_type}_{entity}` (e.g., `crypto_options_bar_1m`)
 - **Go packages**: `internal/{markettype}/` (e.g., `internal/cryptooptions/`)
-- **API routes**: `/api/v1/{market-type}/` (e.g., `/api/v1/crypto-options/`)
+- **API routes**: `/api/v1/markets/{market-type}/` (e.g., `/api/v1/markets/crypto-options/`)
 - **CLI tools**: `{market-type}-{verb}` (e.g., `crypto-options-convert`)

@@ -8,7 +8,9 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"runtime/debug"
+	"strings"
 	"sync"
 	"time"
 
@@ -29,8 +31,8 @@ const (
 )
 
 // CORSMiddleware returns a gin middleware that handles CORS using the
-// supplied API config. If no origins are configured, all origins are
-// allowed and credentials are disabled.
+// supplied API config. If no origins are configured, browser access is limited
+// to LAN-style origins so accidental public exposure does not get CORS access.
 func CORSMiddleware(cfg config.API) gin.HandlerFunc {
 	c := cors.Config{
 		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
@@ -40,12 +42,33 @@ func CORSMiddleware(cfg config.API) gin.HandlerFunc {
 		MaxAge:           12 * time.Hour,
 	}
 	if len(cfg.CORSOrigins) == 0 {
-		c.AllowAllOrigins = true
-		c.AllowCredentials = false
+		c.AllowOriginFunc = isLANOrigin
 	} else {
 		c.AllowOrigins = cfg.CORSOrigins
 	}
 	return cors.New(c)
+}
+
+func isLANOrigin(origin string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(origin))
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return false
+	}
+	switch strings.ToLower(parsed.Scheme) {
+	case "http", "https":
+	default:
+		return false
+	}
+
+	host := strings.ToLower(parsed.Hostname())
+	if host == "localhost" || strings.HasSuffix(host, ".localhost") || strings.HasSuffix(host, ".local") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return false
+	}
+	return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast()
 }
 
 // APIKeyAuth returns a gin middleware that checks the X-API-Key header.

@@ -6,7 +6,7 @@ Unified multi-market quantitative trading platform for crypto and US equity opti
 
 - **Market data pipeline** — Convert zstd-compressed CSV tick data → Parquet → ClickHouse OHLCV bars with pre-computed materialized views (5m, 15m, 30m, 1h, 2h, 3h, 4h, 6h, 8h, 12h, 1d)
 - **Event-driven backtesting engine** — Pine Script-style strategy interface with multi-asset, multi-leg options support, vectorized indicator computation, and realistic broker simulation (slippage, commissions, TWAP)
-- **Unified infra API** — Query market data through shared `/api/v1/markets/{market}` routes while preserving legacy `/api/v1/crypto-options/*` compatibility
+- **Unified infra API** — Query market data through shared `/api/v1/markets/{market}` routes
 - **Infra observability** — Inspect readiness, market catalog, dataset row counts, latest timestamps, freshness, and dataset summary aggregates
 - **Feature-store APIs** — Read volatility snapshots/history, `us-options` term-structure/skew, cross-market liquidity history, and merged daily feature panels from explicit infra endpoints, with precomputed-read preference where available
 - **Fundamentals APIs** — Read symbol-bound point-in-time factor catalog, sparse/as-of/filled series, latest snapshots, multi-symbol panels, and freshness for low-frequency factors such as PE/PB
@@ -127,10 +127,6 @@ Key design decisions:
 | `/api/v1/backtests/runs/{run_id}/events` | GET | Subscribe to async strategy backtest progress via SSE |
 | `/api/v1/infra/markets` | GET | List available markets and capabilities |
 | `/api/v1/infra/datasets` | GET | Dataset row counts, freshness, summary aggregates |
-| `/api/v1/crypto-options/bars` | GET | OHLCV bars (interval routing: 1m→base, 5m+→precomputed views) |
-| `/api/v1/crypto-options/symbols` | GET | Contract metadata search |
-| `/api/v1/crypto-options/greeks` | GET | Time-series greeks |
-| `/api/v1/crypto-options/backtest` | POST | Run backtest from JSON |
 | `/api/v1/markets/{market}/bars` | GET | Unified bars (us-stocks, us-options, etc.) |
 | `/api/v1/markets/{market}/symbols` | GET | Unified symbol search |
 | `/api/v1/features/volatility-snapshot` | GET | Latest HV/IV/percentile for a symbol |
@@ -305,7 +301,7 @@ Sample response:
 
 ## Tiger API CLI
 
-The repository includes a Tiger OpenAPI testing CLI at `cmd/tools/tigerapi` for ad-hoc US stock and option market-data checks.
+The repository keeps a Tiger OpenAPI testing CLI at `cmd/tools/tigerapi` for ad-hoc US stock and option market-data checks. Tiger support is isolated from default builds because the upstream SDK currently needs local fixes; build it explicitly with `-tags tigerapi` when needed.
 
 Supported commands:
 - `market-state`
@@ -343,10 +339,10 @@ Optional auth inputs for Tiger option endpoints, either in YAML or as env overri
 Examples:
 
 ```bash
-go run ./cmd/tools/tigerapi -- market-state --market US
-go run ./cmd/tools/tigerapi -- stock-kline --symbol AAPL --period day
-go run ./cmd/tools/tigerapi -- option-expirations --symbol AAPL
-go run ./cmd/tools/tigerapi -- raw --method option_expiration --biz-content '{"symbols":["AAPL"]}'
+go run -tags tigerapi ./cmd/tools/tigerapi -- market-state --market US
+go run -tags tigerapi ./cmd/tools/tigerapi -- stock-kline --symbol AAPL --period day
+go run -tags tigerapi ./cmd/tools/tigerapi -- option-expirations --symbol AAPL
+go run -tags tigerapi ./cmd/tools/tigerapi -- raw --method option_expiration --biz-content '{"symbols":["AAPL"]}'
 ```
 
 Current live validation status with the checked-in runtime config:
@@ -478,7 +474,7 @@ Sample response:
 
 **List symbols:**
 ```bash
-curl "http://localhost:9010/api/v1/crypto-options/symbols?base_asset=BTC&limit=10"
+curl "http://localhost:9010/api/v1/markets/crypto-options/symbols?base_asset=BTC&limit=10"
 ```
 
 **List US option symbols from the unified market namespace:**
@@ -488,7 +484,7 @@ curl "http://localhost:9010/api/v1/markets/us-options/symbols?underlying=SPY&lim
 
 **Get OHLCV bars:**
 ```bash
-curl "http://localhost:9010/api/v1/crypto-options/bars?symbol=BTC-28MAR25-100000-C&interval=1h&from=2025-01-01&to=2025-03-01&limit=500"
+curl "http://localhost:9010/api/v1/markets/crypto-options/bars?symbol=BTC-28MAR25-100000-C&interval=1h&from=2025-01-01&to=2025-03-01&limit=500"
 ```
 
 **Get US stock bars from the unified market namespace:**
@@ -498,7 +494,7 @@ curl "http://localhost:9010/api/v1/markets/us-stocks/bars?symbol=AAPL&interval=1
 
 **Get greeks time series:**
 ```bash
-curl "http://localhost:9010/api/v1/crypto-options/greeks?symbol=BTC-28MAR25-100000-C&from=2025-01-01&to=2025-03-01"
+curl "http://localhost:9010/api/v1/markets/crypto-options/greeks?symbol=BTC-28MAR25-100000-C&from=2025-01-01&to=2025-03-01"
 ```
 
 **Get a volatility feature snapshot:**
@@ -876,7 +872,7 @@ Sample response:
 
 **Run a backtest:**
 ```bash
-curl -X POST http://localhost:9010/api/v1/crypto-options/backtest \
+curl -X POST http://localhost:9010/api/v1/markets/crypto-options/backtest \
   -H "Content-Type: application/json" \
   -d '{
     "symbol": "BTC-28MAR25-100000-C",

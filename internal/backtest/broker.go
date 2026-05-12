@@ -182,10 +182,13 @@ func (b *Broker) ExecuteOrderAtCloseNow(o Order, barIndex int, barTime time.Time
 		return nil, false
 	}
 	fillQty := b.resolveOrderQty(o, closePrice)
-	if fillQty <= 0 {
+	if !isValidQuantity(fillQty) {
 		return nil, false
 	}
 	fillPrice := b.applySlippage(closePrice, o.Side)
+	if !isValidPrice(fillPrice) {
+		return nil, false
+	}
 	if o.ID == 0 {
 		o.ID = b.nextOID
 		b.nextOID++
@@ -239,10 +242,13 @@ func (b *Broker) ExecuteStopOrderNow(o Order, barIndex int, barTime time.Time, e
 		return nil, false
 	}
 	fillQty := b.resolveOrderQty(o, fillBasePrice)
-	if fillQty <= 0 {
+	if !isValidQuantity(fillQty) {
 		return nil, false
 	}
 	fillPrice := applySlippageWithExtra(fillBasePrice, o.Side, b.config.SlippagePct, extraSlippagePct)
+	if !isValidPrice(fillPrice) {
+		return nil, false
+	}
 	if o.ID == 0 {
 		o.ID = b.nextOID
 		b.nextOID++
@@ -351,8 +357,11 @@ func (b *Broker) executeOrderOnBar(o Order, barIndex int, barTime time.Time) (*T
 	if !filled {
 		return nil, false, true
 	}
-	if fillQty <= 0 {
+	if !isValidQuantity(fillQty) {
 		return nil, false, true
+	}
+	if !isValidPrice(fillPrice) {
+		return nil, false, false
 	}
 
 	if o.ID == 0 {
@@ -546,6 +555,9 @@ func (b *Broker) markPriceForPosition(qty float64, prices BarPrices) float64 {
 }
 
 func (b *Broker) calcCommission(qty, price float64) float64 {
+	if !isValidQuantity(qty) || !isValidPrice(price) {
+		return 0
+	}
 	switch b.config.CommissionModel {
 	case CommissionFlat:
 		return b.config.CommissionValue
@@ -655,5 +667,9 @@ func maxAvailable(values ...float64) float64 {
 }
 
 func isValidPrice(value float64) bool {
+	return value > 0 && !math.IsNaN(value) && !math.IsInf(value, 0)
+}
+
+func isValidQuantity(value float64) bool {
 	return value > 0 && !math.IsNaN(value) && !math.IsInf(value, 0)
 }

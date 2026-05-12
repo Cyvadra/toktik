@@ -8,72 +8,71 @@ import (
 	"net/url"
 )
 
-
 // Profile is a row returned by the FMP Profile endpoint.
 type Profile struct {
-	Symbol string `json:"symbol"`
-	Price float64 `json:"price"`
-	MarketCap int64 `json:"marketCap"`
-	Beta float64 `json:"beta"`
-	LastDividend float64 `json:"lastDividend"`
-	Range string `json:"range"`
-	Change float64 `json:"change"`
-	ChangePercentage float64 `json:"changePercentage"`
-	Volume int64 `json:"volume"`
-	AverageVolume int64 `json:"averageVolume"`
-	CompanyName string `json:"companyName"`
-	Currency string `json:"currency"`
-	CIK string `json:"cik"`
-	ISIN string `json:"isin"`
-	CUSIP string `json:"cusip"`
-	ExchangeFullName string `json:"exchangeFullName"`
-	Exchange string `json:"exchange"`
-	Industry string `json:"industry"`
-	Website string `json:"website"`
-	Description string `json:"description"`
-	CEO string `json:"ceo"`
-	Sector string `json:"sector"`
-	Country string `json:"country"`
-	FullTimeEmployees string `json:"fullTimeEmployees"`
-	Phone string `json:"phone"`
-	Address string `json:"address"`
-	City string `json:"city"`
-	State string `json:"state"`
-	Zip string `json:"zip"`
-	Image string `json:"image"`
-	IPODate string `json:"ipoDate"`
-	DefaultImage bool `json:"defaultImage"`
-	IsETF bool `json:"isEtf"`
-	IsActivelyTrading bool `json:"isActivelyTrading"`
-	IsADR bool `json:"isAdr"`
-	IsFund bool `json:"isFund"`
+	Symbol            string  `json:"symbol"`
+	Price             float64 `json:"price"`
+	MarketCap         int64   `json:"marketCap"`
+	Beta              float64 `json:"beta"`
+	LastDividend      float64 `json:"lastDividend"`
+	Range             string  `json:"range"`
+	Change            float64 `json:"change"`
+	ChangePercentage  float64 `json:"changePercentage"`
+	Volume            int64   `json:"volume"`
+	AverageVolume     int64   `json:"averageVolume"`
+	CompanyName       string  `json:"companyName"`
+	Currency          string  `json:"currency"`
+	CIK               string  `json:"cik"`
+	ISIN              string  `json:"isin"`
+	CUSIP             string  `json:"cusip"`
+	ExchangeFullName  string  `json:"exchangeFullName"`
+	Exchange          string  `json:"exchange"`
+	Industry          string  `json:"industry"`
+	Website           string  `json:"website"`
+	Description       string  `json:"description"`
+	CEO               string  `json:"ceo"`
+	Sector            string  `json:"sector"`
+	Country           string  `json:"country"`
+	FullTimeEmployees string  `json:"fullTimeEmployees"`
+	Phone             string  `json:"phone"`
+	Address           string  `json:"address"`
+	City              string  `json:"city"`
+	State             string  `json:"state"`
+	Zip               string  `json:"zip"`
+	Image             string  `json:"image"`
+	IPODate           string  `json:"ipoDate"`
+	DefaultImage      bool    `json:"defaultImage"`
+	IsETF             bool    `json:"isEtf"`
+	IsActivelyTrading bool    `json:"isActivelyTrading"`
+	IsADR             bool    `json:"isAdr"`
+	IsFund            bool    `json:"isFund"`
 }
 
 // MarketCapHistory is a row returned by the FMP MarketCapHistory endpoint.
 type MarketCapHistory struct {
-	Symbol string `json:"symbol"`
-	Date string `json:"date"`
-	MarketCap int64 `json:"marketCap"`
+	Symbol    string `json:"symbol"`
+	Date      string `json:"date"`
+	MarketCap int64  `json:"marketCap"`
 }
 
 // EmployeeCount is a row returned by the FMP EmployeeCount endpoint.
 type EmployeeCount struct {
-	Symbol string `json:"symbol"`
-	CIK string `json:"cik"`
+	Symbol         string `json:"symbol"`
+	CIK            string `json:"cik"`
 	AcceptanceTime string `json:"acceptanceTime"`
 	PeriodOfReport string `json:"periodOfReport"`
-	CompanyName string `json:"companyName"`
-	FormType string `json:"formType"`
-	FilingDate string `json:"filingDate"`
-	EmployeeCount int64 `json:"employeeCount"`
-	Source string `json:"source"`
+	CompanyName    string `json:"companyName"`
+	FormType       string `json:"formType"`
+	FilingDate     string `json:"filingDate"`
+	EmployeeCount  int64  `json:"employeeCount"`
+	Source         string `json:"source"`
 }
 
 // CompanyNote is a row returned by the FMP CompanyNote endpoint.
 type CompanyNote struct {
-	CIK string `json:"cik"`
-	Symbol string `json:"symbol"`
-	Title string `json:"title"`
+	CIK      string `json:"cik"`
+	Symbol   string `json:"symbol"`
+	Title    string `json:"title"`
 	Exchange string `json:"exchange"`
 }
 

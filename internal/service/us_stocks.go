@@ -80,12 +80,9 @@ LIMIT %s`, clickhouseUInt32Literal(limit+1))
 	}
 
 	resp := &dto.USStockSymbolResponse{Data: make([]dto.USStockSymbolRow, 0)}
-	if len(symbols) > limit {
-		resp.NextCursor = encodeCursorString(symbols[limit-1].Symbol)
-		resp.Data = symbols[:limit]
-	} else {
-		resp.Data = symbols
-	}
+	resp.Data, resp.NextCursor = applySymbolCursorPagination(symbols, limit, func(r dto.USStockSymbolRow) string {
+		return encodeCursorString(r.Symbol)
+	})
 	s.attachCompanyProfilesToSymbols(ctx, resp.Data)
 	return resp, nil
 }
@@ -160,12 +157,9 @@ LIMIT %s`, tableName, clickhouseStringLiteral(req.Symbol), clickhouseDateTimeLit
 	}
 
 	resp := &dto.USStockBarResponse{Data: make([]dto.USStockBarRow, 0)}
-	if len(bars) > limit {
-		resp.NextCursor = encodeCursor(bars[limit-1].Timestamp)
-		resp.Data = bars[:limit]
-	} else {
-		resp.Data = bars
-	}
+	resp.Data, resp.NextCursor = applyTimeCursorPagination(bars, limit, func(r dto.USStockBarRow) string {
+		return encodeCursor(r.Timestamp)
+	})
 	if err := s.attachFundamentals(ctx, req.Symbol, req.Factors, resp.Data); err != nil {
 		return nil, err
 	}

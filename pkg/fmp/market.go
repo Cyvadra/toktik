@@ -8,24 +8,23 @@ import (
 	"net/url"
 )
 
-
 // SP500Change is a row returned by the FMP SP500Change endpoint.
 type SP500Change struct {
-	DateAdded string `json:"dateAdded"`
-	AddedSecurity string `json:"addedSecurity"`
-	RemovedTicker string `json:"removedTicker"`
+	DateAdded       string `json:"dateAdded"`
+	AddedSecurity   string `json:"addedSecurity"`
+	RemovedTicker   string `json:"removedTicker"`
 	RemovedSecurity string `json:"removedSecurity"`
-	Date string `json:"date"`
-	Symbol string `json:"symbol"`
-	Reason string `json:"reason"`
+	Date            string `json:"date"`
+	Symbol          string `json:"symbol"`
+	Reason          string `json:"reason"`
 }
 
 // SectorPE is a row returned by the FMP SectorPE endpoint.
 type SectorPE struct {
-	Date string `json:"date"`
-	Sector string `json:"sector"`
-	Exchange string `json:"exchange"`
-	PE float64 `json:"pe"`
+	Date     string  `json:"date"`
+	Sector   string  `json:"sector"`
+	Exchange string  `json:"exchange"`
+	PE       float64 `json:"pe"`
 }
 
 // HistoricalSP500 HistoricalSP500Constituents returns S&P 500 addition/removal history.

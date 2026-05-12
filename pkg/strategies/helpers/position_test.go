@@ -57,9 +57,9 @@ func TestPositionSizeFromCash(t *testing.T) {
 
 func TestClampPositionPct(t *testing.T) {
 	tests := []struct {
-		raw     float64
-		def     float64
-		want    float64
+		raw  float64
+		def  float64
+		want float64
 	}{
 		{0.5, 0.95, 0.5},
 		{0, 0.95, 0.95},

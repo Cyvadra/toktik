@@ -383,7 +383,7 @@ func TestGetBars_Success(t *testing.T) {
 	r := setupRouter(mock)
 
 	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("GET", "/api/v1/crypto-options/bars?symbol=BTC-1&interval=1m&from=2024-01-01&to=2024-01-02", nil)
+	req, _ := http.NewRequest("GET", "/api/v1/markets/crypto-options/bars?symbol=BTC-1&interval=1m&from=2024-01-01&to=2024-01-02", nil)
 	r.ServeHTTP(w, req)
 
 	if w.Code != http.StatusOK {
@@ -483,7 +483,7 @@ func TestGetBars_MissingParam(t *testing.T) {
 	r := setupRouter(&mockQuerier{})
 
 	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("GET", "/api/v1/crypto-options/bars?symbol=BTC-1", nil)
+	req, _ := http.NewRequest("GET", "/api/v1/markets/crypto-options/bars?symbol=BTC-1", nil)
 	r.ServeHTTP(w, req)
 
 	if w.Code != http.StatusBadRequest {
@@ -496,7 +496,7 @@ func TestGetBars_ValidationError(t *testing.T) {
 	r := setupRouter(mock)
 
 	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("GET", "/api/v1/crypto-options/bars?symbol=X&interval=1m&from=2024-01-01&to=2024-01-02", nil)
+	req, _ := http.NewRequest("GET", "/api/v1/markets/crypto-options/bars?symbol=X&interval=1m&from=2024-01-01&to=2024-01-02", nil)
 	r.ServeHTTP(w, req)
 
 	if w.Code != http.StatusBadRequest {
@@ -509,7 +509,7 @@ func TestGetBars_InternalError(t *testing.T) {
 	r := setupRouter(mock)
 
 	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("GET", "/api/v1/crypto-options/bars?symbol=X&interval=1m&from=2024-01-01&to=2024-01-02", nil)
+	req, _ := http.NewRequest("GET", "/api/v1/markets/crypto-options/bars?symbol=X&interval=1m&from=2024-01-01&to=2024-01-02", nil)
 	r.ServeHTTP(w, req)
 
 	if w.Code != http.StatusInternalServerError {
@@ -603,7 +603,7 @@ func TestGetBars_Timeout(t *testing.T) {
 	r := setupRouter(mock)
 
 	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("GET", "/api/v1/crypto-options/bars?symbol=X&interval=1m&from=2024-01-01&to=2024-01-02", nil)
+	req, _ := http.NewRequest("GET", "/api/v1/markets/crypto-options/bars?symbol=X&interval=1m&from=2024-01-01&to=2024-01-02", nil)
 	r.ServeHTTP(w, req)
 
 	if w.Code != http.StatusGatewayTimeout {
@@ -622,7 +622,7 @@ func TestGetSymbols_Success(t *testing.T) {
 	r := setupRouter(mock)
 
 	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("GET", "/api/v1/crypto-options/symbols?base_asset=BTC", nil)
+	req, _ := http.NewRequest("GET", "/api/v1/markets/crypto-options/symbols?base_asset=BTC", nil)
 	r.ServeHTTP(w, req)
 
 	if w.Code != http.StatusOK {
@@ -641,7 +641,7 @@ func TestGetGreeks_Success(t *testing.T) {
 	r := setupRouter(mock)
 
 	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("GET", "/api/v1/crypto-options/greeks?symbol=X&from=2024-01-01&to=2024-01-02", nil)
+	req, _ := http.NewRequest("GET", "/api/v1/markets/crypto-options/greeks?symbol=X&from=2024-01-01&to=2024-01-02", nil)
 	r.ServeHTTP(w, req)
 
 	if w.Code != http.StatusOK {
@@ -653,7 +653,7 @@ func TestGetGreeks_MissingSymbol(t *testing.T) {
 	r := setupRouter(&mockQuerier{})
 
 	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("GET", "/api/v1/crypto-options/greeks?from=2024-01-01&to=2024-01-02", nil)
+	req, _ := http.NewRequest("GET", "/api/v1/markets/crypto-options/greeks?from=2024-01-01&to=2024-01-02", nil)
 	r.ServeHTTP(w, req)
 
 	if w.Code != http.StatusBadRequest {
@@ -671,7 +671,7 @@ func TestRunBacktest_Success(t *testing.T) {
 
 	body := `{"symbol":"BTC","interval":"1h","from":"2024-01-01","to":"2024-02-01"}`
 	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("POST", "/api/v1/crypto-options/backtest", strings.NewReader(body))
+	req, _ := http.NewRequest("POST", "/api/v1/markets/crypto-options/backtest", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	r.ServeHTTP(w, req)
 
@@ -684,7 +684,7 @@ func TestRunBacktest_BadJSON(t *testing.T) {
 	r := setupRouter(&mockQuerier{})
 
 	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("POST", "/api/v1/crypto-options/backtest", strings.NewReader("{"))
+	req, _ := http.NewRequest("POST", "/api/v1/markets/crypto-options/backtest", strings.NewReader("{"))
 	req.Header.Set("Content-Type", "application/json")
 	r.ServeHTTP(w, req)
 
@@ -698,7 +698,7 @@ func TestRunBacktest_MissingRequired(t *testing.T) {
 
 	body := `{"symbol":"BTC"}`
 	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("POST", "/api/v1/crypto-options/backtest", strings.NewReader(body))
+	req, _ := http.NewRequest("POST", "/api/v1/markets/crypto-options/backtest", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	r.ServeHTTP(w, req)
 
@@ -713,7 +713,7 @@ func TestRunBacktest_ServiceError(t *testing.T) {
 
 	body := `{"symbol":"BTC","interval":"1h","from":"2024-01-01","to":"2024-02-01"}`
 	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("POST", "/api/v1/crypto-options/backtest", strings.NewReader(body))
+	req, _ := http.NewRequest("POST", "/api/v1/markets/crypto-options/backtest", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	r.ServeHTTP(w, req)
 

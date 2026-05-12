@@ -175,3 +175,20 @@ func dateAsUTC(t time.Time) time.Time {
 	y, m, d := t.Date()
 	return time.Date(y, m, d, 0, 0, 0, 0, time.UTC)
 }
+
+// applyTimeCursorPagination trims rows to the page limit and returns the next cursor
+// when there are more rows. keyFn extracts the cursor value from the last row in the page.
+// rows must have been fetched with limit+1 to probe for a next page.
+func applyTimeCursorPagination[T any](rows []T, limit int, keyFn func(T) string) (page []T, nextCursor string) {
+	if len(rows) > limit {
+		nextCursor = keyFn(rows[limit-1])
+		return rows[:limit], nextCursor
+	}
+	return rows, ""
+}
+
+// applySymbolCursorPagination is identical to applyTimeCursorPagination but kept as
+// an alias for clarity at call sites that page by symbol rather than time.
+func applySymbolCursorPagination[T any](rows []T, limit int, keyFn func(T) string) (page []T, nextCursor string) {
+	return applyTimeCursorPagination(rows, limit, keyFn)
+}
