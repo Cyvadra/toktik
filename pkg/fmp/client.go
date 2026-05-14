@@ -6,8 +6,10 @@ package fmp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"time"
@@ -19,6 +21,7 @@ const baseURL = "https://financialmodelingprep.com/stable"
 type Client struct {
 	apiKey     string
 	httpClient *http.Client
+	baseURL    string
 }
 
 // Option configures the Client.
@@ -36,11 +39,21 @@ func New(apiKey string, opts ...Option) *Client {
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
+		baseURL: baseURL,
 	}
 	for _, o := range opts {
 		o(c)
 	}
 	return c
+}
+
+// WithBaseURL overrides the API base URL. Primarily used for tests.
+func WithBaseURL(u string) Option {
+	return func(c *Client) {
+		if u != "" {
+			c.baseURL = u
+		}
+	}
 }
 
 // get performs a GET to the FMP stable API path and decodes the JSON response.
@@ -50,42 +63,114 @@ func (c *Client) get(ctx context.Context, path string, params url.Values, out an
 	}
 	params.Set("apikey", c.apiKey)
 
-	u := baseURL + path + "?" + params.Encode()
+	u := c.baseURL + path + "?" + params.Encode()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return fmt.Errorf("fmp: build request: %w", err)
 	}
 
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("fmp: http: %w", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return fmt.Errorf("fmp: read body: %w", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		var errMsg struct {
-			Error string `json:"Error Message"`
+	const maxRetries = 3
+	for attempt := 0; ; attempt++ {
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			if shouldRetryTransport(err) && attempt < maxRetries {
+				if waitErr := waitRetryBackoff(ctx, attempt); waitErr != nil {
+					return fmt.Errorf("fmp: http: %w", waitErr)
+				}
+				continue
+			}
+			return fmt.Errorf("fmp: http: %w", err)
 		}
-		if json.Unmarshal(body, &errMsg) == nil && errMsg.Error != "" {
-			return fmt.Errorf("fmp: api error (HTTP %d): %s", resp.StatusCode, errMsg.Error)
+
+		body, readErr := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if readErr != nil {
+			if attempt < maxRetries {
+				if waitErr := waitRetryBackoff(ctx, attempt); waitErr != nil {
+					return fmt.Errorf("fmp: read body: %w", waitErr)
+				}
+				continue
+			}
+			return fmt.Errorf("fmp: read body: %w", readErr)
 		}
-		return fmt.Errorf("fmp: http %d: %s", resp.StatusCode, body)
-	}
 
-	// FMP returns plan/premium errors as a plain JSON string.
-	if len(body) > 0 && body[0] == '"' {
-		var msg string
-		_ = json.Unmarshal(body, &msg)
-		return fmt.Errorf("fmp: api error: %s", msg)
-	}
+		if resp.StatusCode != http.StatusOK {
+			httpErr := &HTTPStatusError{
+				URL:        u,
+				StatusCode: resp.StatusCode,
+				Status:     resp.Status,
+				Body:       stringsTrimSpaceMax(string(body), 300),
+			}
+			if resp.StatusCode >= 500 && attempt < maxRetries {
+				if waitErr := waitRetryBackoff(ctx, attempt); waitErr != nil {
+					return fmt.Errorf("fmp: http: %w", waitErr)
+				}
+				continue
+			}
+			return httpErr
+		}
 
-	if err := json.Unmarshal(body, out); err != nil {
-		return fmt.Errorf("fmp: decode response: %w (body: %.300s)", err, body)
+		// FMP returns plan/premium errors as a plain JSON string.
+		if len(body) > 0 && body[0] == '"' {
+			var msg string
+			_ = json.Unmarshal(body, &msg)
+			return fmt.Errorf("fmp: api error: %s", msg)
+		}
+
+		if err := json.Unmarshal(body, out); err != nil {
+			return fmt.Errorf("fmp: decode response: %w (body: %.300s)", err, body)
+		}
+		return nil
 	}
-	return nil
+}
+
+func shouldRetryTransport(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		return true
+	}
+	return true
+}
+
+func waitRetryBackoff(ctx context.Context, attempt int) error {
+	delay := 500 * time.Millisecond
+	for i := 0; i < attempt; i++ {
+		delay *= 2
+		if delay >= 4*time.Second {
+			delay = 4 * time.Second
+			break
+		}
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+func stringsTrimSpaceMax(value string, max int) string {
+	trimmed := value
+	for len(trimmed) > 0 && (trimmed[0] == ' ' || trimmed[0] == '\n' || trimmed[0] == '\r' || trimmed[0] == '\t') {
+		trimmed = trimmed[1:]
+	}
+	for len(trimmed) > 0 {
+		last := trimmed[len(trimmed)-1]
+		if last != ' ' && last != '\n' && last != '\r' && last != '\t' {
+			break
+		}
+		trimmed = trimmed[:len(trimmed)-1]
+	}
+	if max > 0 && len(trimmed) > max {
+		return trimmed[:max]
+	}
+	return trimmed
 }

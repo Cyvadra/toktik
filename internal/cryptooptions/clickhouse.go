@@ -473,3 +473,25 @@ func InsertSpotBars(ctx context.Context, conn driver.Conn, bars <-chan SpotBar1m
 
 	return totalRows, nil
 }
+
+// DeleteSpotBarsScope deletes crypto spot base rows and precomputed aggregates
+// for one symbol in [from, to). It is used by FMP spot replace-syncs so reruns
+// do not accumulate duplicate 1m rows or duplicate aggregate states.
+func DeleteSpotBarsScope(ctx context.Context, conn driver.Conn, symbol string, from, to time.Time) error {
+	symbol = strings.ToUpper(strings.TrimSpace(symbol))
+	if symbol == "" {
+		return fmt.Errorf("symbol is required")
+	}
+	where := spotSourceWhere(from, to, symbol)
+	args := spotSourceArgs(from, to, symbol)
+	if err := conn.Exec(ctx, "ALTER TABLE crypto_spot_bar_1m DELETE "+where+" SETTINGS mutations_sync = 1", args...); err != nil {
+		return fmt.Errorf("delete crypto spot base rows for %s: %w", symbol, err)
+	}
+	for _, iv := range KlineIntervals {
+		aggTable := fmt.Sprintf("crypto_spot_bar_%s_agg", iv.Suffix)
+		if err := spotAggDeleteScope(ctx, conn, aggTable, from, to, symbol); err != nil {
+			return fmt.Errorf("delete crypto spot aggregate %s for %s: %w", iv.Suffix, symbol, err)
+		}
+	}
+	return nil
+}

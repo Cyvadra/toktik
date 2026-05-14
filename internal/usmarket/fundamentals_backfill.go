@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"net/http"
 	"sort"
 	"strconv"
 	"strings"
@@ -15,6 +16,7 @@ import (
 
 	clickhouse "github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+	"github.com/Cyvadra/toktik/pkg/fmp"
 	"github.com/Cyvadra/toktik/pkg/tigerapi"
 )
 
@@ -138,6 +140,7 @@ type USFundamentalsBackfillResult struct {
 	MissingPrice     int64
 	MissingTTMEPS    int64
 	MissingBookValue int64
+	ThrottledSymbols []string
 }
 
 type usFundamentalsBackfillStats struct {
@@ -279,6 +282,8 @@ func BackfillUSStockPE(ctx context.Context, cfg USFundamentalsBackfillConfig) (U
 		missingPrice     int64
 		missingTTMEPS    int64
 		missingBookValue int64
+		throttledMu      sync.Mutex
+		throttledSymbols = make(map[string]struct{})
 	)
 
 	for i := 0; i < cfg.Workers; i++ {
@@ -305,6 +310,11 @@ func BackfillUSStockPE(ctx context.Context, cfg USFundamentalsBackfillConfig) (U
 				if err != nil {
 					log.Printf("[ERROR] %s: %v", symbol, err)
 					atomic.AddInt64(&failedSymbols, 1)
+					if fmp.IsHTTPStatus(err, http.StatusTooManyRequests) {
+						throttledMu.Lock()
+						throttledSymbols[symbol] = struct{}{}
+						throttledMu.Unlock()
+					}
 					if strings.Contains(strings.ToLower(err.Error()), "decode response") {
 						atomic.AddInt64(&decodeErrors, 1)
 					}
@@ -356,6 +366,13 @@ func BackfillUSStockPE(ctx context.Context, cfg USFundamentalsBackfillConfig) (U
 		MissingPrice:     missingPrice,
 		MissingTTMEPS:    missingTTMEPS,
 		MissingBookValue: missingBookValue,
+	}
+	if len(throttledSymbols) > 0 {
+		result.ThrottledSymbols = make([]string, 0, len(throttledSymbols))
+		for symbol := range throttledSymbols {
+			result.ThrottledSymbols = append(result.ThrottledSymbols, symbol)
+		}
+		sort.Strings(result.ThrottledSymbols)
 	}
 	if failedSymbols > 0 {
 		return result, fmt.Errorf("US PE backfill finished with %d failed symbols", failedSymbols)

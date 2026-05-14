@@ -78,6 +78,9 @@ func main() {
 		LimitSymbols: *limitSymbols,
 		DryRun:       *dryRun,
 	})
+	if len(result.ThrottledSymbols) > 0 {
+		log.Printf("FMP 429 throttled symbols (%d): %s", len(result.ThrottledSymbols), strings.Join(result.ThrottledSymbols, ","))
+	}
 	if err != nil {
 		log.Fatalf("backfill US fundamentals: %v", err)
 	}

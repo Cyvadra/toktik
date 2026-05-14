@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -36,6 +38,7 @@ type FMPStockKlineSyncResult struct {
 	FailedSymbols    int
 	FetchedBars      int64
 	InsertedRows     int64
+	ThrottledSymbols []string
 }
 
 // SyncFMPStockKlines fetches FMP intraday bars per symbol and inserts them
@@ -67,6 +70,7 @@ func SyncFMPStockKlines(ctx context.Context, conn driver.Conn, cfg FMPStockKline
 
 	client := fmp.New(cfg.APIKey)
 	var result FMPStockKlineSyncResult
+	throttled := make(map[string]struct{})
 	targets := cfg.Targets
 	if len(targets) == 0 {
 		targets = make([]FMPStockSyncTarget, 0, len(cfg.Symbols))
@@ -98,6 +102,9 @@ func SyncFMPStockKlines(ctx context.Context, conn driver.Conn, cfg FMPStockKline
 		bars, err := fetchFMPIntradayChunkedStock(ctx, client, fetchSymbol, cfg.Interval, cfg.From, cfg.To)
 		if err != nil {
 			log.Printf("[ERROR] %s <= %s: fetch FMP intraday (%s): %v", storeSymbol, fetchSymbol, target.Source, err)
+			if fmp.IsHTTPStatus(err, http.StatusTooManyRequests) {
+				throttled[storeSymbol] = struct{}{}
+			}
 			result.FailedSymbols++
 			continue
 		}
@@ -142,6 +149,13 @@ func SyncFMPStockKlines(ctx context.Context, conn driver.Conn, cfg FMPStockKline
 		result.ProcessedSymbols++
 		result.InsertedRows += inserted
 		log.Printf("[OK] %s <= %s: fetched=%d inserted=%d source=%s", storeSymbol, fetchSymbol, len(bars), inserted, target.Source)
+	}
+	if len(throttled) > 0 {
+		result.ThrottledSymbols = make([]string, 0, len(throttled))
+		for symbol := range throttled {
+			result.ThrottledSymbols = append(result.ThrottledSymbols, symbol)
+		}
+		sort.Strings(result.ThrottledSymbols)
 	}
 	return result, nil
 }

@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -21,6 +23,7 @@ type FMPKlineSyncConfig struct {
 	Interval  fmp.IntradayInterval
 	BatchSize int
 	DryRun    bool
+	Replace   bool
 }
 
 // FMPKlineSyncResult summarises a sync run.
@@ -29,6 +32,7 @@ type FMPKlineSyncResult struct {
 	FailedSymbols    int
 	FetchedBars      int64
 	InsertedRows     int64
+	ThrottledSymbols []string
 }
 
 // SyncFMPKlines fetches FMP intraday bars per symbol and inserts them into
@@ -53,16 +57,29 @@ func SyncFMPKlines(ctx context.Context, conn driver.Conn, cfg FMPKlineSyncConfig
 
 	client := fmp.New(cfg.APIKey)
 	var result FMPKlineSyncResult
+	throttled := make(map[string]struct{})
 
 	for _, raw := range cfg.Symbols {
 		symbol := strings.ToUpper(strings.TrimSpace(raw))
 		if symbol == "" {
 			continue
 		}
+		if cfg.Replace && !cfg.DryRun {
+			exclusiveTo := cfg.To.AddDate(0, 0, 1)
+			if err := DeleteBarsSymbolScope(ctx, conn, symbol, cfg.From, exclusiveTo); err != nil {
+				log.Printf("[ERROR] %s: delete existing forex rows for replace: %v", symbol, err)
+				result.FailedSymbols++
+				continue
+			}
+			log.Printf("[REPLACE] %s: cleared forex rows and aggregates for %s..%s", symbol, cfg.From.Format("2006-01-02"), cfg.To.Format("2006-01-02"))
+		}
 
 		bars, err := fetchFMPIntradayChunked(ctx, client, symbol, cfg.Interval, cfg.From, cfg.To)
 		if err != nil {
 			log.Printf("[ERROR] %s: fetch FMP intraday: %v", symbol, err)
+			if fmp.IsHTTPStatus(err, http.StatusTooManyRequests) {
+				throttled[symbol] = struct{}{}
+			}
 			result.FailedSymbols++
 			continue
 		}
@@ -110,6 +127,13 @@ func SyncFMPKlines(ctx context.Context, conn driver.Conn, cfg FMPKlineSyncConfig
 		result.ProcessedSymbols++
 		result.InsertedRows += inserted
 		log.Printf("[OK] %s: fetched=%d inserted=%d", symbol, len(bars), inserted)
+	}
+	if len(throttled) > 0 {
+		result.ThrottledSymbols = make([]string, 0, len(throttled))
+		for symbol := range throttled {
+			result.ThrottledSymbols = append(result.ThrottledSymbols, symbol)
+		}
+		sort.Strings(result.ThrottledSymbols)
 	}
 
 	return result, nil

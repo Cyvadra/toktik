@@ -30,6 +30,7 @@ func main() {
 	batchSize := flag.Int("batch-size", 50000, "Rows per ClickHouse INSERT batch")
 	priceSource := flag.String("price-source", cryptooptions.FMPSpotPriceSource, "Value for crypto_spot_bar_1m.price_source")
 	dryRun := flag.Bool("dry-run", false, "Fetch and report without inserting into ClickHouse")
+	replace := flag.Bool("replace", false, "Delete existing crypto spot 1m rows and precomputed aggregates for each symbol/date scope before inserting")
 	initSchema := flag.Bool("init-schema", true, "Initialize crypto base + spot kline schema before insert")
 	schemaFile := flag.String("schema", "", "Path to crypto_options.sql DDL (auto-detected if empty)")
 	flag.Parse()
@@ -78,13 +79,17 @@ func main() {
 		BatchSize:   *batchSize,
 		PriceSource: *priceSource,
 		DryRun:      *dryRun,
+		Replace:     *replace,
 	})
 	if err != nil {
 		log.Fatalf("sync FMP crypto spot bars: %v", err)
 	}
 
-	log.Printf("FMP crypto spot sync complete: processed=%d failed=%d fetched=%d inserted=%d dry_run=%v",
-		result.ProcessedSymbols, result.FailedSymbols, result.FetchedBars, result.InsertedRows, *dryRun)
+	log.Printf("FMP crypto spot sync complete: processed=%d failed=%d fetched=%d inserted=%d dry_run=%v replace=%v",
+		result.ProcessedSymbols, result.FailedSymbols, result.FetchedBars, result.InsertedRows, *dryRun, *replace)
+	if len(result.ThrottledSymbols) > 0 {
+		log.Printf("FMP 429 throttled symbols (%d): %s", len(result.ThrottledSymbols), strings.Join(result.ThrottledSymbols, ","))
+	}
 }
 
 func mustParseDateRange(startStr, endStr string) (time.Time, time.Time) {

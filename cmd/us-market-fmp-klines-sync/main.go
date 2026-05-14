@@ -91,6 +91,9 @@ func main() {
 
 	log.Printf("FMP US stock kline sync complete: processed=%d failed=%d fetched=%d inserted=%d dry_run=%v replace=%v",
 		result.ProcessedSymbols, result.FailedSymbols, result.FetchedBars, result.InsertedRows, *dryRun, *replace)
+	if len(result.ThrottledSymbols) > 0 {
+		log.Printf("FMP 429 throttled symbols (%d): %s", len(result.ThrottledSymbols), strings.Join(result.ThrottledSymbols, ","))
+	}
 
 	// After a replace-sync, regenerate all kline aggregates (5m → 1d) from the
 	// freshly imported 1m data.  The window [from, to] is inclusive on both ends;

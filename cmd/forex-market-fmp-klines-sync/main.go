@@ -29,6 +29,7 @@ func main() {
 	intervalFlag := flag.String("interval", "1min", "FMP intraday interval (1min, 5min, 15min, 30min, 1hour, 4hour)")
 	batchSize := flag.Int("batch-size", 50000, "Rows per ClickHouse INSERT batch")
 	dryRun := flag.Bool("dry-run", false, "Fetch and report without inserting into ClickHouse")
+	replace := flag.Bool("replace", false, "Delete existing forex 1m rows and precomputed aggregates for each symbol/date scope before inserting")
 	schemaFile := flag.String("schema", "", "Path to forex_market.sql DDL (auto-detected if empty)")
 	flag.Parse()
 
@@ -77,13 +78,17 @@ func main() {
 		Interval:  interval,
 		BatchSize: *batchSize,
 		DryRun:    *dryRun,
+		Replace:   *replace,
 	})
 	if err != nil {
 		log.Fatalf("sync FMP forex klines: %v", err)
 	}
 
-	log.Printf("FMP forex kline sync complete: processed=%d failed=%d fetched=%d inserted=%d dry_run=%v",
-		result.ProcessedSymbols, result.FailedSymbols, result.FetchedBars, result.InsertedRows, *dryRun)
+	log.Printf("FMP forex kline sync complete: processed=%d failed=%d fetched=%d inserted=%d dry_run=%v replace=%v",
+		result.ProcessedSymbols, result.FailedSymbols, result.FetchedBars, result.InsertedRows, *dryRun, *replace)
+	if len(result.ThrottledSymbols) > 0 {
+		log.Printf("FMP 429 throttled symbols (%d): %s", len(result.ThrottledSymbols), strings.Join(result.ThrottledSymbols, ","))
+	}
 }
 
 func mustParseDateRange(startStr, endStr string) (time.Time, time.Time) {

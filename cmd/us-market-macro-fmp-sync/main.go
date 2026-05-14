@@ -1129,6 +1129,9 @@ func insertMacroObservations(ctx context.Context, conn driver.Conn, rows []macro
 	if len(rows) == 0 {
 		return nil
 	}
+	if batchSize <= 0 {
+		batchSize = len(rows)
+	}
 	existing, err := loadExistingMacroRevisions(ctx, conn, rows)
 	if err != nil {
 		return err
@@ -1146,8 +1149,11 @@ func insertMacroObservations(ctx context.Context, conn driver.Conn, rows []macro
 	pending := 0
 	for _, row := range rows {
 		key := fmt.Sprintf("%s|%s|%s|%s", row.Dataset, row.FactorCode, row.EventTS.UTC().Format(time.RFC3339Nano), row.KnownAt.UTC().Format(time.RFC3339Nano))
-		if revision, ok := existing[key]; ok {
-			row.Revision = revision + 1
+		if current, ok := existing[key]; ok {
+			if almostEqualFloat(current.Value, row.Value) {
+				continue
+			}
+			row.Revision = current.Revision + 1
 		}
 		if err := batch.Append(
 			row.Dataset,
@@ -1183,9 +1189,14 @@ func insertMacroObservations(ctx context.Context, conn driver.Conn, rows []macro
 	return nil
 }
 
-func loadExistingMacroRevisions(ctx context.Context, conn driver.Conn, rows []macroObservationRow) (map[string]uint32, error) {
+type existingMacroObservation struct {
+	Revision uint32
+	Value    float64
+}
+
+func loadExistingMacroRevisions(ctx context.Context, conn driver.Conn, rows []macroObservationRow) (map[string]existingMacroObservation, error) {
 	if len(rows) == 0 {
-		return map[string]uint32{}, nil
+		return map[string]existingMacroObservation{}, nil
 	}
 	type timeRange struct {
 		From time.Time
@@ -1206,9 +1217,11 @@ func loadExistingMacroRevisions(ctx context.Context, conn driver.Conn, rows []ma
 		}
 		byDataset[row.Dataset] = current
 	}
-	out := map[string]uint32{}
+	out := map[string]existingMacroObservation{}
 	for dataset, timeWindow := range byDataset {
-		queryRows, err := conn.Query(ctx, `SELECT dataset, factor_code, event_ts, known_at, max(revision)
+		queryRows, err := conn.Query(ctx, `SELECT dataset, factor_code, event_ts, known_at,
+		argMax(value, revision) AS value,
+		max(revision) AS revision
 		FROM macro_observation
 		WHERE dataset = {dataset:String}
 		  AND event_ts >= toDateTime({from:String}, 'UTC')
@@ -1224,13 +1237,14 @@ func loadExistingMacroRevisions(ctx context.Context, conn driver.Conn, rows []ma
 		for queryRows.Next() {
 			var loadedDataset, factorCode string
 			var eventTS, knownAt time.Time
+			var value float64
 			var revision uint32
-			if err := queryRows.Scan(&loadedDataset, &factorCode, &eventTS, &knownAt, &revision); err != nil {
+			if err := queryRows.Scan(&loadedDataset, &factorCode, &eventTS, &knownAt, &value, &revision); err != nil {
 				queryRows.Close()
 				return nil, err
 			}
 			key := fmt.Sprintf("%s|%s|%s|%s", loadedDataset, factorCode, eventTS.UTC().Format(time.RFC3339Nano), knownAt.UTC().Format(time.RFC3339Nano))
-			out[key] = revision
+			out[key] = existingMacroObservation{Revision: revision, Value: value}
 		}
 		if err := queryRows.Err(); err != nil {
 			queryRows.Close()
@@ -1239,6 +1253,11 @@ func loadExistingMacroRevisions(ctx context.Context, conn driver.Conn, rows []ma
 		queryRows.Close()
 	}
 	return out, nil
+}
+
+func almostEqualFloat(left, right float64) bool {
+	const epsilon = 1e-9
+	return math.Abs(left-right) <= epsilon
 }
 
 func parseFMPKnownAt(values ...string) time.Time {

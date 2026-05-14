@@ -138,3 +138,39 @@ func InsertBars(ctx context.Context, conn driver.Conn, bars <-chan Bar1m, batchS
 
 	return totalRows, nil
 }
+
+// DeleteBarsSymbolScope deletes forex base rows and precomputed aggregates for
+// one symbol in [from, to). It is used by FMP replace-syncs to keep reruns
+// idempotent for both 1m data and AggregatingMergeTree rollups.
+func DeleteBarsSymbolScope(ctx context.Context, conn driver.Conn, symbol string, from, to time.Time) error {
+	symbol = strings.ToUpper(strings.TrimSpace(symbol))
+	if symbol == "" {
+		return fmt.Errorf("symbol is required")
+	}
+	where, args := forexScope("timestamp", symbol, from, to)
+	if err := conn.Exec(ctx, "ALTER TABLE forex_bar_1m DELETE "+where+" SETTINGS mutations_sync = 1", args...); err != nil {
+		return fmt.Errorf("delete forex base rows for %s: %w", symbol, err)
+	}
+	for _, iv := range KlineIntervals {
+		aggTable := "forex_bar_" + iv.Suffix + "_agg"
+		where, args := forexScope("ts", symbol, from, to)
+		if err := conn.Exec(ctx, fmt.Sprintf("ALTER TABLE %s DELETE %s SETTINGS mutations_sync = 1", aggTable, where), args...); err != nil {
+			return fmt.Errorf("delete forex aggregate %s for %s: %w", iv.Suffix, symbol, err)
+		}
+	}
+	return nil
+}
+
+func forexScope(timeColumn, symbol string, from, to time.Time) (string, []any) {
+	parts := []string{"symbol = {symbol:String}"}
+	args := []any{clickhouse.Named("symbol", symbol)}
+	if !from.IsZero() {
+		parts = append(parts, timeColumn+" >= toDateTime({from:String}, 'UTC')")
+		args = append(args, clickhouse.Named("from", from.UTC().Format("2006-01-02 15:04:05")))
+	}
+	if !to.IsZero() {
+		parts = append(parts, timeColumn+" < toDateTime({to:String}, 'UTC')")
+		args = append(args, clickhouse.Named("to", to.UTC().Format("2006-01-02 15:04:05")))
+	}
+	return "WHERE " + strings.Join(parts, " AND "), args
+}
