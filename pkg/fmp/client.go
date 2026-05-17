@@ -9,9 +9,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"time"
 )
 
@@ -74,7 +76,7 @@ func (c *Client) get(ctx context.Context, path string, params url.Values, out an
 		resp, err := c.httpClient.Do(req)
 		if err != nil {
 			if shouldRetryTransport(err) && attempt < maxRetries {
-				if waitErr := waitRetryBackoff(ctx, attempt); waitErr != nil {
+				if waitErr := waitRetryBackoff(ctx, retryDelayForAttempt(attempt, 500*time.Millisecond, 4*time.Second)); waitErr != nil {
 					return fmt.Errorf("fmp: http: %w", waitErr)
 				}
 				continue
@@ -86,7 +88,7 @@ func (c *Client) get(ctx context.Context, path string, params url.Values, out an
 		_ = resp.Body.Close()
 		if readErr != nil {
 			if attempt < maxRetries {
-				if waitErr := waitRetryBackoff(ctx, attempt); waitErr != nil {
+				if waitErr := waitRetryBackoff(ctx, retryDelayForAttempt(attempt, 500*time.Millisecond, 4*time.Second)); waitErr != nil {
 					return fmt.Errorf("fmp: read body: %w", waitErr)
 				}
 				continue
@@ -100,9 +102,16 @@ func (c *Client) get(ctx context.Context, path string, params url.Values, out an
 				StatusCode: resp.StatusCode,
 				Status:     resp.Status,
 				Body:       stringsTrimSpaceMax(string(body), 300),
+				RetryAfter: parseRetryAfterHeader(resp.Header.Get("Retry-After")),
+			}
+			if resp.StatusCode == http.StatusTooManyRequests && attempt < maxRetries {
+				if waitErr := waitRetryBackoff(ctx, retryDelayFor429(attempt, httpErr.RetryAfter)); waitErr != nil {
+					return fmt.Errorf("fmp: http: %w", waitErr)
+				}
+				continue
 			}
 			if resp.StatusCode >= 500 && attempt < maxRetries {
-				if waitErr := waitRetryBackoff(ctx, attempt); waitErr != nil {
+				if waitErr := waitRetryBackoff(ctx, retryDelayForAttempt(attempt, 500*time.Millisecond, 4*time.Second)); waitErr != nil {
 					return fmt.Errorf("fmp: http: %w", waitErr)
 				}
 				continue
@@ -138,13 +147,34 @@ func shouldRetryTransport(err error) bool {
 	return true
 }
 
-func waitRetryBackoff(ctx context.Context, attempt int) error {
-	delay := 500 * time.Millisecond
-	for i := 0; i < attempt; i++ {
-		delay *= 2
-		if delay >= 4*time.Second {
-			delay = 4 * time.Second
-			break
+func retryDelayFor429(attempt int, retryAfter time.Duration) time.Duration {
+	if retryAfter > 0 {
+		return retryAfter
+	}
+	return retryDelayForAttempt(attempt, 2*time.Second, 30*time.Second)
+}
+
+func retryDelayForAttempt(attempt int, baseDelay, maxDelay time.Duration) time.Duration {
+	if baseDelay <= 0 {
+		return 0
+	}
+	if maxDelay <= 0 || maxDelay < baseDelay {
+		maxDelay = baseDelay
+	}
+	delay := time.Duration(float64(baseDelay) * math.Pow(2, float64(attempt)))
+	if delay > maxDelay {
+		return maxDelay
+	}
+	return delay
+}
+
+func waitRetryBackoff(ctx context.Context, delay time.Duration) error {
+	if delay <= 0 {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+			return nil
 		}
 	}
 	timer := time.NewTimer(delay)
@@ -155,6 +185,28 @@ func waitRetryBackoff(ctx context.Context, attempt int) error {
 	case <-timer.C:
 		return nil
 	}
+}
+
+func parseRetryAfterHeader(value string) time.Duration {
+	trimmed := stringsTrimSpaceMax(value, 128)
+	if trimmed == "" {
+		return 0
+	}
+	if seconds, err := strconv.Atoi(trimmed); err == nil {
+		if seconds <= 0 {
+			return 0
+		}
+		return time.Duration(seconds) * time.Second
+	}
+	when, err := http.ParseTime(trimmed)
+	if err != nil {
+		return 0
+	}
+	delay := time.Until(when)
+	if delay <= 0 {
+		return 0
+	}
+	return delay
 }
 
 func stringsTrimSpaceMax(value string, max int) string {

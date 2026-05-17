@@ -48,6 +48,7 @@ type PEBackfillWorker interface {
 // coordination across workers.
 type backfillRateLimiter interface {
 	Wait(context.Context) error
+	Backoff(context.Context, time.Duration) error
 }
 
 // PEFetchResult is the provider-normalized output for one symbol fetch.
@@ -113,18 +114,30 @@ func (w *tigerPEBackfillWorker) FetchSymbolPE(ctx context.Context, symbol string
 }
 
 type USFundamentalsBackfillConfig struct {
-	Conn         driver.Conn
-	DSN          string
-	Provider     PEBackfillProvider
-	StartDate    time.Time
-	EndDate      time.Time
-	Symbols      []string
-	Workers      int
-	BatchSize    int
-	PageSize     int
-	QPS          int
-	LimitSymbols int
-	DryRun       bool
+	Conn               driver.Conn
+	DSN                string
+	Provider           PEBackfillProvider
+	StartDate          time.Time
+	EndDate            time.Time
+	Symbols            []string
+	Workers            int
+	BatchSize          int
+	PageSize           int
+	QPS                int
+	LimitSymbols       int
+	DryRun             bool
+	DistributedLimiter DistributedRateLimitConfig
+}
+
+type DistributedRateLimitConfig struct {
+	Enabled      bool
+	Addr         string
+	Password     string
+	DB           int
+	KeyPrefix    string
+	DialTimeout  time.Duration
+	ReadTimeout  time.Duration
+	WriteTimeout time.Duration
 }
 
 type USFundamentalsBackfillResult struct {
@@ -216,6 +229,33 @@ func (l *requestLimiter) Wait(ctx context.Context) error {
 	}
 }
 
+func (l *requestLimiter) Backoff(_ context.Context, cooldown time.Duration) error {
+	if l == nil || cooldown <= 0 {
+		return nil
+	}
+	penaltyUntil := time.Now().Add(cooldown)
+	l.mu.Lock()
+	if l.next.Before(penaltyUntil) {
+		l.next = penaltyUntil
+	}
+	l.mu.Unlock()
+	return nil
+}
+
+func newBackfillRateLimiter(ctx context.Context, cfg USFundamentalsBackfillConfig) (backfillRateLimiter, func() error, error) {
+	if cfg.QPS <= 0 {
+		return newRequestLimiter(0), func() error { return nil }, nil
+	}
+	if cfg.DistributedLimiter.Enabled {
+		limiter, err := newRedisRequestLimiter(ctx, cfg.Provider.Name(), cfg.QPS, cfg.DistributedLimiter)
+		if err != nil {
+			return nil, nil, err
+		}
+		return limiter, limiter.Close, nil
+	}
+	return newRequestLimiter(cfg.QPS), func() error { return nil }, nil
+}
+
 func BackfillUSStockPE(ctx context.Context, cfg USFundamentalsBackfillConfig) (USFundamentalsBackfillResult, error) {
 	if cfg.Conn == nil {
 		return USFundamentalsBackfillResult{}, fmt.Errorf("clickhouse connection is required")
@@ -259,6 +299,14 @@ func BackfillUSStockPE(ctx context.Context, cfg USFundamentalsBackfillConfig) (U
 		return USFundamentalsBackfillResult{FilteredSymbols: filteredSymbols}, nil
 	}
 
+	limiter, closeLimiter, err := newBackfillRateLimiter(ctx, cfg)
+	if err != nil {
+		return USFundamentalsBackfillResult{}, fmt.Errorf("build request limiter: %w", err)
+	}
+	defer func() {
+		_ = closeLimiter()
+	}()
+
 	if !cfg.DryRun {
 		if err := ensureFundamentalFactorCatalogRows(ctx, cfg.Conn); err != nil {
 			return USFundamentalsBackfillResult{}, err
@@ -268,7 +316,6 @@ func BackfillUSStockPE(ctx context.Context, cfg USFundamentalsBackfillConfig) (U
 	log.Printf("Found %d US symbols to backfill fundamentals between %s and %s using provider=%s", len(symbols), cfg.StartDate.Format("2006-01-02"), cfg.EndDate.Format("2006-01-02"), cfg.Provider.Name())
 
 	taskCh := make(chan string)
-	limiter := newRequestLimiter(cfg.QPS)
 	var (
 		wg               sync.WaitGroup
 		processedSymbols int64
@@ -314,6 +361,13 @@ func BackfillUSStockPE(ctx context.Context, cfg USFundamentalsBackfillConfig) (U
 						throttledMu.Lock()
 						throttledSymbols[symbol] = struct{}{}
 						throttledMu.Unlock()
+						cooldown := fmp.RetryAfterDelay(err)
+						if cooldown <= 0 {
+							cooldown = 30 * time.Second
+						}
+						if backoffErr := limiter.Backoff(ctx, cooldown); backoffErr != nil {
+							log.Printf("[WARN] %s: apply FMP limiter backoff: %v", symbol, backoffErr)
+						}
 					}
 					if strings.Contains(strings.ToLower(err.Error()), "decode response") {
 						atomic.AddInt64(&decodeErrors, 1)

@@ -194,15 +194,16 @@ func (s *fmpUSStocks) AuditTargets(sourceKey string) []syncpipeline.AuditTarget 
 func (s *fmpUSStocks) MaxConcurrency() int { return 4 }
 
 type FMPUSFundamentalsConfig struct {
-	Provider          usmarket.PEBackfillProvider
-	DSN               string
-	Symbols           []string
-	Workers           int
-	BatchSize         int
-	PageSize          int
-	QPS               int
-	LimitSymbols      int
-	ColdStartFloorUTC time.Time
+	Provider           usmarket.PEBackfillProvider
+	DSN                string
+	Symbols            []string
+	Workers            int
+	BatchSize          int
+	PageSize           int
+	QPS                int
+	LimitSymbols       int
+	DistributedLimiter usmarket.DistributedRateLimitConfig
+	ColdStartFloorUTC  time.Time
 }
 
 type fmpUSFundamentals struct{ cfg FMPUSFundamentalsConfig }
@@ -229,7 +230,7 @@ func (s *fmpUSFundamentals) ResolveCursor(ctx context.Context, conn driver.Conn,
 }
 func (s *fmpUSFundamentals) ColdStartFloor(string) time.Time { return s.cfg.ColdStartFloorUTC }
 func (s *fmpUSFundamentals) Sync(ctx context.Context, conn driver.Conn, req syncpipeline.SyncRequest) (syncpipeline.SyncResult, error) {
-	res, err := usmarket.BackfillUSStockPE(ctx, usmarket.USFundamentalsBackfillConfig{Conn: conn, DSN: s.cfg.DSN, Provider: s.cfg.Provider, StartDate: req.From, EndDate: req.To, Symbols: s.cfg.Symbols, Workers: s.cfg.Workers, BatchSize: s.cfg.BatchSize, PageSize: s.cfg.PageSize, QPS: s.cfg.QPS, LimitSymbols: s.cfg.LimitSymbols, DryRun: req.DryRun})
+	res, err := usmarket.BackfillUSStockPE(ctx, usmarket.USFundamentalsBackfillConfig{Conn: conn, DSN: s.cfg.DSN, Provider: s.cfg.Provider, StartDate: req.From, EndDate: req.To, Symbols: s.cfg.Symbols, Workers: s.cfg.Workers, BatchSize: s.cfg.BatchSize, PageSize: s.cfg.PageSize, QPS: s.cfg.QPS, LimitSymbols: s.cfg.LimitSymbols, DryRun: req.DryRun, DistributedLimiter: s.cfg.DistributedLimiter})
 	return syncResult(req, res.InsertedRows), err
 }
 func (s *fmpUSFundamentals) AuditTargets(string) []syncpipeline.AuditTarget {
@@ -238,14 +239,15 @@ func (s *fmpUSFundamentals) AuditTargets(string) []syncpipeline.AuditTarget {
 func (s *fmpUSFundamentals) MaxConcurrency() int { return 1 }
 
 type FMPETFFundamentalsConfig struct {
-	APIKey            string
-	DSN               string
-	Symbols           []string
-	SymbolMappings    map[string]string
-	BatchSize         int
-	QPS               int
-	MinCoverage       float64
-	ColdStartFloorUTC time.Time
+	APIKey             string
+	DSN                string
+	Symbols            []string
+	SymbolMappings     map[string]string
+	BatchSize          int
+	QPS                int
+	MinCoverage        float64
+	DistributedLimiter usmarket.DistributedRateLimitConfig
+	ColdStartFloorUTC  time.Time
 }
 
 type fmpETFFundamentals struct{ cfg FMPETFFundamentalsConfig }
@@ -281,7 +283,7 @@ func (s *fmpETFFundamentals) Sync(ctx context.Context, conn driver.Conn, req syn
 		}
 		symbols = append(symbols, fetch)
 	}
-	res, err := usmarket.BackfillUSStockPE(ctx, usmarket.USFundamentalsBackfillConfig{Conn: conn, DSN: s.cfg.DSN, Provider: usmarket.NewFMPPEBackfillProvider(s.cfg.APIKey, 40), StartDate: req.From, EndDate: req.To, Symbols: symbols, Workers: 1, BatchSize: s.cfg.BatchSize, PageSize: 251, QPS: s.cfg.QPS, DryRun: req.DryRun})
+	res, err := usmarket.BackfillUSStockPE(ctx, usmarket.USFundamentalsBackfillConfig{Conn: conn, DSN: s.cfg.DSN, Provider: usmarket.NewFMPPEBackfillProvider(s.cfg.APIKey, 40), StartDate: req.From, EndDate: req.To, Symbols: symbols, Workers: 1, BatchSize: s.cfg.BatchSize, PageSize: 251, QPS: s.cfg.QPS, DryRun: req.DryRun, DistributedLimiter: s.cfg.DistributedLimiter})
 	return syncResult(req, res.InsertedRows), err
 }
 func (s *fmpETFFundamentals) AuditTargets(string) []syncpipeline.AuditTarget {

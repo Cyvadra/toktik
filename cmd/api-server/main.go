@@ -31,7 +31,6 @@ import (
 	"syscall"
 	"time"
 
-	_ "github.com/Cyvadra/toktik/docs"
 	"github.com/Cyvadra/toktik/internal/api"
 	"github.com/Cyvadra/toktik/internal/cache"
 	"github.com/Cyvadra/toktik/internal/chrepo"

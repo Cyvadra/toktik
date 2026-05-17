@@ -539,6 +539,16 @@ func buildJobSpecs(runtimeCfg config.Runtime, dsn string, cfg pipelineConfig, se
 }
 
 func buildSyncer(runtimeCfg config.Runtime, name string, job jobConfig, apiKey, dsn string, sessions usmarket.SessionMap) (syncpipeline.Syncer, error) {
+	limiterCfg := usmarket.DistributedRateLimitConfig{
+		Enabled:      runtimeCfg.Redis.Enabled,
+		Addr:         runtimeCfg.Redis.Addr,
+		Password:     runtimeCfg.Redis.Password,
+		DB:           runtimeCfg.Redis.DB,
+		KeyPrefix:    runtimeCfg.Redis.KeyPrefix,
+		DialTimeout:  runtimeCfg.RedisDialTimeout(),
+		ReadTimeout:  runtimeCfg.RedisReadTimeout(),
+		WriteTimeout: runtimeCfg.RedisWriteTimeout(),
+	}
 	switch name {
 	case "fmp_crypto_spot":
 		return pipelinejobs.NewFMPCryptoSpot(pipelinejobs.FMPCryptoSpotConfig{APIKey: apiKey, Symbols: job.Symbols, ResolveAtStartup: job.ResolveAtStartup, LimitSymbols: job.LimitSymbols, Interval: fmp.IntradayInterval(job.Interval), BatchSize: job.BatchSize, PriceSource: job.PriceSource, ColdStartFloorUTC: parseColdStart(job.ColdStartFloor)})
@@ -547,9 +557,9 @@ func buildSyncer(runtimeCfg config.Runtime, name string, job jobConfig, apiKey, 
 	case "fmp_us_stocks":
 		return pipelinejobs.NewFMPUSStocks(pipelinejobs.FMPUSStocksConfig{APIKey: apiKey, Symbols: job.Symbols, ResolveAtStartup: job.ResolveAtStartup, IncludeOptionGapMappings: job.IncludeOptionGapMappings, LimitSymbols: job.LimitSymbols, Interval: fmp.IntradayInterval(job.Interval), BatchSize: job.BatchSize, ColdStartFloorUTC: parseColdStart(job.ColdStartFloor)})
 	case "fmp_us_fundamentals":
-		return pipelinejobs.NewFMPUSFundamentals(pipelinejobs.FMPUSFundamentalsConfig{Provider: usmarket.NewFMPPEBackfillProvider(apiKey, job.FMPQuarterLimit), DSN: dsn, Symbols: job.Symbols, Workers: job.Workers, BatchSize: job.BatchSize, PageSize: job.PageSize, QPS: job.QPS, LimitSymbols: job.LimitSymbols, ColdStartFloorUTC: parseColdStart(job.ColdStartFloor)})
+		return pipelinejobs.NewFMPUSFundamentals(pipelinejobs.FMPUSFundamentalsConfig{Provider: usmarket.NewFMPPEBackfillProvider(apiKey, job.FMPQuarterLimit), DSN: dsn, Symbols: job.Symbols, Workers: job.Workers, BatchSize: job.BatchSize, PageSize: job.PageSize, QPS: job.QPS, LimitSymbols: job.LimitSymbols, DistributedLimiter: limiterCfg, ColdStartFloorUTC: parseColdStart(job.ColdStartFloor)})
 	case "fmp_etf_fundamentals":
-		return pipelinejobs.NewFMPETFFundamentals(pipelinejobs.FMPETFFundamentalsConfig{APIKey: apiKey, DSN: dsn, Symbols: job.Symbols, SymbolMappings: job.SymbolMappings, BatchSize: job.BatchSize, QPS: job.QPS, MinCoverage: job.MinCoverage, ColdStartFloorUTC: parseColdStart(job.ColdStartFloor)})
+		return pipelinejobs.NewFMPETFFundamentals(pipelinejobs.FMPETFFundamentalsConfig{APIKey: apiKey, DSN: dsn, Symbols: job.Symbols, SymbolMappings: job.SymbolMappings, BatchSize: job.BatchSize, QPS: job.QPS, MinCoverage: job.MinCoverage, DistributedLimiter: limiterCfg, ColdStartFloorUTC: parseColdStart(job.ColdStartFloor)})
 	case "polygon_us_flatfiles":
 		polygonSvc, err := service.NewPolygonServiceFromConfig(runtimeCfg, nil)
 		if err != nil {

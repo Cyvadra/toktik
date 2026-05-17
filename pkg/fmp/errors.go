@@ -3,6 +3,7 @@ package fmp
 import (
 	"errors"
 	"fmt"
+	"time"
 )
 
 // HTTPStatusError captures non-200 HTTP responses from FMP.
@@ -11,6 +12,7 @@ type HTTPStatusError struct {
 	StatusCode int
 	Status     string
 	Body       string
+	RetryAfter time.Duration
 }
 
 func (e *HTTPStatusError) Error() string {
@@ -31,4 +33,12 @@ func IsHTTPStatus(err error, statusCode int) bool {
 		return httpErr.StatusCode == statusCode
 	}
 	return false
+}
+
+func RetryAfterDelay(err error) time.Duration {
+	var httpErr *HTTPStatusError
+	if errors.As(err, &httpErr) {
+		return httpErr.RetryAfter
+	}
+	return 0
 }

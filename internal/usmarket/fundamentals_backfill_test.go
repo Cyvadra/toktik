@@ -21,6 +21,20 @@ func TestRequestLimiterAllowsZeroQPS(t *testing.T) {
 	}
 }
 
+func TestRequestLimiterBackoffDelaysNextSlot(t *testing.T) {
+	limiter := newRequestLimiter(1000)
+	if err := limiter.Backoff(context.Background(), 25*time.Millisecond); err != nil {
+		t.Fatalf("backoff: %v", err)
+	}
+	start := time.Now()
+	if err := limiter.Wait(context.Background()); err != nil {
+		t.Fatalf("wait: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed < 20*time.Millisecond {
+		t.Fatalf("expected backoff delay, elapsed=%v", elapsed)
+	}
+}
+
 func TestExtractPEObservations(t *testing.T) {
 	bars := []tigerapi.KlineBar{
 		{Symbol: "AAPL", Time: 1712534400000, Fundamentals: map[string]any{"ttmPeRate": 31.8}},

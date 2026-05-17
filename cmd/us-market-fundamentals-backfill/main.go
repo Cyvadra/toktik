@@ -77,6 +77,16 @@ func main() {
 		QPS:          *qps,
 		LimitSymbols: *limitSymbols,
 		DryRun:       *dryRun,
+		DistributedLimiter: usmarket.DistributedRateLimitConfig{
+			Enabled:      runtimeCfg.Redis.Enabled,
+			Addr:         runtimeCfg.Redis.Addr,
+			Password:     runtimeCfg.Redis.Password,
+			DB:           runtimeCfg.Redis.DB,
+			KeyPrefix:    runtimeCfg.Redis.KeyPrefix,
+			DialTimeout:  runtimeCfg.RedisDialTimeout(),
+			ReadTimeout:  runtimeCfg.RedisReadTimeout(),
+			WriteTimeout: runtimeCfg.RedisWriteTimeout(),
+		},
 	})
 	if len(result.ThrottledSymbols) > 0 {
 		log.Printf("FMP 429 throttled symbols (%d): %s", len(result.ThrottledSymbols), strings.Join(result.ThrottledSymbols, ","))
