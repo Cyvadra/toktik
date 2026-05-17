@@ -1,0 +1,88 @@
+runner:
+  max_job_concurrency: 1
+  overlap_days: 1
+  audit_enabled: true
+  audit_lookback_days: 7
+  audit_max_findings: 50
+  lock_ttl: 2h
+  default_per_job_timeout: ""
+  default_per_source_timeout: ""
+
+market_data_sources:
+  # US stock bars can come from FMP intraday APIs or Polygon flat files.
+  # Set us_stocks: polygon to import both US stocks and US options from
+  # Polygon flat files through polygon_us_flatfiles.
+  us_stocks: polygon
+  # US option minute bars are currently sourced from Polygon flat files.
+  us_options: polygon
+
+jobs:
+  guru_macro:
+    enabled: true
+    dataset: gurufocus-shiller
+    url: "https://www.gurufocus.cn/_api/indicator/shiller_pe/data?locale=zh-hans"
+    reference_symbol: SPX
+    batch_size: 1000
+
+  fmp_us_macro:
+    enabled: false
+    dataset: gurufocus-shiller
+    reference_symbol: SPX
+    batch_size: 1000
+
+  fmp_crypto_spot:
+    enabled: false
+    resolve_at_startup: true
+    interval: 1min
+    batch_size: 50000
+
+  fmp_forex:
+    enabled: false
+    resolve_at_startup: true
+    interval: 1min
+    batch_size: 50000
+
+  fmp_us_stocks:
+    enabled: true
+    depends_on: [polygon_us_flatfiles]
+    resolve_at_startup: true
+    include_option_gap_mappings: true
+    interval: 1min
+    batch_size: 50000
+
+  fmp_us_fundamentals:
+    enabled: true
+    depends_on: [fmp_us_stocks]
+    provider: fmp
+    workers: 2
+    batch_size: 1000
+    page_size: 251
+    qps: 10
+    fmp_quarter_limit: 40
+
+  fmp_etf_fundamentals:
+    enabled: true
+    depends_on: [fmp_us_fundamentals]
+    symbols: [SPY, IWM, NDX, FIX, KWEB]
+    symbol_mappings:
+      NDX: QQQ
+    batch_size: 1000
+    qps: 10
+    min_coverage: 0.8
+
+  polygon_us_flatfiles:
+    enabled: true
+    batch_size: 100000
+    workers: 2
+    risk_free_rate: 0.05
+    force_download: false
+    # Usually managed by market_data_sources.us_stocks.
+    sync_stocks: false
+
+  polygon_us_greeks:
+    enabled: true
+    depends_on: [polygon_us_flatfiles, fmp_us_stocks]
+    batch_size: 100000
+    workers: 2
+    risk_free_rate: 0.05
+    rebuild_aggregates: true
