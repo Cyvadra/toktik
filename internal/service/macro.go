@@ -237,6 +237,10 @@ func (s *MacroService) QuerySeries(ctx context.Context, req dto.MacroSeriesReque
 	if err != nil {
 		return nil, err
 	}
+	anchorValues, err := s.queryReferenceAnchorValues(ctx, tableName, referenceSymbol, collectMacroAnchorEventTimestamps(observations, from, to), interval == "1d")
+	if err != nil {
+		return nil, err
+	}
 	bars, err := s.queryReferenceBars(ctx, tableName, referenceSymbol, from, to, limit, interval == "1d")
 	if err != nil {
 		return nil, err
@@ -244,9 +248,9 @@ func (s *MacroService) QuerySeries(ctx context.Context, req dto.MacroSeriesReque
 	resp.ReferenceMarket = referenceMarket
 	resp.ReferenceSymbol = referenceSymbol
 	if interval == "1d" {
-		resp.Data = buildExpandedMacroDailySeries(requestedFactors, observations, metaByFactor, virtualByFactor, bars, referenceMarket, referenceSymbol, from, to)
+		resp.Data = buildExpandedMacroDailySeries(requestedFactors, observations, metaByFactor, virtualByFactor, bars, anchorValues, referenceMarket, referenceSymbol, from, to)
 	} else {
-		resp.Data = buildExpandedMacroSeries(requestedFactors, observations, metaByFactor, virtualByFactor, bars, referenceMarket, referenceSymbol)
+		resp.Data = buildExpandedMacroSeries(requestedFactors, observations, metaByFactor, virtualByFactor, bars, anchorValues, referenceMarket, referenceSymbol)
 	}
 	if len(resp.Data) > limit {
 		resp.Data = resp.Data[:limit]
@@ -494,8 +498,8 @@ func buildMacroEventSeries(requestedFactors []string, observations map[string][]
 	return out
 }
 
-func buildExpandedMacroSeries(requestedFactors []string, observations map[string][]macroObservation, metaByFactor map[string]macroFactorMeta, virtualByFactor map[string]macroVirtualFactor, bars []macroReferenceBar, referenceMarket, referenceSymbol string) []dto.MacroSeriesPoint {
-	baseExpanded := expandMacroObservations(observations, metaByFactor, bars, referenceMarket, referenceSymbol)
+func buildExpandedMacroSeries(requestedFactors []string, observations map[string][]macroObservation, metaByFactor map[string]macroFactorMeta, virtualByFactor map[string]macroVirtualFactor, bars []macroReferenceBar, anchorValues map[time.Time]float64, referenceMarket, referenceSymbol string) []dto.MacroSeriesPoint {
+	baseExpanded := expandMacroObservations(observations, metaByFactor, bars, anchorValues, referenceMarket, referenceSymbol)
 	byFactor := groupMacroSeriesByFactor(baseExpanded)
 	out := make([]dto.MacroSeriesPoint, 0, len(baseExpanded))
 	for _, factor := range requestedFactors {
@@ -514,8 +518,8 @@ func buildExpandedMacroSeries(requestedFactors []string, observations map[string
 	return out
 }
 
-func buildExpandedMacroDailySeries(requestedFactors []string, observations map[string][]macroObservation, metaByFactor map[string]macroFactorMeta, virtualByFactor map[string]macroVirtualFactor, bars []macroReferenceBar, referenceMarket, referenceSymbol string, from, to time.Time) []dto.MacroSeriesPoint {
-	baseExpanded := expandMacroObservationsDaily(observations, metaByFactor, bars, referenceMarket, referenceSymbol, from, to)
+func buildExpandedMacroDailySeries(requestedFactors []string, observations map[string][]macroObservation, metaByFactor map[string]macroFactorMeta, virtualByFactor map[string]macroVirtualFactor, bars []macroReferenceBar, anchorValues map[time.Time]float64, referenceMarket, referenceSymbol string, from, to time.Time) []dto.MacroSeriesPoint {
+	baseExpanded := expandMacroObservationsDaily(observations, metaByFactor, bars, anchorValues, referenceMarket, referenceSymbol, from, to)
 	byFactor := groupMacroSeriesByFactor(baseExpanded)
 	out := make([]dto.MacroSeriesPoint, 0, len(baseExpanded))
 	for _, factor := range requestedFactors {
@@ -559,7 +563,7 @@ func deriveVirtualMacroSeries(code string, source []dto.MacroSeriesPoint, virtua
 	return out
 }
 
-func expandMacroObservations(observations map[string][]macroObservation, metaByFactor map[string]macroFactorMeta, bars []macroReferenceBar, referenceMarket, referenceSymbol string) []dto.MacroSeriesPoint {
+func expandMacroObservations(observations map[string][]macroObservation, metaByFactor map[string]macroFactorMeta, bars []macroReferenceBar, anchorValues map[time.Time]float64, referenceMarket, referenceSymbol string) []dto.MacroSeriesPoint {
 	out := make([]dto.MacroSeriesPoint, 0, len(bars)*max(1, len(observations)))
 	for factor, series := range observations {
 		if len(series) == 0 {
@@ -577,8 +581,9 @@ func expandMacroObservations(observations map[string][]macroObservation, metaByF
 			}
 			value := current.Value
 			realtime := false
-			if meta.RealtimeMode == macroRealtimePriceScaled && !math.IsNaN(current.AnchorValue) && current.AnchorValue != 0 {
-				value = current.Value * (bar.Close / current.AnchorValue)
+			anchorValue := resolveMacroAnchorValue(current, anchorValues, referenceSymbol)
+			if meta.RealtimeMode == macroRealtimePriceScaled && !math.IsNaN(anchorValue) && anchorValue != 0 {
+				value = current.Value * (bar.Close / anchorValue)
 				realtime = true
 			}
 			out = append(out, dto.MacroSeriesPoint{
@@ -604,7 +609,7 @@ func expandMacroObservations(observations map[string][]macroObservation, metaByF
 	return out
 }
 
-func expandMacroObservationsDaily(observations map[string][]macroObservation, metaByFactor map[string]macroFactorMeta, bars []macroReferenceBar, referenceMarket, referenceSymbol string, from, to time.Time) []dto.MacroSeriesPoint {
+func expandMacroObservationsDaily(observations map[string][]macroObservation, metaByFactor map[string]macroFactorMeta, bars []macroReferenceBar, anchorValues map[time.Time]float64, referenceMarket, referenceSymbol string, from, to time.Time) []dto.MacroSeriesPoint {
 	if len(bars) == 0 {
 		return nil
 	}
@@ -637,8 +642,9 @@ func expandMacroObservationsDaily(observations map[string][]macroObservation, me
 
 			value := current.Value
 			realtime := false
-			if meta.RealtimeMode == macroRealtimePriceScaled && !math.IsNaN(current.AnchorValue) && current.AnchorValue != 0 {
-				value = current.Value * (currentBar.Close / current.AnchorValue)
+			anchorValue := resolveMacroAnchorValue(current, anchorValues, referenceSymbol)
+			if meta.RealtimeMode == macroRealtimePriceScaled && !math.IsNaN(anchorValue) && anchorValue != 0 {
+				value = current.Value * (currentBar.Close / anchorValue)
 				realtime = true
 			}
 			out = append(out, dto.MacroSeriesPoint{
@@ -662,6 +668,87 @@ func expandMacroObservationsDaily(observations map[string][]macroObservation, me
 		return out[i].Timestamp.Before(out[j].Timestamp)
 	})
 	return out
+}
+
+func (s *MacroService) queryReferenceAnchorValues(ctx context.Context, tableName, symbol string, eventTimestamps []time.Time, includeSeed bool) (map[time.Time]float64, error) {
+	if len(eventTimestamps) == 0 {
+		return map[time.Time]float64{}, nil
+	}
+	sortedTargets := append([]time.Time(nil), eventTimestamps...)
+	sort.Slice(sortedTargets, func(i, j int) bool { return sortedTargets[i].Before(sortedTargets[j]) })
+	from := sortedTargets[0].AddDate(0, 0, -14)
+	to := sortedTargets[len(sortedTargets)-1].Add(24 * time.Hour)
+	bars, err := s.queryReferenceBars(ctx, tableName, symbol, from, to, maxMacroSeriesLimit, includeSeed)
+	if err != nil {
+		return nil, fmt.Errorf("query macro reference anchors: %w", err)
+	}
+	return mapMacroAnchorValues(sortedTargets, bars), nil
+}
+
+func collectMacroAnchorEventTimestamps(observations map[string][]macroObservation, from, to time.Time) []time.Time {
+	seen := make(map[time.Time]struct{})
+	out := make([]time.Time, 0)
+	for _, series := range observations {
+		if len(series) == 0 {
+			continue
+		}
+		currentIndex := -1
+		for index, item := range series {
+			if !item.KnownAt.After(from) {
+				currentIndex = index
+				continue
+			}
+			break
+		}
+		startIndex := 0
+		if currentIndex >= 0 {
+			startIndex = currentIndex
+		}
+		for index := startIndex; index < len(series); index++ {
+			item := series[index]
+			if index > currentIndex && !item.KnownAt.Before(to) {
+				break
+			}
+			if _, ok := seen[item.EventTS]; ok {
+				continue
+			}
+			seen[item.EventTS] = struct{}{}
+			out = append(out, item.EventTS)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Before(out[j]) })
+	return out
+}
+
+func mapMacroAnchorValues(targets []time.Time, bars []macroReferenceBar) map[time.Time]float64 {
+	out := make(map[time.Time]float64, len(targets))
+	if len(targets) == 0 || len(bars) == 0 {
+		return out
+	}
+	barIndex := 0
+	for _, target := range targets {
+		for barIndex+1 < len(bars) && !bars[barIndex+1].Timestamp.After(target) {
+			barIndex++
+		}
+		current := bars[barIndex]
+		if current.Timestamp.After(target) {
+			continue
+		}
+		out[target] = current.Close
+	}
+	return out
+}
+
+func resolveMacroAnchorValue(current macroObservation, anchorValues map[time.Time]float64, referenceSymbol string) float64 {
+	if anchorValues != nil {
+		if value, ok := anchorValues[current.EventTS]; ok && !math.IsNaN(value) && value != 0 {
+			return value
+		}
+	}
+	if strings.EqualFold(current.ReferenceSymbol, referenceSymbol) && !math.IsNaN(current.AnchorValue) && current.AnchorValue != 0 {
+		return current.AnchorValue
+	}
+	return math.NaN()
 }
 
 func normalizeMacroDataset(dataset string, required bool) (string, error) {

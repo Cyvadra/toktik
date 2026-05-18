@@ -109,11 +109,7 @@ func ResolveUSStockSyncTargets(ctx context.Context, conn driver.Conn, symbols []
 	targets := make([]FMPStockSyncTarget, 0, len(stockSymbols))
 	for _, symbol := range stockSymbols {
 		stockSet[symbol] = struct{}{}
-		targets = append(targets, FMPStockSyncTarget{
-			StoreSymbol: symbol,
-			FetchSymbol: symbol,
-			Source:      "stored-stock",
-		})
+		targets = append(targets, buildStoredStockSyncTarget(symbol))
 	}
 	if !includeOptionGaps {
 		return targets, nil
@@ -134,6 +130,21 @@ func ResolveUSStockSyncTargets(ctx context.Context, conn driver.Conn, symbols []
 		targets = append(targets, target)
 	}
 	return PrioritizeUSStockSyncTargets(ctx, conn, targets)
+}
+
+func buildStoredStockSyncTarget(symbol string) FMPStockSyncTarget {
+	storeSymbol := strings.ToUpper(strings.TrimSpace(symbol))
+	fetchSymbol := storeSymbol
+	source := "stored-stock"
+	if alias, ok := fmpIndexGapAliases[storeSymbol]; ok {
+		fetchSymbol = alias
+		source = "stored-stock-index-alias"
+	}
+	return FMPStockSyncTarget{
+		StoreSymbol: storeSymbol,
+		FetchSymbol: fetchSymbol,
+		Source:      source,
+	}
 }
 
 func normalizeExplicitSyncTargets(symbols []string) []FMPStockSyncTarget {
