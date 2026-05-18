@@ -2,12 +2,15 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
 	"os"
+	"os/signal"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	appCli "github.com/Cyvadra/toktik/internal/cli"
@@ -44,7 +47,8 @@ func main() {
 		log.Fatalf("invalid --interval %q; must be one of 1min,5min,15min,30min,1hour,4hour", *intervalFlag)
 	}
 
-	ctx := context.Background()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 	ddlFile, err := appCli.ResolveSchemaFile(*schemaFile, appCli.UsMarketSchemaFile)
 	if err != nil {
 		log.Fatalf("resolve us_market.sql schema: %v", err)
@@ -86,6 +90,10 @@ func main() {
 		Replace:   *replace,
 	})
 	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			log.Printf("sync FMP US stock klines interrupted")
+			os.Exit(130)
+		}
 		log.Fatalf("sync FMP US stock klines: %v", err)
 	}
 
@@ -113,6 +121,10 @@ func main() {
 			To:      backfillTo,
 			Replace: true,
 		}); err != nil {
+			if errors.Is(err, context.Canceled) {
+				log.Printf("kline aggregate regeneration interrupted")
+				os.Exit(130)
+			}
 			log.Fatalf("backfill kline windows after replace-sync: %v", err)
 		}
 		log.Printf("kline aggregate regeneration complete")

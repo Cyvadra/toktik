@@ -58,7 +58,7 @@ web/data-browser/dist/
 web/data-browser/vite.config.d.ts
 web/data-browser/vite.config.js
 
-signal-list/
+# signal-list/
 
 tmp/
 tiger-env.sh

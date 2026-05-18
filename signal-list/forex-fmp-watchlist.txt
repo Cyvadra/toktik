@@ -1,0 +1,24 @@
+# Default forex FMP watchlist.
+# Keep this aligned with docs/fmp-forex-trading-watchlist.md.
+EURUSD
+GBPUSD
+USDJPY
+USDCHF
+AUDUSD
+USDCAD
+NZDUSD
+EURJPY
+GBPJPY
+EURGBP
+USDCNH
+USDHKD
+USDSGD
+USDKRW
+USDINR
+USDMXN
+USDBRL
+USDZAR
+USDTRY
+USDPLN
+XAUUSD
+XAGUSD

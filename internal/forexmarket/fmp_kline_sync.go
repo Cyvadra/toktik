@@ -35,6 +35,10 @@ type FMPKlineSyncResult struct {
 	ThrottledSymbols []string
 }
 
+var fetchFMPIntradayBars = fetchFMPIntradayChunked
+var deleteBarsForSymbolScope = DeleteBarsSymbolScope
+var insertForexBars = InsertBars
+
 // SyncFMPKlines fetches FMP intraday bars per symbol and inserts them into
 // forex_bar_1m. Symbols are processed sequentially to stay within provider
 // rate limits.
@@ -64,17 +68,8 @@ func SyncFMPKlines(ctx context.Context, conn driver.Conn, cfg FMPKlineSyncConfig
 		if symbol == "" {
 			continue
 		}
-		if cfg.Replace && !cfg.DryRun {
-			exclusiveTo := cfg.To.AddDate(0, 0, 1)
-			if err := DeleteBarsSymbolScope(ctx, conn, symbol, cfg.From, exclusiveTo); err != nil {
-				log.Printf("[ERROR] %s: delete existing forex rows for replace: %v", symbol, err)
-				result.FailedSymbols++
-				continue
-			}
-			log.Printf("[REPLACE] %s: cleared forex rows and aggregates for %s..%s", symbol, cfg.From.Format("2006-01-02"), cfg.To.Format("2006-01-02"))
-		}
 
-		bars, err := fetchFMPIntradayChunked(ctx, client, symbol, cfg.Interval, cfg.From, cfg.To)
+		bars, err := fetchFMPIntradayBars(ctx, client, symbol, cfg.Interval, cfg.From, cfg.To)
 		if err != nil {
 			log.Printf("[ERROR] %s: fetch FMP intraday: %v", symbol, err)
 			if fmp.IsHTTPStatus(err, http.StatusTooManyRequests) {
@@ -84,6 +79,16 @@ func SyncFMPKlines(ctx context.Context, conn driver.Conn, cfg FMPKlineSyncConfig
 			continue
 		}
 		result.FetchedBars += int64(len(bars))
+
+		if cfg.Replace && !cfg.DryRun {
+			exclusiveTo := cfg.To.AddDate(0, 0, 1)
+			if err := deleteBarsForSymbolScope(ctx, conn, symbol, cfg.From, exclusiveTo); err != nil {
+				log.Printf("[ERROR] %s: delete existing forex rows for replace: %v", symbol, err)
+				result.FailedSymbols++
+				continue
+			}
+			log.Printf("[REPLACE] %s: cleared forex rows and aggregates for %s..%s", symbol, cfg.From.Format("2006-01-02"), cfg.To.Format("2006-01-02"))
+		}
 
 		if cfg.DryRun || len(bars) == 0 {
 			result.ProcessedSymbols++
@@ -107,7 +112,7 @@ func SyncFMPKlines(ctx context.Context, conn driver.Conn, cfg FMPKlineSyncConfig
 					High:         float32(bar.High),
 					Low:          float32(bar.Low),
 					Close:        float32(bar.Close),
-					Volume:       bar.Volume,
+					Volume:       0,
 					Transactions: 0,
 					MarketDate:   marketDate,
 					SessionKind:  sessionKind,
@@ -118,7 +123,7 @@ func SyncFMPKlines(ctx context.Context, conn driver.Conn, cfg FMPKlineSyncConfig
 			}
 		}(symbol, bars)
 
-		inserted, err := InsertBars(ctx, conn, ch, cfg.BatchSize)
+		inserted, err := insertForexBars(ctx, conn, ch, cfg.BatchSize)
 		if err != nil {
 			log.Printf("[ERROR] %s: insert forex bars: %v", symbol, err)
 			result.FailedSymbols++
@@ -140,7 +145,13 @@ func SyncFMPKlines(ctx context.Context, conn driver.Conn, cfg FMPKlineSyncConfig
 }
 
 func fetchFMPIntradayChunked(ctx context.Context, client *fmp.Client, symbol string, interval fmp.IntradayInterval, from, to time.Time) ([]fmp.IntradayBar, error) {
-	const chunkDays = 30
+	return fetchFMPIntradayChunkedFunc(ctx, func(ctx context.Context, symbol string, interval fmp.IntradayInterval, from, to string) ([]fmp.IntradayBar, error) {
+		return client.ForexIntradayPrices(ctx, symbol, interval, from, to)
+	}, symbol, interval, from, to)
+}
+
+func fetchFMPIntradayChunkedFunc(ctx context.Context, fetch func(context.Context, string, fmp.IntradayInterval, string, string) ([]fmp.IntradayBar, error), symbol string, interval fmp.IntradayInterval, from, to time.Time) ([]fmp.IntradayBar, error) {
+	chunkDays := intradayChunkDays(interval)
 	var all []fmp.IntradayBar
 	cursor := from
 	for !cursor.After(to) {
@@ -148,7 +159,7 @@ func fetchFMPIntradayChunked(ctx context.Context, client *fmp.Client, symbol str
 		if chunkEnd.After(to) {
 			chunkEnd = to
 		}
-		bars, err := client.ForexIntradayPrices(ctx, symbol, interval,
+		bars, err := fetch(ctx, symbol, interval,
 			cursor.Format("2006-01-02"),
 			chunkEnd.Format("2006-01-02"),
 		)
@@ -159,7 +170,58 @@ func fetchFMPIntradayChunked(ctx context.Context, client *fmp.Client, symbol str
 		all = append(all, bars...)
 		cursor = chunkEnd.AddDate(0, 0, 1)
 	}
-	return all, nil
+	return normalizeIntradayBars(all), nil
+}
+
+func intradayChunkDays(interval fmp.IntradayInterval) int {
+	switch interval {
+	case fmp.Interval1Min:
+		return 3
+	case fmp.Interval5Min:
+		return 15
+	case fmp.Interval15Min:
+		return 45
+	case fmp.Interval30Min:
+		return 90
+	case fmp.Interval1Hour:
+		return 180
+	case fmp.Interval4Hour:
+		return 365
+	default:
+		return 30
+	}
+}
+
+func normalizeIntradayBars(bars []fmp.IntradayBar) []fmp.IntradayBar {
+	if len(bars) <= 1 {
+		return bars
+	}
+	type stampedBar struct {
+		bar fmp.IntradayBar
+		ts  time.Time
+	}
+	stamped := make([]stampedBar, 0, len(bars))
+	seen := make(map[string]struct{}, len(bars))
+	for _, bar := range bars {
+		ts, ok := parseFMPIntradayTimestamp(bar.Date)
+		if !ok {
+			continue
+		}
+		key := ts.Format(time.RFC3339)
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		stamped = append(stamped, stampedBar{bar: bar, ts: ts})
+	}
+	sort.Slice(stamped, func(i, j int) bool {
+		return stamped[i].ts.Before(stamped[j].ts)
+	})
+	out := make([]fmp.IntradayBar, 0, len(stamped))
+	for _, item := range stamped {
+		out = append(out, item.bar)
+	}
+	return out
 }
 
 func parseFMPIntradayTimestamp(value string) (time.Time, bool) {

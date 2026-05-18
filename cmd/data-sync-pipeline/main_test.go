@@ -33,6 +33,26 @@ func TestDefaultPipelineConfigEnablesETFFundamentalsForSPYAndIWM(t *testing.T) {
 	}
 }
 
+func TestDefaultPipelineConfigDefinesFeatureStoreBackfillJob(t *testing.T) {
+	cfg := defaultPipelineConfig()
+	job, ok := cfg.Jobs["feature_store_backfill"]
+	if !ok {
+		t.Fatal("expected feature_store_backfill job in default config")
+	}
+	if job.Enabled {
+		t.Fatal("expected feature_store_backfill disabled by default")
+	}
+	if job.Workers != 4 {
+		t.Fatalf("expected feature_store_backfill workers=4, got %d", job.Workers)
+	}
+	if job.PriorityOrder != "us-default" {
+		t.Fatalf("expected feature_store_backfill priority_order=us-default, got %q", job.PriorityOrder)
+	}
+	if len(job.Markets) != 1 || job.Markets[0] != "us-options" {
+		t.Fatalf("unexpected feature_store_backfill markets: %#v", job.Markets)
+	}
+}
+
 func TestFormatOptionCoverageWarningSymbols(t *testing.T) {
 	got := formatOptionCoverageWarningSymbols([]string{"ACHHY", "AKTSQ", "ALLGF"})
 	want := "ACHHY, \tAKTSQ, \tALLGF"

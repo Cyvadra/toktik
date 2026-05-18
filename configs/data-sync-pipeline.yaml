@@ -24,12 +24,6 @@ jobs:
     reference_symbol: SPX
     batch_size: 1000
 
-  fmp_us_macro:
-    enabled: false
-    dataset: gurufocus-shiller
-    reference_symbol: SPX
-    batch_size: 1000
-
   fmp_crypto_spot:
     enabled: false
     resolve_at_startup: true
@@ -38,6 +32,7 @@ jobs:
 
   fmp_forex:
     enabled: false
+    symbols_file: signal-list/forex-fmp-watchlist.txt
     resolve_at_startup: true
     interval: 1min
     batch_size: 50000
@@ -86,3 +81,15 @@ jobs:
     workers: 2
     risk_free_rate: 0.05
     rebuild_aggregates: true
+
+  feature_store_backfill:
+    enabled: true
+    depends_on: [polygon_us_greeks]
+    markets: [us-options]
+    priority_order: us-default
+    lookback_days: 252
+    min_days_to_expiry: 0
+    max_days_to_expiry: 365
+    workers: 4
+    replace: true
+    cold_start_floor: 2022-01-01

@@ -57,6 +57,7 @@ type jobConfig struct {
 	PerJobTimeout            string            `yaml:"per_job_timeout"`
 	PerSourceTimeout         string            `yaml:"per_source_timeout"`
 	Symbols                  []string          `yaml:"symbols"`
+	SymbolsFile              string            `yaml:"symbols_file"`
 	ResolveAtStartup         bool              `yaml:"resolve_at_startup"`
 	IncludeOptionGapMappings bool              `yaml:"include_option_gap_mappings"`
 	LimitSymbols             int               `yaml:"limit_symbols"`
@@ -74,7 +75,13 @@ type jobConfig struct {
 	ForceDownload            bool              `yaml:"force_download"`
 	SyncStocks               bool              `yaml:"sync_stocks"`
 	RebuildAggregates        bool              `yaml:"rebuild_aggregates"`
+	Replace                  bool              `yaml:"replace"`
 	Underlyings              []string          `yaml:"underlyings"`
+	Markets                  []string          `yaml:"markets"`
+	PriorityOrder            string            `yaml:"priority_order"`
+	LookbackDays             int               `yaml:"lookback_days"`
+	MinDaysToExpiry          int               `yaml:"min_days_to_expiry"`
+	MaxDaysToExpiry          int               `yaml:"max_days_to_expiry"`
 	Dataset                  string            `yaml:"dataset"`
 	URL                      string            `yaml:"url"`
 	ReferenceSymbol          string            `yaml:"reference_symbol"`
@@ -410,15 +417,15 @@ func defaultPipelineConfig() pipelineConfig {
 			// Keep the Gurufocus job for macro CAPE/pe10 only. Symbol-level `pe`
 			// for ETF underlyings such as SPY/IWM/QQQ now comes from
 			// fmp_etf_fundamentals into fundamental_observation.
-			"guru_macro":           {Enabled: true, BatchSize: 1000, URL: macro.DefaultGurufocusShillerURL, ReferenceSymbol: macro.DefaultReferenceSymbol, Dataset: macro.DefaultGurufocusShillerDataset},
-			"fmp_us_macro":         {Enabled: false, BatchSize: 1000, ReferenceSymbol: macro.DefaultReferenceSymbol, Dataset: macro.DefaultGurufocusShillerDataset},
-			"fmp_crypto_spot":      {Enabled: true, ResolveAtStartup: true, BatchSize: 50000, Interval: string(fmp.Interval1Min)},
-			"fmp_forex":            {Enabled: true, ResolveAtStartup: true, BatchSize: 50000, Interval: string(fmp.Interval1Min)},
-			"fmp_us_stocks":        {Enabled: true, DependsOn: []string{"polygon_us_flatfiles"}, ResolveAtStartup: true, IncludeOptionGapMappings: true, BatchSize: 50000, Interval: string(fmp.Interval1Min)},
-			"fmp_us_fundamentals":  {Enabled: true, DependsOn: []string{"fmp_us_stocks"}, Provider: "fmp", Workers: 2, BatchSize: 1000, PageSize: 251, QPS: 10, FMPQuarterLimit: 40},
-			"fmp_etf_fundamentals": {Enabled: true, DependsOn: []string{"fmp_us_fundamentals"}, Symbols: []string{"SPY", "IWM", "NDX", "FIX", "KWEB"}, SymbolMappings: map[string]string{"NDX": "QQQ"}, BatchSize: 1000, QPS: 10, MinCoverage: 0.8},
-			"polygon_us_flatfiles": {Enabled: true, BatchSize: 100000, Workers: 2, RiskFreeRate: 0.05, SyncStocks: false},
-			"polygon_us_greeks":    {Enabled: true, DependsOn: []string{"polygon_us_flatfiles", "fmp_us_stocks"}, BatchSize: 100000, Workers: 2, RiskFreeRate: 0.05, RebuildAggregates: true},
+			"guru_macro":             {Enabled: true, BatchSize: 1000, URL: macro.DefaultGurufocusShillerURL, ReferenceSymbol: macro.DefaultReferenceSymbol, Dataset: macro.DefaultGurufocusShillerDataset},
+			"fmp_crypto_spot":        {Enabled: true, ResolveAtStartup: true, BatchSize: 50000, Interval: string(fmp.Interval1Min)},
+			"fmp_forex":              {Enabled: true, ResolveAtStartup: true, BatchSize: 50000, Interval: string(fmp.Interval1Min)},
+			"fmp_us_stocks":          {Enabled: true, DependsOn: []string{"polygon_us_flatfiles"}, ResolveAtStartup: true, IncludeOptionGapMappings: true, BatchSize: 50000, Interval: string(fmp.Interval1Min)},
+			"fmp_us_fundamentals":    {Enabled: true, DependsOn: []string{"fmp_us_stocks"}, Provider: "fmp", Workers: 2, BatchSize: 1000, PageSize: 251, QPS: 10, FMPQuarterLimit: 40},
+			"fmp_etf_fundamentals":   {Enabled: true, DependsOn: []string{"fmp_us_fundamentals"}, Symbols: []string{"SPY", "IWM", "NDX", "FIX", "KWEB"}, SymbolMappings: map[string]string{"NDX": "QQQ"}, BatchSize: 1000, QPS: 10, MinCoverage: 0.8},
+			"polygon_us_flatfiles":   {Enabled: true, BatchSize: 100000, Workers: 2, RiskFreeRate: 0.05, SyncStocks: false},
+			"polygon_us_greeks":      {Enabled: true, DependsOn: []string{"polygon_us_flatfiles", "fmp_us_stocks"}, BatchSize: 100000, Workers: 2, RiskFreeRate: 0.05, RebuildAggregates: true},
+			"feature_store_backfill": {Enabled: false, DependsOn: []string{"polygon_us_greeks"}, Markets: []string{"us-options"}, PriorityOrder: usmarket.PriorityOrderUSDefault, LookbackDays: 252, MinDaysToExpiry: 0, MaxDaysToExpiry: 365, Workers: 4, Replace: true, ColdStartFloor: "2022-01-01"},
 		},
 	}
 	_ = normalizePipelineConfig(&cfg)
@@ -469,7 +476,28 @@ func normalizePipelineConfig(cfg *pipelineConfig) error {
 		job.DependsOn = ensureDependency(job.DependsOn, "polygon_us_flatfiles")
 		cfg.Jobs["polygon_us_greeks"] = job
 	}
+	if job, ok := cfg.Jobs["feature_store_backfill"]; ok && job.Enabled {
+		if len(job.Markets) == 0 {
+			job.Markets = []string{"us-options"}
+		}
+		if containsString(job.Markets, "us-options") {
+			job.DependsOn = ensureDependency(job.DependsOn, "polygon_us_greeks")
+		}
+		if containsString(job.Markets, "crypto-options") {
+			job.DependsOn = ensureDependency(job.DependsOn, "fmp_crypto_spot")
+		}
+		cfg.Jobs["feature_store_backfill"] = job
+	}
 	return nil
+}
+
+func containsString(values []string, target string) bool {
+	for _, value := range values {
+		if strings.EqualFold(strings.TrimSpace(value), target) {
+			return true
+		}
+	}
+	return false
 }
 
 func normalizeMarketDataSource(value string) string {
@@ -553,7 +581,7 @@ func buildSyncer(runtimeCfg config.Runtime, name string, job jobConfig, apiKey, 
 	case "fmp_crypto_spot":
 		return pipelinejobs.NewFMPCryptoSpot(pipelinejobs.FMPCryptoSpotConfig{APIKey: apiKey, Symbols: job.Symbols, ResolveAtStartup: job.ResolveAtStartup, LimitSymbols: job.LimitSymbols, Interval: fmp.IntradayInterval(job.Interval), BatchSize: job.BatchSize, PriceSource: job.PriceSource, ColdStartFloorUTC: parseColdStart(job.ColdStartFloor)})
 	case "fmp_forex":
-		return pipelinejobs.NewFMPForex(pipelinejobs.FMPForexConfig{APIKey: apiKey, Symbols: job.Symbols, ResolveAtStartup: job.ResolveAtStartup, LimitSymbols: job.LimitSymbols, Interval: fmp.IntradayInterval(job.Interval), BatchSize: job.BatchSize, ColdStartFloorUTC: parseColdStart(job.ColdStartFloor)})
+		return pipelinejobs.NewFMPForex(pipelinejobs.FMPForexConfig{APIKey: apiKey, Symbols: job.Symbols, SymbolsFile: job.SymbolsFile, ResolveAtStartup: job.ResolveAtStartup, LimitSymbols: job.LimitSymbols, Interval: fmp.IntradayInterval(job.Interval), BatchSize: job.BatchSize, ColdStartFloorUTC: parseColdStart(job.ColdStartFloor)})
 	case "fmp_us_stocks":
 		return pipelinejobs.NewFMPUSStocks(pipelinejobs.FMPUSStocksConfig{APIKey: apiKey, Symbols: job.Symbols, ResolveAtStartup: job.ResolveAtStartup, IncludeOptionGapMappings: job.IncludeOptionGapMappings, LimitSymbols: job.LimitSymbols, Interval: fmp.IntradayInterval(job.Interval), BatchSize: job.BatchSize, ColdStartFloorUTC: parseColdStart(job.ColdStartFloor)})
 	case "fmp_us_fundamentals":
@@ -568,13 +596,13 @@ func buildSyncer(runtimeCfg config.Runtime, name string, job jobConfig, apiKey, 
 		return pipelinejobs.NewPolygonUSFlatFiles(pipelinejobs.PolygonUSFlatFilesConfig{Downloader: polygonSvc, Sessions: sessions, DSN: dsn, BatchSize: job.BatchSize, Workers: job.Workers, RiskFreeRate: job.RiskFreeRate, ForceDownload: job.ForceDownload, SyncStocks: job.SyncStocks, ColdStartFloorUTC: parseColdStart(job.ColdStartFloor)})
 	case "polygon_us_greeks":
 		return pipelinejobs.NewPolygonUSGreeks(pipelinejobs.PolygonUSGreeksConfig{DSN: dsn, BatchSize: job.BatchSize, Workers: job.Workers, RiskFreeRate: job.RiskFreeRate, Underlyings: job.Underlyings, LimitTasks: job.LimitSymbols, RebuildAggregates: job.RebuildAggregates, ColdStartFloorUTC: parseColdStart(job.ColdStartFloor)})
+	case "feature_store_backfill":
+		return pipelinejobs.NewFeatureStoreBackfill(pipelinejobs.FeatureStoreBackfillConfig{DSN: dsn, Markets: job.Markets, Underlyings: job.Underlyings, PriorityOrder: job.PriorityOrder, LookbackDays: job.LookbackDays, MinDaysToExpiry: job.MinDaysToExpiry, MaxDaysToExpiry: job.MaxDaysToExpiry, Workers: job.Workers, Replace: job.Replace, ColdStartFloorUTC: parseColdStart(job.ColdStartFloor)})
 	case "guru_macro":
 		return pipelinejobs.NewGuruMacro(pipelinejobs.GuruMacroConfig{Dataset: job.Dataset, ColdStartFloorUTC: parseColdStart(job.ColdStartFloor), SyncFunc: func(ctx context.Context, conn driver.Conn, from, to time.Time, dryRun bool) (int64, error) {
 			res, err := macro.SyncGurufocusShiller(ctx, conn, macro.GurufocusShillerConfig{URL: job.URL, ReferenceSymbol: job.ReferenceSymbol, BatchSize: job.BatchSize}, from, to, dryRun)
 			return int64(res.ObservationRows), err
 		}})
-	case "fmp_us_macro":
-		return nil, fmt.Errorf("fmp_us_macro is intentionally disabled until the FMP macro CLI flow is extracted; use guru_macro as the default Shiller PE source")
 	default:
 		return nil, fmt.Errorf("unknown job %q", name)
 	}
@@ -600,7 +628,7 @@ func initSelectedSchemas(ctx context.Context, conn driver.Conn, cfg pipelineConf
 	if !enabled {
 		return nil, nil
 	}
-	needsUSMarket, needsFundamentals, needsForex, needsCrypto := false, false, false, false
+	needsUSMarket, needsFundamentals, needsForex, needsCrypto, needsFeatureStore := false, false, false, false, false
 	for name, job := range cfg.Jobs {
 		if !shouldIncludeJob(name, job, selected) {
 			continue
@@ -608,9 +636,17 @@ func initSelectedSchemas(ctx context.Context, conn driver.Conn, cfg pipelineConf
 		switch name {
 		case "fmp_us_stocks", "polygon_us_flatfiles", "polygon_us_greeks", "guru_macro":
 			needsUSMarket = true
+		case "feature_store_backfill":
+			needsFeatureStore = true
+			if containsString(job.Markets, "us-options") {
+				needsUSMarket = true
+			}
+			if containsString(job.Markets, "crypto-options") {
+				needsCrypto = true
+			}
 		}
 		switch name {
-		case "fmp_us_fundamentals", "fmp_etf_fundamentals", "guru_macro", "fmp_us_macro":
+		case "fmp_us_fundamentals", "fmp_etf_fundamentals", "guru_macro":
 			needsFundamentals = true
 		case "fmp_forex":
 			needsForex = true
@@ -661,6 +697,15 @@ func initSelectedSchemas(ctx context.Context, conn driver.Conn, cfg pipelineConf
 		}
 		if err := cryptooptions.InitSpotKlineSchema(ctx, conn); err != nil {
 			return nil, fmt.Errorf("initialize crypto spot kline schema: %w", err)
+		}
+	}
+	if needsFeatureStore {
+		ddl, err := appCli.ResolveSchemaFile("", appCli.FeatureStoreSchemaFile)
+		if err != nil {
+			return nil, err
+		}
+		if err := cryptooptions.InitSchema(ctx, conn, ddl); err != nil {
+			return nil, fmt.Errorf("initialize feature store schema: %w", err)
 		}
 	}
 	return sessions, nil

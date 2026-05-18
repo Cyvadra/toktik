@@ -2,12 +2,15 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
 	"os"
+	"os/signal"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	appCli "github.com/Cyvadra/toktik/internal/cli"
@@ -20,6 +23,7 @@ func main() {
 	startDate := flag.String("start-date", "", "Start market date to backfill (YYYY-MM-DD)")
 	endDate := flag.String("end-date", "", "End market date to backfill (YYYY-MM-DD)")
 	symbolsFlag := flag.String("symbols", "", "Optional comma-separated underlying symbols to restrict backfill")
+	priorityOrder := flag.String("priority-order", usmarket.PriorityOrderUSDefault, "Underlying execution priority order (none, us-default)")
 	dsn := flag.String("clickhouse-dsn", runtimeCfg.ClickHouse.DSN, "ClickHouse DSN")
 	workers := flag.Int("workers", 2, "Number of parallel backfill workers")
 	batchSize := flag.Int("batch-size", 100000, "Rows per ClickHouse INSERT batch")
@@ -33,8 +37,13 @@ func main() {
 	if *workers < 1 {
 		*workers = 1
 	}
+	resolvedPriorityOrder, err := usmarket.NormalizeUSPriorityOrder(*priorityOrder)
+	if err != nil {
+		log.Fatalf("resolve priority order: %v", err)
+	}
 
-	ctx := context.Background()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 	conn, err := usmarket.ConnectClickHouse(ctx, *dsn)
 	if err != nil {
 		log.Fatalf("connect ClickHouse: %v", err)
@@ -47,6 +56,7 @@ func main() {
 		StartDate:         from,
 		EndDate:           to,
 		Underlyings:       underlyings,
+		PriorityOrder:     resolvedPriorityOrder,
 		Workers:           *workers,
 		BatchSize:         *batchSize,
 		LimitTasks:        *limitTasks,
@@ -55,6 +65,10 @@ func main() {
 		RebuildAggregates: *rebuildKlines,
 	})
 	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			log.Printf("option greeks backfill interrupted")
+			os.Exit(130)
+		}
 		log.Fatalf("backfill missing option greeks: %v", err)
 	}
 

@@ -133,7 +133,7 @@ func ResolveUSStockSyncTargets(ctx context.Context, conn driver.Conn, symbols []
 		}
 		targets = append(targets, target)
 	}
-	return targets, nil
+	return PrioritizeUSStockSyncTargets(ctx, conn, targets)
 }
 
 func normalizeExplicitSyncTargets(symbols []string) []FMPStockSyncTarget {

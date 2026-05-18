@@ -18,6 +18,7 @@ import (
 )
 
 const baseURL = "https://financialmodelingprep.com/stable"
+const defaultHTTPTimeout = 2 * time.Minute
 
 // Client is the FMP API client. Create one with New and reuse it across calls.
 type Client struct {
@@ -29,7 +30,7 @@ type Client struct {
 // Option configures the Client.
 type Option func(*Client)
 
-// WithHTTPClient replaces the default HTTP client (30 s timeout).
+// WithHTTPClient replaces the default HTTP client (2 min timeout).
 func WithHTTPClient(hc *http.Client) Option {
 	return func(c *Client) { c.httpClient = hc }
 }
@@ -39,7 +40,7 @@ func New(apiKey string, opts ...Option) *Client {
 	c := &Client{
 		apiKey: apiKey,
 		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
+			Timeout: defaultHTTPTimeout,
 		},
 		baseURL: baseURL,
 	}

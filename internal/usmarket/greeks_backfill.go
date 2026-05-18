@@ -46,6 +46,7 @@ type OptionGreeksBackfillConfig struct {
 	StartDate         time.Time
 	EndDate           time.Time
 	Underlyings       []string
+	PriorityOrder     string
 	Workers           int
 	BatchSize         int
 	LimitTasks        int
@@ -204,6 +205,10 @@ func BackfillMissingOptionGreeks(ctx context.Context, cfg OptionGreeksBackfillCo
 	}
 
 	tasks, err := ListMissingOptionGreeksTasks(ctx, cfg.Conn, cfg.StartDate, cfg.EndDate, cfg.Underlyings, cfg.LimitTasks)
+	if err != nil {
+		return OptionGreeksBackfillResult{}, err
+	}
+	tasks, err = MaybePrioritizeMissingOptionGreeksTasks(ctx, cfg.Conn, tasks, cfg.PriorityOrder)
 	if err != nil {
 		return OptionGreeksBackfillResult{}, err
 	}

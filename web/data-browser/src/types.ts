@@ -99,11 +99,47 @@ export type DatasetCatalogResponse = {
 export type BarRow = {
   timestamp: string;
   symbol?: string;
+  symbol_id?: string | number;
+  base_asset?: string;
+  underlying?: string;
+  option_type?: string;
+  expiration?: string;
+  strike?: number;
+  open?: number;
+  high?: number;
+  low?: number;
   close?: number;
+  mark_open?: number;
+  mark_high?: number;
+  mark_low?: number;
   mark_close?: number;
+  last_open?: number;
+  last_high?: number;
+  last_low?: number;
   last_close?: number;
+  bid_open?: number;
+  bid_high?: number;
+  bid_low?: number;
+  bid_close?: number;
+  ask_open?: number;
+  ask_high?: number;
+  ask_low?: number;
+  ask_close?: number;
+  underlying_price_open?: number;
+  underlying_price_high?: number;
+  underlying_price_low?: number;
+  underlying_price_close?: number;
   underlying_close?: number;
   volume?: number;
+  transactions?: number;
+  tick_count?: number;
+  open_interest?: number;
+  implied_volatility?: number;
+  delta?: number;
+  gamma?: number;
+  vega?: number;
+  theta?: number;
+  rho?: number;
   [key: string]: unknown;
 };
 
@@ -132,5 +168,27 @@ export type CryptoOptionSymbolResponse = {
     expiration: string;
     underlying_index: string;
   }>;
+  next_cursor?: string;
+};
+
+export type MarketSymbolRow = {
+  symbol?: string;
+  symbol_id?: string | number;
+  underlying?: string;
+  base_asset?: string;
+  root?: string;
+  option_type?: string;
+  expiration?: string;
+  strike?: number;
+  strike_price?: number;
+  profile?: {
+    sector?: string;
+    industry?: string;
+  };
+  [key: string]: unknown;
+};
+
+export type MarketSymbolResponse = {
+  data: MarketSymbolRow[];
   next_cursor?: string;
 };

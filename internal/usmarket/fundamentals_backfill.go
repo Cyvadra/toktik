@@ -447,9 +447,6 @@ func ResolveUSStockSymbols(ctx context.Context, conn driver.Conn, symbols []stri
 FROM us_stocks_bar_1m
 GROUP BY symbol
 ORDER BY symbol`
-	if limit > 0 {
-		query += fmt.Sprintf(" LIMIT %d", limit)
-	}
 
 	rows, err := conn.Query(ctx, query)
 	if err != nil {
@@ -468,7 +465,14 @@ ORDER BY symbol`
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate US stock symbols: %w", err)
 	}
-	return out, nil
+	prioritized, err := PrioritizeUSSymbols(ctx, conn, out)
+	if err != nil {
+		return nil, err
+	}
+	if limit > 0 && len(prioritized) > limit {
+		prioritized = prioritized[:limit]
+	}
+	return prioritized, nil
 }
 
 func normalizeFundamentalSymbols(symbols []string) []string {

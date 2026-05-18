@@ -2,19 +2,23 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
 	"log/slog"
 	"os"
+	"os/signal"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/Cyvadra/toktik/internal/chrepo"
 	appCli "github.com/Cyvadra/toktik/internal/cli"
 	"github.com/Cyvadra/toktik/internal/cryptooptions"
 	"github.com/Cyvadra/toktik/internal/service"
+	"github.com/Cyvadra/toktik/internal/usmarket"
 )
 
 func main() {
@@ -23,12 +27,14 @@ func main() {
 	schemaFile := flag.String("schema", "", "Path to feature store DDL SQL file (auto-detected if empty)")
 	marketsFlag := flag.String("markets", "crypto-options,us-options", "Comma-separated markets to backfill")
 	underlyingsFlag := flag.String("underlyings", "", "Optional comma-separated underlying filter")
+	priorityOrder := flag.String("priority-order", usmarket.PriorityOrderUSDefault, "Underlying execution priority order for us-options (none, us-default)")
 	fromFlag := flag.String("from", "", "Optional start date (YYYY-MM-DD), inclusive")
 	toFlag := flag.String("to", "", "Optional end date (YYYY-MM-DD), exclusive via next-day rule")
 	incrementalDays := flag.Int("incremental-days", 0, "If > 0 and --from/--to are omitted, backfill only the last N calendar days")
 	lookbackDays := flag.Int("lookback-days", 252, "Lookback window for IV percentile/rank")
 	minDaysToExpiry := flag.Int("min-days-to-expiry", 0, "Minimum days to expiry for precomputed daily panels")
 	maxDaysToExpiry := flag.Int("max-days-to-expiry", 365, "Maximum days to expiry for precomputed daily panels")
+	workers := flag.Int("workers", 4, "Number of underlyings to backfill concurrently")
 	replace := flag.Bool("replace", false, "Replace existing rows in the selected scope before backfill")
 	flag.Parse()
 	startedAt := time.Now().UTC()
@@ -37,13 +43,21 @@ func main() {
 	if err != nil {
 		log.Fatalf("resolve backfill range: %v", err)
 	}
+	resolvedPriorityOrder, err := usmarket.NormalizeUSPriorityOrder(*priorityOrder)
+	if err != nil {
+		log.Fatalf("resolve priority order: %v", err)
+	}
+	if *workers < 1 {
+		*workers = 1
+	}
 
 	ddlFile, err := appCli.ResolveSchemaFile(*schemaFile, appCli.FeatureStoreSchemaFile)
 	if err != nil {
 		log.Fatalf("resolve feature store schema: %v", err)
 	}
 
-	ctx := context.Background()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 	conn, err := appCli.ConnectClickHouse(ctx, *dsn, nil)
 	if err != nil {
 		log.Fatalf("connect ClickHouse: %v", err)
@@ -56,11 +70,13 @@ func main() {
 	stats, err := featureSvc.BackfillFeatureSnapshots(ctx, service.FeatureBackfillOptions{
 		Markets:         splitCSV(*marketsFlag),
 		Underlyings:     splitCSV(*underlyingsFlag),
+		PriorityOrder:   resolvedPriorityOrder,
 		From:            from,
 		To:              to,
 		LookbackDays:    *lookbackDays,
 		MinDaysToExpiry: *minDaysToExpiry,
 		MaxDaysToExpiry: *maxDaysToExpiry,
+		Workers:         *workers,
 		Replace:         *replace,
 		ContinueOnError: true,
 		Progress: func(progress service.FeatureBackfillProgress) {
@@ -72,6 +88,10 @@ func main() {
 	}
 	if err != nil {
 		fmt.Fprintln(os.Stdout, formatBackfillSummary(stats, startedAt, time.Now().UTC(), from, to, *replace))
+		if errors.Is(err, context.Canceled) {
+			log.Printf("feature store backfill interrupted")
+			os.Exit(130)
+		}
 		log.Fatalf("backfill feature store datasets: %v", err)
 	}
 

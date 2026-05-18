@@ -88,6 +88,55 @@ func TestBuildVolatilityHistoryRows(t *testing.T) {
 	}
 }
 
+func TestBuildUSOptionsCurrentIVSeriesUsesNearest30DayATM(t *testing.T) {
+	atmFar := 0.61
+	atmNear := 0.49
+	atmNext := 0.45
+	atmNextNear := 0.44
+	series := buildUSOptionsCurrentIVSeries([]usOptionsSurfaceAggregateRow{
+		{
+			AsOfDate:     time.Date(2026, 5, 15, 0, 0, 0, 0, time.UTC),
+			Expiration:   time.Date(2026, 5, 23, 0, 0, 0, 0, time.UTC),
+			DaysToExpiry: 8,
+			ATMIV:        &atmFar,
+		},
+		{
+			AsOfDate:     time.Date(2026, 5, 15, 0, 0, 0, 0, time.UTC),
+			Expiration:   time.Date(2026, 6, 12, 0, 0, 0, 0, time.UTC),
+			DaysToExpiry: 28,
+			ATMIV:        &atmNear,
+		},
+		{
+			AsOfDate:     time.Date(2026, 5, 16, 0, 0, 0, 0, time.UTC),
+			Expiration:   time.Date(2026, 5, 23, 0, 0, 0, 0, time.UTC),
+			DaysToExpiry: 7,
+			ATMIV:        &atmNext,
+		},
+		{
+			AsOfDate:     time.Date(2026, 5, 16, 0, 0, 0, 0, time.UTC),
+			Expiration:   time.Date(2026, 6, 13, 0, 0, 0, 0, time.UTC),
+			DaysToExpiry: 28,
+			ATMIV:        &atmNextNear,
+		},
+		{
+			AsOfDate:     time.Date(2026, 5, 17, 0, 0, 0, 0, time.UTC),
+			Expiration:   time.Date(2026, 6, 14, 0, 0, 0, 0, time.UTC),
+			DaysToExpiry: 28,
+			ATMIV:        nil,
+		},
+	}, 30)
+
+	if len(series) != 2 {
+		t.Fatalf("expected 2 series points, got %d", len(series))
+	}
+	if series[0].Date != time.Date(2026, 5, 15, 0, 0, 0, 0, time.UTC) || series[0].Value != atmNear {
+		t.Fatalf("unexpected first point: %+v", series[0])
+	}
+	if series[1].Date != time.Date(2026, 5, 16, 0, 0, 0, 0, time.UTC) || series[1].Value != atmNextNear {
+		t.Fatalf("unexpected second point: %+v", series[1])
+	}
+}
+
 func TestBuildTermStructureSnapshotRows(t *testing.T) {
 	atmIV := 0.24
 	callIV := 0.22

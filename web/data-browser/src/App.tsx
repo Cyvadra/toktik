@@ -1,5 +1,7 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Dispatch, ReactNode, SetStateAction } from 'react';
+import { CandlestickSeries, ColorType, HistogramSeries, createChart } from 'lightweight-charts';
+import type { CandlestickData, HistogramData, UTCTimestamp } from 'lightweight-charts';
 import { Activity, Database, Play, RefreshCw, Save, Search } from 'lucide-react';
 import { api, getStoredApiKey, setStoredApiKey } from './api';
 import type {
@@ -15,6 +17,8 @@ import type {
   BrowserValueListResponse,
   ChainResponse,
   DatasetCatalogResponse,
+  MarketSymbolResponse,
+  MarketSymbolRow,
 } from './types';
 
 type Tab = 'schema' | 'symbols' | 'preview' | 'coverage' | 'profile' | 'validity' | 'market' | 'chain';
@@ -41,7 +45,51 @@ type DateWindow = {
   to: string;
 };
 
+type ChartBar = {
+  timestamp: string;
+  time: UTCTimestamp;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+  raw: BarRow;
+};
+
 type CatalogDataset = DatasetCatalogResponse['datasets'][number];
+
+type BizMarketQueryRow = {
+  biz_request_key: string;
+  first_loaded_at: string;
+  last_loaded_at: string;
+  cache_status: string;
+  hits: number;
+  market: string;
+  symbol: string;
+  interval: string;
+  from: string;
+  to: string;
+  limit: number;
+  bars: number;
+  last_price: string;
+};
+
+type BizMarketGapRow = {
+  biz_gap: string;
+  from: string;
+  to: string;
+  missing_span: string;
+};
+
+type BizBootstrapCache = {
+  cachedAt: number;
+  datasets: BrowserDataset[];
+  catalog: DatasetCatalogResponse;
+};
+
+const defaultIntervals = ['1m', '5m', '15m', '30m', '1h', '2h', '3h', '4h', '6h', '8h', '12h', '1d'];
+const forexIntervals = ['1m', '5m', '15m', '30m', '1h', '2h', '4h', '1d'];
+const bizBootstrapCacheKey = 'toktik.biz_data_browser_bootstrap.v1';
 
 const tabs: Array<{ id: Tab; label: string }> = [
   { id: 'schema', label: 'Schema' },
@@ -61,11 +109,12 @@ const fallbackDateWindow = (() => {
 })();
 
 export default function App() {
+  const cachedBootstrap = readBizBootstrapCache();
   const [apiKey, setApiKey] = useState(getStoredApiKey());
-  const [status, setStatus] = useState<'checking' | 'ready' | 'error'>('checking');
+  const [status, setStatus] = useState<'checking' | 'ready' | 'error'>(cachedBootstrap ? 'ready' : 'checking');
   const [statusError, setStatusError] = useState('');
-  const [datasets, setDatasets] = useState<BrowserDataset[]>([]);
-  const [catalog, setCatalog] = useState<DatasetCatalogResponse>();
+  const [datasets, setDatasets] = useState<BrowserDataset[]>(cachedBootstrap?.datasets ?? []);
+  const [catalog, setCatalog] = useState<DatasetCatalogResponse | undefined>(cachedBootstrap?.catalog);
   const [activeName, setActiveName] = useState('');
   const [filter, setFilter] = useState('');
   const [tab, setTab] = useState<Tab>('schema');
@@ -108,6 +157,7 @@ export default function App() {
       setStatus(ready.status === 'ready' ? 'ready' : 'error');
       setDatasets(presets.datasets);
       setCatalog(catalogResp);
+      writeBizBootstrapCache({ cachedAt: Date.now(), datasets: presets.datasets, catalog: catalogResp });
     } catch (error) {
       setStatus('error');
       setStatusError(errorMessage(error));
@@ -116,6 +166,11 @@ export default function App() {
 
   function saveApiKey() {
     setStoredApiKey(apiKey);
+    setRefreshToken((value) => value + 1);
+  }
+
+  function refreshAll() {
+    api.clearCache();
     setRefreshToken((value) => value + 1);
   }
 
@@ -178,7 +233,7 @@ export default function App() {
             <Metric label="ready" value={catalog?.summary.ready ?? 0} />
             <Metric label="stale" value={catalog?.summary.stale ?? 0} />
             <Metric label="missing" value={catalog?.summary.missing ?? 0} />
-            <button className="icon-button" onClick={() => setRefreshToken((value) => value + 1)} title="Refresh" aria-label="Refresh">
+            <button className="icon-button" onClick={refreshAll} title="Refresh" aria-label="Refresh">
               <RefreshCw size={16} />
             </button>
           </div>
@@ -214,7 +269,7 @@ function TabPanel({ dataset, catalogDataset, tab, selection, onSelectValue }: { 
   if (tab === 'coverage') return <CoveragePanel key={panelKey} dataset={dataset} dateWindow={dateWindow} />;
   if (tab === 'profile') return <ProfilePanel key={panelKey} dataset={dataset} dateWindow={dateWindow} />;
   if (tab === 'validity') return <ValidityPanel key={panelKey} dataset={dataset} dateWindow={dateWindow} />;
-  if (tab === 'market') return <MarketPanel key={panelKey} dataset={dataset} dateWindow={dateWindow} selection={selection} />;
+  if (tab === 'market') return <MarketPanel key={panelKey} dataset={dataset} catalogDataset={catalogDataset} dateWindow={dateWindow} selection={selection} />;
   return <ChainPanel key={panelKey} dataset={dataset} dateWindow={dateWindow} selection={selection} />;
 }
 
@@ -367,16 +422,55 @@ function ValidityPanel({ dataset, dateWindow }: { dataset: BrowserDataset; dateW
   );
 }
 
-function MarketPanel({ dataset, dateWindow, selection }: { dataset: BrowserDataset; dateWindow: DateWindow; selection?: BrowserSelection }) {
+function MarketPanel({ dataset, catalogDataset, dateWindow, selection }: { dataset: BrowserDataset; catalogDataset?: CatalogDataset; dateWindow: DateWindow; selection?: BrowserSelection }) {
+  const market = browserDatasetToMarket(dataset);
   const [symbol, setSymbol] = useState(defaultMarketSymbol(dataset));
+  const [symbolSearch, setSymbolSearch] = useState(defaultMarketSymbol(dataset));
   const [interval, setInterval] = useState('1h');
   const [from, setFrom] = useState(dateWindow.from);
   const [to, setTo] = useState(dateWindow.to);
+  const [limit, setLimit] = useState(1000);
   const [state, setState] = useQueryState<{ market: string; response: BarResponse }>();
+  const [symbolState, setSymbolState] = useQueryState<MarketSymbolResponse>();
+  const [bizQueryRows, setBizQueryRows] = useState<BizMarketQueryRow[]>([]);
+  const symbolRequestIDRef = useRef(0);
+  const intervals = marketIntervals(market);
+  const symbolListID = `market-symbols-${market}`;
+  const bizDatasetRows = useMemo(() => [toBizDatasetRow(dataset, catalogDataset, intervals)], [dataset, catalogDataset, intervals]);
 
   useEffect(() => {
-    setSymbol(defaultMarketSymbol(dataset));
+    const fallback = defaultMarketSymbol(dataset);
+    setSymbol(fallback);
+    setSymbolSearch(fallback);
   }, [dataset.name]);
+
+  useEffect(() => {
+    if (!intervals.includes(interval)) {
+      setInterval(defaultMarketInterval(market));
+    }
+  }, [interval, intervals, market]);
+
+  useEffect(() => {
+    const handle = setTimeout(() => {
+      const requestID = symbolRequestIDRef.current + 1;
+      symbolRequestIDRef.current = requestID;
+      setSymbolState((current) => ({ ...current, loading: true, error: '' }));
+      api.marketSymbols(market, { search: symbolSearch, limit: 25 })
+        .then((data) => {
+          if (symbolRequestIDRef.current !== requestID) {
+            return;
+          }
+          setSymbolState({ loading: false, error: '', data });
+        })
+        .catch((error) => {
+          if (symbolRequestIDRef.current !== requestID) {
+            return;
+          }
+          setSymbolState((current) => ({ ...current, loading: false, error: errorMessage(error) }));
+        });
+    }, 250);
+    return () => clearTimeout(handle);
+  }, [market, symbolSearch, setSymbolState]);
 
   useEffect(() => {
     let cancelled = false;
@@ -384,6 +478,7 @@ function MarketPanel({ dataset, dateWindow, selection }: { dataset: BrowserDatas
       .then((nextSymbol) => {
         if (!cancelled && nextSymbol) {
           setSymbol(nextSymbol);
+          setSymbolSearch(nextSymbol);
         }
       })
       .catch(() => {
@@ -399,19 +494,66 @@ function MarketPanel({ dataset, dateWindow, selection }: { dataset: BrowserDatas
       return;
     }
     setSymbol(selection.value);
+    setSymbolSearch(selection.value);
   }, [selection]);
 
-  const market = browserDatasetToMarket(dataset);
+  async function runMarketBars() {
+    const result = { market, response: await api.bars(market, { symbol, interval, from, to, limit }) };
+    const bars = toChartBars(result.response.data);
+    const requestKey = marketQueryKey({ market, symbol, interval, from, to, limit });
+    setBizQueryRows((current) => upsertBizQueryRows(current, {
+        biz_request_key: requestKey,
+        first_loaded_at: new Date().toISOString(),
+        last_loaded_at: new Date().toISOString(),
+        cache_status: current.some((row) => row.biz_request_key === requestKey) ? 'hit' : 'miss',
+        hits: 1,
+        market,
+        symbol,
+        interval,
+        from,
+        to,
+        limit,
+        bars: bars.length,
+        last_price: bars.at(-1) ? formatPrice(bars.at(-1)!.close) : 'n/a',
+      }).slice(0, 8));
+    return result;
+  }
+
   return (
-    <Panel title="Market Series" icon={<Activity size={16} />} loading={state.loading} error={state.error} action={<RunButton onClick={() => runQuery(setState, async () => ({ market, response: await api.bars(market, { symbol, interval, from, to, limit: 1000 }) }))} />}>
-      <QueryControls>
+    <Panel title="Market Series" icon={<Activity size={16} />} loading={state.loading} error={state.error} action={<RunButton onClick={() => runQuery(setState, runMarketBars)} />}>
+      <QueryControls className="market-controls">
         <Control label="Market"><input value={market} readOnly /></Control>
-        <Control label="Symbol"><input value={symbol} onChange={(event) => setSymbol(event.target.value)} /></Control>
-        <Control label="Interval"><input value={interval} onChange={(event) => setInterval(event.target.value)} /></Control>
+        <Control label="Symbol">
+          <input
+            list={symbolListID}
+            value={symbol}
+            onChange={(event) => {
+              setSymbol(event.target.value);
+              setSymbolSearch(event.target.value);
+            }}
+            placeholder="AAPL, BTC, EURUSD"
+          />
+          <datalist id={symbolListID}>
+            {(symbolState.data?.data ?? []).map((row, index) => {
+              const value = marketSymbolValue(row);
+              return value ? <option key={`${value}:${index}`} value={value}>{marketSymbolLabel(row)}</option> : null;
+            })}
+          </datalist>
+        </Control>
+        <Control label="Interval">
+          <select value={interval} onChange={(event) => setInterval(event.target.value)}>
+            {intervals.map((value) => <option key={value} value={value}>{value}</option>)}
+          </select>
+        </Control>
         <Control label="From"><input value={from} onChange={(event) => setFrom(event.target.value)} type="date" /></Control>
         <Control label="To"><input value={to} onChange={(event) => setTo(event.target.value)} type="date" /></Control>
+        <Control label="Limit"><input value={limit} onChange={(event) => setLimit(Number(event.target.value))} type="number" min={50} max={10000} step={50} /></Control>
       </QueryControls>
-      {state.data && <SeriesView rows={state.data.response.data} />}
+      <div className="biz-table-grid">
+        <BizTable title="biz_market_dataset" rows={bizDatasetRows} columns={['biz_table', 'market', 'relation', 'status', 'freshness', 'row_count', 'last_timestamp', 'intervals']} />
+        <BizTable title="biz_market_query_cache" rows={bizQueryRows} columns={['biz_request_key', 'cache_status', 'hits', 'market', 'symbol', 'interval', 'bars', 'last_price', 'last_loaded_at']} emptyText="Run a market query to populate the prefixed business cache table." />
+      </div>
+      {state.data && <SeriesView rows={state.data.response.data} interval={interval} />}
     </Panel>
   );
 }
@@ -457,9 +599,9 @@ function Panel({ title, icon, action, loading, error, children }: { title: strin
         {action}
       </div>
       <div className="panel-body">
-        {loading && <div className="empty-state">Loading...</div>}
-        {error && <div className="error-state">{error}</div>}
-        {!loading && !error && children}
+        {loading && <div className="loading-state">Loading...</div>}
+        {error && !loading && <div className="error-state">{error}</div>}
+        {(!error || loading) && children}
       </div>
     </div>
   );
@@ -469,8 +611,8 @@ function RunButton({ onClick }: { onClick: () => void }) {
   return <button className="primary-button" onClick={onClick}><Play size={15} />Run</button>;
 }
 
-function QueryControls({ children }: { children: ReactNode }) {
-  return <div className="controls">{children}</div>;
+function QueryControls({ children, className = '' }: { children: ReactNode; className?: string }) {
+  return <div className={`controls ${className}`.trim()}>{children}</div>;
 }
 
 function Control({ label, children }: { label: string; children: ReactNode }) {
@@ -526,11 +668,24 @@ function ValidityView({ data }: { data: BrowserValidCountResponse }) {
   );
 }
 
-function SeriesView({ rows }: { rows: BarRow[] }) {
-  const points = rows.map((row) => ({ timestamp: row.timestamp, value: Number(row.close ?? row.mark_close ?? row.last_close ?? row.underlying_close ?? 0) })).filter((point) => Number.isFinite(point.value) && point.value > 0);
+function SeriesView({ rows, interval }: { rows: BarRow[]; interval: string }) {
+  const bars = toChartBars(rows);
+  const gaps = toGapRows(bars, interval);
+  const latest = bars.at(-1);
+  const first = bars[0];
+  const volume = bars.reduce((total, bar) => total + bar.volume, 0);
   return (
     <>
-      <div className="chart"><LineChart points={points} /></div>
+      <div className="market-summary">
+        <Stat label="Last" value={latest ? formatPrice(latest.close) : 'n/a'} />
+        <Stat label="Bars" value={formatNumber(bars.length)} />
+        <Stat label="Volume" value={formatCompactNumber(volume)} />
+        <Stat label="Window" value={first && latest ? `${compactDate(first.timestamp)} - ${compactDate(latest.timestamp)}` : 'n/a'} />
+      </div>
+      {gaps.length > 0 && (
+        <BizTable title="biz_market_gap_diagnostics" rows={gaps.slice(0, 12)} columns={['biz_gap', 'from', 'to', 'missing_span']} />
+      )}
+      <div className="chart market-chart"><MarketCandlestickChart bars={bars} /></div>
       <DataTable rows={rows.slice(0, 200) as Array<Record<string, unknown>>} columns={inferColumns(rows)} />
     </>
   );
@@ -549,6 +704,15 @@ function ChainView({ data }: { data: ChainResponse }) {
       </div>
       <DataTable rows={snapshot.contracts.slice(0, 500)} columns={inferColumns(snapshot.contracts)} />
     </>
+  );
+}
+
+function BizTable({ title, rows, columns, emptyText = 'No business rows yet.' }: { title: string; rows: Array<Record<string, unknown>>; columns: string[]; emptyText?: string }) {
+  return (
+    <section className="biz-table-card" aria-label={title}>
+      <div className="biz-table-title">{title}</div>
+      {rows.length ? <DataTable rows={rows} columns={columns} /> : <div className="empty-state compact">{emptyText}</div>}
+    </section>
   );
 }
 
@@ -601,28 +765,70 @@ function ValueListView({ dataset, data, sortBy, onSelectValue }: { dataset: Brow
   );
 }
 
-function LineChart({ points }: { points: Array<{ timestamp: string; value: number }> }) {
-  if (points.length < 2) {
-    return <div className="empty-state">Run a query with at least two price points.</div>;
+function MarketCandlestickChart({ bars }: { bars: ChartBar[] }) {
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container || bars.length < 2) {
+      return;
+    }
+
+    const chart = createChart(container, {
+      width: container.clientWidth,
+      height: 420,
+      autoSize: true,
+      layout: {
+        background: { type: ColorType.Solid, color: '#fbfcfd' },
+        textColor: '#415066',
+      },
+      grid: {
+        vertLines: { color: '#edf2f6' },
+        horzLines: { color: '#edf2f6' },
+      },
+      rightPriceScale: {
+        borderColor: '#d8e0e7',
+        scaleMargins: { top: 0.08, bottom: 0.26 },
+      },
+      timeScale: {
+        borderColor: '#d8e0e7',
+        timeVisible: true,
+        secondsVisible: false,
+      },
+      crosshair: {
+        vertLine: { color: '#9aa9b8', labelBackgroundColor: '#155d8b' },
+        horzLine: { color: '#9aa9b8', labelBackgroundColor: '#155d8b' },
+      },
+    });
+
+    const candleSeries = chart.addSeries(CandlestickSeries, {
+      upColor: '#1f8a5b',
+      downColor: '#c44536',
+      borderUpColor: '#1f8a5b',
+      borderDownColor: '#c44536',
+      wickUpColor: '#1f8a5b',
+      wickDownColor: '#c44536',
+    });
+    candleSeries.setData(bars.map(toCandlestickData));
+
+    const volumeSeries = chart.addSeries(HistogramSeries, {
+      priceFormat: { type: 'volume' },
+      priceScaleId: '',
+    });
+    volumeSeries.setData(bars.map(toVolumeData));
+    volumeSeries.priceScale().applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
+
+    chart.timeScale().fitContent();
+
+    return () => {
+      chart.remove();
+    };
+  }, [bars]);
+
+  if (bars.length < 2) {
+    return <div className="empty-state">Run a query with at least two valid OHLC bars.</div>;
   }
-  const width = 900;
-  const height = 240;
-  const padding = 18;
-  const min = Math.min(...points.map((point) => point.value));
-  const max = Math.max(...points.map((point) => point.value));
-  const spread = max - min || 1;
-  const coords = points.map((point, index) => {
-    const x = padding + (index / (points.length - 1)) * (width - padding * 2);
-    const y = height - padding - ((point.value - min) / spread) * (height - padding * 2);
-    return `${x},${y}`;
-  });
-  const area = `${padding},${height - padding} ${coords.join(' ')} ${width - padding},${height - padding}`;
-  return (
-    <svg className="line-chart" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Price series chart">
-      <polyline className="chart-area" points={area} />
-      <polyline className="chart-line" points={coords.join(' ')} />
-    </svg>
-  );
+  return <div className="market-chart-canvas" ref={containerRef} aria-label="Candlestick price chart" />;
 }
 
 function DataTable({ rows, columns }: { rows: Array<Record<string, unknown>>; columns: string[] }) {
@@ -716,6 +922,7 @@ function applySelectionToFilters(dataset: BrowserDataset, selection: BrowserSele
 
 function browserDatasetToMarket(dataset: BrowserDataset) {
   if (dataset.market === 'crypto-spot') return 'crypto-spot';
+  if (dataset.market === 'forex') return 'forex';
   if (dataset.market === 'us-stocks') return 'us-stocks';
   if (dataset.market === 'us-options') return 'us-options';
   return 'crypto-options';
@@ -723,9 +930,50 @@ function browserDatasetToMarket(dataset: BrowserDataset) {
 
 function defaultMarketSymbol(dataset: BrowserDataset) {
   if (dataset.market === 'crypto-spot') return 'BTC';
+  if (dataset.market === 'forex') return 'EURUSD';
   if (dataset.market === 'us-stocks') return 'AAPL';
   if (dataset.market === 'us-options') return 'SPY';
   return 'BTC';
+}
+
+function marketIntervals(market: string) {
+  return market === 'forex' ? forexIntervals : defaultIntervals;
+}
+
+function defaultMarketInterval(market: string) {
+  return market === 'forex' ? '1h' : '1h';
+}
+
+function marketQueryKey(query: { market: string; symbol: string; interval: string; from: string; to: string; limit: number }) {
+  return [query.market, query.symbol.trim().toUpperCase(), query.interval, query.from, query.to, query.limit].join('|');
+}
+
+function upsertBizQueryRows(rows: BizMarketQueryRow[], next: BizMarketQueryRow) {
+  const existing = rows.find((row) => row.biz_request_key === next.biz_request_key);
+  if (!existing) {
+    return [next, ...rows];
+  }
+  const updated = {
+    ...existing,
+    ...next,
+    first_loaded_at: existing.first_loaded_at,
+    cache_status: 'hit',
+    hits: existing.hits + 1,
+  };
+  return [updated, ...rows.filter((row) => row.biz_request_key !== next.biz_request_key)];
+}
+
+function toBizDatasetRow(dataset: BrowserDataset, catalogDataset: CatalogDataset | undefined, intervals: string[]) {
+  return {
+    biz_table: `biz_${dataset.name}`,
+    market: browserDatasetToMarket(dataset),
+    relation: dataset.relation,
+    status: catalogDataset?.status ?? 'unknown',
+    freshness: catalogDataset?.freshness ?? 'unknown',
+    row_count: formatNumber(catalogDataset?.row_count ?? 0),
+    last_timestamp: catalogDataset?.last_timestamp ?? 'n/a',
+    intervals: intervals.join(', '),
+  };
 }
 
 function defaultDateWindow(lastTimestamp?: string): DateWindow {
@@ -739,6 +987,30 @@ function defaultDateWindow(lastTimestamp?: string): DateWindow {
   const toDate = new Date(lastDate.getTime() + 1000 * 60 * 60 * 24);
   const fromDate = new Date(toDate.getTime() - 1000 * 60 * 60 * 24 * 30);
   return { from: toDateInput(fromDate), to: toDateInput(toDate) };
+}
+
+function readBizBootstrapCache() {
+  try {
+    const raw = sessionStorage.getItem(bizBootstrapCacheKey);
+    if (!raw) return undefined;
+    const cache = JSON.parse(raw) as BizBootstrapCache;
+    if (Date.now() - cache.cachedAt > 300_000) {
+      sessionStorage.removeItem(bizBootstrapCacheKey);
+      return undefined;
+    }
+    return cache;
+  } catch {
+    sessionStorage.removeItem(bizBootstrapCacheKey);
+    return undefined;
+  }
+}
+
+function writeBizBootstrapCache(cache: BizBootstrapCache) {
+  try {
+    sessionStorage.setItem(bizBootstrapCacheKey, JSON.stringify(cache));
+  } catch {
+    // Ignore quota errors; the API request cache still handles de-duplication.
+  }
 }
 
 async function resolveDefaultMarketSymbol(dataset: BrowserDataset, dateWindow: DateWindow) {
@@ -768,10 +1040,15 @@ async function resolveDefaultMarketSymbol(dataset: BrowserDataset, dateWindow: D
     });
     const rawID = preview.data[0]?.symbol_id;
     const baseAsset = preview.data[0]?.base_asset;
-    if (typeof rawID !== 'string' || !rawID.trim()) {
+    if (rawID === undefined || rawID === null || !`${rawID}`.trim()) {
       return defaultMarketSymbol(dataset);
     }
-    const symbolID = BigInt(rawID);
+    let symbolID: bigint;
+    try {
+      symbolID = BigInt(`${rawID}`.trim());
+    } catch {
+      return defaultMarketSymbol(dataset);
+    }
     const cursor = encodeRawURLBase64((symbolID - 1n).toString());
     const symbols = await api.cryptoOptionSymbols({ base_asset: typeof baseAsset === 'string' && baseAsset.trim() ? baseAsset : 'BTC', cursor, limit: 1 });
     return symbols.data[0]?.symbol ?? defaultMarketSymbol(dataset);
@@ -784,15 +1061,157 @@ function encodeRawURLBase64(value: string) {
   return btoa(value).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
 }
 
+function marketSymbolValue(row: MarketSymbolRow) {
+  if (typeof row.symbol === 'string' && row.symbol.trim()) return row.symbol;
+  if (row.symbol_id !== undefined && row.symbol_id !== null) return String(row.symbol_id);
+  return '';
+}
+
+function marketSymbolLabel(row: MarketSymbolRow) {
+  const value = marketSymbolValue(row);
+  const details = [row.underlying, row.base_asset, row.option_type, row.expiration ? shortDate(row.expiration) : '', row.strike ?? row.strike_price, row.profile?.sector]
+    .filter((item) => item !== undefined && item !== null && `${item}`.trim() !== '')
+    .join(' / ');
+  return details ? `${value} - ${details}` : value;
+}
+
+function toChartBars(rows: BarRow[]) {
+  const byTime = new Map<number, ChartBar>();
+  for (const row of rows) {
+    const time = toChartTime(row.timestamp);
+    const open = firstFinite(row.open, row.mark_open, row.last_open, row.underlying_price_open);
+    const high = firstFinite(row.high, row.mark_high, row.last_high, row.underlying_price_high);
+    const low = firstFinite(row.low, row.mark_low, row.last_low, row.underlying_price_low);
+    const close = firstFinite(row.close, row.mark_close, row.last_close, row.underlying_close, row.underlying_price_close);
+    if (!time || open === undefined || high === undefined || low === undefined || close === undefined) {
+      continue;
+    }
+    if (open <= 0 || high <= 0 || low <= 0 || close <= 0) {
+      continue;
+    }
+    byTime.set(time, {
+      timestamp: row.timestamp,
+      time: time as UTCTimestamp,
+      open,
+      high: Math.max(high, open, close),
+      low: Math.min(low, open, close),
+      close,
+      volume: firstFinite(row.volume, row.transactions, row.tick_count) ?? 0,
+      raw: row,
+    });
+  }
+  return Array.from(byTime.values()).sort((left, right) => left.time - right.time);
+}
+
+function toGapRows(bars: ChartBar[], interval: string): BizMarketGapRow[] {
+  const expectedSeconds = intervalSeconds(interval);
+  if (!expectedSeconds || bars.length < 2) return [];
+  const rows: BizMarketGapRow[] = [];
+  for (let index = 1; index < bars.length; index += 1) {
+    const previous = bars[index - 1];
+    const current = bars[index];
+    const deltaSeconds = Number(current.time) - Number(previous.time);
+    if (deltaSeconds <= expectedSeconds * 1.5) {
+      continue;
+    }
+    rows.push({
+      biz_gap: `biz_gap_${rows.length + 1}`,
+      from: previous.timestamp,
+      to: current.timestamp,
+      missing_span: formatDuration(deltaSeconds),
+    });
+  }
+  return rows;
+}
+
+function intervalSeconds(interval: string) {
+  const match = interval.match(/^(\d+)(m|h|d)$/);
+  if (!match) return 0;
+  const amount = Number(match[1]);
+  if (match[2] === 'm') return amount * 60;
+  if (match[2] === 'h') return amount * 60 * 60;
+  return amount * 24 * 60 * 60;
+}
+
+function formatDuration(seconds: number) {
+  const days = seconds / 86400;
+  if (days >= 1) return `${Math.round(days * 10) / 10}d`;
+  const hours = seconds / 3600;
+  if (hours >= 1) return `${Math.round(hours * 10) / 10}h`;
+  return `${Math.round(seconds / 60)}m`;
+}
+
+function toChartTime(timestamp: string) {
+  const parsed = Date.parse(timestamp);
+  if (!Number.isFinite(parsed)) return 0;
+  return Math.floor(parsed / 1000);
+}
+
+function firstFinite(...values: unknown[]) {
+  for (const value of values) {
+    const numberValue = Number(value);
+    if (Number.isFinite(numberValue)) {
+      return numberValue;
+    }
+  }
+  return undefined;
+}
+
+function toCandlestickData(bar: ChartBar): CandlestickData<UTCTimestamp> {
+  return {
+    time: bar.time,
+    open: bar.open,
+    high: bar.high,
+    low: bar.low,
+    close: bar.close,
+  };
+}
+
+function toVolumeData(bar: ChartBar): HistogramData<UTCTimestamp> {
+  return {
+    time: bar.time,
+    value: bar.volume,
+    color: bar.close >= bar.open ? 'rgba(31, 138, 91, 0.35)' : 'rgba(196, 69, 54, 0.35)',
+  };
+}
+
+function formatPrice(value: number) {
+  if (Math.abs(value) >= 1000) return new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 }).format(value);
+  if (Math.abs(value) >= 1) return new Intl.NumberFormat('en-US', { maximumFractionDigits: 4 }).format(value);
+  return new Intl.NumberFormat('en-US', { maximumFractionDigits: 8 }).format(value);
+}
+
+function formatCompactNumber(value: number) {
+  return new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 2 }).format(value);
+}
+
+function shortDate(value: string) {
+  if (!value) return '';
+  return value.slice(0, 10);
+}
+
+function compactDate(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return shortDate(value);
+  return `${String(date.getUTCMonth() + 1).padStart(2, '0')}/${String(date.getUTCDate()).padStart(2, '0')}/${date.getUTCFullYear()}`;
+}
+
 function toDateInput(date: Date) {
   return date.toISOString().slice(0, 10);
 }
 
 function valueText(value: unknown) {
   if (value === null || value === undefined) return '';
-  if (typeof value === 'number') return Number.isFinite(value) ? String(Math.round(value * 1000000) / 1000000) : '';
+  if (typeof value === 'number') return formatTableNumber(value);
   if (typeof value === 'object') return JSON.stringify(value);
   return String(value);
+}
+
+function formatTableNumber(value: number) {
+  if (!Number.isFinite(value)) return '';
+  if (Number.isInteger(value)) return formatNumber(value);
+  if (Math.abs(value) >= 1000) return new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 }).format(value);
+  return String(Math.round(value * 1000000) / 1000000);
 }
 
 function formatNumber(value: number) {

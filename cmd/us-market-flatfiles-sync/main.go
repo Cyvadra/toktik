@@ -140,6 +140,7 @@ func main() {
 				DSN:               *dsn,
 				StartDate:         from,
 				EndDate:           to,
+				PriorityOrder:     usmarket.PriorityOrderUSDefault,
 				Workers:           *workers,
 				BatchSize:         *batchSize,
 				RiskFreeRate:      *riskFreeRate,

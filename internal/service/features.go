@@ -2,16 +2,19 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	clickhouse "github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/Cyvadra/toktik/internal/chrepo"
 	"github.com/Cyvadra/toktik/internal/dto"
+	"github.com/Cyvadra/toktik/internal/usmarket"
 )
 
 const (
@@ -39,10 +42,43 @@ func (e featureBackfillScopeError) Error() string {
 	return e.Err.Error()
 }
 
+func (e featureBackfillScopeError) Unwrap() error {
+	return e.Err
+}
+
 type featureScopeResult struct {
-	Status         string
-	RowsWritten    int
-	ScopesReplaced int
+	Status               string
+	RowsWritten          int
+	ScopesReplaced       int
+	VolatilityHistory    []dto.FeatureVolatilityHistoryRow
+	HasVolatilityHistory bool
+	LiquidityHistory     []dto.FeatureLiquidityHistoryRow
+	HasLiquidityHistory  bool
+	SurfaceSummary       map[string]featureSurfacePanelSummary
+	HasSurfaceSummary    bool
+}
+
+type featureBackfillUnderlyingRequest struct {
+	Market          string
+	MarketIndex     int
+	MarketCount     int
+	Underlying      string
+	UnderlyingIndex int
+	UnderlyingCount int
+}
+
+type featureBackfillUnderlyingResult struct {
+	Stats FeatureBackfillStats
+	Err   error
+}
+
+type featureBackfillPanelInputs struct {
+	VolatilityHistory    []dto.FeatureVolatilityHistoryRow
+	HasVolatilityHistory bool
+	LiquidityHistory     []dto.FeatureLiquidityHistoryRow
+	HasLiquidityHistory  bool
+	SurfaceSummary       map[string]featureSurfacePanelSummary
+	HasSurfaceSummary    bool
 }
 
 type usOptionsSurfaceAggregateRow struct {
@@ -117,11 +153,13 @@ type FeatureBackfillProgress struct {
 type FeatureBackfillOptions struct {
 	Markets         []string
 	Underlyings     []string
+	PriorityOrder   string
 	From            time.Time
 	To              time.Time
 	LookbackDays    int
 	MinDaysToExpiry int
 	MaxDaysToExpiry int
+	Workers         int
 	Replace         bool
 	ContinueOnError bool
 	Progress        func(FeatureBackfillProgress)
@@ -613,6 +651,10 @@ ORDER BY as_of_date ASC, expiration ASC`, featureSkewTable),
 // BackfillFeatureSnapshots computes and stores all currently supported feature-store snapshots.
 func (s *FeatureService) BackfillFeatureSnapshots(ctx context.Context, opts FeatureBackfillOptions) (FeatureBackfillStats, error) {
 	lookbackDays := clamp(opts.LookbackDays, defaultFeatureLookbackDays, maxFeatureLookbackDays)
+	workers := opts.Workers
+	if workers < 1 {
+		workers = 1
+	}
 	markets, err := normalizeFeatureMarkets(opts.Markets)
 	if err != nil {
 		return FeatureBackfillStats{}, err
@@ -634,6 +676,10 @@ func (s *FeatureService) BackfillFeatureSnapshots(ctx context.Context, opts Feat
 				return FeatureBackfillStats{}, err
 			}
 		}
+		underlyings, err = prioritizeFeatureUnderlyings(ctx, s.repo.Conn, market, underlyings, opts.PriorityOrder)
+		if err != nil {
+			return FeatureBackfillStats{}, err
+		}
 		emitFeatureBackfillProgress(opts, FeatureBackfillProgress{
 			Market:          market,
 			MarketIndex:     marketIndex + 1,
@@ -642,181 +688,294 @@ func (s *FeatureService) BackfillFeatureSnapshots(ctx context.Context, opts Feat
 			Scope:           "market",
 			Phase:           "start",
 		})
+		requests := make([]featureBackfillUnderlyingRequest, 0, len(underlyings))
 		for underlyingIndex, underlying := range underlyings {
-			stats.UnderlyingsConsidered++
-			wroteAny := false
-			allSkipped := true
-			allEmpty := true
-			failureCountBefore := len(stats.Failures)
-			emitFeatureBackfillProgress(opts, FeatureBackfillProgress{
+			requests = append(requests, featureBackfillUnderlyingRequest{
 				Market:          market,
 				MarketIndex:     marketIndex + 1,
 				MarketCount:     len(markets),
 				Underlying:      underlying,
 				UnderlyingIndex: underlyingIndex + 1,
 				UnderlyingCount: len(underlyings),
-				Scope:           "underlying",
-				Phase:           "start",
 			})
-
-			runScope := func(scope string, fn func() (featureScopeResult, error)) (featureScopeResult, error) {
-				emitFeatureBackfillProgress(opts, FeatureBackfillProgress{
-					Market:          market,
-					MarketIndex:     marketIndex + 1,
-					MarketCount:     len(markets),
-					Underlying:      underlying,
-					UnderlyingIndex: underlyingIndex + 1,
-					UnderlyingCount: len(underlyings),
-					Scope:           scope,
-					Phase:           "start",
-				})
-				startedAt := time.Now()
-				result, runErr := fn()
-				progress := FeatureBackfillProgress{
-					Market:          market,
-					MarketIndex:     marketIndex + 1,
-					MarketCount:     len(markets),
-					Underlying:      underlying,
-					UnderlyingIndex: underlyingIndex + 1,
-					UnderlyingCount: len(underlyings),
-					Scope:           scope,
-					Phase:           "end",
-					Elapsed:         time.Since(startedAt),
-					RowsWritten:     result.RowsWritten,
-					ScopesReplaced:  result.ScopesReplaced,
-					Outcome:         result.Status,
-				}
-				if runErr != nil {
-					progress.Outcome = "failed"
-					if scopeErr, ok := runErr.(featureBackfillScopeError); ok {
-						progress.Stage = scopeErr.Stage
-						progress.Error = scopeErr.Err.Error()
-					} else {
-						progress.Error = runErr.Error()
-					}
-				}
-				emitFeatureBackfillProgress(opts, progress)
-				return result, runErr
-			}
-
-			volatilityResult, err := runScope("volatility", func() (featureScopeResult, error) {
-				return s.backfillVolatilityScope(ctx, market, underlying, opts.From, opts.To, lookbackDays, opts.Replace)
-			})
-			if err != nil {
-				if opts.ContinueOnError {
-					stats.Failures = append(stats.Failures, toFeatureBackfillFailure(market, underlying, err))
-				} else {
-					return stats, err
-				}
-			} else {
-				applyFeatureScopeResult(&stats, &wroteAny, &allSkipped, &allEmpty, volatilityResult)
-			}
-
-			if market == "us-options" {
-				surfaceResult, err := runScope("surface", func() (featureScopeResult, error) {
-					return s.backfillUSOptionsSurfaceScope(ctx, underlying, opts.From, opts.To, opts.Replace)
-				})
-				if err != nil {
-					if opts.ContinueOnError {
-						stats.Failures = append(stats.Failures, toFeatureBackfillFailure(market, underlying, err))
-					} else {
-						return stats, err
-					}
-				} else {
-					applyFeatureScopeResult(&stats, &wroteAny, &allSkipped, &allEmpty, surfaceResult)
-				}
-				liquidityResult, err := runScope("liquidity", func() (featureScopeResult, error) {
-					return s.backfillUSOptionsLiquidityScope(ctx, underlying, opts.From, opts.To, opts.Replace)
-				})
-				if err != nil {
-					if opts.ContinueOnError {
-						stats.Failures = append(stats.Failures, toFeatureBackfillFailure(market, underlying, err))
-					} else {
-						return stats, err
-					}
-				} else {
-					applyFeatureScopeResult(&stats, &wroteAny, &allSkipped, &allEmpty, liquidityResult)
-				}
-				panelResult, err := runScope("daily-panel", func() (featureScopeResult, error) {
-					return s.backfillDailyPanelScope(ctx, market, underlying, opts.From, opts.To, lookbackDays, minDTE, maxDTE, opts.Replace)
-				})
-				if err != nil {
-					if opts.ContinueOnError {
-						stats.Failures = append(stats.Failures, toFeatureBackfillFailure(market, underlying, err))
-					} else {
-						return stats, err
-					}
-				} else {
-					applyFeatureScopeResult(&stats, &wroteAny, &allSkipped, &allEmpty, panelResult)
-				}
-			}
-			if market == "crypto-options" {
-				liquidityResult, err := runScope("liquidity", func() (featureScopeResult, error) {
-					return s.backfillCryptoOptionsLiquidityScope(ctx, underlying, opts.From, opts.To, opts.Replace)
-				})
-				if err != nil {
-					if opts.ContinueOnError {
-						stats.Failures = append(stats.Failures, toFeatureBackfillFailure(market, underlying, err))
-					} else {
-						return stats, err
-					}
-				} else {
-					applyFeatureScopeResult(&stats, &wroteAny, &allSkipped, &allEmpty, liquidityResult)
-				}
-				panelResult, err := runScope("daily-panel", func() (featureScopeResult, error) {
-					return s.backfillDailyPanelScope(ctx, market, underlying, opts.From, opts.To, lookbackDays, minDTE, maxDTE, opts.Replace)
-				})
-				if err != nil {
-					if opts.ContinueOnError {
-						stats.Failures = append(stats.Failures, toFeatureBackfillFailure(market, underlying, err))
-					} else {
-						return stats, err
-					}
-				} else {
-					applyFeatureScopeResult(&stats, &wroteAny, &allSkipped, &allEmpty, panelResult)
-				}
-			}
-
-			finalOutcome := "empty"
-			if wroteAny {
-				finalOutcome = "written"
-			} else if len(stats.Failures) > failureCountBefore {
-				finalOutcome = "failed"
-			} else if allSkipped {
-				finalOutcome = "skipped"
-			}
-			emitFeatureBackfillProgress(opts, FeatureBackfillProgress{
-				Market:          market,
-				MarketIndex:     marketIndex + 1,
-				MarketCount:     len(markets),
-				Underlying:      underlying,
-				UnderlyingIndex: underlyingIndex + 1,
-				UnderlyingCount: len(underlyings),
-				Scope:           "underlying",
-				Phase:           "end",
-				Outcome:         finalOutcome,
-			})
-
-			if wroteAny {
-				stats.UnderlyingsWritten++
-				continue
-			}
-			if len(stats.Failures) > failureCountBefore {
-				continue
-			}
-			if allSkipped {
-				stats.UnderlyingsSkipped++
-				continue
-			}
-			if allEmpty {
-				stats.UnderlyingsEmpty++
-			}
+		}
+		marketStats, err := s.backfillFeatureUnderlyingBatch(ctx, opts, requests, lookbackDays, minDTE, maxDTE, workers)
+		mergeFeatureBackfillStats(&stats, marketStats)
+		if err != nil {
+			return stats, err
 		}
 	}
 	if len(stats.Failures) > 0 {
 		return stats, fmt.Errorf("%d feature-store backfill scopes failed", len(stats.Failures))
 	}
 	return stats, nil
+}
+
+func (s *FeatureService) backfillFeatureUnderlyingBatch(ctx context.Context, opts FeatureBackfillOptions, requests []featureBackfillUnderlyingRequest, lookbackDays int, minDTE, maxDTE int32, workers int) (FeatureBackfillStats, error) {
+	if len(requests) == 0 {
+		return FeatureBackfillStats{}, nil
+	}
+	if workers < 1 {
+		workers = 1
+	}
+	if workers > len(requests) {
+		workers = len(requests)
+	}
+	if workers == 1 {
+		var stats FeatureBackfillStats
+		for _, req := range requests {
+			result, err := s.backfillFeatureUnderlying(ctx, opts, req, lookbackDays, minDTE, maxDTE)
+			mergeFeatureBackfillStats(&stats, result)
+			if err != nil {
+				return stats, err
+			}
+		}
+		return stats, nil
+	}
+
+	workerCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	jobs := make(chan featureBackfillUnderlyingRequest)
+	results := make(chan featureBackfillUnderlyingResult)
+	var wg sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for req := range jobs {
+				stats, err := s.backfillFeatureUnderlying(workerCtx, opts, req, lookbackDays, minDTE, maxDTE)
+				select {
+				case results <- featureBackfillUnderlyingResult{Stats: stats, Err: err}:
+				case <-workerCtx.Done():
+					return
+				}
+				if err != nil && !opts.ContinueOnError {
+					cancel()
+				}
+			}
+		}()
+	}
+	go func() {
+		defer close(jobs)
+		for _, req := range requests {
+			select {
+			case jobs <- req:
+			case <-workerCtx.Done():
+				return
+			}
+		}
+	}()
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	var (
+		stats    FeatureBackfillStats
+		firstErr error
+	)
+	for result := range results {
+		mergeFeatureBackfillStats(&stats, result.Stats)
+		if result.Err != nil && firstErr == nil {
+			firstErr = result.Err
+			if !opts.ContinueOnError {
+				cancel()
+			}
+		}
+	}
+	if firstErr != nil {
+		return stats, firstErr
+	}
+	return stats, ctx.Err()
+}
+
+func (s *FeatureService) backfillFeatureUnderlying(ctx context.Context, opts FeatureBackfillOptions, req featureBackfillUnderlyingRequest, lookbackDays int, minDTE, maxDTE int32) (FeatureBackfillStats, error) {
+	stats := FeatureBackfillStats{UnderlyingsConsidered: 1}
+	wroteAny := false
+	allSkipped := true
+	allEmpty := true
+	panelInputs := featureBackfillPanelInputs{}
+	emitFeatureBackfillProgress(opts, FeatureBackfillProgress{
+		Market:          req.Market,
+		MarketIndex:     req.MarketIndex,
+		MarketCount:     req.MarketCount,
+		Underlying:      req.Underlying,
+		UnderlyingIndex: req.UnderlyingIndex,
+		UnderlyingCount: req.UnderlyingCount,
+		Scope:           "underlying",
+		Phase:           "start",
+	})
+
+	runScope := func(scope string, fn func() (featureScopeResult, error)) (featureScopeResult, error) {
+		emitFeatureBackfillProgress(opts, FeatureBackfillProgress{
+			Market:          req.Market,
+			MarketIndex:     req.MarketIndex,
+			MarketCount:     req.MarketCount,
+			Underlying:      req.Underlying,
+			UnderlyingIndex: req.UnderlyingIndex,
+			UnderlyingCount: req.UnderlyingCount,
+			Scope:           scope,
+			Phase:           "start",
+		})
+		startedAt := time.Now()
+		result, runErr := fn()
+		progress := FeatureBackfillProgress{
+			Market:          req.Market,
+			MarketIndex:     req.MarketIndex,
+			MarketCount:     req.MarketCount,
+			Underlying:      req.Underlying,
+			UnderlyingIndex: req.UnderlyingIndex,
+			UnderlyingCount: req.UnderlyingCount,
+			Scope:           scope,
+			Phase:           "end",
+			Elapsed:         time.Since(startedAt),
+			RowsWritten:     result.RowsWritten,
+			ScopesReplaced:  result.ScopesReplaced,
+			Outcome:         result.Status,
+		}
+		if runErr != nil {
+			progress.Outcome = "failed"
+			if scopeErr, ok := runErr.(featureBackfillScopeError); ok {
+				progress.Stage = scopeErr.Stage
+				progress.Error = scopeErr.Err.Error()
+			} else {
+				progress.Error = runErr.Error()
+			}
+		}
+		emitFeatureBackfillProgress(opts, progress)
+		return result, runErr
+	}
+
+	applyResult := func(result featureScopeResult) {
+		applyFeatureScopeResult(&stats, &wroteAny, &allSkipped, &allEmpty, result)
+		if result.HasVolatilityHistory {
+			panelInputs.HasVolatilityHistory = true
+			panelInputs.VolatilityHistory = result.VolatilityHistory
+		}
+		if result.HasLiquidityHistory {
+			panelInputs.HasLiquidityHistory = true
+			panelInputs.LiquidityHistory = result.LiquidityHistory
+		}
+		if result.HasSurfaceSummary {
+			panelInputs.HasSurfaceSummary = true
+			panelInputs.SurfaceSummary = result.SurfaceSummary
+		}
+	}
+	handleErr := func(err error) error {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return err
+		}
+		if opts.ContinueOnError {
+			stats.Failures = append(stats.Failures, toFeatureBackfillFailure(req.Market, req.Underlying, err))
+			return nil
+		}
+		return err
+	}
+
+	volatilityResult, err := runScope("volatility", func() (featureScopeResult, error) {
+		return s.backfillVolatilityScope(ctx, req.Market, req.Underlying, opts.From, opts.To, lookbackDays, opts.Replace)
+	})
+	if err != nil {
+		if err := handleErr(err); err != nil {
+			return stats, err
+		}
+	} else {
+		applyResult(volatilityResult)
+	}
+
+	if req.Market == "us-options" {
+		surfaceResult, err := runScope("surface", func() (featureScopeResult, error) {
+			return s.backfillUSOptionsSurfaceScope(ctx, req.Underlying, opts.From, opts.To, opts.Replace)
+		})
+		if err != nil {
+			if err := handleErr(err); err != nil {
+				return stats, err
+			}
+		} else {
+			applyResult(surfaceResult)
+		}
+		liquidityResult, err := runScope("liquidity", func() (featureScopeResult, error) {
+			return s.backfillUSOptionsLiquidityScope(ctx, req.Underlying, opts.From, opts.To, opts.Replace)
+		})
+		if err != nil {
+			if err := handleErr(err); err != nil {
+				return stats, err
+			}
+		} else {
+			applyResult(liquidityResult)
+		}
+		panelResult, err := runScope("daily-panel", func() (featureScopeResult, error) {
+			return s.backfillDailyPanelScope(ctx, req.Market, req.Underlying, opts.From, opts.To, lookbackDays, minDTE, maxDTE, opts.Replace, panelInputs)
+		})
+		if err != nil {
+			if err := handleErr(err); err != nil {
+				return stats, err
+			}
+		} else {
+			applyResult(panelResult)
+		}
+	}
+	if req.Market == "crypto-options" {
+		liquidityResult, err := runScope("liquidity", func() (featureScopeResult, error) {
+			return s.backfillCryptoOptionsLiquidityScope(ctx, req.Underlying, opts.From, opts.To, opts.Replace)
+		})
+		if err != nil {
+			if err := handleErr(err); err != nil {
+				return stats, err
+			}
+		} else {
+			applyResult(liquidityResult)
+		}
+		panelResult, err := runScope("daily-panel", func() (featureScopeResult, error) {
+			return s.backfillDailyPanelScope(ctx, req.Market, req.Underlying, opts.From, opts.To, lookbackDays, minDTE, maxDTE, opts.Replace, panelInputs)
+		})
+		if err != nil {
+			if err := handleErr(err); err != nil {
+				return stats, err
+			}
+		} else {
+			applyResult(panelResult)
+		}
+	}
+
+	finalOutcome := "empty"
+	if wroteAny {
+		finalOutcome = "written"
+	} else if len(stats.Failures) > 0 {
+		finalOutcome = "failed"
+	} else if allSkipped {
+		finalOutcome = "skipped"
+	}
+	emitFeatureBackfillProgress(opts, FeatureBackfillProgress{
+		Market:          req.Market,
+		MarketIndex:     req.MarketIndex,
+		MarketCount:     req.MarketCount,
+		Underlying:      req.Underlying,
+		UnderlyingIndex: req.UnderlyingIndex,
+		UnderlyingCount: req.UnderlyingCount,
+		Scope:           "underlying",
+		Phase:           "end",
+		Outcome:         finalOutcome,
+	})
+
+	if wroteAny {
+		stats.UnderlyingsWritten++
+	} else if len(stats.Failures) == 0 && allSkipped {
+		stats.UnderlyingsSkipped++
+	} else if len(stats.Failures) == 0 && allEmpty {
+		stats.UnderlyingsEmpty++
+	}
+	return stats, nil
+}
+
+func mergeFeatureBackfillStats(dst *FeatureBackfillStats, src FeatureBackfillStats) {
+	dst.UnderlyingsConsidered += src.UnderlyingsConsidered
+	dst.UnderlyingsWritten += src.UnderlyingsWritten
+	dst.UnderlyingsSkipped += src.UnderlyingsSkipped
+	dst.UnderlyingsEmpty += src.UnderlyingsEmpty
+	dst.ScopesReplaced += src.ScopesReplaced
+	dst.RowsWritten += src.RowsWritten
+	dst.Failures = append(dst.Failures, src.Failures...)
 }
 
 func emitFeatureBackfillProgress(opts FeatureBackfillOptions, progress FeatureBackfillProgress) {
@@ -844,6 +1003,10 @@ func (s *FeatureService) BackfillVolatilitySnapshots(ctx context.Context, opts F
 			if err != nil {
 				return FeatureBackfillStats{}, err
 			}
+		}
+		underlyings, err = prioritizeFeatureUnderlyings(ctx, s.repo.Conn, market, underlyings, opts.PriorityOrder)
+		if err != nil {
+			return FeatureBackfillStats{}, err
 		}
 		for _, underlying := range underlyings {
 			stats.UnderlyingsConsidered++
@@ -900,64 +1063,68 @@ func (s *FeatureService) BackfillVolatilitySnapshots(ctx context.Context, opts F
 }
 
 func (s *FeatureService) backfillVolatilityScope(ctx context.Context, market, underlying string, from, to time.Time, lookbackDays int, replace bool) (featureScopeResult, error) {
-	hasRows, err := s.precomputedVolatilityRowsExist(ctx, market, underlying, from, to, lookbackDays)
-	if err != nil {
-		return featureScopeResult{}, featureBackfillScopeError{Stage: "check-existing", Err: err}
-	}
-	if hasRows && !replace {
-		return featureScopeResult{Status: "skipped"}, nil
-	}
 	replaced := 0
-	if hasRows && replace {
+	if replace {
 		if err := s.deletePrecomputedVolatilityRows(ctx, market, underlying, from, to, lookbackDays); err != nil {
 			return featureScopeResult{}, featureBackfillScopeError{Stage: "delete-scope", Err: err}
 		}
 		replaced = 1
+	} else {
+		hasRows, err := s.precomputedVolatilityRowsExist(ctx, market, underlying, from, to, lookbackDays)
+		if err != nil {
+			return featureScopeResult{}, featureBackfillScopeError{Stage: "check-existing", Err: err}
+		}
+		if hasRows {
+			return featureScopeResult{Status: "skipped"}, nil
+		}
 	}
 	history, _, _, err := s.computeVolatilityHistory(ctx, market, underlying, from, to, lookbackDays)
 	if err != nil {
 		return featureScopeResult{}, featureBackfillScopeError{Stage: "compute-history", Err: err}
 	}
 	if len(history) == 0 {
-		return featureScopeResult{Status: "empty", ScopesReplaced: replaced}, nil
+		return featureScopeResult{Status: "empty", ScopesReplaced: replaced, HasVolatilityHistory: true}, nil
 	}
 	if err := s.insertPrecomputedVolatilityRows(ctx, market, underlying, lookbackDays, history); err != nil {
 		return featureScopeResult{}, featureBackfillScopeError{Stage: "insert-rows", Err: err}
 	}
-	return featureScopeResult{Status: "written", RowsWritten: len(history), ScopesReplaced: replaced}, nil
+	return featureScopeResult{Status: "written", RowsWritten: len(history), ScopesReplaced: replaced, VolatilityHistory: history, HasVolatilityHistory: true}, nil
 }
 
 func (s *FeatureService) backfillUSOptionsSurfaceScope(ctx context.Context, underlying string, from, to time.Time, replace bool) (featureScopeResult, error) {
-	termHasRows, err := s.precomputedSurfaceRowsExist(ctx, featureTermStructureTable, "us-options", underlying, from, to)
-	if err != nil {
-		return featureScopeResult{}, featureBackfillScopeError{Stage: "term-structure-check-existing", Err: err}
-	}
-	skewHasRows, err := s.precomputedSurfaceRowsExist(ctx, featureSkewTable, "us-options", underlying, from, to)
-	if err != nil {
-		return featureScopeResult{}, featureBackfillScopeError{Stage: "skew-check-existing", Err: err}
-	}
-	if termHasRows && skewHasRows && !replace {
-		return featureScopeResult{Status: "skipped"}, nil
-	}
 	replaced := 0
-	if replace && termHasRows {
+	termHasRows := false
+	skewHasRows := false
+	if replace {
 		if err := s.deletePrecomputedSurfaceRows(ctx, featureTermStructureTable, "us-options", underlying, from, to); err != nil {
 			return featureScopeResult{}, featureBackfillScopeError{Stage: "term-structure-delete-scope", Err: err}
 		}
 		replaced++
-	}
-	if replace && skewHasRows {
 		if err := s.deletePrecomputedSurfaceRows(ctx, featureSkewTable, "us-options", underlying, from, to); err != nil {
 			return featureScopeResult{}, featureBackfillScopeError{Stage: "skew-delete-scope", Err: err}
 		}
 		replaced++
+	} else {
+		var err error
+		termHasRows, err = s.precomputedSurfaceRowsExist(ctx, featureTermStructureTable, "us-options", underlying, from, to)
+		if err != nil {
+			return featureScopeResult{}, featureBackfillScopeError{Stage: "term-structure-check-existing", Err: err}
+		}
+		skewHasRows, err = s.precomputedSurfaceRowsExist(ctx, featureSkewTable, "us-options", underlying, from, to)
+		if err != nil {
+			return featureScopeResult{}, featureBackfillScopeError{Stage: "skew-check-existing", Err: err}
+		}
+		if termHasRows && skewHasRows {
+			return featureScopeResult{Status: "skipped"}, nil
+		}
 	}
 	aggregates, err := s.queryUSOptionsSurfaceAggregates(ctx, underlying, from, to, time.Time{}, 0, 0)
 	if err != nil {
 		return featureScopeResult{}, featureBackfillScopeError{Stage: "compute-surface", Err: err}
 	}
+	surfaceSummary := summarizeUSOptionsSurfaceHistory(aggregates)
 	if len(aggregates) == 0 {
-		return featureScopeResult{Status: "empty", ScopesReplaced: replaced}, nil
+		return featureScopeResult{Status: "empty", ScopesReplaced: replaced, SurfaceSummary: surfaceSummary, HasSurfaceSummary: true}, nil
 	}
 	termRows := aggregates
 	skewRows := aggregates
@@ -982,41 +1149,43 @@ func (s *FeatureService) backfillUSOptionsSurfaceScope(ctx context.Context, unde
 	}
 	if rowsWritten == 0 {
 		if termHasRows || skewHasRows {
-			return featureScopeResult{Status: "skipped", ScopesReplaced: replaced}, nil
+			return featureScopeResult{Status: "skipped", ScopesReplaced: replaced, SurfaceSummary: surfaceSummary, HasSurfaceSummary: true}, nil
 		}
-		return featureScopeResult{Status: "empty", ScopesReplaced: replaced}, nil
+		return featureScopeResult{Status: "empty", ScopesReplaced: replaced, SurfaceSummary: surfaceSummary, HasSurfaceSummary: true}, nil
 	}
-	return featureScopeResult{Status: "written", RowsWritten: rowsWritten, ScopesReplaced: replaced}, nil
+	return featureScopeResult{Status: "written", RowsWritten: rowsWritten, ScopesReplaced: replaced, SurfaceSummary: surfaceSummary, HasSurfaceSummary: true}, nil
 }
 
 func (s *FeatureService) backfillLiquidityScope(ctx context.Context, market, underlying string, from, to time.Time, replace bool,
 	computeFn func(context.Context, string, time.Time, time.Time, time.Time, int32, int32) ([]cryptoLiquidityAggregateRow, error),
 ) (featureScopeResult, error) {
-	hasRows, err := s.precomputedSurfaceRowsExist(ctx, featureLiquidityTable, market, underlying, from, to)
-	if err != nil {
-		return featureScopeResult{}, featureBackfillScopeError{Stage: "liquidity-check-existing", Err: err}
-	}
-	if hasRows && !replace {
-		return featureScopeResult{Status: "skipped"}, nil
-	}
 	replaced := 0
-	if replace && hasRows {
+	if replace {
 		if err := s.deletePrecomputedSurfaceRows(ctx, featureLiquidityTable, market, underlying, from, to); err != nil {
 			return featureScopeResult{}, featureBackfillScopeError{Stage: "liquidity-delete-scope", Err: err}
 		}
 		replaced = 1
+	} else {
+		hasRows, err := s.precomputedSurfaceRowsExist(ctx, featureLiquidityTable, market, underlying, from, to)
+		if err != nil {
+			return featureScopeResult{}, featureBackfillScopeError{Stage: "liquidity-check-existing", Err: err}
+		}
+		if hasRows {
+			return featureScopeResult{Status: "skipped"}, nil
+		}
 	}
 	aggregates, err := computeFn(ctx, underlying, from, to, time.Time{}, 0, 0)
 	if err != nil {
 		return featureScopeResult{}, featureBackfillScopeError{Stage: "liquidity-compute", Err: err}
 	}
+	liquidityHistory := buildLiquidityHistoryRows(aggregates)
 	if len(aggregates) == 0 {
-		return featureScopeResult{Status: "empty", ScopesReplaced: replaced}, nil
+		return featureScopeResult{Status: "empty", ScopesReplaced: replaced, LiquidityHistory: liquidityHistory, HasLiquidityHistory: true}, nil
 	}
 	if err := s.insertPrecomputedLiquidityRows(ctx, market, underlying, aggregates); err != nil {
 		return featureScopeResult{}, featureBackfillScopeError{Stage: "liquidity-insert-rows", Err: err}
 	}
-	return featureScopeResult{Status: "written", RowsWritten: len(aggregates), ScopesReplaced: replaced}, nil
+	return featureScopeResult{Status: "written", RowsWritten: len(aggregates), ScopesReplaced: replaced, LiquidityHistory: liquidityHistory, HasLiquidityHistory: true}, nil
 }
 
 func (s *FeatureService) backfillCryptoOptionsLiquidityScope(ctx context.Context, underlying string, from, to time.Time, replace bool) (featureScopeResult, error) {
@@ -1027,22 +1196,23 @@ func (s *FeatureService) backfillUSOptionsLiquidityScope(ctx context.Context, un
 	return s.backfillLiquidityScope(ctx, "us-options", underlying, from, to, replace, s.queryUSOptionsLiquidityAggregates)
 }
 
-func (s *FeatureService) backfillDailyPanelScope(ctx context.Context, market, underlying string, from, to time.Time, lookbackDays int, minDTE, maxDTE int32, replace bool) (featureScopeResult, error) {
-	hasRows, err := s.precomputedDailyPanelRowsExist(ctx, market, underlying, from, to, lookbackDays, minDTE, maxDTE)
-	if err != nil {
-		return featureScopeResult{}, featureBackfillScopeError{Stage: "daily-panel-check-existing", Err: err}
-	}
-	if hasRows && !replace {
-		return featureScopeResult{Status: "skipped"}, nil
-	}
+func (s *FeatureService) backfillDailyPanelScope(ctx context.Context, market, underlying string, from, to time.Time, lookbackDays int, minDTE, maxDTE int32, replace bool, inputs featureBackfillPanelInputs) (featureScopeResult, error) {
 	replaced := 0
-	if replace && hasRows {
+	if replace {
 		if err := s.deletePrecomputedDailyPanelRows(ctx, market, underlying, from, to, lookbackDays, minDTE, maxDTE); err != nil {
 			return featureScopeResult{}, featureBackfillScopeError{Stage: "daily-panel-delete-scope", Err: err}
 		}
 		replaced = 1
+	} else {
+		hasRows, err := s.precomputedDailyPanelRowsExist(ctx, market, underlying, from, to, lookbackDays, minDTE, maxDTE)
+		if err != nil {
+			return featureScopeResult{}, featureBackfillScopeError{Stage: "daily-panel-check-existing", Err: err}
+		}
+		if hasRows {
+			return featureScopeResult{Status: "skipped"}, nil
+		}
 	}
-	rows, err := s.buildDailyFeaturePanelRows(ctx, market, underlying, from, to, lookbackDays, minDTE, maxDTE)
+	rows, err := s.buildDailyFeaturePanelRowsWithInputs(ctx, market, underlying, from, to, lookbackDays, minDTE, maxDTE, inputs)
 	if err != nil {
 		return featureScopeResult{}, featureBackfillScopeError{Stage: "daily-panel-compute", Err: err}
 	}
@@ -1568,6 +1738,13 @@ func normalizeUnderlyingList(underlyings []string) []string {
 	return result
 }
 
+func prioritizeFeatureUnderlyings(ctx context.Context, conn driver.Conn, market string, underlyings []string, priorityOrder string) ([]string, error) {
+	if market != "us-options" {
+		return underlyings, nil
+	}
+	return usmarket.MaybePrioritizeUSSymbols(ctx, conn, underlyings, priorityOrder)
+}
+
 func (s *FeatureService) computeVolatilityHistory(ctx context.Context, market, underlying string, from, to time.Time, lookbackDays int) ([]dto.FeatureVolatilityHistoryRow, []featurePoint, []featurePoint, error) {
 	historyStart := from
 	if !historyStart.IsZero() {
@@ -1644,6 +1821,14 @@ ORDER BY day ASC`
 }
 
 func (s *FeatureService) queryImpliedVolatilityHistory(ctx context.Context, market, underlying string, from, to time.Time) ([]featurePoint, error) {
+	if market == "us-options" {
+		aggregates, err := s.queryUSOptionsSurfaceAggregates(ctx, underlying, from, to, time.Time{}, 1, defaultPanelMaxDTE)
+		if err != nil {
+			return nil, err
+		}
+		return buildUSOptionsCurrentIVSeries(aggregates, 30), nil
+	}
+
 	var (
 		query string
 		args  []interface{}
@@ -1672,34 +1857,51 @@ FROM (
 	GROUP BY day
 )
 ORDER BY day ASC`
-	case "us-options":
-		query = `SELECT day, iv
-FROM (
-	SELECT
-		toDate(timestamp) AS day,
-		avgIf(toFloat64(implied_volatility), isFinite(implied_volatility) AND implied_volatility > 0) AS iv
-	FROM us_options_bar_1d
-	WHERE underlying = {underlying:String}
-	`
-		args = []interface{}{clickhouse.Named("underlying", underlying)}
-		if !from.IsZero() {
-			query += `
-	  AND timestamp >= toDateTime({from:String}, 'UTC')`
-			args = append(args, clickhouse.Named("from", from.UTC().Format("2006-01-02 15:04:05")))
-		}
-		if !to.IsZero() {
-			query += `
-	  AND timestamp < toDateTime({to:String}, 'UTC')`
-			args = append(args, clickhouse.Named("to", to.UTC().Format("2006-01-02 15:04:05")))
-		}
-		query += `
-	GROUP BY day
-)
-ORDER BY day ASC`
 	default:
 		return nil, dto.NewValidationError("unsupported feature market %q", market)
 	}
 	return queryFeatureSeries(ctx, s.repo.Conn, query, args...)
+}
+
+func buildUSOptionsCurrentIVSeries(aggregates []usOptionsSurfaceAggregateRow, targetDTE int) []featurePoint {
+	if len(aggregates) == 0 {
+		return nil
+	}
+
+	series := make([]featurePoint, 0)
+	currentDay := ""
+	var best featurePoint
+	bestDistance := 0
+	haveBest := false
+
+	flush := func() {
+		if haveBest {
+			series = append(series, best)
+		}
+	}
+
+	for _, row := range aggregates {
+		dayKey := row.AsOfDate.UTC().Format("2006-01-02")
+		if dayKey != currentDay {
+			flush()
+			currentDay = dayKey
+			haveBest = false
+		}
+		if row.ATMIV == nil {
+			continue
+		}
+		distance := row.DaysToExpiry - targetDTE
+		if distance < 0 {
+			distance = -distance
+		}
+		if !haveBest || distance < bestDistance {
+			best = featurePoint{Date: row.AsOfDate.UTC(), Value: *row.ATMIV}
+			bestDistance = distance
+			haveBest = true
+		}
+	}
+	flush()
+	return series
 }
 
 func (s *FeatureService) listFeatureUnderlyings(ctx context.Context, market string) ([]string, error) {
@@ -3232,13 +3434,30 @@ func (s *FeatureService) loadPanelLiquidityHistory(ctx context.Context, market, 
 }
 
 func (s *FeatureService) buildDailyFeaturePanelRows(ctx context.Context, market, underlying string, from, to time.Time, lookbackDays int, minDTE, maxDTE int32) ([]dto.FeatureDailyPanelRow, error) {
-	volHistory, err := s.loadPanelVolatilityHistory(ctx, market, underlying, from, to, lookbackDays)
-	if err != nil {
-		return nil, err
+	return s.buildDailyFeaturePanelRowsWithInputs(ctx, market, underlying, from, to, lookbackDays, minDTE, maxDTE, featureBackfillPanelInputs{})
+}
+
+func (s *FeatureService) buildDailyFeaturePanelRowsWithInputs(ctx context.Context, market, underlying string, from, to time.Time, lookbackDays int, minDTE, maxDTE int32, inputs featureBackfillPanelInputs) ([]dto.FeatureDailyPanelRow, error) {
+	var (
+		volHistory       []dto.FeatureVolatilityHistoryRow
+		liquidityHistory []dto.FeatureLiquidityHistoryRow
+		err              error
+	)
+	if inputs.HasVolatilityHistory {
+		volHistory = inputs.VolatilityHistory
+	} else {
+		volHistory, err = s.loadPanelVolatilityHistory(ctx, market, underlying, from, to, lookbackDays)
+		if err != nil {
+			return nil, err
+		}
 	}
-	liquidityHistory, err := s.loadPanelLiquidityHistory(ctx, market, underlying, from, to, minDTE, maxDTE)
-	if err != nil {
-		return nil, err
+	if inputs.HasLiquidityHistory {
+		liquidityHistory = inputs.LiquidityHistory
+	} else {
+		liquidityHistory, err = s.loadPanelLiquidityHistory(ctx, market, underlying, from, to, minDTE, maxDTE)
+		if err != nil {
+			return nil, err
+		}
 	}
 	eventHistory := make(map[string]dto.FeatureEventWindowHistoryRow)
 	if market == "us-options" {
@@ -3252,9 +3471,13 @@ func (s *FeatureService) buildDailyFeaturePanelRows(ctx context.Context, market,
 	}
 	surfaceSummary := make(map[string]featureSurfacePanelSummary)
 	if market == "us-options" {
-		surfaceSummary, err = s.loadPanelUSOptionsSurfaceSummary(ctx, underlying, from, to, minDTE, maxDTE)
-		if err != nil {
-			return nil, err
+		if inputs.HasSurfaceSummary {
+			surfaceSummary = inputs.SurfaceSummary
+		} else {
+			surfaceSummary, err = s.loadPanelUSOptionsSurfaceSummary(ctx, underlying, from, to, minDTE, maxDTE)
+			if err != nil {
+				return nil, err
+			}
 		}
 	}
 	return mergeDailyFeaturePanelRows(volHistory, liquidityHistory, surfaceSummary, eventHistory), nil
