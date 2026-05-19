@@ -42,6 +42,7 @@ type Request struct {
 	Targets          []string
 	Underlyings      []string
 	Symbols          []string
+	Progress         func(format string, args ...any)
 	Repair           bool
 	DryRun           bool
 	MaxSamples       int
@@ -98,8 +99,10 @@ func (c *Checker) Run(ctx context.Context, req Request) (Report, error) {
 	now := time.Now().UTC()
 	req = normalizeRequest(req, now)
 	report := Report{From: req.From, To: req.To, Targets: req.Targets, StartedAt: now}
+	req.progressf("integrity progress: start window=%s..%s targets=%d", req.From.Format("2006-01-02"), req.To.Format("2006-01-02"), len(req.Targets))
 
-	for _, target := range req.Targets {
+	for index, target := range req.Targets {
+		req.progressf("integrity progress: target %d/%d %s started", index+1, len(req.Targets), target)
 		switch target {
 		case TargetUSOptionsAggregates:
 			findings, repairNeeded, err := c.checkAggregateGroup(ctx, req, aggregateGroupRequest{
@@ -173,9 +176,11 @@ func (c *Checker) Run(ctx context.Context, req Request) (Report, error) {
 		default:
 			return report, fmt.Errorf("unknown integrity target %q", target)
 		}
+		req.progressf("integrity progress: target %d/%d %s finished", index+1, len(req.Targets), target)
 	}
 
 	report.FinishedAt = time.Now().UTC()
+	req.progressf("integrity progress: completed findings=%d repairs=%d elapsed=%s", len(report.Findings), len(report.Repairs), report.FinishedAt.Sub(report.StartedAt).Round(time.Second))
 	return report, nil
 }
 
@@ -209,6 +214,12 @@ func normalizeRequest(req Request, now time.Time) Request {
 	req.Underlyings = normalizeSymbols(req.Underlyings)
 	req.Symbols = normalizeSymbols(req.Symbols)
 	return req
+}
+
+func (req Request) progressf(format string, args ...any) {
+	if req.Progress != nil {
+		req.Progress(format, args...)
+	}
 }
 
 func normalizeTargets(values []string) []string {
@@ -296,7 +307,9 @@ func (c *Checker) checkAggregateGroup(ctx context.Context, req Request, group ag
 	windows := splitMonthlyWindowsInclusive(req.From, req.To)
 	findings := make([]Finding, 0, len(group.Intervals))
 	repairNeeded := false
-	for _, interval := range group.Intervals {
+	req.progressf("integrity progress: target=%s intervals=%d monthly_chunks=%d", group.Target, len(group.Intervals), len(windows))
+	for intervalIndex, interval := range group.Intervals {
+		req.progressf("integrity progress: target=%s interval %d/%d %s started", group.Target, intervalIndex+1, len(group.Intervals), interval.Suffix)
 		finding := Finding{
 			Target:   group.Target,
 			Check:    group.Check,
@@ -306,7 +319,8 @@ func (c *Checker) checkAggregateGroup(ctx context.Context, req Request, group ag
 			Message:  fmt.Sprintf("%s coverage ok for %s", group.TableName(interval), interval.Suffix),
 		}
 		missingKeySet := map[string]struct{}{}
-		for _, window := range windows {
+		for windowIndex, window := range windows {
+			req.progressf("integrity progress: target=%s interval=%s chunk %d/%d %s..%s", group.Target, interval.Suffix, windowIndex+1, len(windows), window.From.Format("2006-01-02"), window.To.Format("2006-01-02"))
 			chunk, err := c.checkAggregateCoverageChunk(ctx, aggregateCoverageRequest{
 				Target:      group.Target,
 				Check:       group.Check,
@@ -338,6 +352,7 @@ func (c *Checker) checkAggregateGroup(ctx context.Context, req Request, group ag
 			finding.Message = fmt.Sprintf("%s is missing %d date/key aggregate rows from %d base date/key pairs", finding.Table, finding.MissingKeys, finding.BaseKeys)
 			repairNeeded = true
 		}
+		req.progressf("integrity progress: target=%s interval %d/%d %s finished base=%d missing=%d", group.Target, intervalIndex+1, len(group.Intervals), interval.Suffix, finding.BaseKeys, finding.MissingKeys)
 		findings = append(findings, finding)
 	}
 	return findings, repairNeeded, nil
@@ -441,6 +456,7 @@ func (c *Checker) repairOptionChainCache(ctx context.Context, req Request) []Rep
 }
 
 func (c *Checker) checkFundamentals(ctx context.Context, req Request) ([]Finding, error) {
+	req.progressf("integrity progress: target=%s started", TargetFundamentals)
 	whereStocks := "market_date >= {from:Date} AND market_date <= {to:Date}"
 	whereFundamentals := "market = 'us-stocks' AND factor_code IN ('pe','pb')"
 	args := []any{clickhouse.Named("from", req.From.Format("2006-01-02")), clickhouse.Named("to", req.To.Format("2006-01-02"))}
@@ -511,10 +527,12 @@ LIMIT %d`, whereStocks, whereFundamentals, req.MaxSamples), args)
 		Table:       "fundamental_observation",
 		MissingKeys: staleFactors,
 	})
+	req.progressf("integrity progress: target=%s finished findings=%d", TargetFundamentals, len(findings))
 	return findings, nil
 }
 
 func (c *Checker) checkFeatures(ctx context.Context, req Request) ([]Finding, error) {
+	req.progressf("integrity progress: target=%s started", TargetFeatures)
 	volatility, err := c.checkVolatilityFeatures(ctx, req)
 	if err != nil {
 		return nil, err
@@ -526,6 +544,7 @@ func (c *Checker) checkFeatures(ctx context.Context, req Request) ([]Finding, er
 	findings := make([]Finding, 0, len(volatility)+len(panel))
 	findings = append(findings, volatility...)
 	findings = append(findings, panel...)
+	req.progressf("integrity progress: target=%s finished findings=%d", TargetFeatures, len(findings))
 	return findings, nil
 }
 

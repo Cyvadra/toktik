@@ -169,11 +169,14 @@ func integrityCommand(args []string) error {
 	}
 	defer conn.Close()
 	report, err := dataintegrity.NewChecker(conn).Run(ctx, dataintegrity.Request{
-		From:             from,
-		To:               to,
-		Targets:          splitCSV(*targetsCSV),
-		Underlyings:      splitCSV(*underlyingsCSV),
-		Symbols:          splitCSV(*symbolsCSV),
+		From:        from,
+		To:          to,
+		Targets:     splitCSV(*targetsCSV),
+		Underlyings: splitCSV(*underlyingsCSV),
+		Symbols:     splitCSV(*symbolsCSV),
+		Progress: func(format string, args ...any) {
+			fmt.Fprintf(os.Stderr, format+"\n", args...)
+		},
 		Repair:           *repair,
 		DryRun:           *dryRun,
 		MaxSamples:       *maxSamples,
