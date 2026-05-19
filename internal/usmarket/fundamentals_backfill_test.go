@@ -81,7 +81,7 @@ func TestPlanPEObservationInsertsSkipsUnchangedAndRevisesChanged(t *testing.T) {
 }
 
 func TestFilterFMPFundamentalSymbolsExcludesUnitsAndWarrants(t *testing.T) {
-	input := []string{"AAPL", "BRK.B", "AAC.U", "AAC.WS", "XYZ.PR", "MSFT"}
+	input := []string{"AAPL", "BRK.B", "AAC.U", "AAC.WS", "AACWS", "ADSEW", "XYZ.PR", "MSFT"}
 	filtered := filterFMPFundamentalSymbols(input)
 	want := []string{"AAPL", "BRK.B", "MSFT"}
 	if len(filtered) != len(want) {
@@ -94,11 +94,27 @@ func TestFilterFMPFundamentalSymbolsExcludesUnitsAndWarrants(t *testing.T) {
 	}
 }
 
+func TestNormalizeFMPDiscoveryPageLimit(t *testing.T) {
+	if got := normalizeFMPDiscoveryPageLimit(0); got != maxFMPDiscoveryPages {
+		t.Fatalf("expected zero to use max discovery pages, got %d", got)
+	}
+	if got := normalizeFMPDiscoveryPageLimit(8); got != 8 {
+		t.Fatalf("expected explicit limit preserved, got %d", got)
+	}
+	if got := normalizeFMPDiscoveryPageLimit(maxFMPDiscoveryPages + 1); got != maxFMPDiscoveryPages {
+		t.Fatalf("expected limit capped at %d, got %d", maxFMPDiscoveryPages, got)
+	}
+}
+
 func TestFMPFundamentalsIncrementalModeNormalization(t *testing.T) {
 	cases := map[string]string{
 		"":                            "",
 		"off":                         "",
 		"none":                        "",
+		"sec":                         "sec-filings-financials",
+		"sec_filings_financials":      "sec-filings-financials",
+		"earnings":                    "earnings-calendar",
+		"earnings_calendar":           "earnings-calendar",
 		"latest":                      "latest-financial-statements",
 		"latest_financial_statements": "latest-financial-statements",
 		"latest-financial-statements": "latest-financial-statements",
@@ -127,6 +143,38 @@ func TestFMPLatestStatementCandidateParsesPeriodAndKnownAt(t *testing.T) {
 	}
 }
 
+func TestFMPSecFilingsFinancialCandidateParsesKnownAtAndLookback(t *testing.T) {
+	candidate, ok := fmpSecFilingsFinancialCandidate(fmp.SecFilingsFinancial{Symbol: "aapl", FilingDate: "2026-05-01 00:00:00", AcceptedDate: "2026-05-01 16:12:00", HasFinancials: true})
+	if !ok {
+		t.Fatal("expected candidate")
+	}
+	if candidate.Symbol != "AAPL" {
+		t.Fatalf("unexpected symbol %q", candidate.Symbol)
+	}
+	if got := candidate.KnownAt.Format("2006-01-02 15:04:05"); got != "2026-05-01 16:12:00" {
+		t.Fatalf("unexpected known_at %s", got)
+	}
+	if got := candidate.PeriodDate.Format("2006-01-02"); got != "2025-11-01" {
+		t.Fatalf("unexpected lookback period date %s", got)
+	}
+}
+
+func TestFMPEarningsCalendarCandidateParsesKnownAtAndLookback(t *testing.T) {
+	candidate, ok := fmpEarningsCalendarCandidate(fmp.EarningsCalendarEntry{Symbol: "aapl", Date: "2026-05-19", LastUpdated: "2026-05-19"})
+	if !ok {
+		t.Fatal("expected candidate")
+	}
+	if candidate.Symbol != "AAPL" {
+		t.Fatalf("unexpected symbol %q", candidate.Symbol)
+	}
+	if got := candidate.KnownAt.Format("2006-01-02 15:04:05"); got != "2026-05-19 00:00:00" {
+		t.Fatalf("unexpected known_at %s", got)
+	}
+	if got := candidate.PeriodDate.Format("2006-01-02"); got != "2025-11-19" {
+		t.Fatalf("unexpected lookback period date %s", got)
+	}
+}
+
 func TestFMPFundamentalCandidateFreshnessRequiresPEAndPB(t *testing.T) {
 	candidate := fmpFundamentalsDiscoveryCandidate{Symbol: "AAPL", PeriodDate: time.Date(2026, 3, 31, 0, 0, 0, 0, time.UTC), KnownAt: time.Date(2026, 5, 1, 16, 12, 0, 0, time.UTC)}
 	fresh := map[string]existingFundamentalFreshness{
@@ -139,5 +187,20 @@ func TestFMPFundamentalCandidateFreshnessRequiresPEAndPB(t *testing.T) {
 	delete(fresh, usStocksPBFactorCode)
 	if fmpFundamentalCandidateIsFresh(candidate, fresh) {
 		t.Fatal("expected missing PB to require update")
+	}
+}
+
+func TestFMPFundamentalCandidateFreshnessCanUseKnownAtOnly(t *testing.T) {
+	candidate := fmpFundamentalsDiscoveryCandidate{Symbol: "AAPL", KnownAt: time.Date(2026, 5, 1, 16, 12, 0, 0, time.UTC)}
+	fresh := map[string]existingFundamentalFreshness{
+		usStocksPEFactorCode: {LatestEventTS: time.Date(2026, 3, 31, 0, 0, 0, 0, time.UTC), LatestKnownAt: time.Date(2026, 5, 1, 16, 12, 0, 0, time.UTC)},
+		usStocksPBFactorCode: {LatestEventTS: time.Date(2026, 3, 31, 0, 0, 0, 0, time.UTC), LatestKnownAt: time.Date(2026, 5, 1, 16, 12, 0, 0, time.UTC)},
+	}
+	if !fmpFundamentalCandidateIsFresh(candidate, fresh) {
+		t.Fatal("expected candidate to be fresh when known_at is already covered")
+	}
+	candidate.KnownAt = time.Date(2026, 5, 2, 16, 12, 0, 0, time.UTC)
+	if fmpFundamentalCandidateIsFresh(candidate, fresh) {
+		t.Fatal("expected newer known_at to require refresh")
 	}
 }

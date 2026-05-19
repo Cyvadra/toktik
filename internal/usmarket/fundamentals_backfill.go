@@ -27,6 +27,7 @@ const (
 	usStocksPECatalogSource    = "external_fundamentals_provider"
 	tigerKlineFundamentalSrc   = "tiger_kline_fundamental"
 	tigerTTMPEField            = "ttmPeRate"
+	maxFMPDiscoveryPages       = 1000
 )
 
 // PEBackfillProvider abstracts the upstream market-data source used to fetch
@@ -194,6 +195,7 @@ type fmpFundamentalsDiscoveryCandidate struct {
 }
 
 type fmpFundamentalsDiscoveryResult struct {
+	Mode             string
 	Symbols          []string
 	PagesFetched     int
 	RowsScanned      int
@@ -217,6 +219,10 @@ func normalizeFMPFundamentalsIncrementalMode(value string) string {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "", "off", "false", "none", "disabled":
 		return ""
+	case "sec", "sec-filings", "sec-filings-financials", "sec_filings_financials":
+		return "sec-filings-financials"
+	case "earnings", "earnings-calendar", "earnings_calendar":
+		return "earnings-calendar"
 	case "latest", "latest-financial-statements", "latest_financial_statements":
 		return "latest-financial-statements"
 	default:
@@ -227,62 +233,242 @@ func normalizeFMPFundamentalsIncrementalMode(value string) string {
 func newFMPFundamentalsDiscoveryClient(provider PEBackfillProvider) (*fmp.Client, error) {
 	fmpProvider, ok := provider.(*FMPPEBackfillProvider)
 	if !ok || strings.TrimSpace(fmpProvider.apiKey) == "" {
-		return nil, fmt.Errorf("FMP latest financial statements discovery requires FMP provider")
+		return nil, fmt.Errorf("FMP incremental discovery requires FMP provider")
 	}
 	return fmp.New(fmpProvider.apiKey), nil
 }
 
-func discoverFMPFundamentalsUpdateSymbols(ctx context.Context, conn driver.Conn, client *fmp.Client, startDate, endDate time.Time, pageSize, pageLimit, limitSymbols int) (fmpFundamentalsDiscoveryResult, error) {
+func discoverFMPFundamentalsUpdateSymbols(ctx context.Context, conn driver.Conn, client *fmp.Client, mode string, startDate, endDate time.Time, pageSize, pageLimit, limitSymbols int) (fmpFundamentalsDiscoveryResult, error) {
 	if client == nil {
 		return fmpFundamentalsDiscoveryResult{}, fmt.Errorf("FMP discovery client is required")
+	}
+	mode = normalizeFMPFundamentalsIncrementalMode(mode)
+	if mode == "" {
+		mode = "sec-filings-financials"
 	}
 	if pageSize <= 0 {
 		pageSize = 250
 	}
-	if pageLimit <= 0 {
-		pageLimit = 8
-	}
-	if limitSymbols > 0 && pageLimit > 1000 {
-		pageLimit = 1000
-	}
+	pageLimit = normalizeFMPDiscoveryPageLimit(pageLimit)
 	localSymbols, err := queryUSStockSymbolSet(ctx, conn)
 	if err != nil {
 		return fmpFundamentalsDiscoveryResult{}, err
 	}
-	candidatesBySymbol := map[string]fmpFundamentalsDiscoveryCandidate{}
-	result := fmpFundamentalsDiscoveryResult{}
-	for page := 0; page < pageLimit; page++ {
-		rows, err := client.LatestFinancialStatements(ctx, page, pageSize)
+	chain := fmpFundamentalsDiscoveryModeChain(mode)
+	var lastErr error
+	for index, discoveryMode := range chain {
+		result, err := discoverFMPFundamentalsUpdateSymbolsMode(ctx, conn, client, localSymbols, discoveryMode, startDate, endDate, pageSize, pageLimit, limitSymbols)
 		if err != nil {
-			return result, fmt.Errorf("FMP latest financial statements page %d: %w", page, err)
+			lastErr = err
+			if index < len(chain)-1 {
+				log.Printf("FMP fundamentals discovery mode=%s failed: %v; falling back to %s", discoveryMode, err, chain[index+1])
+				continue
+			}
+			return fmpFundamentalsDiscoveryResult{}, err
 		}
-		result.PagesFetched++
-		if len(rows) == 0 {
-			break
+		if result.RowsScanned == 0 && index < len(chain)-1 {
+			log.Printf("FMP fundamentals discovery mode=%s returned no rows; falling back to %s", discoveryMode, chain[index+1])
+			continue
 		}
+		return result, nil
+	}
+	if lastErr != nil {
+		return fmpFundamentalsDiscoveryResult{}, lastErr
+	}
+	return fmpFundamentalsDiscoveryResult{}, nil
+}
+
+func fmpFundamentalsDiscoveryModeChain(mode string) []string {
+	switch normalizeFMPFundamentalsIncrementalMode(mode) {
+	case "latest-financial-statements":
+		return []string{"latest-financial-statements", "sec-filings-financials", "earnings-calendar"}
+	case "earnings-calendar":
+		return []string{"earnings-calendar"}
+	case "sec-filings-financials", "":
+		return []string{"sec-filings-financials", "earnings-calendar"}
+	default:
+		return []string{mode}
+	}
+}
+
+func discoverFMPFundamentalsUpdateSymbolsMode(ctx context.Context, conn driver.Conn, client *fmp.Client, localSymbols map[string]struct{}, mode string, startDate, endDate time.Time, pageSize, pageLimit, limitSymbols int) (fmpFundamentalsDiscoveryResult, error) {
+	candidatesBySymbol := map[string]fmpFundamentalsDiscoveryCandidate{}
+	result := fmpFundamentalsDiscoveryResult{Mode: mode}
+	from := normalizeDateOnly(startDate).Format("2006-01-02")
+	to := normalizeDateOnly(endDate).Format("2006-01-02")
+	appendCandidate := func(candidate fmpFundamentalsDiscoveryCandidate) {
+		if !endDate.IsZero() && !candidate.KnownAt.IsZero() && candidate.KnownAt.After(normalizeDateOnly(endDate).AddDate(0, 0, 1)) {
+			return
+		}
+		if len(localSymbols) > 0 {
+			if _, ok := localSymbols[candidate.Symbol]; !ok {
+				return
+			}
+		}
+		current, exists := candidatesBySymbol[candidate.Symbol]
+		if !exists || candidate.KnownAt.After(current.KnownAt) || (candidate.KnownAt.Equal(current.KnownAt) && candidate.PeriodDate.After(current.PeriodDate)) {
+			candidatesBySymbol[candidate.Symbol] = candidate
+		}
+	}
+	switch mode {
+	case "latest-financial-statements":
+		for page := 0; page < pageLimit; page++ {
+			rows, err := client.LatestFinancialStatements(ctx, page, pageSize)
+			if err != nil {
+				return result, fmt.Errorf("FMP latest financial statements page %d: %w", page, err)
+			}
+			result.PagesFetched++
+			if len(rows) == 0 {
+				break
+			}
+			for _, row := range rows {
+				result.RowsScanned++
+				candidate, ok := fmpLatestStatementCandidate(row)
+				if !ok {
+					continue
+				}
+				appendCandidate(candidate)
+			}
+			if limitSymbols > 0 && len(candidatesBySymbol) >= limitSymbols {
+				break
+			}
+			if len(rows) < pageSize {
+				break
+			}
+		}
+	case "sec-filings-financials":
+		for page := 0; page < pageLimit; page++ {
+			rows, err := client.SecFilingsFinancials(ctx, from, to, page, pageSize)
+			if err != nil {
+				return result, fmt.Errorf("FMP sec filings financials page %d: %w", page, err)
+			}
+			result.PagesFetched++
+			if len(rows) == 0 {
+				break
+			}
+			for _, row := range rows {
+				result.RowsScanned++
+				candidate, ok := fmpSecFilingsFinancialCandidate(row)
+				if !ok {
+					continue
+				}
+				appendCandidate(candidate)
+			}
+			if limitSymbols > 0 && len(candidatesBySymbol) >= limitSymbols {
+				break
+			}
+			if len(rows) < pageSize {
+				break
+			}
+		}
+	case "earnings-calendar":
+		rows, err := client.EarningsCalendar(ctx, from, to)
+		if err != nil {
+			return result, fmt.Errorf("FMP earnings calendar: %w", err)
+		}
+		result.PagesFetched = 1
 		for _, row := range rows {
 			result.RowsScanned++
-			candidate, ok := fmpLatestStatementCandidate(row)
+			candidate, ok := fmpEarningsCalendarCandidate(row)
 			if !ok {
 				continue
 			}
-			if !endDate.IsZero() && candidate.KnownAt.After(normalizeDateOnly(endDate).AddDate(0, 0, 1)) {
-				continue
-			}
-			if len(localSymbols) > 0 {
-				if _, ok := localSymbols[candidate.Symbol]; !ok {
-					continue
-				}
-			}
-			current, exists := candidatesBySymbol[candidate.Symbol]
-			if !exists || candidate.KnownAt.After(current.KnownAt) || (candidate.KnownAt.Equal(current.KnownAt) && candidate.PeriodDate.After(current.PeriodDate)) {
-				candidatesBySymbol[candidate.Symbol] = candidate
-			}
+			appendCandidate(candidate)
 		}
-		if limitSymbols > 0 && len(candidatesBySymbol) >= limitSymbols {
-			break
+	default:
+		return result, fmt.Errorf("unsupported FMP fundamentals incremental mode %q", mode)
+	}
+	return finalizeFMPFundamentalsDiscoveryResult(ctx, conn, result, candidatesBySymbol, limitSymbols)
+}
+
+func normalizeFMPDiscoveryPageLimit(value int) int {
+	if value <= 0 {
+		return maxFMPDiscoveryPages
+	}
+	if value > maxFMPDiscoveryPages {
+		return maxFMPDiscoveryPages
+	}
+	return value
+}
+
+func fmpLatestStatementCandidate(row fmp.LatestFinancialStatement) (fmpFundamentalsDiscoveryCandidate, bool) {
+	symbol := strings.ToUpper(strings.TrimSpace(row.Symbol))
+	if symbol == "" || !isFMPFundamentalSymbolSupported(symbol) {
+		return fmpFundamentalsDiscoveryCandidate{}, false
+	}
+	periodDate, ok := parseFMPDate(row.Date)
+	if !ok {
+		return fmpFundamentalsDiscoveryCandidate{}, false
+	}
+	knownAt := parseFMPKnownAt(row.AcceptedDate, row.FilingDate, row.Date)
+	if knownAt.IsZero() {
+		knownAt = periodDate
+	}
+	return fmpFundamentalsDiscoveryCandidate{Symbol: symbol, PeriodDate: periodDate, KnownAt: knownAt}, true
+}
+
+func fmpSecFilingsFinancialCandidate(row fmp.SecFilingsFinancial) (fmpFundamentalsDiscoveryCandidate, bool) {
+	if !row.HasFinancials {
+		return fmpFundamentalsDiscoveryCandidate{}, false
+	}
+	symbol := strings.ToUpper(strings.TrimSpace(row.Symbol))
+	if symbol == "" || !isFMPFundamentalSymbolSupported(symbol) {
+		return fmpFundamentalsDiscoveryCandidate{}, false
+	}
+	knownAt := parseFMPKnownAt(row.AcceptedDate, row.FilingDate)
+	if knownAt.IsZero() {
+		return fmpFundamentalsDiscoveryCandidate{}, false
+	}
+	return fmpFundamentalsDiscoveryCandidate{Symbol: symbol, PeriodDate: approximateFMPDiscoveryPeriodDate(knownAt), KnownAt: knownAt}, true
+}
+
+func fmpEarningsCalendarCandidate(row fmp.EarningsCalendarEntry) (fmpFundamentalsDiscoveryCandidate, bool) {
+	symbol := strings.ToUpper(strings.TrimSpace(row.Symbol))
+	if symbol == "" || !isFMPFundamentalSymbolSupported(symbol) {
+		return fmpFundamentalsDiscoveryCandidate{}, false
+	}
+	knownAt := parseFMPKnownAt(row.LastUpdated, row.Date)
+	if knownAt.IsZero() {
+		return fmpFundamentalsDiscoveryCandidate{}, false
+	}
+	return fmpFundamentalsDiscoveryCandidate{Symbol: symbol, PeriodDate: approximateFMPDiscoveryPeriodDate(knownAt), KnownAt: knownAt}, true
+}
+
+func approximateFMPDiscoveryPeriodDate(knownAt time.Time) time.Time {
+	if knownAt.IsZero() {
+		return time.Time{}
+	}
+	return normalizeDateOnly(knownAt.AddDate(0, -6, 0))
+}
+
+func candidateSymbols(candidates []fmpFundamentalsDiscoveryCandidate) []string {
+	out := make([]string, 0, len(candidates))
+	for _, candidate := range candidates {
+		out = append(out, candidate.Symbol)
+	}
+	return out
+}
+
+func fmpFundamentalCandidateIsFresh(candidate fmpFundamentalsDiscoveryCandidate, existing map[string]existingFundamentalFreshness) bool {
+	pe, hasPE := existing[usStocksPEFactorCode]
+	pb, hasPB := existing[usStocksPBFactorCode]
+	if !hasPE || !hasPB {
+		return false
+	}
+	if !candidate.PeriodDate.IsZero() {
+		if pe.LatestEventTS.Before(candidate.PeriodDate) || pb.LatestEventTS.Before(candidate.PeriodDate) {
+			return false
 		}
 	}
+	if !candidate.KnownAt.IsZero() {
+		if pe.LatestKnownAt.Before(candidate.KnownAt) || pb.LatestKnownAt.Before(candidate.KnownAt) {
+			return false
+		}
+	}
+	return true
+}
+
+func finalizeFMPFundamentalsDiscoveryResult(ctx context.Context, conn driver.Conn, result fmpFundamentalsDiscoveryResult, candidatesBySymbol map[string]fmpFundamentalsDiscoveryCandidate, limitSymbols int) (fmpFundamentalsDiscoveryResult, error) {
 	if len(candidatesBySymbol) == 0 {
 		return result, nil
 	}
@@ -310,45 +496,12 @@ func discoverFMPFundamentalsUpdateSymbols(ctx context.Context, conn driver.Conn,
 			continue
 		}
 		result.Symbols = append(result.Symbols, candidate.Symbol)
-		if result.MinPeriodDate.IsZero() || candidate.PeriodDate.Before(result.MinPeriodDate) {
+		if !candidate.PeriodDate.IsZero() && (result.MinPeriodDate.IsZero() || candidate.PeriodDate.Before(result.MinPeriodDate)) {
 			result.MinPeriodDate = candidate.PeriodDate
 		}
 	}
 	sort.Strings(result.Symbols)
 	return result, nil
-}
-
-func fmpLatestStatementCandidate(row fmp.LatestFinancialStatement) (fmpFundamentalsDiscoveryCandidate, bool) {
-	symbol := strings.ToUpper(strings.TrimSpace(row.Symbol))
-	if symbol == "" || !isFMPFundamentalSymbolSupported(symbol) {
-		return fmpFundamentalsDiscoveryCandidate{}, false
-	}
-	periodDate, ok := parseFMPDate(row.Date)
-	if !ok {
-		return fmpFundamentalsDiscoveryCandidate{}, false
-	}
-	knownAt := parseFMPKnownAt(row.AcceptedDate, row.FilingDate, row.Date)
-	if knownAt.IsZero() {
-		knownAt = periodDate
-	}
-	return fmpFundamentalsDiscoveryCandidate{Symbol: symbol, PeriodDate: periodDate, KnownAt: knownAt}, true
-}
-
-func candidateSymbols(candidates []fmpFundamentalsDiscoveryCandidate) []string {
-	out := make([]string, 0, len(candidates))
-	for _, candidate := range candidates {
-		out = append(out, candidate.Symbol)
-	}
-	return out
-}
-
-func fmpFundamentalCandidateIsFresh(candidate fmpFundamentalsDiscoveryCandidate, existing map[string]existingFundamentalFreshness) bool {
-	pe, hasPE := existing[usStocksPEFactorCode]
-	pb, hasPB := existing[usStocksPBFactorCode]
-	if !hasPE || !hasPB {
-		return false
-	}
-	return !pe.LatestEventTS.Before(candidate.PeriodDate) && !pb.LatestEventTS.Before(candidate.PeriodDate) && !pe.LatestKnownAt.Before(candidate.KnownAt) && !pb.LatestKnownAt.Before(candidate.KnownAt)
 }
 
 func queryUSStockSymbolSet(ctx context.Context, conn driver.Conn) (map[string]struct{}, error) {
@@ -545,14 +698,14 @@ func BackfillUSStockPE(ctx context.Context, cfg USFundamentalsBackfillConfig) (U
 	}
 	incrementalMode := normalizeFMPFundamentalsIncrementalMode(cfg.IncrementalMode)
 	if strings.TrimSpace(cfg.IncrementalMode) == "" && strings.EqualFold(cfg.Provider.Name(), "fmp") && len(cfg.Symbols) == 0 {
-		incrementalMode = "latest-financial-statements"
+		incrementalMode = "sec-filings-financials"
 	}
 
 	var discovery fmpFundamentalsDiscoveryResult
 	var symbols []string
 	var err error
 	hasExistingFMPFundamentals := false
-	if incrementalMode == "latest-financial-statements" && strings.EqualFold(cfg.Provider.Name(), "fmp") && len(cfg.Symbols) == 0 {
+	if incrementalMode != "" && strings.EqualFold(cfg.Provider.Name(), "fmp") && len(cfg.Symbols) == 0 {
 		hasExistingFMPFundamentals, err = hasExistingFMPFundamentalObservations(ctx, cfg.Conn)
 		if err != nil {
 			return USFundamentalsBackfillResult{}, err
@@ -562,12 +715,12 @@ func BackfillUSStockPE(ctx context.Context, cfg USFundamentalsBackfillConfig) (U
 			if err != nil {
 				return USFundamentalsBackfillResult{}, err
 			}
-			discovery, err = discoverFMPFundamentalsUpdateSymbols(ctx, cfg.Conn, discoveryClient, cfg.StartDate, cfg.EndDate, discoveryPageSize, discoveryPageLimit, cfg.LimitSymbols)
+			discovery, err = discoverFMPFundamentalsUpdateSymbols(ctx, cfg.Conn, discoveryClient, incrementalMode, cfg.StartDate, cfg.EndDate, discoveryPageSize, discoveryPageLimit, cfg.LimitSymbols)
 			if err != nil {
 				return USFundamentalsBackfillResult{}, err
 			}
 			symbols = discovery.Symbols
-			log.Printf("FMP fundamentals discovery mode=%s pages=%d rows=%d candidates=%d skipped_fresh=%d tasks=%d", incrementalMode, discovery.PagesFetched, discovery.RowsScanned, discovery.CandidateSymbols, discovery.SkippedFresh, len(symbols))
+			log.Printf("FMP fundamentals discovery mode=%s pages=%d rows=%d candidates=%d skipped_fresh=%d tasks=%d", discovery.Mode, discovery.PagesFetched, discovery.RowsScanned, discovery.CandidateSymbols, discovery.SkippedFresh, len(symbols))
 		} else {
 			log.Printf("FMP fundamentals discovery disabled for cold start: no existing FMP PE/PB observations")
 			symbols, err = ResolveUSStockSymbols(ctx, cfg.Conn, cfg.Symbols, cfg.LimitSymbols)

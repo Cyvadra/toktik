@@ -111,3 +111,67 @@ func TestLatestFinancialStatementsUsesPagination(t *testing.T) {
 		t.Fatalf("unexpected row: %#v", rows[0])
 	}
 }
+
+func TestEarningsCalendarUsesDateWindow(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/earnings-calendar" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		if got := r.URL.Query().Get("apikey"); got != "test-key" {
+			t.Fatalf("unexpected api key %q", got)
+		}
+		if got := r.URL.Query().Get("from"); got != "2026-05-12" {
+			t.Fatalf("unexpected from %q", got)
+		}
+		if got := r.URL.Query().Get("to"); got != "2026-05-19" {
+			t.Fatalf("unexpected to %q", got)
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`[{"symbol":"AAPL","date":"2026-05-15","lastUpdated":"2026-05-15"}]`))
+	}))
+	defer server.Close()
+
+	client := New("test-key", WithHTTPClient(server.Client()), WithBaseURL(server.URL))
+	rows, err := client.EarningsCalendar(context.Background(), "2026-05-12", "2026-05-19")
+	if err != nil {
+		t.Fatalf("earnings calendar: %v", err)
+	}
+	if len(rows) != 1 || rows[0].Symbol != "AAPL" || rows[0].LastUpdated != "2026-05-15" {
+		t.Fatalf("unexpected rows: %#v", rows)
+	}
+}
+
+func TestSecFilingsFinancialsUsesPaginationAndWindow(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/sec-filings-financials" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		if got := r.URL.Query().Get("apikey"); got != "test-key" {
+			t.Fatalf("unexpected api key %q", got)
+		}
+		if got := r.URL.Query().Get("from"); got != "2026-05-12" {
+			t.Fatalf("unexpected from %q", got)
+		}
+		if got := r.URL.Query().Get("to"); got != "2026-05-19" {
+			t.Fatalf("unexpected to %q", got)
+		}
+		if got := r.URL.Query().Get("page"); got != "2" {
+			t.Fatalf("unexpected page %q", got)
+		}
+		if got := r.URL.Query().Get("limit"); got != "250" {
+			t.Fatalf("unexpected limit %q", got)
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`[{"symbol":"AAPL","filingDate":"2026-05-01 00:00:00","acceptedDate":"2026-05-01 16:12:00","formType":"10-Q","hasFinancials":true}]`))
+	}))
+	defer server.Close()
+
+	client := New("test-key", WithHTTPClient(server.Client()), WithBaseURL(server.URL))
+	rows, err := client.SecFilingsFinancials(context.Background(), "2026-05-12", "2026-05-19", 2, 250)
+	if err != nil {
+		t.Fatalf("sec filings financials: %v", err)
+	}
+	if len(rows) != 1 || rows[0].Symbol != "AAPL" || !rows[0].HasFinancials {
+		t.Fatalf("unexpected rows: %#v", rows)
+	}
+}
