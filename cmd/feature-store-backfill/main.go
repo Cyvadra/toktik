@@ -71,6 +71,7 @@ func main() {
 		Markets:         splitCSV(*marketsFlag),
 		Underlyings:     splitCSV(*underlyingsFlag),
 		PriorityOrder:   resolvedPriorityOrder,
+		ClickHouseDSN:   *dsn,
 		From:            from,
 		To:              to,
 		LookbackDays:    *lookbackDays,

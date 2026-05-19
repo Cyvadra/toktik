@@ -54,6 +54,8 @@ type featureScopeResult struct {
 	HasVolatilityHistory bool
 	LiquidityHistory     []dto.FeatureLiquidityHistoryRow
 	HasLiquidityHistory  bool
+	SurfaceAggregates    []usOptionsSurfaceAggregateRow
+	HasSurfaceAggregates bool
 	SurfaceSummary       map[string]featureSurfacePanelSummary
 	HasSurfaceSummary    bool
 }
@@ -154,6 +156,7 @@ type FeatureBackfillOptions struct {
 	Markets         []string
 	Underlyings     []string
 	PriorityOrder   string
+	ClickHouseDSN   string
 	From            time.Time
 	To              time.Time
 	LookbackDays    int
@@ -699,7 +702,16 @@ func (s *FeatureService) BackfillFeatureSnapshots(ctx context.Context, opts Feat
 				UnderlyingCount: len(underlyings),
 			})
 		}
-		marketStats, err := s.backfillFeatureUnderlyingBatch(ctx, opts, requests, lookbackDays, minDTE, maxDTE, workers)
+		marketOpts := opts
+		if opts.Replace {
+			clearedScopes, err := s.preclearFeatureBackfillScopes(ctx, market, underlyings, opts.From, opts.To, lookbackDays, minDTE, maxDTE)
+			if err != nil {
+				return stats, err
+			}
+			marketOpts.Replace = false
+			stats.ScopesReplaced += clearedScopes
+		}
+		marketStats, err := s.backfillFeatureUnderlyingBatch(ctx, marketOpts, requests, lookbackDays, minDTE, maxDTE, workers)
 		mergeFeatureBackfillStats(&stats, marketStats)
 		if err != nil {
 			return stats, err
@@ -742,8 +754,26 @@ func (s *FeatureService) backfillFeatureUnderlyingBatch(ctx context.Context, opt
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			workerService := s
+			var closeConn func()
+			if strings.TrimSpace(opts.ClickHouseDSN) != "" {
+				workerConn, err := usmarket.ConnectClickHouse(workerCtx, opts.ClickHouseDSN)
+				if err != nil {
+					select {
+					case results <- featureBackfillUnderlyingResult{Err: fmt.Errorf("connect ClickHouse worker: %w", err)}:
+					case <-workerCtx.Done():
+					}
+					cancel()
+					return
+				}
+				workerService = NewFeatureService(chrepo.NewRepo(workerConn))
+				closeConn = func() { _ = workerConn.Close() }
+			}
+			if closeConn != nil {
+				defer closeConn()
+			}
 			for req := range jobs {
-				stats, err := s.backfillFeatureUnderlying(workerCtx, opts, req, lookbackDays, minDTE, maxDTE)
+				stats, err := workerService.backfillFeatureUnderlying(workerCtx, opts, req, lookbackDays, minDTE, maxDTE)
 				select {
 				case results <- featureBackfillUnderlyingResult{Stats: stats, Err: err}:
 				case <-workerCtx.Done():
@@ -885,7 +915,10 @@ func (s *FeatureService) backfillFeatureUnderlying(ctx context.Context, opts Fea
 
 	if req.Market == "us-options" {
 		surfaceResult, err := runScope("surface", func() (featureScopeResult, error) {
-			return s.backfillUSOptionsSurfaceScope(ctx, req.Underlying, opts.From, opts.To, opts.Replace)
+			if volatilityResult.HasSurfaceAggregates {
+				return s.backfillUSOptionsSurfaceScope(ctx, req.Underlying, opts.From, opts.To, opts.Replace, volatilityResult.SurfaceAggregates)
+			}
+			return s.backfillUSOptionsSurfaceScope(ctx, req.Underlying, opts.From, opts.To, opts.Replace, nil)
 		})
 		if err != nil {
 			if err := handleErr(err); err != nil {
@@ -966,6 +999,76 @@ func (s *FeatureService) backfillFeatureUnderlying(ctx context.Context, opts Fea
 		stats.UnderlyingsEmpty++
 	}
 	return stats, nil
+}
+
+func (s *FeatureService) preclearFeatureBackfillScopes(ctx context.Context, market string, underlyings []string, from, to time.Time, lookbackDays int, minDTE, maxDTE int32) (int, error) {
+	if len(underlyings) == 0 {
+		return 0, nil
+	}
+	deleteScope := func(table string, includeLookback bool, includeDTE bool) error {
+		query := fmt.Sprintf(`DELETE FROM %s WHERE market = {market:String} AND underlying IN ({underlyings:Array(String)})`, table)
+		args := []interface{}{
+			clickhouse.Named("market", market),
+			clickhouse.Named("underlyings", underlyings),
+		}
+		if includeLookback {
+			query += ` AND lookback_days = {lookback_days:UInt16}`
+			args = append(args, clickhouse.Named("lookback_days", uint16(lookbackDays)))
+		}
+		if includeDTE {
+			query += ` AND min_days_to_expiry = {min_dte:Int32} AND max_days_to_expiry = {max_dte:Int32}`
+			args = append(args,
+				clickhouse.Named("min_dte", minDTE),
+				clickhouse.Named("max_dte", maxDTE),
+			)
+		}
+		if !from.IsZero() {
+			query += ` AND as_of_date >= toDate({from:String})`
+			args = append(args, clickhouse.Named("from", from.UTC().Format("2006-01-02")))
+		}
+		if !to.IsZero() {
+			query += ` AND as_of_date < toDate({to:String})`
+			args = append(args, clickhouse.Named("to", to.UTC().Format("2006-01-02")))
+		}
+		return s.repo.Exec(ctx, query, args...)
+	}
+
+	targets := []struct {
+		table           string
+		includeLookback bool
+		includeDTE      bool
+	}{
+		{table: featureSnapshotTable, includeLookback: true},
+		{table: featureLiquidityTable},
+		{table: featureDailyPanelTable, includeLookback: true, includeDTE: true},
+	}
+	if market == "us-options" {
+		targets = append(targets,
+			struct {
+				table           string
+				includeLookback bool
+				includeDTE      bool
+			}{table: featureTermStructureTable},
+			struct {
+				table           string
+				includeLookback bool
+				includeDTE      bool
+			}{table: featureSkewTable},
+		)
+	}
+	for _, target := range targets {
+		if err := deleteScope(target.table, target.includeLookback, target.includeDTE); err != nil {
+			return 0, fmt.Errorf("preclear %s %s: %w", market, target.table, err)
+		}
+	}
+	return len(underlyings) * featureBackfillReplaceScopeCount(market), nil
+}
+
+func featureBackfillReplaceScopeCount(market string) int {
+	if market == "us-options" {
+		return 5
+	}
+	return 3
 }
 
 func mergeFeatureBackfillStats(dst *FeatureBackfillStats, src FeatureBackfillStats) {
@@ -1078,20 +1181,34 @@ func (s *FeatureService) backfillVolatilityScope(ctx context.Context, market, un
 			return featureScopeResult{Status: "skipped"}, nil
 		}
 	}
-	history, _, _, err := s.computeVolatilityHistory(ctx, market, underlying, from, to, lookbackDays)
+	history, surfaceAggregates, err := s.computeVolatilityHistoryForBackfill(ctx, market, underlying, from, to, lookbackDays)
 	if err != nil {
 		return featureScopeResult{}, featureBackfillScopeError{Stage: "compute-history", Err: err}
 	}
 	if len(history) == 0 {
-		return featureScopeResult{Status: "empty", ScopesReplaced: replaced, HasVolatilityHistory: true}, nil
+		result := featureScopeResult{Status: "empty", ScopesReplaced: replaced, HasVolatilityHistory: true}
+		if market == "us-options" {
+			result.SurfaceAggregates = surfaceAggregates
+			result.HasSurfaceAggregates = true
+			result.SurfaceSummary = summarizeUSOptionsSurfaceHistory(surfaceAggregates)
+			result.HasSurfaceSummary = true
+		}
+		return result, nil
 	}
 	if err := s.insertPrecomputedVolatilityRows(ctx, market, underlying, lookbackDays, history); err != nil {
 		return featureScopeResult{}, featureBackfillScopeError{Stage: "insert-rows", Err: err}
 	}
-	return featureScopeResult{Status: "written", RowsWritten: len(history), ScopesReplaced: replaced, VolatilityHistory: history, HasVolatilityHistory: true}, nil
+	result := featureScopeResult{Status: "written", RowsWritten: len(history), ScopesReplaced: replaced, VolatilityHistory: history, HasVolatilityHistory: true}
+	if market == "us-options" {
+		result.SurfaceAggregates = surfaceAggregates
+		result.HasSurfaceAggregates = true
+		result.SurfaceSummary = summarizeUSOptionsSurfaceHistory(surfaceAggregates)
+		result.HasSurfaceSummary = true
+	}
+	return result, nil
 }
 
-func (s *FeatureService) backfillUSOptionsSurfaceScope(ctx context.Context, underlying string, from, to time.Time, replace bool) (featureScopeResult, error) {
+func (s *FeatureService) backfillUSOptionsSurfaceScope(ctx context.Context, underlying string, from, to time.Time, replace bool, precomputed []usOptionsSurfaceAggregateRow) (featureScopeResult, error) {
 	replaced := 0
 	termHasRows := false
 	skewHasRows := false
@@ -1118,9 +1235,13 @@ func (s *FeatureService) backfillUSOptionsSurfaceScope(ctx context.Context, unde
 			return featureScopeResult{Status: "skipped"}, nil
 		}
 	}
-	aggregates, err := s.queryUSOptionsSurfaceAggregates(ctx, underlying, from, to, time.Time{}, 0, 0)
-	if err != nil {
-		return featureScopeResult{}, featureBackfillScopeError{Stage: "compute-surface", Err: err}
+	aggregates := precomputed
+	if aggregates == nil {
+		var err error
+		aggregates, err = s.queryUSOptionsSurfaceAggregates(ctx, underlying, from, to, time.Time{}, 0, 0)
+		if err != nil {
+			return featureScopeResult{}, featureBackfillScopeError{Stage: "compute-surface", Err: err}
+		}
 	}
 	surfaceSummary := summarizeUSOptionsSurfaceHistory(aggregates)
 	if len(aggregates) == 0 {
@@ -1154,6 +1275,32 @@ func (s *FeatureService) backfillUSOptionsSurfaceScope(ctx context.Context, unde
 		return featureScopeResult{Status: "empty", ScopesReplaced: replaced, SurfaceSummary: surfaceSummary, HasSurfaceSummary: true}, nil
 	}
 	return featureScopeResult{Status: "written", RowsWritten: rowsWritten, ScopesReplaced: replaced, SurfaceSummary: surfaceSummary, HasSurfaceSummary: true}, nil
+}
+
+func (s *FeatureService) computeVolatilityHistoryForBackfill(ctx context.Context, market, underlying string, from, to time.Time, lookbackDays int) ([]dto.FeatureVolatilityHistoryRow, []usOptionsSurfaceAggregateRow, error) {
+	historyStart := from
+	if !historyStart.IsZero() {
+		historyStart = historyStart.AddDate(0, 0, -(lookbackDays + 31))
+	}
+	priceSeries, err := s.queryUnderlyingCloseHistory(ctx, market, underlying, historyStart, to)
+	if err != nil {
+		return nil, nil, err
+	}
+	if market == "us-options" {
+		aggregates, err := s.queryUSOptionsSurfaceAggregates(ctx, underlying, historyStart, to, time.Time{}, 1, defaultPanelMaxDTE)
+		if err != nil {
+			return nil, nil, err
+		}
+		ivSeries := buildUSOptionsCurrentIVSeries(aggregates, 30)
+		history := buildVolatilityHistoryRows(priceSeries, ivSeries, from, to, lookbackDays, annualizationDays(market))
+		return history, aggregates, nil
+	}
+	ivSeries, err := s.queryImpliedVolatilityHistory(ctx, market, underlying, historyStart, to)
+	if err != nil {
+		return nil, nil, err
+	}
+	history := buildVolatilityHistoryRows(priceSeries, ivSeries, from, to, lookbackDays, annualizationDays(market))
+	return history, nil, nil
 }
 
 func (s *FeatureService) backfillLiquidityScope(ctx context.Context, market, underlying string, from, to time.Time, replace bool,

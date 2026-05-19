@@ -486,10 +486,10 @@ type FeatureStoreBackfillConfig struct {
 type featureStoreBackfill struct{ cfg FeatureStoreBackfillConfig }
 
 type featureCursorScope struct {
-	table          string
-	market         string
+	table           string
+	market          string
 	includeLookback bool
-	includeDTE     bool
+	includeDTE      bool
 }
 
 func NewFeatureStoreBackfill(cfg FeatureStoreBackfillConfig) (syncpipeline.Syncer, error) {
@@ -551,6 +551,7 @@ func (s *featureStoreBackfill) Sync(ctx context.Context, conn driver.Conn, req s
 		Markets:         s.cfg.Markets,
 		Underlyings:     s.cfg.Underlyings,
 		PriorityOrder:   s.cfg.PriorityOrder,
+		ClickHouseDSN:   s.cfg.DSN,
 		From:            req.From,
 		To:              req.To.AddDate(0, 0, 1),
 		LookbackDays:    s.cfg.LookbackDays,

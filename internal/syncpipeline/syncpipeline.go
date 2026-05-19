@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	clickhouse "github.com/ClickHouse/clickhouse-go/v2"
@@ -216,14 +217,81 @@ func (r *Runner) runJob(ctx context.Context, spec JobSpec) JobReport {
 	}
 	ledger := importledger.New(r.conn)
 	report := JobReport{Job: spec.Name, Status: JobStatusSuccess}
-	for _, rawKey := range keys {
-		key := NormalizeSourceKey(rawKey)
-		sourceReport := r.runSource(jobCtx, spec, ledger, key)
-		report.Sources = append(report.Sources, sourceReport)
-		report.RowsInserted += sourceReport.RowsInserted
-		if sourceReport.Status == JobStatusFailed {
-			report.Status = JobStatusFailed
-			report.Err = sourceReport.Err
+	sourceConcurrency := r.sourceConcurrency(spec, len(keys))
+	if sourceConcurrency <= 1 {
+		for _, rawKey := range keys {
+			key := NormalizeSourceKey(rawKey)
+			sourceReport := r.runSource(jobCtx, spec, ledger, key)
+			report.Sources = append(report.Sources, sourceReport)
+			report.RowsInserted += sourceReport.RowsInserted
+			if sourceReport.Status == JobStatusFailed {
+				report.Status = JobStatusFailed
+				report.Err = sourceReport.Err
+				return report
+			}
+		}
+	} else {
+		jobCtx, cancel := context.WithCancel(jobCtx)
+		defer cancel()
+		type sourceTask struct {
+			index int
+			key   string
+		}
+		type sourceResult struct {
+			index  int
+			report SourceReport
+		}
+		jobs := make(chan sourceTask)
+		results := make(chan sourceResult, sourceConcurrency)
+		var wg sync.WaitGroup
+		for i := 0; i < sourceConcurrency; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for task := range jobs {
+					sourceReport := r.runSource(jobCtx, spec, ledger, task.key)
+					select {
+					case results <- sourceResult{index: task.index, report: sourceReport}:
+					case <-jobCtx.Done():
+						return
+					}
+					if sourceReport.Status == JobStatusFailed {
+						cancel()
+					}
+				}
+			}()
+		}
+		go func() {
+			defer close(jobs)
+			for index, rawKey := range keys {
+				select {
+				case jobs <- sourceTask{index: index, key: NormalizeSourceKey(rawKey)}:
+				case <-jobCtx.Done():
+					return
+				}
+			}
+		}()
+		go func() {
+			wg.Wait()
+			close(results)
+		}()
+
+		orderedReports := make([]SourceReport, len(keys))
+		for result := range results {
+			orderedReports[result.index] = result.report
+			report.RowsInserted += result.report.RowsInserted
+			if report.Status != JobStatusFailed && result.report.Status == JobStatusFailed {
+				report.Status = JobStatusFailed
+				report.Err = result.report.Err
+			}
+		}
+		for _, sourceReport := range orderedReports {
+			if strings.TrimSpace(sourceReport.SourceKey) == "" {
+				continue
+			}
+			report.Sources = append(report.Sources, sourceReport)
+		}
+		if report.Status == JobStatusFailed {
 			return report
 		}
 	}
@@ -236,6 +304,23 @@ func (r *Runner) runJob(ctx context.Context, spec JobSpec) JobReport {
 		}
 	}
 	return report
+}
+
+func (r *Runner) sourceConcurrency(spec JobSpec, keyCount int) int {
+	concurrency := spec.Syncer.MaxConcurrency()
+	if concurrency <= 0 {
+		concurrency = 1
+	}
+	if r.opts.MaxJobConcurrency > 0 && r.opts.MaxJobConcurrency < concurrency {
+		concurrency = r.opts.MaxJobConcurrency
+	}
+	if keyCount > 0 && concurrency > keyCount {
+		concurrency = keyCount
+	}
+	if concurrency <= 0 {
+		return 1
+	}
+	return concurrency
 }
 
 func (r *Runner) runSource(ctx context.Context, spec JobSpec, ledger *importledger.Repository, sourceKey string) SourceReport {
