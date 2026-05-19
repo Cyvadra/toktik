@@ -61,6 +61,15 @@ func TestImpliedVolatilityMetrics(t *testing.T) {
 	}
 }
 
+func TestNormalizeCalendarDatePreservesCalendarDayAcrossTimeZones(t *testing.T) {
+	value := time.Date(2025, 8, 4, 0, 0, 0, 0, time.FixedZone("UTC+8", 8*60*60))
+	got := normalizeCalendarDate(value)
+	want := time.Date(2025, 8, 4, 0, 0, 0, 0, time.UTC)
+	if !got.Equal(want) {
+		t.Fatalf("expected %v, got %v", want, got)
+	}
+}
+
 func TestBuildVolatilityHistoryRows(t *testing.T) {
 	prices := []featurePoint{
 		{Date: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC), Value: 100},

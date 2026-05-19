@@ -1588,8 +1588,8 @@ ORDER BY as_of_date ASC, expiration ASC`
 		if contractCount == 0 {
 			continue
 		}
-		row.AsOfDate = row.AsOfDate.UTC()
-		row.Expiration = row.Expiration.UTC()
+		row.AsOfDate = normalizeCalendarDate(row.AsOfDate)
+		row.Expiration = normalizeCalendarDate(row.Expiration)
 		row.DaysToExpiry = int(daysToExpiry)
 		row.ContractCount = int(contractCount)
 		row.ATMIV = sanitizeF64Ptr(row.ATMIV)
@@ -1862,6 +1862,13 @@ func annualizationDays(market string) float64 {
 		return 365
 	}
 	return 252
+}
+
+func normalizeCalendarDate(value time.Time) time.Time {
+	if value.IsZero() {
+		return time.Time{}
+	}
+	return time.Date(value.Year(), value.Month(), value.Day(), 0, 0, 0, 0, time.UTC)
 }
 
 func normalizeUnderlyingList(underlyings []string) []string {
@@ -3129,7 +3136,7 @@ func scanFeatureHistoryRow(rows driver.Rows) (dto.FeatureVolatilityHistoryRow, e
 	); err != nil {
 		return dto.FeatureVolatilityHistoryRow{}, fmt.Errorf("scan feature history row: %w", err)
 	}
-	row.Date = row.Date.UTC()
+	row.Date = normalizeCalendarDate(row.Date)
 	row.PriceObservations = int(priceObservations)
 	row.IVObservations = int(ivObservations)
 	row.HV10 = hv10
@@ -3160,7 +3167,7 @@ func queryFeatureSeries(ctx context.Context, conn driver.Conn, query string, arg
 		if !isFinitePositive(value) {
 			continue
 		}
-		series = append(series, featurePoint{Date: day.UTC(), Value: value})
+		series = append(series, featurePoint{Date: normalizeCalendarDate(day), Value: value})
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate feature series rows: %w", err)

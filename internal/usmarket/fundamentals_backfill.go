@@ -411,6 +411,9 @@ func fmpSecFilingsFinancialCandidate(row fmp.SecFilingsFinancial) (fmpFundamenta
 	if !row.HasFinancials {
 		return fmpFundamentalsDiscoveryCandidate{}, false
 	}
+	if !isFMPFundamentalsDiscoveryFormTypeSupported(row.FormType) {
+		return fmpFundamentalsDiscoveryCandidate{}, false
+	}
 	symbol := strings.ToUpper(strings.TrimSpace(row.Symbol))
 	if symbol == "" || !isFMPFundamentalSymbolSupported(symbol) {
 		return fmpFundamentalsDiscoveryCandidate{}, false
@@ -420,6 +423,15 @@ func fmpSecFilingsFinancialCandidate(row fmp.SecFilingsFinancial) (fmpFundamenta
 		return fmpFundamentalsDiscoveryCandidate{}, false
 	}
 	return fmpFundamentalsDiscoveryCandidate{Symbol: symbol, PeriodDate: approximateFMPDiscoveryPeriodDate(knownAt), KnownAt: knownAt}, true
+}
+
+func isFMPFundamentalsDiscoveryFormTypeSupported(value string) bool {
+	switch strings.ToUpper(strings.TrimSpace(value)) {
+	case "10-Q", "10-Q/A", "10-K", "10-K/A", "20-F", "20-F/A", "40-F", "40-F/A":
+		return true
+	default:
+		return false
+	}
 }
 
 func fmpEarningsCalendarCandidate(row fmp.EarningsCalendarEntry) (fmpFundamentalsDiscoveryCandidate, bool) {
@@ -884,6 +896,20 @@ func BackfillUSStockPE(ctx context.Context, cfg USFundamentalsBackfillConfig) (U
 		}
 		sort.Strings(result.ThrottledSymbols)
 	}
+	log.Printf("FMP fundamentals summary: processed=%d failed=%d discovery_symbols=%d skipped_fresh=%d scanned_bars=%d candidate_rows=%d inserted_rows=%d skipped_rows=%d no_quarter_inputs=%d missing_ttm_eps=%d missing_book_value=%d missing_price=%d",
+		result.ProcessedSymbols,
+		result.FailedSymbols,
+		result.DiscoverySymbols,
+		result.SkippedFresh,
+		result.ScannedBars,
+		result.CandidateRows,
+		result.InsertedRows,
+		result.SkippedRows,
+		result.NoQuarterInputs,
+		result.MissingTTMEPS,
+		result.MissingBookValue,
+		result.MissingPrice,
+	)
 	if failedSymbols > 0 {
 		return result, fmt.Errorf("US PE backfill finished with %d failed symbols", failedSymbols)
 	}
@@ -970,6 +996,12 @@ func isFMPFundamentalSymbolSupported(symbol string) bool {
 	}
 	for _, suffix := range unsupportedSuffixes {
 		if strings.HasSuffix(normalized, suffix) {
+			return false
+		}
+	}
+	unsupportedCompactSuffixes := []string{"UN", "UT", "WS", "WT", "RT", "W", "U", "R"}
+	for _, suffix := range unsupportedCompactSuffixes {
+		if len(normalized) > len(suffix)+2 && strings.HasSuffix(normalized, suffix) {
 			return false
 		}
 	}

@@ -22,6 +22,8 @@ import (
 
 const SingletonSourceKey = "_default"
 
+const recentCursorSkipThreshold = 20 * time.Hour
+
 type JobStatus string
 
 const (
@@ -84,15 +86,22 @@ type RunnerOptions struct {
 }
 
 type Runner struct {
-	conn driver.Conn
-	opts RunnerOptions
+	conn      driver.Conn
+	opts      RunnerOptions
+	startedAt time.Time
 }
 
 func NewRunner(conn driver.Conn, opts RunnerOptions) *Runner {
 	if opts.Logger == nil {
 		opts.Logger = slog.Default()
 	}
-	return &Runner{conn: conn, opts: opts}
+	return &Runner{conn: conn, opts: opts, startedAt: time.Now().UTC()}
+}
+
+type resolvedWindow struct {
+	From       time.Time
+	To         time.Time
+	SkipReason string
 }
 
 type RunReport struct {
@@ -330,10 +339,14 @@ func (r *Runner) runSource(ctx context.Context, spec JobSpec, ledger *importledg
 		sourceCtx, cancel = context.WithTimeout(ctx, spec.PerSourceTimeout)
 		defer cancel()
 	}
-	from, to, err := r.resolveWindow(sourceCtx, spec, sourceKey)
+	window, err := r.resolveWindow(sourceCtx, spec, sourceKey)
 	if err != nil {
 		return SourceReport{SourceKey: sourceKey, Status: JobStatusFailed, Err: err.Error()}
 	}
+	if window.SkipReason != "" {
+		return SourceReport{SourceKey: sourceKey, From: window.From, To: window.To, Status: JobStatusSkipped, Notes: []string{window.SkipReason}}
+	}
+	from, to := window.From, window.To
 	scope := ScopeKeyForRange(from, to)
 	if !r.opts.Force {
 		ok, err := ledger.AlreadySucceeded(sourceCtx, spec.Name, sourceKey, scope)
@@ -368,18 +381,21 @@ func (r *Runner) runSource(ctx context.Context, spec JobSpec, ledger *importledg
 	return SourceReport{SourceKey: sourceKey, From: from, To: to, Status: JobStatusSuccess, RowsInserted: res.RowsInserted, Notes: res.Notes}
 }
 
-func (r *Runner) resolveWindow(ctx context.Context, spec JobSpec, sourceKey string) (time.Time, time.Time, error) {
+func (r *Runner) resolveWindow(ctx context.Context, spec JobSpec, sourceKey string) (resolvedWindow, error) {
 	to := r.opts.ToOverride
 	if to.IsZero() {
-		to = time.Now().UTC()
+		to = r.startedAt
 	}
 	from := r.opts.FromOverride
 	if from.IsZero() {
 		cursor, ok, err := spec.Syncer.ResolveCursor(ctx, r.conn, sourceKey)
 		if err != nil {
-			return time.Time{}, time.Time{}, err
+			return resolvedWindow{}, err
 		}
 		if ok {
+			if !r.opts.Force && r.opts.FromOverride.IsZero() && r.opts.ToOverride.IsZero() && shouldSkipRecentCursor(cursor, r.startedAt) {
+				return resolvedWindow{From: dateOnly(cursor), To: dateOnly(to), SkipReason: recentCursorSkipReason(spec.Name, sourceKey, cursor, r.startedAt)}, nil
+			}
 			from = cursor.AddDate(0, 0, -spec.OverlapDays)
 		} else {
 			from = spec.Syncer.ColdStartFloor(sourceKey)
@@ -392,9 +408,24 @@ func (r *Runner) resolveWindow(ctx context.Context, spec JobSpec, sourceKey stri
 	from = dateOnly(from)
 	to = dateOnly(to)
 	if to.Before(from) {
-		return time.Time{}, time.Time{}, fmt.Errorf("to %s before from %s", to.Format("2006-01-02"), from.Format("2006-01-02"))
+		return resolvedWindow{}, fmt.Errorf("to %s before from %s", to.Format("2006-01-02"), from.Format("2006-01-02"))
 	}
-	return from, to, nil
+	return resolvedWindow{From: from, To: to}, nil
+}
+
+func shouldSkipRecentCursor(cursor, startedAt time.Time) bool {
+	if cursor.IsZero() || startedAt.IsZero() {
+		return false
+	}
+	coverageEnd := dateOnly(cursor).Add(24 * time.Hour)
+	if !startedAt.After(coverageEnd) {
+		return true
+	}
+	return startedAt.Sub(coverageEnd) <= recentCursorSkipThreshold
+}
+
+func recentCursorSkipReason(jobName, sourceKey string, cursor, startedAt time.Time) string {
+	return fmt.Sprintf("skip recent sync: latest cursor %s for %s/%s is within %s of runner start %s", dateOnly(cursor).Format("2006-01-02"), jobName, NormalizeSourceKey(sourceKey), recentCursorSkipThreshold, startedAt.UTC().Format(time.RFC3339))
 }
 
 func topoSort(specs []JobSpec) ([]JobSpec, error) {

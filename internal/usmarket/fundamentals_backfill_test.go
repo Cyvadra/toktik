@@ -144,7 +144,7 @@ func TestFMPLatestStatementCandidateParsesPeriodAndKnownAt(t *testing.T) {
 }
 
 func TestFMPSecFilingsFinancialCandidateParsesKnownAtAndLookback(t *testing.T) {
-	candidate, ok := fmpSecFilingsFinancialCandidate(fmp.SecFilingsFinancial{Symbol: "aapl", FilingDate: "2026-05-01 00:00:00", AcceptedDate: "2026-05-01 16:12:00", HasFinancials: true})
+	candidate, ok := fmpSecFilingsFinancialCandidate(fmp.SecFilingsFinancial{Symbol: "aapl", FilingDate: "2026-05-01 00:00:00", AcceptedDate: "2026-05-01 16:12:00", FormType: "10-Q", HasFinancials: true})
 	if !ok {
 		t.Fatal("expected candidate")
 	}
@@ -156,6 +156,15 @@ func TestFMPSecFilingsFinancialCandidateParsesKnownAtAndLookback(t *testing.T) {
 	}
 	if got := candidate.PeriodDate.Format("2006-01-02"); got != "2025-11-01" {
 		t.Fatalf("unexpected lookback period date %s", got)
+	}
+}
+
+func TestFMPSecFilingsFinancialCandidateRejectsUnsupportedFormTypes(t *testing.T) {
+	if _, ok := fmpSecFilingsFinancialCandidate(fmp.SecFilingsFinancial{Symbol: "YPF", FilingDate: "2026-05-01 00:00:00", AcceptedDate: "2026-05-01 16:12:00", FormType: "6-K", HasFinancials: true}); ok {
+		t.Fatal("expected 6-K filing to be rejected for PE/PB discovery")
+	}
+	if !isFMPFundamentalsDiscoveryFormTypeSupported("10-K/A") {
+		t.Fatal("expected 10-K/A to be supported")
 	}
 }
 

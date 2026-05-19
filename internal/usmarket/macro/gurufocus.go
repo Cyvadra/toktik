@@ -342,7 +342,17 @@ func InsertObservations(ctx context.Context, conn driver.Conn, rows []Observatio
 		codesSet[row.FactorCode] = struct{}{}
 	}
 	codes := sortedStringSet(codesSet)
-	if err := conn.Exec(ctx, `ALTER TABLE macro_observation DELETE WHERE dataset = {dataset:String} AND factor_code IN {codes:Array(String)} AND event_ts >= {from:DateTime} AND event_ts <= {to:DateTime} SETTINGS mutations_sync = 1`, clickhouse.Named("dataset", rows[0].Dataset), clickhouse.Named("codes", codes), clickhouse.Named("from", from.UTC()), clickhouse.Named("to", to.UTC())); err != nil {
+	if err := conn.Exec(ctx, `ALTER TABLE macro_observation DELETE
+		WHERE dataset = {dataset:String}
+		  AND factor_code IN {codes:Array(String)}
+		  AND event_ts >= toDateTime({from:String}, 'UTC')
+		  AND event_ts <= toDateTime({to:String}, 'UTC')
+		SETTINGS mutations_sync = 1`,
+		clickhouse.Named("dataset", rows[0].Dataset),
+		clickhouse.Named("codes", codes),
+		clickhouse.Named("from", from.UTC().Format("2006-01-02 15:04:05")),
+		clickhouse.Named("to", to.UTC().Format("2006-01-02 15:04:05")),
+	); err != nil {
 		return err
 	}
 	batch, err := conn.PrepareBatch(ctx, `INSERT INTO macro_observation (
