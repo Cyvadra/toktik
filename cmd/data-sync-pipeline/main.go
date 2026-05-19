@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -16,6 +17,7 @@ import (
 	appCli "github.com/Cyvadra/toktik/internal/cli"
 	"github.com/Cyvadra/toktik/internal/config"
 	"github.com/Cyvadra/toktik/internal/cryptooptions"
+	"github.com/Cyvadra/toktik/internal/dataintegrity"
 	"github.com/Cyvadra/toktik/internal/forexmarket"
 	"github.com/Cyvadra/toktik/internal/service"
 	"github.com/Cyvadra/toktik/internal/syncpipeline"
@@ -105,6 +107,8 @@ func main() {
 		err = statusCommand(os.Args[2:])
 	case "audit":
 		err = auditCommand(os.Args[2:])
+	case "integrity":
+		err = integrityCommand(os.Args[2:])
 	case "list-jobs":
 		err = listJobsCommand(os.Args[2:])
 	case "help", "-h", "--help":
@@ -117,6 +121,84 @@ func main() {
 		fmt.Fprintf(os.Stderr, "data-sync-pipeline: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+func integrityCommand(args []string) error {
+	fs := flag.NewFlagSet("integrity", flag.ContinueOnError)
+	configPath := fs.String("config", defaultPipelineConfigPath, "Pipeline YAML config path")
+	fromValue := fs.String("from", "", "Inclusive start date (YYYY-MM-DD); default is seven days before --to")
+	toValue := fs.String("to", "", "Inclusive end date (YYYY-MM-DD); default is today UTC")
+	targetsCSV := fs.String("targets", "all", "Comma-separated checks: all, us-options-aggregates, us-stocks-aggregates, chain-cache, fundamentals, features")
+	underlyingsCSV := fs.String("underlyings", "", "Comma-separated US option underlyings to check")
+	symbolsCSV := fs.String("symbols", "", "Comma-separated US stock symbols to check")
+	repair := fs.Bool("repair", false, "Repair rebuildable aggregate/cache findings")
+	dryRun := fs.Bool("dry-run", false, "Print planned repairs without mutating data")
+	format := fs.String("format", "text", "Output format: text or json")
+	maxSamples := fs.Int("max-samples", 10, "Maximum sample missing keys per finding")
+	lookbackDays := fs.Int("lookback-days", 252, "Feature volatility lookback_days to validate")
+	minDTE := fs.Int("min-days-to-expiry", 0, "Feature daily panel min_days_to_expiry to validate")
+	maxDTE := fs.Int("max-days-to-expiry", 365, "Feature daily panel max_days_to_expiry to validate")
+	fundamentalStale := fs.Duration("fundamental-stale", 120*24*time.Hour, "Flag PE/PB observations older than this duration")
+	featureStale := fs.Duration("feature-stale", 48*time.Hour, "Flag feature rows whose latest updated_at is older than this duration")
+	dsn := fs.String("clickhouse-dsn", "", "ClickHouse DSN; default comes from runtime config")
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+		return err
+	}
+	runtimeCfg := appCli.MustLoadRuntime()
+	if strings.TrimSpace(*dsn) == "" {
+		*dsn = runtimeCfg.ClickHouse.DSN
+	}
+	if _, err := loadPipelineConfig(*configPath); err != nil {
+		return err
+	}
+	from, err := parseOptionalDate(*fromValue, "--from")
+	if err != nil {
+		return err
+	}
+	to, err := parseOptionalDate(*toValue, "--to")
+	if err != nil {
+		return err
+	}
+	ctx := context.Background()
+	conn, err := usmarket.ConnectClickHouse(ctx, *dsn)
+	if err != nil {
+		return fmt.Errorf("connect ClickHouse: %w", err)
+	}
+	defer conn.Close()
+	report, err := dataintegrity.NewChecker(conn).Run(ctx, dataintegrity.Request{
+		From:             from,
+		To:               to,
+		Targets:          splitCSV(*targetsCSV),
+		Underlyings:      splitCSV(*underlyingsCSV),
+		Symbols:          splitCSV(*symbolsCSV),
+		Repair:           *repair,
+		DryRun:           *dryRun,
+		MaxSamples:       *maxSamples,
+		LookbackDays:     *lookbackDays,
+		MinDaysToExpiry:  *minDTE,
+		MaxDaysToExpiry:  *maxDTE,
+		FundamentalStale: *fundamentalStale,
+		FeatureStale:     *featureStale,
+	})
+	if err != nil {
+		return err
+	}
+	switch strings.ToLower(strings.TrimSpace(*format)) {
+	case "", "text":
+		printIntegrityReport(report)
+	case "json":
+		encoded, err := json.MarshalIndent(report, "", "  ")
+		if err != nil {
+			return err
+		}
+		fmt.Println(string(encoded))
+	default:
+		return fmt.Errorf("unknown --format %q", *format)
+	}
+	return integrityExitError(report)
 }
 
 func runCommand(args []string) error {
@@ -766,6 +848,68 @@ func printRunReport(report syncpipeline.RunReport) {
 	}
 }
 
+func printIntegrityReport(report dataintegrity.Report) {
+	fmt.Printf("integrity started=%s finished=%s window=%s..%s targets=%s findings=%d repairs=%d\n",
+		report.StartedAt.Format(time.RFC3339),
+		report.FinishedAt.Format(time.RFC3339),
+		report.From.Format("2006-01-02"),
+		report.To.Format("2006-01-02"),
+		strings.Join(report.Targets, ","),
+		len(report.Findings),
+		len(report.Repairs),
+	)
+	for _, finding := range report.Findings {
+		fmt.Printf("%-22s %-32s severity=%-8s", finding.Target, finding.Check, finding.Severity)
+		if finding.Interval != "" {
+			fmt.Printf(" interval=%s", finding.Interval)
+		}
+		if finding.Table != "" {
+			fmt.Printf(" table=%s", finding.Table)
+		}
+		if finding.BaseKeys > 0 || finding.TargetKeys > 0 || finding.MissingKeys > 0 {
+			fmt.Printf(" base=%d target=%d missing=%d", finding.BaseKeys, finding.TargetKeys, finding.MissingKeys)
+		}
+		if finding.MissingRatio > 0 {
+			fmt.Printf(" missing_ratio=%.4f", finding.MissingRatio)
+		}
+		if finding.FirstMissingDate != "" || finding.LastMissingDate != "" {
+			fmt.Printf(" missing_window=%s..%s", finding.FirstMissingDate, finding.LastMissingDate)
+		}
+		fmt.Printf(" msg=%q\n", finding.Message)
+		if len(finding.Samples) > 0 {
+			fmt.Printf("  samples: %s\n", strings.Join(finding.Samples, ", "))
+		}
+	}
+	for _, repair := range report.Repairs {
+		fmt.Printf("repair %-22s action=%q status=%s", repair.Target, repair.Action, repair.Status)
+		if repair.Message != "" {
+			fmt.Printf(" msg=%q", repair.Message)
+		}
+		fmt.Println()
+	}
+}
+
+func integrityExitError(report dataintegrity.Report) error {
+	repairedTargets := map[string]struct{}{}
+	for _, repair := range report.Repairs {
+		if repair.Status == "failed" {
+			return fmt.Errorf("integrity repair failed: %s: %s", repair.Action, repair.Message)
+		}
+		if repair.Status == "completed" {
+			repairedTargets[repair.Target] = struct{}{}
+		}
+	}
+	for _, finding := range report.Findings {
+		if _, repaired := repairedTargets[finding.Target]; repaired {
+			continue
+		}
+		if finding.Severity == dataintegrity.SeverityCritical {
+			return fmt.Errorf("integrity critical findings detected")
+		}
+	}
+	return nil
+}
+
 type preRunSnapshotRow struct {
 	Job       string
 	Dataset   string
@@ -948,10 +1092,11 @@ func usage() {
 	fmt.Fprintf(os.Stderr, `Usage: data-sync-pipeline <command> [flags]
 
 Commands:
-  run          Execute configured jobs through syncpipeline.Runner
-  status       Show latest import_ledger row per job/source
-  audit        Run duplicate audit over an explicit window
-  list-jobs    Print configured jobs and dependencies
+	run          Execute configured jobs through syncpipeline.Runner
+	status       Show latest import_ledger row per job/source
+	audit        Run duplicate audit over an explicit window
+	integrity    Check core market-data completeness and optionally repair aggregates
+	list-jobs    Print configured jobs and dependencies
 `)
 }
 
@@ -973,6 +1118,17 @@ func selectedSet(csv string) map[string]bool {
 	}
 	if len(out) == 0 {
 		return nil
+	}
+	return out
+}
+
+func splitCSV(csv string) []string {
+	var out []string
+	for _, part := range strings.Split(csv, ",") {
+		value := strings.TrimSpace(part)
+		if value != "" {
+			out = append(out, value)
+		}
 	}
 	return out
 }
