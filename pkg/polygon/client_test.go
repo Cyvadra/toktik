@@ -221,6 +221,69 @@ func TestDownloadMinuteAggregatesFlatFilesNotFound(t *testing.T) {
 	}
 }
 
+func TestDownloadMinuteAggregatesFlatFilesRetriesTransientMCFailure(t *testing.T) {
+	cacheDir := t.TempDir()
+	logPath := filepath.Join(t.TempDir(), "mc.log")
+	attemptPath := filepath.Join(t.TempDir(), "attempt.txt")
+	installFakeCommand(t, "mc", fmt.Sprintf(`#!/bin/sh
+set -eu
+if [ "${MC_HOST_s3massive:-}" = "" ]; then
+	echo missing alias >&2
+	exit 2
+fi
+count=0
+if [ -f %q ]; then
+	count=$(cat %q)
+fi
+count=$((count+1))
+printf '%%s' "$count" > %q
+echo "$*" >> %q
+if [ "$1" != "cat" ]; then
+	echo unexpected command >&2
+	exit 2
+fi
+if [ "$count" -eq 1 ]; then
+	echo 'mc: <ERROR> Unable to read source. Get "https://files.massive.com/flatfiles/?location=": Connection closed by foreign host. Retry again.' >&2
+	exit 1
+fi
+printf stock-file
+`, attemptPath, attemptPath, attemptPath, logPath))
+
+	client, err := New(Config{
+		APIKey:             "test_massive_key",
+		BaseURL:            "https://api.massive.com",
+		FlatFilesBaseURL:   "https://files.massive.com/flatfiles",
+		FlatFilesTool:      "mc",
+		FlatFilesCacheDir:  cacheDir,
+		FlatFilesAccessKey: "flat-access",
+		FlatFilesSecretKey: "flat-secret",
+	})
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+
+	stockPath, err := client.DownloadStockMinuteAggregates(context.Background(), time.Date(2026, 4, 7, 12, 34, 0, 0, time.UTC), true)
+	if err != nil {
+		t.Fatalf("DownloadStockMinuteAggregates failed after retry: %v", err)
+	}
+
+	stockBytes, err := os.ReadFile(stockPath)
+	if err != nil {
+		t.Fatalf("read stock cache file: %v", err)
+	}
+	if string(stockBytes) != "stock-file" {
+		t.Fatalf("unexpected cached content: %q", string(stockBytes))
+	}
+	logBytes, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read mc log: %v", err)
+	}
+	requests := strings.FieldsFunc(strings.TrimSpace(string(logBytes)), func(r rune) bool { return r == '\n' })
+	if len(requests) != 2 {
+		t.Fatalf("expected 2 mc attempts, got %d (%q)", len(requests), string(logBytes))
+	}
+}
+
 func TestDownloadMinuteAggregatesFlatFilesWithRclone(t *testing.T) {
 	cacheDir := t.TempDir()
 	logPath := filepath.Join(t.TempDir(), "rclone.log")

@@ -49,6 +49,9 @@ jobs:
     enabled: true
     depends_on: [fmp_us_stocks]
     provider: fmp
+    incremental_mode: latest-financial-statements
+    discovery_page_size: 250
+    discovery_page_limit: 8
     workers: 2
     batch_size: 1000
     page_size: 251

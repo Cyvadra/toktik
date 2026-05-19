@@ -69,6 +69,9 @@ type jobConfig struct {
 	PriceSource              string            `yaml:"price_source"`
 	Provider                 string            `yaml:"provider"`
 	FMPQuarterLimit          int               `yaml:"fmp_quarter_limit"`
+	IncrementalMode          string            `yaml:"incremental_mode"`
+	DiscoveryPageSize        int               `yaml:"discovery_page_size"`
+	DiscoveryPageLimit       int               `yaml:"discovery_page_limit"`
 	SymbolMappings           map[string]string `yaml:"symbol_mappings"`
 	MinCoverage              float64           `yaml:"min_coverage"`
 	RiskFreeRate             float64           `yaml:"risk_free_rate"`
@@ -421,7 +424,7 @@ func defaultPipelineConfig() pipelineConfig {
 			"fmp_crypto_spot":        {Enabled: true, ResolveAtStartup: true, BatchSize: 50000, Interval: string(fmp.Interval1Min)},
 			"fmp_forex":              {Enabled: true, ResolveAtStartup: true, BatchSize: 50000, Interval: string(fmp.Interval1Min)},
 			"fmp_us_stocks":          {Enabled: true, DependsOn: []string{"polygon_us_flatfiles"}, ResolveAtStartup: true, IncludeOptionGapMappings: true, BatchSize: 50000, Interval: string(fmp.Interval1Min)},
-			"fmp_us_fundamentals":    {Enabled: true, DependsOn: []string{"fmp_us_stocks"}, Provider: "fmp", Workers: 2, BatchSize: 1000, PageSize: 251, QPS: 10, FMPQuarterLimit: 40},
+			"fmp_us_fundamentals":    {Enabled: true, DependsOn: []string{"fmp_us_stocks"}, Provider: "fmp", Workers: 2, BatchSize: 1000, PageSize: 251, QPS: 10, FMPQuarterLimit: 40, IncrementalMode: "latest-financial-statements", DiscoveryPageSize: 250, DiscoveryPageLimit: 8},
 			"fmp_etf_fundamentals":   {Enabled: true, DependsOn: []string{"fmp_us_fundamentals"}, Symbols: []string{"SPY", "IWM", "NDX", "FIX", "KWEB"}, SymbolMappings: map[string]string{"NDX": "QQQ"}, BatchSize: 1000, QPS: 10, MinCoverage: 0.8},
 			"polygon_us_flatfiles":   {Enabled: true, BatchSize: 100000, Workers: 2, RiskFreeRate: 0.05, SyncStocks: false},
 			"polygon_us_greeks":      {Enabled: true, DependsOn: []string{"polygon_us_flatfiles", "fmp_us_stocks"}, BatchSize: 100000, Workers: 2, RiskFreeRate: 0.05, RebuildAggregates: true},
@@ -585,7 +588,7 @@ func buildSyncer(runtimeCfg config.Runtime, name string, job jobConfig, apiKey, 
 	case "fmp_us_stocks":
 		return pipelinejobs.NewFMPUSStocks(pipelinejobs.FMPUSStocksConfig{APIKey: apiKey, Symbols: job.Symbols, ResolveAtStartup: job.ResolveAtStartup, IncludeOptionGapMappings: job.IncludeOptionGapMappings, LimitSymbols: job.LimitSymbols, Interval: fmp.IntradayInterval(job.Interval), BatchSize: job.BatchSize, ColdStartFloorUTC: parseColdStart(job.ColdStartFloor)})
 	case "fmp_us_fundamentals":
-		return pipelinejobs.NewFMPUSFundamentals(pipelinejobs.FMPUSFundamentalsConfig{Provider: usmarket.NewFMPPEBackfillProvider(apiKey, job.FMPQuarterLimit), DSN: dsn, Symbols: job.Symbols, Workers: job.Workers, BatchSize: job.BatchSize, PageSize: job.PageSize, QPS: job.QPS, LimitSymbols: job.LimitSymbols, DistributedLimiter: limiterCfg, ColdStartFloorUTC: parseColdStart(job.ColdStartFloor)})
+		return pipelinejobs.NewFMPUSFundamentals(pipelinejobs.FMPUSFundamentalsConfig{Provider: usmarket.NewFMPPEBackfillProvider(apiKey, job.FMPQuarterLimit), DSN: dsn, Symbols: job.Symbols, IncrementalMode: job.IncrementalMode, DiscoveryPageSize: job.DiscoveryPageSize, DiscoveryPageLimit: job.DiscoveryPageLimit, Workers: job.Workers, BatchSize: job.BatchSize, PageSize: job.PageSize, QPS: job.QPS, LimitSymbols: job.LimitSymbols, DistributedLimiter: limiterCfg, ColdStartFloorUTC: parseColdStart(job.ColdStartFloor)})
 	case "fmp_etf_fundamentals":
 		return pipelinejobs.NewFMPETFFundamentals(pipelinejobs.FMPETFFundamentalsConfig{APIKey: apiKey, DSN: dsn, Symbols: job.Symbols, SymbolMappings: job.SymbolMappings, BatchSize: job.BatchSize, QPS: job.QPS, MinCoverage: job.MinCoverage, DistributedLimiter: limiterCfg, ColdStartFloorUTC: parseColdStart(job.ColdStartFloor)})
 	case "polygon_us_flatfiles":

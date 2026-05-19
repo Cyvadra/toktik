@@ -18,6 +18,9 @@ import (
 const (
 	stockMinuteAggregatesDatasetPath  = "us_stocks_sip/minute_aggs_v1"
 	optionMinuteAggregatesDatasetPath = "us_options_opra/minute_aggs_v1"
+	flatFileDownloadMaxAttempts       = 5
+	flatFileRetryBaseDelay            = 1500 * time.Millisecond
+	flatFileRetryMaxDelay             = 5 * time.Second
 )
 
 type FlatFileDataset struct {
@@ -118,15 +121,25 @@ func (c *Client) downloadToFile(ctx context.Context, requestURL, relativePath, c
 		_ = os.Remove(tempPath)
 	}()
 
-	cmd, tool, err := c.buildFlatFileDownloadCommand(ctx, remote)
-	if err != nil {
-		return err
-	}
-	cmd.Stdout = tempFile
 	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	err = cmd.Run()
-	if err != nil {
+	var tool string
+	for attempt := 1; attempt <= flatFileDownloadMaxAttempts; attempt++ {
+		if err := resetFlatFileTemp(tempFile); err != nil {
+			return fmt.Errorf("reset temp flatfile %s: %w", tempPath, err)
+		}
+		stderr.Reset()
+
+		cmd, cmdTool, err := c.buildFlatFileDownloadCommand(ctx, remote)
+		if err != nil {
+			return err
+		}
+		tool = cmdTool
+		cmd.Stdout = tempFile
+		cmd.Stderr = &stderr
+		err = cmd.Run()
+		if err == nil {
+			break
+		}
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
@@ -138,6 +151,12 @@ func (c *Client) downloadToFile(ctx context.Context, requestURL, relativePath, c
 				Status:     "404 Not Found",
 				Body:       body,
 			}
+		}
+		if attempt < flatFileDownloadMaxAttempts && shouldRetryFlatFileDownload(err, body) {
+			if waitErr := waitFlatFileRetry(ctx, flatFileRetryDelay(attempt)); waitErr != nil {
+				return waitErr
+			}
+			continue
 		}
 		if body == "" {
 			return fmt.Errorf("download flatfile %s with %s: %w", requestURL, tool, err)
@@ -293,4 +312,77 @@ func isMissingFlatFileError(output string) bool {
 		}
 	}
 	return false
+}
+
+func shouldRetryFlatFileDownload(err error, output string) bool {
+	if err == nil {
+		return false
+	}
+	text := strings.ToLower(strings.TrimSpace(output))
+	if text == "" {
+		text = strings.ToLower(err.Error())
+	} else {
+		text += " " + strings.ToLower(err.Error())
+	}
+	retryMarkers := []string{
+		"connection closed by foreign host",
+		"connection reset",
+		"connection refused",
+		"i/o timeout",
+		"timed out",
+		"timeout",
+		"tls handshake timeout",
+		"temporary failure",
+		"temporarily unavailable",
+		"service unavailable",
+		"internal server error",
+		"bad gateway",
+		"gateway timeout",
+		"unexpected eof",
+		"retry again",
+		"no such host",
+		"503",
+		"502",
+		"500",
+		"504",
+	}
+	for _, marker := range retryMarkers {
+		if strings.Contains(text, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func resetFlatFileTemp(file *os.File) error {
+	if err := file.Truncate(0); err != nil {
+		return err
+	}
+	_, err := file.Seek(0, 0)
+	return err
+}
+
+func flatFileRetryDelay(attempt int) time.Duration {
+	delay := flatFileRetryBaseDelay
+	for i := 1; i < attempt; i++ {
+		if delay >= flatFileRetryMaxDelay {
+			return flatFileRetryMaxDelay
+		}
+		delay *= 2
+	}
+	if delay > flatFileRetryMaxDelay {
+		return flatFileRetryMaxDelay
+	}
+	return delay
+}
+
+func waitFlatFileRetry(ctx context.Context, delay time.Duration) error {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }

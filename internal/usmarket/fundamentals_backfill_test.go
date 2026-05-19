@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Cyvadra/toktik/pkg/fmp"
 	"github.com/Cyvadra/toktik/pkg/tigerapi"
 )
 
@@ -90,5 +91,53 @@ func TestFilterFMPFundamentalSymbolsExcludesUnitsAndWarrants(t *testing.T) {
 		if filtered[index] != want[index] {
 			t.Fatalf("unexpected filtered symbols: want %#v got %#v", want, filtered)
 		}
+	}
+}
+
+func TestFMPFundamentalsIncrementalModeNormalization(t *testing.T) {
+	cases := map[string]string{
+		"":                            "",
+		"off":                         "",
+		"none":                        "",
+		"latest":                      "latest-financial-statements",
+		"latest_financial_statements": "latest-financial-statements",
+		"latest-financial-statements": "latest-financial-statements",
+		"LATEST-FINANCIAL-STATEMENTS": "latest-financial-statements",
+	}
+	for input, want := range cases {
+		if got := normalizeFMPFundamentalsIncrementalMode(input); got != want {
+			t.Fatalf("normalize %q: want %q got %q", input, want, got)
+		}
+	}
+}
+
+func TestFMPLatestStatementCandidateParsesPeriodAndKnownAt(t *testing.T) {
+	candidate, ok := fmpLatestStatementCandidate(fmp.LatestFinancialStatement{Symbol: "aapl", Date: "2026-03-31", FilingDate: "2026-05-01", AcceptedDate: "2026-05-01 16:12:00"})
+	if !ok {
+		t.Fatal("expected candidate")
+	}
+	if candidate.Symbol != "AAPL" {
+		t.Fatalf("unexpected symbol %q", candidate.Symbol)
+	}
+	if got := candidate.PeriodDate.Format("2006-01-02"); got != "2026-03-31" {
+		t.Fatalf("unexpected period date %s", got)
+	}
+	if got := candidate.KnownAt.Format("2006-01-02 15:04:05"); got != "2026-05-01 16:12:00" {
+		t.Fatalf("unexpected known_at %s", got)
+	}
+}
+
+func TestFMPFundamentalCandidateFreshnessRequiresPEAndPB(t *testing.T) {
+	candidate := fmpFundamentalsDiscoveryCandidate{Symbol: "AAPL", PeriodDate: time.Date(2026, 3, 31, 0, 0, 0, 0, time.UTC), KnownAt: time.Date(2026, 5, 1, 16, 12, 0, 0, time.UTC)}
+	fresh := map[string]existingFundamentalFreshness{
+		usStocksPEFactorCode: {LatestEventTS: time.Date(2026, 3, 31, 0, 0, 0, 0, time.UTC), LatestKnownAt: time.Date(2026, 5, 1, 16, 12, 0, 0, time.UTC)},
+		usStocksPBFactorCode: {LatestEventTS: time.Date(2026, 3, 31, 0, 0, 0, 0, time.UTC), LatestKnownAt: time.Date(2026, 5, 1, 16, 12, 0, 0, time.UTC)},
+	}
+	if !fmpFundamentalCandidateIsFresh(candidate, fresh) {
+		t.Fatal("expected candidate to be fresh")
+	}
+	delete(fresh, usStocksPBFactorCode)
+	if fmpFundamentalCandidateIsFresh(candidate, fresh) {
+		t.Fatal("expected missing PB to require update")
 	}
 }

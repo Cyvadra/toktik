@@ -258,6 +258,9 @@ type FMPUSFundamentalsConfig struct {
 	Provider           usmarket.PEBackfillProvider
 	DSN                string
 	Symbols            []string
+	IncrementalMode    string
+	DiscoveryPageSize  int
+	DiscoveryPageLimit int
 	Workers            int
 	BatchSize          int
 	PageSize           int
@@ -291,7 +294,7 @@ func (s *fmpUSFundamentals) ResolveCursor(ctx context.Context, conn driver.Conn,
 }
 func (s *fmpUSFundamentals) ColdStartFloor(string) time.Time { return s.cfg.ColdStartFloorUTC }
 func (s *fmpUSFundamentals) Sync(ctx context.Context, conn driver.Conn, req syncpipeline.SyncRequest) (syncpipeline.SyncResult, error) {
-	res, err := usmarket.BackfillUSStockPE(ctx, usmarket.USFundamentalsBackfillConfig{Conn: conn, DSN: s.cfg.DSN, Provider: s.cfg.Provider, StartDate: req.From, EndDate: req.To, Symbols: s.cfg.Symbols, Workers: s.cfg.Workers, BatchSize: s.cfg.BatchSize, PageSize: s.cfg.PageSize, QPS: s.cfg.QPS, LimitSymbols: s.cfg.LimitSymbols, DryRun: req.DryRun, DistributedLimiter: s.cfg.DistributedLimiter})
+	res, err := usmarket.BackfillUSStockPE(ctx, usmarket.USFundamentalsBackfillConfig{Conn: conn, DSN: s.cfg.DSN, Provider: s.cfg.Provider, StartDate: req.From, EndDate: req.To, Symbols: s.cfg.Symbols, IncrementalMode: s.cfg.IncrementalMode, DiscoveryPageSize: s.cfg.DiscoveryPageSize, DiscoveryPageLimit: s.cfg.DiscoveryPageLimit, Workers: s.cfg.Workers, BatchSize: s.cfg.BatchSize, PageSize: s.cfg.PageSize, QPS: s.cfg.QPS, LimitSymbols: s.cfg.LimitSymbols, DryRun: req.DryRun, DistributedLimiter: s.cfg.DistributedLimiter})
 	return syncResult(req, res.InsertedRows), err
 }
 func (s *fmpUSFundamentals) AuditTargets(string) []syncpipeline.AuditTarget {

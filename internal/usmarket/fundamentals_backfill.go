@@ -120,6 +120,9 @@ type USFundamentalsBackfillConfig struct {
 	StartDate          time.Time
 	EndDate            time.Time
 	Symbols            []string
+	IncrementalMode    string
+	DiscoveryPageSize  int
+	DiscoveryPageLimit int
 	Workers            int
 	BatchSize          int
 	PageSize           int
@@ -148,6 +151,10 @@ type USFundamentalsBackfillResult struct {
 	InsertedRows     int64
 	SkippedRows      int64
 	FilteredSymbols  int64
+	DiscoveryPages   int64
+	DiscoveryRows    int64
+	DiscoverySymbols int64
+	SkippedFresh     int64
 	DecodeErrors     int64
 	NoQuarterInputs  int64
 	MissingPrice     int64
@@ -175,6 +182,26 @@ type existingFundamentalObservation struct {
 	Revision uint32
 }
 
+type existingFundamentalFreshness struct {
+	LatestEventTS time.Time
+	LatestKnownAt time.Time
+}
+
+type fmpFundamentalsDiscoveryCandidate struct {
+	Symbol     string
+	PeriodDate time.Time
+	KnownAt    time.Time
+}
+
+type fmpFundamentalsDiscoveryResult struct {
+	Symbols          []string
+	PagesFetched     int
+	RowsScanned      int
+	CandidateSymbols int
+	SkippedFresh     int
+	MinPeriodDate    time.Time
+}
+
 type fundamentalObservationInsert struct {
 	Market     string
 	Symbol     string
@@ -184,6 +211,233 @@ type fundamentalObservationInsert struct {
 	Source     string
 	Value      float64
 	Revision   uint32
+}
+
+func normalizeFMPFundamentalsIncrementalMode(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", "off", "false", "none", "disabled":
+		return ""
+	case "latest", "latest-financial-statements", "latest_financial_statements":
+		return "latest-financial-statements"
+	default:
+		return strings.ToLower(strings.TrimSpace(value))
+	}
+}
+
+func newFMPFundamentalsDiscoveryClient(provider PEBackfillProvider) (*fmp.Client, error) {
+	fmpProvider, ok := provider.(*FMPPEBackfillProvider)
+	if !ok || strings.TrimSpace(fmpProvider.apiKey) == "" {
+		return nil, fmt.Errorf("FMP latest financial statements discovery requires FMP provider")
+	}
+	return fmp.New(fmpProvider.apiKey), nil
+}
+
+func discoverFMPFundamentalsUpdateSymbols(ctx context.Context, conn driver.Conn, client *fmp.Client, startDate, endDate time.Time, pageSize, pageLimit, limitSymbols int) (fmpFundamentalsDiscoveryResult, error) {
+	if client == nil {
+		return fmpFundamentalsDiscoveryResult{}, fmt.Errorf("FMP discovery client is required")
+	}
+	if pageSize <= 0 {
+		pageSize = 250
+	}
+	if pageLimit <= 0 {
+		pageLimit = 8
+	}
+	if limitSymbols > 0 && pageLimit > 1000 {
+		pageLimit = 1000
+	}
+	localSymbols, err := queryUSStockSymbolSet(ctx, conn)
+	if err != nil {
+		return fmpFundamentalsDiscoveryResult{}, err
+	}
+	candidatesBySymbol := map[string]fmpFundamentalsDiscoveryCandidate{}
+	result := fmpFundamentalsDiscoveryResult{}
+	for page := 0; page < pageLimit; page++ {
+		rows, err := client.LatestFinancialStatements(ctx, page, pageSize)
+		if err != nil {
+			return result, fmt.Errorf("FMP latest financial statements page %d: %w", page, err)
+		}
+		result.PagesFetched++
+		if len(rows) == 0 {
+			break
+		}
+		for _, row := range rows {
+			result.RowsScanned++
+			candidate, ok := fmpLatestStatementCandidate(row)
+			if !ok {
+				continue
+			}
+			if !endDate.IsZero() && candidate.KnownAt.After(normalizeDateOnly(endDate).AddDate(0, 0, 1)) {
+				continue
+			}
+			if len(localSymbols) > 0 {
+				if _, ok := localSymbols[candidate.Symbol]; !ok {
+					continue
+				}
+			}
+			current, exists := candidatesBySymbol[candidate.Symbol]
+			if !exists || candidate.KnownAt.After(current.KnownAt) || (candidate.KnownAt.Equal(current.KnownAt) && candidate.PeriodDate.After(current.PeriodDate)) {
+				candidatesBySymbol[candidate.Symbol] = candidate
+			}
+		}
+		if limitSymbols > 0 && len(candidatesBySymbol) >= limitSymbols {
+			break
+		}
+	}
+	if len(candidatesBySymbol) == 0 {
+		return result, nil
+	}
+	candidates := make([]fmpFundamentalsDiscoveryCandidate, 0, len(candidatesBySymbol))
+	for _, candidate := range candidatesBySymbol {
+		candidates = append(candidates, candidate)
+	}
+	sort.Slice(candidates, func(left, right int) bool {
+		if candidates[left].KnownAt.Equal(candidates[right].KnownAt) {
+			return candidates[left].Symbol < candidates[right].Symbol
+		}
+		return candidates[left].KnownAt.After(candidates[right].KnownAt)
+	})
+	if limitSymbols > 0 && len(candidates) > limitSymbols {
+		candidates = candidates[:limitSymbols]
+	}
+	result.CandidateSymbols = len(candidates)
+	freshness, err := loadExistingFMPFundamentalFreshness(ctx, conn, candidateSymbols(candidates))
+	if err != nil {
+		return result, err
+	}
+	for _, candidate := range candidates {
+		if existing, ok := freshness[candidate.Symbol]; ok && fmpFundamentalCandidateIsFresh(candidate, existing) {
+			result.SkippedFresh++
+			continue
+		}
+		result.Symbols = append(result.Symbols, candidate.Symbol)
+		if result.MinPeriodDate.IsZero() || candidate.PeriodDate.Before(result.MinPeriodDate) {
+			result.MinPeriodDate = candidate.PeriodDate
+		}
+	}
+	sort.Strings(result.Symbols)
+	return result, nil
+}
+
+func fmpLatestStatementCandidate(row fmp.LatestFinancialStatement) (fmpFundamentalsDiscoveryCandidate, bool) {
+	symbol := strings.ToUpper(strings.TrimSpace(row.Symbol))
+	if symbol == "" || !isFMPFundamentalSymbolSupported(symbol) {
+		return fmpFundamentalsDiscoveryCandidate{}, false
+	}
+	periodDate, ok := parseFMPDate(row.Date)
+	if !ok {
+		return fmpFundamentalsDiscoveryCandidate{}, false
+	}
+	knownAt := parseFMPKnownAt(row.AcceptedDate, row.FilingDate, row.Date)
+	if knownAt.IsZero() {
+		knownAt = periodDate
+	}
+	return fmpFundamentalsDiscoveryCandidate{Symbol: symbol, PeriodDate: periodDate, KnownAt: knownAt}, true
+}
+
+func candidateSymbols(candidates []fmpFundamentalsDiscoveryCandidate) []string {
+	out := make([]string, 0, len(candidates))
+	for _, candidate := range candidates {
+		out = append(out, candidate.Symbol)
+	}
+	return out
+}
+
+func fmpFundamentalCandidateIsFresh(candidate fmpFundamentalsDiscoveryCandidate, existing map[string]existingFundamentalFreshness) bool {
+	pe, hasPE := existing[usStocksPEFactorCode]
+	pb, hasPB := existing[usStocksPBFactorCode]
+	if !hasPE || !hasPB {
+		return false
+	}
+	return !pe.LatestEventTS.Before(candidate.PeriodDate) && !pb.LatestEventTS.Before(candidate.PeriodDate) && !pe.LatestKnownAt.Before(candidate.KnownAt) && !pb.LatestKnownAt.Before(candidate.KnownAt)
+}
+
+func queryUSStockSymbolSet(ctx context.Context, conn driver.Conn) (map[string]struct{}, error) {
+	rows, err := conn.Query(ctx, `SELECT symbol FROM us_stocks_bar_1m GROUP BY symbol`)
+	if err != nil {
+		return nil, fmt.Errorf("query local US stock symbol set: %w", err)
+	}
+	defer rows.Close()
+	out := map[string]struct{}{}
+	for rows.Next() {
+		var symbol string
+		if err := rows.Scan(&symbol); err != nil {
+			return nil, fmt.Errorf("scan local US stock symbol: %w", err)
+		}
+		if normalized := strings.ToUpper(strings.TrimSpace(symbol)); normalized != "" {
+			out[normalized] = struct{}{}
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate local US stock symbols: %w", err)
+	}
+	return out, nil
+}
+
+func loadExistingFMPFundamentalFreshness(ctx context.Context, conn driver.Conn, symbols []string) (map[string]map[string]existingFundamentalFreshness, error) {
+	out := map[string]map[string]existingFundamentalFreshness{}
+	if len(symbols) == 0 {
+		return out, nil
+	}
+	rows, err := conn.Query(ctx, `SELECT symbol, factor_code, max(event_ts), max(known_at)
+FROM fundamental_observation
+WHERE market = {market:String}
+  AND source = {source:String}
+  AND factor_code IN ({factors:Array(String)})
+  AND symbol IN ({symbols:Array(String)})
+GROUP BY symbol, factor_code`,
+		clickhouse.Named("market", usStocksFundamentalsMarket),
+		clickhouse.Named("source", fmpQuarterStatementsSource),
+		clickhouse.Named("factors", []string{usStocksPEFactorCode, usStocksPBFactorCode}),
+		clickhouse.Named("symbols", symbols),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query existing FMP fundamentals freshness: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var symbol, factorCode string
+		var latestEventTS, latestKnownAt time.Time
+		if err := rows.Scan(&symbol, &factorCode, &latestEventTS, &latestKnownAt); err != nil {
+			return nil, fmt.Errorf("scan existing FMP fundamentals freshness: %w", err)
+		}
+		symbol = strings.ToUpper(strings.TrimSpace(symbol))
+		if out[symbol] == nil {
+			out[symbol] = map[string]existingFundamentalFreshness{}
+		}
+		out[symbol][factorCode] = existingFundamentalFreshness{LatestEventTS: latestEventTS.UTC(), LatestKnownAt: latestKnownAt.UTC()}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate existing FMP fundamentals freshness: %w", err)
+	}
+	return out, nil
+}
+
+func hasExistingFMPFundamentalObservations(ctx context.Context, conn driver.Conn) (bool, error) {
+	rows, err := conn.Query(ctx, `SELECT count()
+FROM fundamental_observation
+WHERE market = {market:String}
+  AND source = {source:String}
+  AND factor_code IN ({factors:Array(String)})
+LIMIT 1`,
+		clickhouse.Named("market", usStocksFundamentalsMarket),
+		clickhouse.Named("source", fmpQuarterStatementsSource),
+		clickhouse.Named("factors", []string{usStocksPEFactorCode, usStocksPBFactorCode}),
+	)
+	if err != nil {
+		return false, fmt.Errorf("query existing FMP fundamentals presence: %w", err)
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		return false, rows.Err()
+	}
+	var count uint64
+	if err := rows.Scan(&count); err != nil {
+		return false, fmt.Errorf("scan existing FMP fundamentals presence: %w", err)
+	}
+	if err := rows.Err(); err != nil {
+		return false, fmt.Errorf("iterate existing FMP fundamentals presence: %w", err)
+	}
+	return count > 0, nil
 }
 
 type requestLimiter struct {
@@ -281,10 +535,51 @@ func BackfillUSStockPE(ctx context.Context, cfg USFundamentalsBackfillConfig) (U
 	if cfg.EndDate.Before(cfg.StartDate) {
 		return USFundamentalsBackfillResult{}, fmt.Errorf("end date must be on or after start date")
 	}
+	discoveryPageSize := cfg.DiscoveryPageSize
+	if discoveryPageSize <= 0 {
+		discoveryPageSize = 250
+	}
+	discoveryPageLimit := cfg.DiscoveryPageLimit
+	if discoveryPageLimit <= 0 {
+		discoveryPageLimit = 8
+	}
+	incrementalMode := normalizeFMPFundamentalsIncrementalMode(cfg.IncrementalMode)
+	if strings.TrimSpace(cfg.IncrementalMode) == "" && strings.EqualFold(cfg.Provider.Name(), "fmp") && len(cfg.Symbols) == 0 {
+		incrementalMode = "latest-financial-statements"
+	}
 
-	symbols, err := ResolveUSStockSymbols(ctx, cfg.Conn, cfg.Symbols, cfg.LimitSymbols)
-	if err != nil {
-		return USFundamentalsBackfillResult{}, err
+	var discovery fmpFundamentalsDiscoveryResult
+	var symbols []string
+	var err error
+	hasExistingFMPFundamentals := false
+	if incrementalMode == "latest-financial-statements" && strings.EqualFold(cfg.Provider.Name(), "fmp") && len(cfg.Symbols) == 0 {
+		hasExistingFMPFundamentals, err = hasExistingFMPFundamentalObservations(ctx, cfg.Conn)
+		if err != nil {
+			return USFundamentalsBackfillResult{}, err
+		}
+		if hasExistingFMPFundamentals {
+			discoveryClient, err := newFMPFundamentalsDiscoveryClient(cfg.Provider)
+			if err != nil {
+				return USFundamentalsBackfillResult{}, err
+			}
+			discovery, err = discoverFMPFundamentalsUpdateSymbols(ctx, cfg.Conn, discoveryClient, cfg.StartDate, cfg.EndDate, discoveryPageSize, discoveryPageLimit, cfg.LimitSymbols)
+			if err != nil {
+				return USFundamentalsBackfillResult{}, err
+			}
+			symbols = discovery.Symbols
+			log.Printf("FMP fundamentals discovery mode=%s pages=%d rows=%d candidates=%d skipped_fresh=%d tasks=%d", incrementalMode, discovery.PagesFetched, discovery.RowsScanned, discovery.CandidateSymbols, discovery.SkippedFresh, len(symbols))
+		} else {
+			log.Printf("FMP fundamentals discovery disabled for cold start: no existing FMP PE/PB observations")
+			symbols, err = ResolveUSStockSymbols(ctx, cfg.Conn, cfg.Symbols, cfg.LimitSymbols)
+			if err != nil {
+				return USFundamentalsBackfillResult{}, err
+			}
+		}
+	} else {
+		symbols, err = ResolveUSStockSymbols(ctx, cfg.Conn, cfg.Symbols, cfg.LimitSymbols)
+		if err != nil {
+			return USFundamentalsBackfillResult{}, err
+		}
 	}
 	filteredSymbols := int64(0)
 	if strings.EqualFold(cfg.Provider.Name(), "fmp") {
@@ -296,7 +591,7 @@ func BackfillUSStockPE(ctx context.Context, cfg USFundamentalsBackfillConfig) (U
 		}
 	}
 	if len(symbols) == 0 {
-		return USFundamentalsBackfillResult{FilteredSymbols: filteredSymbols}, nil
+		return USFundamentalsBackfillResult{FilteredSymbols: filteredSymbols, DiscoveryPages: int64(discovery.PagesFetched), DiscoveryRows: int64(discovery.RowsScanned), DiscoverySymbols: int64(discovery.CandidateSymbols), SkippedFresh: int64(discovery.SkippedFresh)}, nil
 	}
 
 	limiter, closeLimiter, err := newBackfillRateLimiter(ctx, cfg)
@@ -314,6 +609,10 @@ func BackfillUSStockPE(ctx context.Context, cfg USFundamentalsBackfillConfig) (U
 	}
 
 	log.Printf("Found %d US symbols to backfill fundamentals between %s and %s using provider=%s", len(symbols), cfg.StartDate.Format("2006-01-02"), cfg.EndDate.Format("2006-01-02"), cfg.Provider.Name())
+	fetchStartDate := cfg.StartDate
+	if !discovery.MinPeriodDate.IsZero() && discovery.MinPeriodDate.Before(fetchStartDate) {
+		fetchStartDate = discovery.MinPeriodDate
+	}
 
 	taskCh := make(chan string)
 	var (
@@ -353,7 +652,7 @@ func BackfillUSStockPE(ctx context.Context, cfg USFundamentalsBackfillConfig) (U
 			}
 
 			for symbol := range taskCh {
-				stats, err := backfillUSStockSymbolPE(ctx, workerConn, providerWorker, symbol, cfg.StartDate, cfg.EndDate, cfg.PageSize, cfg.BatchSize, limiter, cfg.DryRun)
+				stats, err := backfillUSStockSymbolPE(ctx, workerConn, providerWorker, symbol, fetchStartDate, cfg.EndDate, cfg.PageSize, cfg.BatchSize, limiter, cfg.DryRun)
 				if err != nil {
 					log.Printf("[ERROR] %s: %v", symbol, err)
 					atomic.AddInt64(&failedSymbols, 1)
@@ -415,6 +714,10 @@ func BackfillUSStockPE(ctx context.Context, cfg USFundamentalsBackfillConfig) (U
 		InsertedRows:     insertedRows,
 		SkippedRows:      skippedRows,
 		FilteredSymbols:  filteredSymbols,
+		DiscoveryPages:   int64(discovery.PagesFetched),
+		DiscoveryRows:    int64(discovery.RowsScanned),
+		DiscoverySymbols: int64(discovery.CandidateSymbols),
+		SkippedFresh:     int64(discovery.SkippedFresh),
 		DecodeErrors:     decodeErrors,
 		NoQuarterInputs:  noQuarterInputs,
 		MissingPrice:     missingPrice,

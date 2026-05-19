@@ -79,3 +79,35 @@ func TestClientReturns429AfterRetryBudgetExhausted(t *testing.T) {
 		t.Fatalf("expected 4 attempts after retry budget, got %d", got)
 	}
 }
+
+func TestLatestFinancialStatementsUsesPagination(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/latest-financial-statements" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		if got := r.URL.Query().Get("apikey"); got != "test-key" {
+			t.Fatalf("unexpected api key %q", got)
+		}
+		if got := r.URL.Query().Get("page"); got != "2" {
+			t.Fatalf("unexpected page %q", got)
+		}
+		if got := r.URL.Query().Get("limit"); got != "250" {
+			t.Fatalf("unexpected limit %q", got)
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`[{"symbol":"AAPL","date":"2026-03-31","filingDate":"2026-05-01","acceptedDate":"2026-05-01 16:12:00","fiscalYear":"2026","period":"Q2"}]`))
+	}))
+	defer server.Close()
+
+	client := New("test-key", WithHTTPClient(server.Client()), WithBaseURL(server.URL))
+	rows, err := client.LatestFinancialStatements(context.Background(), 2, 250)
+	if err != nil {
+		t.Fatalf("latest financial statements: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(rows))
+	}
+	if rows[0].Symbol != "AAPL" || rows[0].Date != "2026-03-31" || rows[0].AcceptedDate != "2026-05-01 16:12:00" {
+		t.Fatalf("unexpected row: %#v", rows[0])
+	}
+}
