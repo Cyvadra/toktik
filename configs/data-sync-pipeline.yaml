@@ -24,6 +24,32 @@ jobs:
     reference_symbol: SPX
     batch_size: 1000
 
+  fmp_sp500_macro:
+    enabled: true
+    depends_on: [fmp_us_stocks]
+    dataset: fmp-sp500-shiller
+    constituent_universe: sp500
+    price_symbol: SPY
+    reference_symbol: SPY
+    workers: 6
+    batch_size: 1000
+    rolling_quarters: 8
+    min_quarters: 4
+    cold_start_floor: 2023-05-01
+
+  fmp_nasdaq100_macro:
+    enabled: true
+    depends_on: [fmp_us_stocks]
+    dataset: fmp-nasdaq100-shiller
+    constituent_universe: nasdaq100
+    price_symbol: QQQ
+    reference_symbol: QQQ
+    workers: 6
+    batch_size: 1000
+    rolling_quarters: 8
+    min_quarters: 4
+    cold_start_floor: 2023-05-01
+
   fmp_crypto_spot:
     enabled: false
     resolve_at_startup: true

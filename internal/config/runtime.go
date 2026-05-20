@@ -24,6 +24,7 @@ const (
 	EnvSchemaDir             = "TOKTIK_SCHEMA_DIR"
 	EnvDeribitBaseURL        = "DERIBIT_BASE_URL"
 	EnvFMPAPIKey             = "FMP_API_KEY"
+	EnvFMPCacheDir           = "TOKTIK_FMP_CACHE_DIR"
 	EnvTigerID               = "TIGEROPEN_TIGER_ID"
 	EnvTigerPrivateKey       = "TIGEROPEN_PRIVATE_KEY"
 	EnvTigerAccount          = "TIGEROPEN_ACCOUNT"
@@ -135,7 +136,8 @@ type Polygon struct {
 }
 
 type FMP struct {
-	apiKey string
+	CacheDir string `yaml:"cache_dir"`
+	apiKey   string
 }
 
 func (t *Tiger) UnmarshalYAML(value *yaml.Node) error {
@@ -206,12 +208,14 @@ func (p *Polygon) UnmarshalYAML(value *yaml.Node) error {
 
 func (f *FMP) UnmarshalYAML(value *yaml.Node) error {
 	type rawFMP struct {
-		APIKey string `yaml:"api_key"`
+		CacheDir string `yaml:"cache_dir"`
+		APIKey   string `yaml:"api_key"`
 	}
 	var raw rawFMP
 	if err := value.Decode(&raw); err != nil {
 		return err
 	}
+	f.CacheDir = raw.CacheDir
 	f.apiKey = raw.APIKey
 	return nil
 }
@@ -376,6 +380,9 @@ func (c *Runtime) applyEnvOverrides() {
 	if value := strings.TrimSpace(os.Getenv(EnvFMPAPIKey)); value != "" {
 		c.SetFMPAPIKey(value)
 	}
+	if value := strings.TrimSpace(os.Getenv(EnvFMPCacheDir)); value != "" {
+		c.FMP.CacheDir = value
+	}
 	if value := strings.TrimSpace(os.Getenv(EnvRedisEnabled)); value != "" {
 		if parsed, err := strconv.ParseBool(value); err == nil {
 			c.Redis.Enabled = parsed
@@ -516,6 +523,13 @@ func (c *Runtime) normalize() {
 		c.Polygon.TimeoutSeconds = defaultPolygonTimeoutSec
 	}
 	c.FMP.apiKey = strings.TrimSpace(c.FMP.apiKey)
+	if strings.TrimSpace(c.FMP.CacheDir) != "" {
+		if filepath.IsAbs(c.FMP.CacheDir) {
+			c.FMP.CacheDir = filepath.Clean(c.FMP.CacheDir)
+		} else {
+			c.FMP.CacheDir = filepath.Clean(c.FMP.CacheDir)
+		}
+	}
 	if strings.TrimSpace(c.Redis.Addr) == "" {
 		c.Redis.Addr = defaultRedisAddr
 	}

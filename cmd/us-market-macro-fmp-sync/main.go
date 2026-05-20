@@ -24,10 +24,10 @@ import (
 )
 
 const (
-	macroDataset            = "gurufocus-shiller"
+	legacyMacroDataset      = "gurufocus-shiller"
 	macroSourceName         = "fmp"
-	defaultPriceSymbol      = "^GSPC"
-	defaultReferenceSymbol  = "SPX"
+	defaultSP500Dataset     = "fmp-sp500-shiller"
+	defaultNasdaq100Dataset = "fmp-nasdaq100-shiller"
 	defaultReferenceMarket  = "us-stocks"
 	realtimeForwardFill     = "forward_fill"
 	realtimePriceScaled     = "price_scaled"
@@ -36,6 +36,34 @@ const (
 	defaultMinQuarters      = 4
 	defaultDebugCSVFileName = "fmp_shiller_last_1y.csv"
 )
+
+type constituentUniverseConfig struct {
+	Name                   string
+	DisplayName            string
+	PriceFactorCode        string
+	DefaultDataset         string
+	DefaultPriceSymbol     string
+	DefaultReferenceSymbol string
+}
+
+var constituentUniverses = map[string]constituentUniverseConfig{
+	"sp500": {
+		Name:                   "sp500",
+		DisplayName:            "S&P 500",
+		PriceFactorCode:        "sp500",
+		DefaultDataset:         defaultSP500Dataset,
+		DefaultPriceSymbol:     "SPY",
+		DefaultReferenceSymbol: "SPY",
+	},
+	"nasdaq100": {
+		Name:                   "nasdaq100",
+		DisplayName:            "Nasdaq-100",
+		PriceFactorCode:        "ndx",
+		DefaultDataset:         defaultNasdaq100Dataset,
+		DefaultPriceSymbol:     "QQQ",
+		DefaultReferenceSymbol: "QQQ",
+	},
+}
 
 type factorDefinition struct {
 	Code         string
@@ -152,8 +180,10 @@ func main() {
 	dsn := flag.String("clickhouse-dsn", runtimeCfg.ClickHouse.DSN, "ClickHouse DSN")
 	fromValue := flag.String("from", defaultFrom.Format("2006-01-02"), "Output start date (YYYY-MM-DD)")
 	toValue := flag.String("to", defaultTo.Format("2006-01-02"), "Output end date, exclusive (YYYY-MM-DD)")
-	priceSymbol := flag.String("price-symbol", defaultPriceSymbol, "FMP symbol used for index price history")
-	referenceSymbol := flag.String("reference-symbol", defaultReferenceSymbol, "Reference symbol used for timestamp alignment and realtime scaling")
+	universeName := flag.String("constituent-universe", "sp500", "Constituent universe: sp500 or nasdaq100")
+	datasetName := flag.String("dataset", "", "Output macro dataset name (defaults by constituent universe)")
+	priceSymbol := flag.String("price-symbol", "", "FMP symbol used for index or ETF price history (defaults by constituent universe)")
+	referenceSymbol := flag.String("reference-symbol", "", "Reference symbol used for timestamp alignment and realtime scaling (defaults by constituent universe)")
 	workers := flag.Int("workers", defaultWorkerCount, "Concurrent FMP symbol fetch workers")
 	batchSize := flag.Int("batch-size", 1000, "Rows per ClickHouse batch")
 	initSchema := flag.Bool("init-schema", true, "Initialize fundamentals schema before sync")
@@ -194,6 +224,20 @@ func main() {
 		log.Fatalf("--min-quarters must be in [1, rolling-quarters]")
 	}
 
+	universe, err := resolveConstituentUniverse(*universeName)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if strings.TrimSpace(*datasetName) == "" {
+		*datasetName = universe.DefaultDataset
+	}
+	if strings.TrimSpace(*priceSymbol) == "" {
+		*priceSymbol = universe.DefaultPriceSymbol
+	}
+	if strings.TrimSpace(*referenceSymbol) == "" {
+		*referenceSymbol = universe.DefaultReferenceSymbol
+	}
+
 	client := fmp.New(fmpAPIKey, fmp.WithHTTPClient(&http.Client{Timeout: 90 * time.Second}))
 	rollingMonths := *rollingQuarters * 3
 	calcFrom := time.Date(from.Year(), from.Month(), 1, 0, 0, 0, 0, time.UTC).AddDate(0, -rollingMonths, 0)
@@ -213,7 +257,7 @@ func main() {
 		cpiSeries = map[string]float64{}
 	}
 	if len(cpiSeries) < rollingMonths {
-		legacyCPI, err := loadLegacyMonthlySeries(ctx, conn, macroDataset, "CPI", calcFrom, calcTo)
+		legacyCPI, err := loadLegacyMonthlySeries(ctx, conn, legacyMacroDataset, "CPI", calcFrom, calcTo)
 		if err != nil {
 			log.Fatalf("load legacy CPI bootstrap: %v", err)
 		}
@@ -232,7 +276,7 @@ func main() {
 		rateSeries = map[string]float64{}
 	}
 	if len(rateSeries) < rollingMonths {
-		legacyRates, err := loadLegacyMonthlySeries(ctx, conn, macroDataset, "rate_GS10", calcFrom, calcTo)
+		legacyRates, err := loadLegacyMonthlySeries(ctx, conn, legacyMacroDataset, "rate_GS10", calcFrom, calcTo)
 		if err != nil {
 			log.Fatalf("load legacy GS10 bootstrap: %v", err)
 		}
@@ -245,13 +289,13 @@ func main() {
 	if len(rateSeries) == 0 {
 		log.Fatalf("GS10 series unavailable from both FMP and legacy storage")
 	}
-	currentConstituents, err := fetchCurrentConstituents(ctx, client)
+	currentConstituents, err := fetchCurrentConstituents(ctx, client, universe)
 	if err != nil {
-		log.Fatalf("fetch S&P 500 constituents: %v", err)
+		log.Fatalf("fetch %s constituents: %v", universe.DisplayName, err)
 	}
-	changes, err := fetchHistoricalConstituentChanges(ctx, client)
+	changes, err := fetchHistoricalConstituentChanges(ctx, client, universe)
 	if err != nil {
-		log.Fatalf("fetch S&P 500 constituent changes: %v", err)
+		log.Fatalf("fetch %s constituent changes: %v", universe.DisplayName, err)
 	}
 	memberships := buildMonthlyMemberships(currentConstituents, changes, calcFrom, calcTo)
 	unionSymbols := unionMembershipSymbols(memberships)
@@ -275,8 +319,9 @@ func main() {
 		log.Fatalf("no monthly points computed in requested range")
 	}
 
-	catalogRows := buildCatalogRows(strings.ToUpper(strings.TrimSpace(*referenceSymbol)))
-	observationRows := buildObservationRows(filtered, anchors, strings.ToUpper(strings.TrimSpace(*referenceSymbol)))
+	referenceSymbolValue := strings.ToUpper(strings.TrimSpace(*referenceSymbol))
+	catalogRows := buildCatalogRows(*datasetName, universe, referenceSymbolValue)
+	observationRows := buildObservationRows(*datasetName, filtered, anchors, referenceSymbolValue, universe.PriceFactorCode)
 
 	if err := writeDebugCSV(*debugCSV, filtered); err != nil {
 		log.Fatalf("write debug csv: %v", err)
@@ -287,7 +332,7 @@ func main() {
 	}
 
 	if *dryRun {
-		log.Printf("dry-run complete: dataset=%s rows=%d factors=%d debug_csv=%s live_csv=%s", macroDataset, len(observationRows), len(catalogRows), *debugCSV, *debugLiveCSV)
+		log.Printf("dry-run complete: dataset=%s universe=%s rows=%d factors=%d debug_csv=%s live_csv=%s", *datasetName, universe.Name, len(observationRows), len(catalogRows), *debugCSV, *debugLiveCSV)
 		return
 	}
 	if err := upsertMacroCatalog(ctx, conn, catalogRows, *batchSize); err != nil {
@@ -296,12 +341,34 @@ func main() {
 	if err := insertMacroObservations(ctx, conn, observationRows, *batchSize); err != nil {
 		log.Fatalf("insert macro observations: %v", err)
 	}
-	log.Printf("fmp macro sync complete: dataset=%s points=%d observation_rows=%d debug_csv=%s", macroDataset, len(filtered), len(observationRows), *debugCSV)
+	log.Printf("fmp macro sync complete: dataset=%s universe=%s points=%d observation_rows=%d debug_csv=%s", *datasetName, universe.Name, len(filtered), len(observationRows), *debugCSV)
 	log.Printf("coverage snapshot: latest_month=%s covered_constituents=%d total_constituents=%d", filtered[len(filtered)-1].Month.Format("2006-01"), filtered[len(filtered)-1].CoveredConstituents, filtered[len(filtered)-1].ConstituentCount)
 }
 
-func fetchCurrentConstituents(ctx context.Context, client *fmp.Client) ([]string, error) {
-	rows, err := client.SP500Constituents(ctx)
+func resolveConstituentUniverse(raw string) (constituentUniverseConfig, error) {
+	name := strings.ToLower(strings.TrimSpace(raw))
+	if name == "" {
+		name = "sp500"
+	}
+	if cfg, ok := constituentUniverses[name]; ok {
+		return cfg, nil
+	}
+	return constituentUniverseConfig{}, fmt.Errorf("unsupported --constituent-universe %q (expected one of: sp500, nasdaq100)", raw)
+}
+
+func fetchCurrentConstituents(ctx context.Context, client *fmp.Client, universe constituentUniverseConfig) ([]string, error) {
+	var (
+		rows []fmp.IndexConstituent
+		err  error
+	)
+	switch universe.Name {
+	case "sp500":
+		rows, err = client.SP500Constituents(ctx)
+	case "nasdaq100":
+		rows, err = client.NasdaqConstituents(ctx)
+	default:
+		return nil, fmt.Errorf("unsupported constituent universe %q", universe.Name)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -319,8 +386,19 @@ func fetchCurrentConstituents(ctx context.Context, client *fmp.Client) ([]string
 	return out, nil
 }
 
-func fetchHistoricalConstituentChanges(ctx context.Context, client *fmp.Client) ([]constituentChange, error) {
-	rows, err := client.HistoricalSP500Changes(ctx, 5000)
+func fetchHistoricalConstituentChanges(ctx context.Context, client *fmp.Client, universe constituentUniverseConfig) ([]constituentChange, error) {
+	var (
+		rows []fmp.IndexConstituentChange
+		err  error
+	)
+	switch universe.Name {
+	case "sp500":
+		rows, err = client.HistoricalSP500Changes(ctx, 5000)
+	case "nasdaq100":
+		rows, err = client.HistoricalNasdaqChanges(ctx, 5000)
+	default:
+		return nil, fmt.Errorf("unsupported constituent universe %q", universe.Name)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -706,21 +784,21 @@ func filterMonthlyPoints(points []monthlyPoint, from, to time.Time) []monthlyPoi
 	return out
 }
 
-func buildCatalogRows(referenceSymbol string) []macroCatalogRow {
+func buildCatalogRows(dataset string, universe constituentUniverseConfig, referenceSymbol string) []macroCatalogRow {
 	definitions := []factorDefinition{
-		{Code: "sp500", DisplayName: "S&P 500 Price", Description: "Monthly S&P 500 level derived from FMP index history", ValueType: "index", RealtimeMode: realtimePriceScaled},
-		{Code: "earnings", DisplayName: "Earnings", Description: "Monthly index earnings-per-unit derived from FMP S&P 500 constituent penetration", ValueType: "float", RealtimeMode: realtimeForwardFill},
+		{Code: universe.PriceFactorCode, DisplayName: universe.DisplayName + " Price", Description: "Monthly " + universe.DisplayName + " level derived from FMP price history", ValueType: "index", RealtimeMode: realtimePriceScaled},
+		{Code: "earnings", DisplayName: "Earnings", Description: "Monthly index earnings-per-unit derived from FMP " + universe.DisplayName + " constituent penetration", ValueType: "float", RealtimeMode: realtimeForwardFill},
 		{Code: "CPI", DisplayName: "CPI", Description: "Monthly CPI field from FMP economic indicators", ValueType: "float", RealtimeMode: realtimeForwardFill},
 		{Code: "rate_GS10", DisplayName: "GS10 Rate", Description: "10-year treasury yield from FMP treasury rates", ValueType: "percent", Unit: "%", RealtimeMode: realtimeForwardFill},
-		{Code: "real_sp", DisplayName: "Real S&P 500", Description: "Monthly inflation-adjusted S&P 500 level derived from FMP data", ValueType: "index", RealtimeMode: realtimePriceScaled},
+		{Code: "real_sp", DisplayName: "Real " + universe.DisplayName, Description: "Monthly inflation-adjusted " + universe.DisplayName + " level derived from FMP data", ValueType: "index", RealtimeMode: realtimePriceScaled},
 		{Code: "real_earnings", DisplayName: "Real Earnings", Description: "Monthly inflation-adjusted earnings derived from FMP constituent penetration", ValueType: "float", RealtimeMode: realtimeForwardFill},
-		{Code: "pe10", DisplayName: "Shiller PE", Description: "Monthly CAPE ratio computed from FMP index price, CPI, and constituent earnings penetration", ValueType: "ratio", RealtimeMode: realtimePriceScaled},
+		{Code: "pe10", DisplayName: universe.DisplayName + " PE10", Description: "Monthly CAPE ratio computed from FMP price, CPI, and constituent earnings penetration", ValueType: "ratio", RealtimeMode: realtimePriceScaled},
 		{Code: "excess_cape_yield", DisplayName: "Excess CAPE Yield", Description: "Monthly excess CAPE yield computed as 100/pe10 - rate_GS10", ValueType: "percent", Unit: "%", RealtimeMode: realtimeForwardFill},
 	}
 	rows := make([]macroCatalogRow, 0, len(definitions))
 	for _, definition := range definitions {
 		rows = append(rows, macroCatalogRow{
-			Dataset:            macroDataset,
+			Dataset:            dataset,
 			FactorCode:         definition.Code,
 			DisplayName:        definition.DisplayName,
 			Description:        definition.Description,
@@ -736,13 +814,13 @@ func buildCatalogRows(referenceSymbol string) []macroCatalogRow {
 			RealtimeMode:       definition.RealtimeMode,
 			Active:             1,
 			SLAHours:           24 * 7,
-			Metadata:           fmt.Sprintf(`{"dataset":"%s","source":"%s","factor":"%s"}`, macroDataset, macroSourceName, definition.Code),
+			Metadata:           fmt.Sprintf(`{"dataset":"%s","source":"%s","factor":"%s","universe":"%s"}`, dataset, macroSourceName, definition.Code, universe.Name),
 		})
 	}
 	return rows
 }
 
-func buildObservationRows(points []monthlyPoint, anchors map[string]monthAnchor, referenceSymbol string) []macroObservationRow {
+func buildObservationRows(dataset string, points []monthlyPoint, anchors map[string]monthAnchor, referenceSymbol, priceFactorCode string) []macroObservationRow {
 	rows := make([]macroObservationRow, 0, len(points)*8)
 	for _, point := range points {
 		monthKey := point.Month.Format("2006-01")
@@ -750,23 +828,23 @@ func buildObservationRows(points []monthlyPoint, anchors map[string]monthAnchor,
 		if !ok {
 			anchor = monthAnchor{LastTS: point.PeriodEnd.Add(-time.Second), FirstTS: point.KnownAt, LastClose: point.AnchorValue}
 		}
-		rows = appendMacroObservation(rows, "sp500", point.Price, point.Month, point.PeriodEnd, anchor, referenceSymbol, true)
-		rows = appendMacroObservation(rows, "earnings", point.NominalEarnings, point.Month, point.PeriodEnd, anchor, referenceSymbol, false)
-		rows = appendMacroObservation(rows, "CPI", point.CPI, point.Month, point.PeriodEnd, anchor, referenceSymbol, false)
-		rows = appendMacroObservation(rows, "rate_GS10", point.RateGS10, point.Month, point.PeriodEnd, anchor, referenceSymbol, false)
-		rows = appendMacroObservation(rows, "real_sp", point.RealSP, point.Month, point.PeriodEnd, anchor, referenceSymbol, true)
-		rows = appendMacroObservation(rows, "real_earnings", point.RealEarnings, point.Month, point.PeriodEnd, anchor, referenceSymbol, false)
+		rows = appendMacroObservation(rows, dataset, priceFactorCode, point.Price, point.Month, point.PeriodEnd, anchor, referenceSymbol, true)
+		rows = appendMacroObservation(rows, dataset, "earnings", point.NominalEarnings, point.Month, point.PeriodEnd, anchor, referenceSymbol, false)
+		rows = appendMacroObservation(rows, dataset, "CPI", point.CPI, point.Month, point.PeriodEnd, anchor, referenceSymbol, false)
+		rows = appendMacroObservation(rows, dataset, "rate_GS10", point.RateGS10, point.Month, point.PeriodEnd, anchor, referenceSymbol, false)
+		rows = appendMacroObservation(rows, dataset, "real_sp", point.RealSP, point.Month, point.PeriodEnd, anchor, referenceSymbol, true)
+		rows = appendMacroObservation(rows, dataset, "real_earnings", point.RealEarnings, point.Month, point.PeriodEnd, anchor, referenceSymbol, false)
 		if point.PE10 > 0 {
-			rows = appendMacroObservation(rows, "pe10", point.PE10, point.Month, point.PeriodEnd, anchor, referenceSymbol, true)
+			rows = appendMacroObservation(rows, dataset, "pe10", point.PE10, point.Month, point.PeriodEnd, anchor, referenceSymbol, true)
 		}
 		if point.ExcessCAPEYield != 0 && !math.IsNaN(point.ExcessCAPEYield) && !math.IsInf(point.ExcessCAPEYield, 0) {
-			rows = appendMacroObservation(rows, "excess_cape_yield", point.ExcessCAPEYield, point.Month, point.PeriodEnd, anchor, referenceSymbol, false)
+			rows = appendMacroObservation(rows, dataset, "excess_cape_yield", point.ExcessCAPEYield, point.Month, point.PeriodEnd, anchor, referenceSymbol, false)
 		}
 	}
 	return rows
 }
 
-func appendMacroObservation(rows []macroObservationRow, factor string, value float64, periodStart, periodEnd time.Time, anchor monthAnchor, referenceSymbol string, priceScaled bool) []macroObservationRow {
+func appendMacroObservation(rows []macroObservationRow, dataset, factor string, value float64, periodStart, periodEnd time.Time, anchor monthAnchor, referenceSymbol string, priceScaled bool) []macroObservationRow {
 	if value == 0 || math.IsNaN(value) || math.IsInf(value, 0) {
 		return rows
 	}
@@ -775,7 +853,7 @@ func appendMacroObservation(rows []macroObservationRow, factor string, value flo
 		anchorValue = anchor.LastClose
 	}
 	return append(rows, macroObservationRow{
-		Dataset:         macroDataset,
+		Dataset:         dataset,
 		FactorCode:      factor,
 		EventTS:         anchor.LastTS,
 		KnownAt:         anchor.FirstTS,
@@ -880,7 +958,7 @@ func writeLiveDebugCSV(path string, points []dailyLivePoint) error {
 	defer file.Close()
 	writer := csv.NewWriter(file)
 	defer writer.Flush()
-	if err := writer.Write([]string{"date", "spx_close", "pe_live", "anchor_month", "covered_constituents", "constituent_count"}); err != nil {
+	if err := writer.Write([]string{"date", "reference_close", "pe_live", "anchor_month", "covered_constituents", "constituent_count"}); err != nil {
 		return err
 	}
 	for _, point := range points {

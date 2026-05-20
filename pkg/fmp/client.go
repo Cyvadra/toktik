@@ -13,6 +13,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"strconv"
 	"time"
 )
@@ -25,6 +26,8 @@ type Client struct {
 	apiKey     string
 	httpClient *http.Client
 	baseURL    string
+	cacheDir   string
+	cacheTTL   time.Duration
 }
 
 // Option configures the Client.
@@ -35,6 +38,11 @@ func WithHTTPClient(hc *http.Client) Option {
 	return func(c *Client) { c.httpClient = hc }
 }
 
+// WithCacheDir enables on-disk GET response caching for this client.
+func WithCacheDir(dir string) Option {
+	return func(c *Client) { c.cacheDir = normalizeCacheDir(dir) }
+}
+
 // New creates a new FMP client with the given API key.
 func New(apiKey string, opts ...Option) *Client {
 	c := &Client{
@@ -42,7 +50,9 @@ func New(apiKey string, opts ...Option) *Client {
 		httpClient: &http.Client{
 			Timeout: defaultHTTPTimeout,
 		},
-		baseURL: baseURL,
+		baseURL:  baseURL,
+		cacheDir: defaultCacheDir(),
+		cacheTTL: defaultCacheTTL,
 	}
 	for _, o := range opts {
 		o(c)
@@ -67,6 +77,12 @@ func (c *Client) get(ctx context.Context, path string, params url.Values, out an
 	params.Set("apikey", c.apiKey)
 
 	u := c.baseURL + path + "?" + params.Encode()
+	if body, ok := c.loadCachedBody(u); ok {
+		if err := decodeResponseBody(body, out); err == nil {
+			return nil
+		}
+		_ = c.deleteCachedBody(u)
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return fmt.Errorf("fmp: build request: %w", err)
@@ -120,18 +136,32 @@ func (c *Client) get(ctx context.Context, path string, params url.Values, out an
 			return httpErr
 		}
 
-		// FMP returns plan/premium errors as a plain JSON string.
-		if len(body) > 0 && body[0] == '"' {
-			var msg string
-			_ = json.Unmarshal(body, &msg)
-			return fmt.Errorf("fmp: api error: %s", msg)
+		if err := decodeResponseBody(body, out); err != nil {
+			return err
 		}
-
-		if err := json.Unmarshal(body, out); err != nil {
-			return fmt.Errorf("fmp: decode response: %w (body: %.300s)", err, body)
-		}
+		c.storeCachedBody(u, body)
 		return nil
 	}
+}
+
+func decodeResponseBody(body []byte, out any) error {
+	// FMP returns plan/premium errors as a plain JSON string.
+	if len(body) > 0 && body[0] == '"' {
+		var msg string
+		_ = json.Unmarshal(body, &msg)
+		return fmt.Errorf("fmp: api error: %s", msg)
+	}
+	if err := json.Unmarshal(body, out); err != nil {
+		return fmt.Errorf("fmp: decode response: %w (body: %.300s)", err, body)
+	}
+	return nil
+}
+
+func normalizeCacheDir(dir string) string {
+	if dir == "" {
+		return ""
+	}
+	return filepath.Clean(dir)
 }
 
 func shouldRetryTransport(err error) bool {

@@ -11,6 +11,7 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/Cyvadra/toktik/internal/config"
 	"github.com/Cyvadra/toktik/internal/cryptooptions"
+	"github.com/Cyvadra/toktik/pkg/fmp"
 )
 
 // SetupLogger configures the default slog logger.
@@ -95,6 +96,7 @@ func MustLoadRuntime() config.Runtime {
 		fmt.Fprintf(os.Stderr, "load runtime config: %v\n", err)
 		os.Exit(1)
 	}
+	fmp.SetDefaultCacheDir(cfg.FMP.CacheDir)
 	return cfg
 }
 

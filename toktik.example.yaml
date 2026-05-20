@@ -51,6 +51,7 @@ polygon:
   pagination: true
 
 fmp:
+  cache_dir: "/mnt/hdd/toktik/fmp-cache"
   api_key: ""
 
 redis:

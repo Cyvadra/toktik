@@ -89,7 +89,11 @@ type jobConfig struct {
 	MaxDaysToExpiry          int               `yaml:"max_days_to_expiry"`
 	Dataset                  string            `yaml:"dataset"`
 	URL                      string            `yaml:"url"`
+	ConstituentUniverse      string            `yaml:"constituent_universe"`
+	PriceSymbol              string            `yaml:"price_symbol"`
 	ReferenceSymbol          string            `yaml:"reference_symbol"`
+	RollingQuarters          int               `yaml:"rolling_quarters"`
+	MinQuarters              int               `yaml:"min_quarters"`
 	ColdStartFloor           string            `yaml:"cold_start_floor"`
 }
 
@@ -140,6 +144,9 @@ func integrityCommand(args []string) error {
 	maxDTE := fs.Int("max-days-to-expiry", 365, "Feature daily panel max_days_to_expiry to validate")
 	fundamentalStale := fs.Duration("fundamental-stale", 120*24*time.Hour, "Flag PE/PB observations older than this duration")
 	featureStale := fs.Duration("feature-stale", 48*time.Hour, "Flag feature rows whose latest updated_at is older than this duration")
+	maxMemoryGB := fs.Float64("max-memory-gb", 12, "ClickHouse SETTING max_memory_usage in GiB (0 disables the cap)")
+	externalGroupByGB := fs.Float64("external-group-by-gb", 8, "ClickHouse SETTING max_bytes_before_external_group_by in GiB (0 disables spill-to-disk)")
+	maxThreads := fs.Int("max-threads", 4, "ClickHouse SETTING max_threads (0 leaves the server default)")
 	dsn := fs.String("clickhouse-dsn", "", "ClickHouse DSN; default comes from runtime config")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -150,6 +157,10 @@ func integrityCommand(args []string) error {
 	runtimeCfg := appCli.MustLoadRuntime()
 	if strings.TrimSpace(*dsn) == "" {
 		*dsn = runtimeCfg.ClickHouse.DSN
+	}
+	fmpAPIKey, err := runtimeCfg.FMPAPIKey()
+	if err != nil {
+		return fmt.Errorf("read FMP api key: %w", err)
 	}
 	if _, err := loadPipelineConfig(*configPath); err != nil {
 		return err
@@ -169,22 +180,33 @@ func integrityCommand(args []string) error {
 	}
 	defer conn.Close()
 	report, err := dataintegrity.NewChecker(conn).Run(ctx, dataintegrity.Request{
-		From:        from,
-		To:          to,
-		Targets:     splitCSV(*targetsCSV),
-		Underlyings: splitCSV(*underlyingsCSV),
-		Symbols:     splitCSV(*symbolsCSV),
+		From:          from,
+		To:            to,
+		Targets:       splitCSV(*targetsCSV),
+		Underlyings:   splitCSV(*underlyingsCSV),
+		Symbols:       splitCSV(*symbolsCSV),
+		ClickHouseDSN: *dsn,
+		FMPAPIKey:     fmpAPIKey,
 		Progress: func(format string, args ...any) {
 			fmt.Fprintf(os.Stderr, format+"\n", args...)
 		},
-		Repair:           *repair,
-		DryRun:           *dryRun,
-		MaxSamples:       *maxSamples,
-		LookbackDays:     *lookbackDays,
-		MinDaysToExpiry:  *minDTE,
-		MaxDaysToExpiry:  *maxDTE,
-		FundamentalStale: *fundamentalStale,
-		FeatureStale:     *featureStale,
+		Repair:                        *repair,
+		DryRun:                        *dryRun,
+		MaxSamples:                    *maxSamples,
+		FMPQuarterLimit:               40,
+		FundamentalWorkers:            2,
+		FundamentalBatchSize:          1000,
+		FundamentalPageSize:           251,
+		FundamentalQPS:                5,
+		LookbackDays:                  *lookbackDays,
+		MinDaysToExpiry:               *minDTE,
+		MaxDaysToExpiry:               *maxDTE,
+		FundamentalStale:              *fundamentalStale,
+		FeatureStale:                  *featureStale,
+		FundamentalDistributedLimiter: usmarket.DistributedRateLimitConfig{Enabled: runtimeCfg.Redis.Enabled, Addr: runtimeCfg.Redis.Addr, Password: runtimeCfg.Redis.Password, DB: runtimeCfg.Redis.DB, KeyPrefix: runtimeCfg.Redis.KeyPrefix, DialTimeout: runtimeCfg.RedisDialTimeout(), ReadTimeout: runtimeCfg.RedisReadTimeout(), WriteTimeout: runtimeCfg.RedisWriteTimeout()},
+		MaxMemoryUsageBytes:           gibToBytes(*maxMemoryGB),
+		MaxBytesBeforeExternalGroupBy: gibToBytes(*externalGroupByGB),
+		MaxThreads:                    *maxThreads,
 	})
 	if err != nil {
 		return err
@@ -202,6 +224,15 @@ func integrityCommand(args []string) error {
 		return fmt.Errorf("unknown --format %q", *format)
 	}
 	return integrityExitError(report)
+}
+
+// gibToBytes converts a GiB value provided on the CLI into bytes. Non-positive
+// values disable the corresponding ClickHouse SETTING.
+func gibToBytes(gib float64) uint64 {
+	if gib <= 0 {
+		return 0
+	}
+	return uint64(gib * float64(1<<30))
 }
 
 func runCommand(args []string) error {
@@ -506,6 +537,8 @@ func defaultPipelineConfig() pipelineConfig {
 			// for ETF underlyings such as SPY/IWM/QQQ now comes from
 			// fmp_etf_fundamentals into fundamental_observation.
 			"guru_macro":             {Enabled: true, BatchSize: 1000, URL: macro.DefaultGurufocusShillerURL, ReferenceSymbol: macro.DefaultReferenceSymbol, Dataset: macro.DefaultGurufocusShillerDataset},
+			"fmp_sp500_macro":        {Enabled: true, DependsOn: []string{"fmp_us_stocks"}, Dataset: macro.DefaultFMPSP500Dataset, ConstituentUniverse: "sp500", PriceSymbol: "SPY", ReferenceSymbol: "SPY", Workers: 6, BatchSize: 1000, RollingQuarters: 8, MinQuarters: 4, ColdStartFloor: "2023-05-01"},
+			"fmp_nasdaq100_macro":    {Enabled: true, DependsOn: []string{"fmp_us_stocks"}, Dataset: macro.DefaultFMPNasdaq100Dataset, ConstituentUniverse: "nasdaq100", PriceSymbol: "QQQ", ReferenceSymbol: "QQQ", Workers: 6, BatchSize: 1000, RollingQuarters: 8, MinQuarters: 4, ColdStartFloor: "2023-05-01"},
 			"fmp_crypto_spot":        {Enabled: true, ResolveAtStartup: true, BatchSize: 50000, Interval: string(fmp.Interval1Min)},
 			"fmp_forex":              {Enabled: true, ResolveAtStartup: true, BatchSize: 50000, Interval: string(fmp.Interval1Min)},
 			"fmp_us_stocks":          {Enabled: true, DependsOn: []string{"polygon_us_flatfiles"}, ResolveAtStartup: true, IncludeOptionGapMappings: true, BatchSize: 50000, Interval: string(fmp.Interval1Min)},
@@ -558,6 +591,12 @@ func normalizePipelineConfig(cfg *pipelineConfig) error {
 	if job, ok := cfg.Jobs["fmp_us_fundamentals"]; ok && job.Enabled {
 		job.DependsOn = replaceDependency(job.DependsOn, "fmp_us_stocks", stockDependency)
 		cfg.Jobs["fmp_us_fundamentals"] = job
+	}
+	for _, name := range []string{"fmp_sp500_macro", "fmp_nasdaq100_macro"} {
+		if job, ok := cfg.Jobs[name]; ok && job.Enabled {
+			job.DependsOn = replaceDependency(job.DependsOn, "fmp_us_stocks", stockDependency)
+			cfg.Jobs[name] = job
+		}
 	}
 	if job, ok := cfg.Jobs["polygon_us_greeks"]; ok && job.Enabled {
 		job.DependsOn = replaceDependency(job.DependsOn, "fmp_us_stocks", stockDependency)
@@ -676,6 +715,11 @@ func buildSyncer(runtimeCfg config.Runtime, name string, job jobConfig, apiKey, 
 		return pipelinejobs.NewFMPUSFundamentals(pipelinejobs.FMPUSFundamentalsConfig{Provider: usmarket.NewFMPPEBackfillProvider(apiKey, job.FMPQuarterLimit), DSN: dsn, Symbols: job.Symbols, IncrementalMode: job.IncrementalMode, DiscoveryPageSize: job.DiscoveryPageSize, DiscoveryPageLimit: job.DiscoveryPageLimit, Workers: job.Workers, BatchSize: job.BatchSize, PageSize: job.PageSize, QPS: job.QPS, LimitSymbols: job.LimitSymbols, DistributedLimiter: limiterCfg, ColdStartFloorUTC: parseColdStart(job.ColdStartFloor)})
 	case "fmp_etf_fundamentals":
 		return pipelinejobs.NewFMPETFFundamentals(pipelinejobs.FMPETFFundamentalsConfig{APIKey: apiKey, DSN: dsn, Symbols: job.Symbols, SymbolMappings: job.SymbolMappings, BatchSize: job.BatchSize, QPS: job.QPS, MinCoverage: job.MinCoverage, DistributedLimiter: limiterCfg, ColdStartFloorUTC: parseColdStart(job.ColdStartFloor)})
+	case "fmp_sp500_macro", "fmp_nasdaq100_macro":
+		return pipelinejobs.NewGuruMacro(pipelinejobs.GuruMacroConfig{Dataset: job.Dataset, Source: "fmp", ColdStartFloorUTC: parseColdStart(job.ColdStartFloor), SyncFunc: func(ctx context.Context, conn driver.Conn, from, to time.Time, dryRun bool) (int64, error) {
+			res, err := macro.SyncFMPIndexShiller(ctx, conn, macro.FMPIndexShillerConfig{APIKey: apiKey, Dataset: job.Dataset, ConstituentUniverse: job.ConstituentUniverse, PriceSymbol: job.PriceSymbol, ReferenceSymbol: job.ReferenceSymbol, BatchSize: job.BatchSize, Workers: job.Workers, RollingQuarters: job.RollingQuarters, MinQuarters: job.MinQuarters}, from, to, dryRun)
+			return int64(res.ObservationRows), err
+		}})
 	case "polygon_us_flatfiles":
 		polygonSvc, err := service.NewPolygonServiceFromConfig(runtimeCfg, nil)
 		if err != nil {
@@ -687,7 +731,7 @@ func buildSyncer(runtimeCfg config.Runtime, name string, job jobConfig, apiKey, 
 	case "feature_store_backfill":
 		return pipelinejobs.NewFeatureStoreBackfill(pipelinejobs.FeatureStoreBackfillConfig{DSN: dsn, Markets: job.Markets, Underlyings: job.Underlyings, PriorityOrder: job.PriorityOrder, LookbackDays: job.LookbackDays, MinDaysToExpiry: job.MinDaysToExpiry, MaxDaysToExpiry: job.MaxDaysToExpiry, Workers: job.Workers, Replace: job.Replace, ColdStartFloorUTC: parseColdStart(job.ColdStartFloor)})
 	case "guru_macro":
-		return pipelinejobs.NewGuruMacro(pipelinejobs.GuruMacroConfig{Dataset: job.Dataset, ColdStartFloorUTC: parseColdStart(job.ColdStartFloor), SyncFunc: func(ctx context.Context, conn driver.Conn, from, to time.Time, dryRun bool) (int64, error) {
+		return pipelinejobs.NewGuruMacro(pipelinejobs.GuruMacroConfig{Dataset: job.Dataset, Source: "gurufocus", ColdStartFloorUTC: parseColdStart(job.ColdStartFloor), SyncFunc: func(ctx context.Context, conn driver.Conn, from, to time.Time, dryRun bool) (int64, error) {
 			res, err := macro.SyncGurufocusShiller(ctx, conn, macro.GurufocusShillerConfig{URL: job.URL, ReferenceSymbol: job.ReferenceSymbol, BatchSize: job.BatchSize}, from, to, dryRun)
 			return int64(res.ObservationRows), err
 		}})
@@ -722,7 +766,7 @@ func initSelectedSchemas(ctx context.Context, conn driver.Conn, cfg pipelineConf
 			continue
 		}
 		switch name {
-		case "fmp_us_stocks", "polygon_us_flatfiles", "polygon_us_greeks", "guru_macro":
+		case "fmp_us_stocks", "polygon_us_flatfiles", "polygon_us_greeks", "guru_macro", "fmp_sp500_macro", "fmp_nasdaq100_macro":
 			needsUSMarket = true
 		case "feature_store_backfill":
 			needsFeatureStore = true
@@ -734,7 +778,7 @@ func initSelectedSchemas(ctx context.Context, conn driver.Conn, cfg pipelineConf
 			}
 		}
 		switch name {
-		case "fmp_us_fundamentals", "fmp_etf_fundamentals", "guru_macro":
+		case "fmp_us_fundamentals", "fmp_etf_fundamentals", "guru_macro", "fmp_sp500_macro", "fmp_nasdaq100_macro":
 			needsFundamentals = true
 		case "fmp_forex":
 			needsForex = true
@@ -1001,6 +1045,10 @@ func snapshotTargetsForJob(spec syncpipeline.JobSpec) []snapshotTarget {
 		return []snapshotTarget{{Dataset: "US fundamentals", Table: "fundamental_observation", DateExpr: "event_ts", WhereSQL: "market = {market:String} AND factor_code IN ('pe','pb')", Args: []any{clickhouse.Named("market", "us-stocks")}, Qualifier: "pe/pb"}}
 	case "guru_macro":
 		return []snapshotTarget{{Dataset: "macro", Table: "macro_observation", DateExpr: "event_ts", WhereSQL: "dataset = {dataset:String} AND source = {source:String}", Args: []any{clickhouse.Named("dataset", macro.DefaultGurufocusShillerDataset), clickhouse.Named("source", "gurufocus")}, Qualifier: "gurufocus-shiller"}}
+	case "fmp_sp500_macro":
+		return []snapshotTarget{{Dataset: "macro", Table: "macro_observation", DateExpr: "event_ts", WhereSQL: "dataset = {dataset:String} AND source = {source:String}", Args: []any{clickhouse.Named("dataset", macro.DefaultFMPSP500Dataset), clickhouse.Named("source", "fmp")}, Qualifier: "fmp-sp500-shiller"}}
+	case "fmp_nasdaq100_macro":
+		return []snapshotTarget{{Dataset: "macro", Table: "macro_observation", DateExpr: "event_ts", WhereSQL: "dataset = {dataset:String} AND source = {source:String}", Args: []any{clickhouse.Named("dataset", macro.DefaultFMPNasdaq100Dataset), clickhouse.Named("source", "fmp")}, Qualifier: "fmp-nasdaq100-shiller"}}
 	case "polygon_us_flatfiles":
 		targets := make([]snapshotTarget, 0, 2)
 		if syncerHasAuditTarget(spec.Syncer, "us_stocks_bar_1m") {

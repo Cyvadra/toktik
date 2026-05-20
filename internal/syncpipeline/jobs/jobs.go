@@ -637,6 +637,7 @@ type MacroSyncFunc func(context.Context, driver.Conn, time.Time, time.Time, bool
 
 type GuruMacroConfig struct {
 	Dataset           string
+	Source            string
 	ColdStartFloorUTC time.Time
 	SyncFunc          MacroSyncFunc
 }
@@ -650,6 +651,9 @@ func NewGuruMacro(cfg GuruMacroConfig) (syncpipeline.Syncer, error) {
 	if strings.TrimSpace(cfg.Dataset) == "" {
 		cfg.Dataset = "gurufocus-shiller"
 	}
+	if strings.TrimSpace(cfg.Source) == "" {
+		cfg.Source = "gurufocus"
+	}
 	if cfg.ColdStartFloorUTC.IsZero() {
 		cfg.ColdStartFloorUTC = time.Date(1880, 1, 1, 0, 0, 0, 0, time.UTC)
 	}
@@ -661,7 +665,7 @@ func (s *guruMacro) SourceKeys(context.Context, driver.Conn) ([]string, error) {
 	return []string{syncpipeline.SingletonSourceKey}, nil
 }
 func (s *guruMacro) ResolveCursor(ctx context.Context, conn driver.Conn, _ string) (time.Time, bool, error) {
-	return queryLatestDate(ctx, conn, "macro_observation", "event_ts", "dataset = {dataset:String} AND source = {source:String}", clickhouse.Named("dataset", s.cfg.Dataset), clickhouse.Named("source", "gurufocus"))
+	return queryLatestDate(ctx, conn, "macro_observation", "event_ts", "dataset = {dataset:String} AND source = {source:String}", clickhouse.Named("dataset", s.cfg.Dataset), clickhouse.Named("source", s.cfg.Source))
 }
 func (s *guruMacro) ColdStartFloor(string) time.Time { return s.cfg.ColdStartFloorUTC }
 func (s *guruMacro) Sync(ctx context.Context, conn driver.Conn, req syncpipeline.SyncRequest) (syncpipeline.SyncResult, error) {
@@ -669,7 +673,7 @@ func (s *guruMacro) Sync(ctx context.Context, conn driver.Conn, req syncpipeline
 	return syncResult(req, rows), err
 }
 func (s *guruMacro) AuditTargets(string) []syncpipeline.AuditTarget {
-	return []syncpipeline.AuditTarget{{Table: "macro_observation", DateColumn: "toDate(event_ts)", KeyColumns: []string{"dataset", "factor_code", "event_ts", "known_at", "source", "revision"}, SourceFilter: fmt.Sprintf("dataset = '%s' AND source = 'gurufocus'", escapeStringLiteral(s.cfg.Dataset))}}
+	return []syncpipeline.AuditTarget{{Table: "macro_observation", DateColumn: "toDate(event_ts)", KeyColumns: []string{"dataset", "factor_code", "event_ts", "known_at", "source", "revision"}, SourceFilter: fmt.Sprintf("dataset = '%s' AND source = '%s'", escapeStringLiteral(s.cfg.Dataset), escapeStringLiteral(s.cfg.Source))}}
 }
 func (s *guruMacro) MaxConcurrency() int { return 1 }
 

@@ -46,6 +46,7 @@ func TestLoadRuntimeFromPathYAML(t *testing.T) {
 		"  flat_files_access_key: \"flat-access\"\n" +
 		"  flat_files_secret_key: \"flat-secret\"\n" +
 		"fmp:\n" +
+		"  cache_dir: \"/srv/toktik/fmp-cache\"\n" +
 		"  api_key: \"fmp-runtime-key\"\n")
 	if err := os.WriteFile(configPath, content, 0o644); err != nil {
 		t.Fatalf("WriteFile(%q) failed: %v", configPath, err)
@@ -111,6 +112,9 @@ func TestLoadRuntimeFromPathYAML(t *testing.T) {
 	if fmpAPIKey != "fmp-runtime-key" {
 		t.Fatalf("unexpected FMP api key: %q", fmpAPIKey)
 	}
+	if cfg.FMP.CacheDir != "/srv/toktik/fmp-cache" {
+		t.Fatalf("unexpected FMP cache dir: %q", cfg.FMP.CacheDir)
+	}
 }
 
 func TestLoadRuntimeFromPathEnvOverrides(t *testing.T) {
@@ -135,6 +139,7 @@ func TestLoadRuntimeFromPathEnvOverrides(t *testing.T) {
 	t.Setenv(EnvTigerServerURL, "https://tiger-env.example")
 	t.Setenv(EnvTigerDeviceID, "env-device")
 	t.Setenv(EnvFMPAPIKey, "env-fmp-key")
+	t.Setenv(EnvFMPCacheDir, "/env/fmp-cache")
 
 	cfg, err := LoadRuntimeFromPath(filepath.Join(t.TempDir(), "missing.yaml"))
 	if err != nil {
@@ -184,6 +189,9 @@ func TestLoadRuntimeFromPathEnvOverrides(t *testing.T) {
 	}
 	if fmpAPIKey != "env-fmp-key" {
 		t.Fatalf("unexpected FMP env override: %q", fmpAPIKey)
+	}
+	if cfg.FMP.CacheDir != "/env/fmp-cache" {
+		t.Fatalf("unexpected FMP cache dir override: %q", cfg.FMP.CacheDir)
 	}
 }
 

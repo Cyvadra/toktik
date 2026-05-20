@@ -16,6 +16,8 @@ import (
 
 const (
 	macroDatasetGurufocusShiller = "gurufocus-shiller"
+	macroDatasetFMPSP500Shiller  = "fmp-sp500-shiller"
+	macroDatasetFMPNDXShiller    = "fmp-nasdaq100-shiller"
 	macroIntervalEvent           = "event"
 	macroRealtimeForwardFill     = "forward_fill"
 	macroRealtimePriceScaled     = "price_scaled"
@@ -27,6 +29,8 @@ const (
 
 var supportedMacroDatasets = map[string]struct{}{
 	macroDatasetGurufocusShiller: {},
+	macroDatasetFMPSP500Shiller:  {},
+	macroDatasetFMPNDXShiller:    {},
 }
 
 type MacroService struct {
@@ -766,7 +770,14 @@ func normalizeMacroDataset(dataset string, required bool) (string, error) {
 }
 
 func virtualMacroFactorsForDataset(dataset string, _ []dto.MacroFactorCatalogEntry) map[string]macroVirtualFactor {
-	if dataset != "" && dataset != macroDatasetGurufocusShiller {
+	if dataset != "" {
+		if _, ok := supportedMacroDatasets[dataset]; !ok {
+			return map[string]macroVirtualFactor{}
+		}
+	} else {
+		dataset = macroDatasetGurufocusShiller
+	}
+	if dataset == "" {
 		return map[string]macroVirtualFactor{}
 	}
 	return map[string]macroVirtualFactor{

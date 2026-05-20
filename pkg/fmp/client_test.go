@@ -8,6 +8,27 @@ import (
 	"testing"
 )
 
+func TestClientUsesDiskCache(t *testing.T) {
+	var attempts int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&attempts, 1)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`[]`))
+	}))
+	defer server.Close()
+
+	client := New("test-key", WithHTTPClient(server.Client()), WithBaseURL(server.URL), WithCacheDir(t.TempDir()))
+	if _, err := client.IntradayPrices(context.Background(), "AAPL", Interval1Min, "2026-01-01", "2026-01-02"); err != nil {
+		t.Fatalf("first fetch failed: %v", err)
+	}
+	if _, err := client.IntradayPrices(context.Background(), "AAPL", Interval1Min, "2026-01-01", "2026-01-02"); err != nil {
+		t.Fatalf("second fetch failed: %v", err)
+	}
+	if got := atomic.LoadInt32(&attempts); got != 1 {
+		t.Fatalf("expected cached second fetch, got %d upstream requests", got)
+	}
+}
+
 func TestClientRetriesOnServerErrors(t *testing.T) {
 	var attempts int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

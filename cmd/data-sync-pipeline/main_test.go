@@ -33,6 +33,22 @@ func TestDefaultPipelineConfigEnablesETFFundamentalsForSPYAndIWM(t *testing.T) {
 	}
 }
 
+func TestDefaultPipelineConfigEnablesFMPMacroJobs(t *testing.T) {
+	cfg := defaultPipelineConfig()
+	for _, name := range []string{"fmp_sp500_macro", "fmp_nasdaq100_macro"} {
+		job, ok := cfg.Jobs[name]
+		if !ok {
+			t.Fatalf("expected %s job in default config", name)
+		}
+		if !job.Enabled {
+			t.Fatalf("expected %s enabled by default", name)
+		}
+		if job.ReferenceSymbol == "" || job.PriceSymbol == "" || job.ConstituentUniverse == "" {
+			t.Fatalf("expected %s to define reference_symbol, price_symbol, and constituent_universe", name)
+		}
+	}
+}
+
 func TestDefaultPipelineConfigDefinesFeatureStoreBackfillJob(t *testing.T) {
 	cfg := defaultPipelineConfig()
 	job, ok := cfg.Jobs["feature_store_backfill"]
@@ -96,6 +112,12 @@ func TestNormalizePipelineConfigSelectsPolygonUSStocks(t *testing.T) {
 	}
 	if got := strings.Join(cfg.Jobs["fmp_us_fundamentals"].DependsOn, ","); got != "polygon_us_flatfiles" {
 		t.Fatalf("expected fundamentals to depend on polygon stock bars, got %q", got)
+	}
+	if got := strings.Join(cfg.Jobs["fmp_sp500_macro"].DependsOn, ","); got != "polygon_us_flatfiles" {
+		t.Fatalf("expected fmp_sp500_macro to depend on polygon stock bars, got %q", got)
+	}
+	if got := strings.Join(cfg.Jobs["fmp_nasdaq100_macro"].DependsOn, ","); got != "polygon_us_flatfiles" {
+		t.Fatalf("expected fmp_nasdaq100_macro to depend on polygon stock bars, got %q", got)
 	}
 }
 

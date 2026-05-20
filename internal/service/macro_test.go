@@ -55,3 +55,15 @@ func TestResolveMacroAnchorValueDoesNotFallbackAcrossSymbols(t *testing.T) {
 		t.Fatalf("expected NaN when requested symbol anchor is missing, got %v", got)
 	}
 }
+
+func TestVirtualMacroFactorsForFMPShillerDatasets(t *testing.T) {
+	for _, dataset := range []string{macroDatasetFMPSP500Shiller, macroDatasetFMPNDXShiller} {
+		factors := virtualMacroFactorsForDataset(dataset, nil)
+		if _, ok := factors["pe10_live"]; !ok {
+			t.Fatalf("expected pe10_live virtual factor for %s", dataset)
+		}
+		if _, ok := factors["cape_earnings_yield_live"]; !ok {
+			t.Fatalf("expected cape_earnings_yield_live virtual factor for %s", dataset)
+		}
+	}
+}
