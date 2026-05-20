@@ -2,6 +2,7 @@ package service
 
 import (
 	"math"
+	"strings"
 	"testing"
 	"time"
 
@@ -143,6 +144,27 @@ func TestBuildUSOptionsCurrentIVSeriesUsesNearest30DayATM(t *testing.T) {
 	}
 	if series[1].Date != time.Date(2026, 5, 16, 0, 0, 0, 0, time.UTC) || series[1].Value != atmNextNear {
 		t.Fatalf("unexpected second point: %+v", series[1])
+	}
+}
+
+func TestBuildUSOptionsATMIVExprFallsBackToWiderWindows(t *testing.T) {
+	expr := buildUSOptionsATMIVExpr()
+	checks := []string{
+		"coalesce(",
+		"strike >= underlying_close * 0.98 AND strike <= underlying_close * 1.02",
+		"strike >= underlying_close * 0.97 AND strike <= underlying_close * 1.03",
+		"strike >= underlying_close * 0.95 AND strike <= underlying_close * 1.05",
+	}
+	for _, check := range checks {
+		if !strings.Contains(expr, check) {
+			t.Fatalf("expected expression to contain %q, got %s", check, expr)
+		}
+	}
+	first := strings.Index(expr, "0.98")
+	second := strings.Index(expr, "0.97")
+	third := strings.Index(expr, "0.95")
+	if !(first >= 0 && first < second && second < third) {
+		t.Fatalf("expected fallback windows ordered from narrow to wide, got %s", expr)
 	}
 }
 
@@ -409,5 +431,74 @@ func TestMergeDailyFeaturePanelRows(t *testing.T) {
 	}
 	if !row.IsEarlyClose || row.DaysFromPrevHoliday == nil || *row.DaysFromPrevHoliday != daysFromPrev || row.DaysToNextHoliday == nil || *row.DaysToNextHoliday != daysToNext {
 		t.Fatalf("unexpected event payload: %+v", row)
+	}
+}
+
+func TestFillVolatilityHistoryFallback(t *testing.T) {
+	hv20 := 0.24
+	currentIV := 0.31
+	rows := fillVolatilityHistoryFallback([]dto.FeatureVolatilityHistoryRow{
+		{
+			Date:              time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC),
+			PriceObservations: 252,
+			IVObservations:    252,
+			HV20:              &hv20,
+			CurrentIV:         &currentIV,
+		},
+		{Date: time.Date(2026, 4, 3, 0, 0, 0, 0, time.UTC)},
+		{Date: time.Date(2026, 4, 10, 0, 0, 0, 0, time.UTC)},
+	}, featureFallbackWindowDays)
+
+	if rows[1].HV20 == nil || *rows[1].HV20 != hv20 || rows[1].CurrentIV == nil || *rows[1].CurrentIV != currentIV {
+		t.Fatalf("expected 7-day fallback to fill missing row: %+v", rows[1])
+	}
+	if rows[2].HV20 != nil || rows[2].CurrentIV != nil {
+		t.Fatalf("expected fallback to stop after 7 days: %+v", rows[2])
+	}
+}
+
+func TestFillDailyPanelFallback(t *testing.T) {
+	hv20 := 0.24
+	currentIV := 0.31
+	frontDTE := 17
+	surfaceContracts := 22
+	frontExpiration := time.Date(2026, 4, 17, 0, 0, 0, 0, time.UTC)
+	openInterest := 1200.0
+	spread := 0.041
+	activityRatio := 0.5
+	tradabilityRatio := 0.4
+	rows := fillDailyPanelFallback([]dto.FeatureDailyPanelRow{
+		{
+			Date:                       time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC),
+			PriceObservations:          252,
+			IVObservations:             252,
+			HV20:                       &hv20,
+			CurrentIV:                  &currentIV,
+			FrontExpiration:            &frontExpiration,
+			FrontDaysToExpiry:          &frontDTE,
+			SurfaceContractCount:       &surfaceContracts,
+			LiquidityOpenInterest:      &openInterest,
+			LiquidityRelativeSpread:    &spread,
+			LiquidityTickCount:         120,
+			LiquidityVolume:            4500,
+			LiquidityTransactions:      210,
+			LiquidityContractCount:     10,
+			LiquidityActiveContracts:   5,
+			LiquidityTradableContracts: 4,
+			LiquidityActivityRatio:     &activityRatio,
+			LiquidityTradabilityRatio:  &tradabilityRatio,
+		},
+		{Date: time.Date(2026, 4, 4, 0, 0, 0, 0, time.UTC)},
+		{Date: time.Date(2026, 4, 10, 0, 0, 0, 0, time.UTC)},
+	}, featureFallbackWindowDays)
+
+	if rows[1].HV20 == nil || *rows[1].HV20 != hv20 || rows[1].CurrentIV == nil || *rows[1].CurrentIV != currentIV {
+		t.Fatalf("expected volatility fallback on panel row: %+v", rows[1])
+	}
+	if rows[1].FrontExpiration == nil || !rows[1].FrontExpiration.Equal(frontExpiration) || rows[1].LiquidityOpenInterest == nil || *rows[1].LiquidityOpenInterest != openInterest {
+		t.Fatalf("expected surface and liquidity fallback on panel row: %+v", rows[1])
+	}
+	if rows[2].HV20 != nil || rows[2].FrontExpiration != nil || rows[2].LiquidityOpenInterest != nil {
+		t.Fatalf("expected panel fallback to stop after 7 days: %+v", rows[2])
 	}
 }

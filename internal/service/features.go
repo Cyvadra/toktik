@@ -26,7 +26,14 @@ const (
 	featureLiquidityTable      = "feature_liquidity_snapshot_daily"
 	featureDailyPanelTable     = "feature_daily_panel_daily"
 	defaultPanelMaxDTE         = 365
+	featureFallbackWindowDays  = 7
 )
+
+var usOptionsATMWindowRatios = [][2]float64{
+	{0.98, 1.02},
+	{0.97, 1.03},
+	{0.95, 1.05},
+}
 
 type featurePoint struct {
 	Date  time.Time
@@ -1509,11 +1516,11 @@ func (s *FeatureService) latestLiquidityFeatureDate(ctx context.Context, market,
 }
 
 func (s *FeatureService) queryUSOptionsSurfaceAggregates(ctx context.Context, underlying string, from, to, asOf time.Time, minDTE, maxDTE int32) ([]usOptionsSurfaceAggregateRow, error) {
-	query := `SELECT
+	query := fmt.Sprintf(`SELECT
 	toDate(timestamp) AS as_of_date,
 	expiration,
 	dateDiff('day', toDate(timestamp), expiration) AS dte_days,
-	nullIf(avgIf(toFloat64(implied_volatility), isFinite(implied_volatility) AND implied_volatility > 0 AND strike >= underlying_close * 0.98 AND strike <= underlying_close * 1.02), 0) AS atm_iv,
+	%s AS atm_iv,
 	nullIf(avgIf(toFloat64(implied_volatility), isFinite(implied_volatility) AND implied_volatility > 0 AND option_type = 'C'), 0) AS call_iv,
 	nullIf(avgIf(toFloat64(implied_volatility), isFinite(implied_volatility) AND implied_volatility > 0 AND option_type = 'P'), 0) AS put_iv,
 	nullIf(avgIf(toFloat64(implied_volatility), isFinite(implied_volatility) AND implied_volatility > 0 AND option_type = 'C' AND strike > underlying_close * 1.02 AND strike <= underlying_close * 1.10), 0) AS otm_call_iv,
@@ -1521,7 +1528,7 @@ func (s *FeatureService) queryUSOptionsSurfaceAggregates(ctx context.Context, un
 	toUInt32(countIf(isFinite(implied_volatility) AND implied_volatility > 0)) AS contract_count
 FROM us_options_bar_1d
 WHERE underlying = {underlying:String}
-  AND expiration >= toDate(timestamp)`
+	  AND expiration >= toDate(timestamp)`, buildUSOptionsATMIVExpr())
 	args := []interface{}{clickhouse.Named("underlying", underlying)}
 	if !asOf.IsZero() {
 		query += `
@@ -1603,6 +1610,18 @@ ORDER BY as_of_date ASC, expiration ASC`
 		return nil, fmt.Errorf("iterate us-options surface aggregate rows: %w", err)
 	}
 	return aggregates, nil
+}
+
+func buildUSOptionsATMIVExpr() string {
+	parts := make([]string, 0, len(usOptionsATMWindowRatios))
+	for _, window := range usOptionsATMWindowRatios {
+		parts = append(parts, fmt.Sprintf(
+			"nullIf(avgIf(toFloat64(implied_volatility), isFinite(implied_volatility) AND implied_volatility > 0 AND strike >= underlying_close * %.2f AND strike <= underlying_close * %.2f), 0)",
+			window[0],
+			window[1],
+		))
+	}
+	return "coalesce(" + strings.Join(parts, ", ") + ")"
 }
 
 func (s *FeatureService) queryCryptoOptionsLiquidityAggregates(ctx context.Context, underlying string, from, to, asOf time.Time, minDTE, maxDTE int32) ([]cryptoLiquidityAggregateRow, error) {
@@ -2108,7 +2127,7 @@ WHERE market = {market:String}
   AND underlying = {underlying:String}
   AND lookback_days = {lookback_days:UInt16}
 ORDER BY as_of_date DESC
-LIMIT 1`, featureSnapshotTable),
+LIMIT %d`, featureSnapshotTable, featureFallbackWindowDays),
 		clickhouse.Named("market", market),
 		clickhouse.Named("underlying", underlying),
 		clickhouse.Named("lookback_days", uint16(lookbackDays)),
@@ -2117,32 +2136,40 @@ LIMIT 1`, featureSnapshotTable),
 		return nil, false, fmt.Errorf("query precomputed volatility snapshot: %w", err)
 	}
 	defer rows.Close()
-	if !rows.Next() {
+	historyDesc := make([]dto.FeatureVolatilityHistoryRow, 0, featureFallbackWindowDays)
+	for rows.Next() {
+		row, err := scanFeatureHistoryRow(rows)
+		if err != nil {
+			return nil, false, err
+		}
+		historyDesc = append(historyDesc, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, fmt.Errorf("iterate precomputed volatility snapshot: %w", err)
+	}
+	if len(historyDesc) == 0 {
 		return nil, false, nil
 	}
-	row, err := scanFeatureHistoryRow(rows)
-	if err != nil {
-		return nil, false, err
-	}
+	priceRow, ivRow := latestValidVolatilitySnapshotRows(historyDesc, featureFallbackWindowDays)
 	resp := &dto.FeatureVolatilitySnapshotResponse{
-		Market:            market,
-		Underlying:        underlying,
-		LookbackDays:      lookbackDays,
-		PriceObservations: row.PriceObservations,
-		IVObservations:    row.IVObservations,
-		HV10:              row.HV10,
-		HV20:              row.HV20,
-		HV30:              row.HV30,
-		CurrentIV:         row.CurrentIV,
-		IVPercentile:      row.IVPercentile,
-		IVRank:            row.IVRank,
+		Market:       market,
+		Underlying:   underlying,
+		LookbackDays: lookbackDays,
 	}
-	if row.HV10 != nil || row.HV20 != nil || row.HV30 != nil {
-		date := row.Date.UTC()
+	if priceRow != nil {
+		resp.PriceObservations = priceRow.PriceObservations
+		resp.HV10 = priceRow.HV10
+		resp.HV20 = priceRow.HV20
+		resp.HV30 = priceRow.HV30
+		date := priceRow.Date.UTC()
 		resp.PriceAsOf = &date
 	}
-	if row.CurrentIV != nil || row.IVPercentile != nil || row.IVRank != nil {
-		date := row.Date.UTC()
+	if ivRow != nil {
+		resp.IVObservations = ivRow.IVObservations
+		resp.CurrentIV = ivRow.CurrentIV
+		resp.IVPercentile = ivRow.IVPercentile
+		resp.IVRank = ivRow.IVRank
+		date := ivRow.Date.UTC()
 		resp.IVAsOf = &date
 	}
 	return resp, true, nil
@@ -2167,13 +2194,13 @@ FROM %s
 WHERE market = {market:String}
   AND underlying = {underlying:String}
   AND lookback_days = {lookback_days:UInt16}
-  AND as_of_date >= toDate({from:String})
+  AND as_of_date >= toDate({window_from:String})
   AND as_of_date < toDate({to:String})
 ORDER BY as_of_date ASC`, featureSnapshotTable),
 		clickhouse.Named("market", market),
 		clickhouse.Named("underlying", underlying),
 		clickhouse.Named("lookback_days", uint16(lookbackDays)),
-		clickhouse.Named("from", from.UTC().Format("2006-01-02")),
+		clickhouse.Named("window_from", featureFallbackWindowStart(from).Format("2006-01-02")),
 		clickhouse.Named("to", to.UTC().Format("2006-01-02")),
 	)
 	if err != nil {
@@ -2191,6 +2218,11 @@ ORDER BY as_of_date ASC`, featureSnapshotTable),
 	if err := rows.Err(); err != nil {
 		return nil, false, fmt.Errorf("iterate precomputed volatility history: %w", err)
 	}
+	if len(history) == 0 {
+		return nil, false, nil
+	}
+	history = fillVolatilityHistoryFallback(history, featureFallbackWindowDays)
+	history = trimVolatilityHistoryRange(history, from, to)
 	if len(history) == 0 {
 		return nil, false, nil
 	}
@@ -2513,7 +2545,7 @@ WHERE market = {market:String}
   AND lookback_days = {lookback_days:UInt16}
   AND min_days_to_expiry = {min_dte:Int32}
   AND max_days_to_expiry = {max_dte:Int32}
-  AND as_of_date >= toDate({from:String})
+  AND as_of_date >= toDate({window_from:String})
   AND as_of_date < toDate({to:String})
 ORDER BY as_of_date ASC`, featureDailyPanelTable),
 		clickhouse.Named("market", market),
@@ -2521,7 +2553,7 @@ ORDER BY as_of_date ASC`, featureDailyPanelTable),
 		clickhouse.Named("lookback_days", uint16(lookbackDays)),
 		clickhouse.Named("min_dte", minDTE),
 		clickhouse.Named("max_dte", maxDTE),
-		clickhouse.Named("from", from.UTC().Format("2006-01-02")),
+		clickhouse.Named("window_from", featureFallbackWindowStart(from).Format("2006-01-02")),
 		clickhouse.Named("to", to.UTC().Format("2006-01-02")),
 	)
 	if err != nil {
@@ -2622,6 +2654,11 @@ ORDER BY as_of_date ASC`, featureDailyPanelTable),
 	if err := rows.Err(); err != nil {
 		return nil, false, fmt.Errorf("iterate precomputed daily feature panel rows: %w", err)
 	}
+	if len(data) == 0 {
+		return nil, false, nil
+	}
+	data = fillDailyPanelFallback(data, featureFallbackWindowDays)
+	data = trimDailyPanelRange(data, from, to)
 	if len(data) == 0 {
 		return nil, false, nil
 	}
@@ -3351,6 +3388,164 @@ func summarizeLiquidityHistory(rows []dto.FeatureLiquidityHistoryRow) map[string
 		result[key] = item.featureLiquidityPanelSummary
 	}
 	return result
+}
+
+func featureFallbackWindowStart(from time.Time) time.Time {
+	return from.UTC().AddDate(0, 0, -featureFallbackWindowDays)
+}
+
+func latestValidVolatilitySnapshotRows(rowsDesc []dto.FeatureVolatilityHistoryRow, maxDays int) (*dto.FeatureVolatilityHistoryRow, *dto.FeatureVolatilityHistoryRow) {
+	if len(rowsDesc) == 0 {
+		return nil, nil
+	}
+	latestDate := rowsDesc[0].Date.UTC()
+	var priceRow *dto.FeatureVolatilityHistoryRow
+	var ivRow *dto.FeatureVolatilityHistoryRow
+	for index := range rowsDesc {
+		row := rowsDesc[index]
+		if latestDate.Sub(row.Date.UTC()) > time.Duration(maxDays)*24*time.Hour {
+			break
+		}
+		if priceRow == nil && volatilityPriceGroupPresent(row) {
+			copy := row
+			priceRow = &copy
+		}
+		if ivRow == nil && volatilityIVGroupPresent(row) {
+			copy := row
+			ivRow = &copy
+		}
+		if priceRow != nil && ivRow != nil {
+			break
+		}
+	}
+	return priceRow, ivRow
+}
+
+func fillVolatilityHistoryFallback(rows []dto.FeatureVolatilityHistoryRow, maxDays int) []dto.FeatureVolatilityHistoryRow {
+	filled := append([]dto.FeatureVolatilityHistoryRow(nil), rows...)
+	var lastPrice *dto.FeatureVolatilityHistoryRow
+	var lastIV *dto.FeatureVolatilityHistoryRow
+	for index := range filled {
+		row := &filled[index]
+		if volatilityPriceGroupPresent(*row) {
+			copy := *row
+			lastPrice = &copy
+		} else if lastPrice != nil && row.Date.UTC().Sub(lastPrice.Date.UTC()) <= time.Duration(maxDays)*24*time.Hour {
+			row.PriceObservations = lastPrice.PriceObservations
+			row.HV10 = lastPrice.HV10
+			row.HV20 = lastPrice.HV20
+			row.HV30 = lastPrice.HV30
+		}
+		if volatilityIVGroupPresent(*row) {
+			copy := *row
+			lastIV = &copy
+		} else if lastIV != nil && row.Date.UTC().Sub(lastIV.Date.UTC()) <= time.Duration(maxDays)*24*time.Hour {
+			row.IVObservations = lastIV.IVObservations
+			row.CurrentIV = lastIV.CurrentIV
+			row.IVPercentile = lastIV.IVPercentile
+			row.IVRank = lastIV.IVRank
+		}
+	}
+	return filled
+}
+
+func trimVolatilityHistoryRange(rows []dto.FeatureVolatilityHistoryRow, from, to time.Time) []dto.FeatureVolatilityHistoryRow {
+	trimmed := make([]dto.FeatureVolatilityHistoryRow, 0, len(rows))
+	for _, row := range rows {
+		if !row.Date.Before(from) && row.Date.Before(to) {
+			trimmed = append(trimmed, row)
+		}
+	}
+	return trimmed
+}
+
+func fillDailyPanelFallback(rows []dto.FeatureDailyPanelRow, maxDays int) []dto.FeatureDailyPanelRow {
+	filled := append([]dto.FeatureDailyPanelRow(nil), rows...)
+	var lastVolPrice *dto.FeatureDailyPanelRow
+	var lastVolIV *dto.FeatureDailyPanelRow
+	var lastSurface *dto.FeatureDailyPanelRow
+	var lastLiquidity *dto.FeatureDailyPanelRow
+	for index := range filled {
+		row := &filled[index]
+		if dailyPanelVolatilityPricePresent(*row) {
+			copy := *row
+			lastVolPrice = &copy
+		} else if lastVolPrice != nil && row.Date.UTC().Sub(lastVolPrice.Date.UTC()) <= time.Duration(maxDays)*24*time.Hour {
+			row.PriceObservations = lastVolPrice.PriceObservations
+			row.HV10 = lastVolPrice.HV10
+			row.HV20 = lastVolPrice.HV20
+			row.HV30 = lastVolPrice.HV30
+		}
+		if dailyPanelVolatilityIVPresent(*row) {
+			copy := *row
+			lastVolIV = &copy
+		} else if lastVolIV != nil && row.Date.UTC().Sub(lastVolIV.Date.UTC()) <= time.Duration(maxDays)*24*time.Hour {
+			row.IVObservations = lastVolIV.IVObservations
+			row.CurrentIV = lastVolIV.CurrentIV
+			row.IVPercentile = lastVolIV.IVPercentile
+			row.IVRank = lastVolIV.IVRank
+		}
+		if dailyPanelSurfacePresent(*row) {
+			copy := *row
+			lastSurface = &copy
+		} else if lastSurface != nil && row.Date.UTC().Sub(lastSurface.Date.UTC()) <= time.Duration(maxDays)*24*time.Hour {
+			row.FrontExpiration = lastSurface.FrontExpiration
+			row.FrontDaysToExpiry = lastSurface.FrontDaysToExpiry
+			row.FrontATMIV = lastSurface.FrontATMIV
+			row.FrontPutCallSkew = lastSurface.FrontPutCallSkew
+			row.SurfaceContractCount = lastSurface.SurfaceContractCount
+		}
+		if dailyPanelLiquidityPresent(*row) {
+			copy := *row
+			lastLiquidity = &copy
+		} else if lastLiquidity != nil && row.Date.UTC().Sub(lastLiquidity.Date.UTC()) <= time.Duration(maxDays)*24*time.Hour {
+			row.LiquidityOpenInterest = lastLiquidity.LiquidityOpenInterest
+			row.LiquidityRelativeSpread = lastLiquidity.LiquidityRelativeSpread
+			row.LiquidityTickCount = lastLiquidity.LiquidityTickCount
+			row.LiquidityVolume = lastLiquidity.LiquidityVolume
+			row.LiquidityTransactions = lastLiquidity.LiquidityTransactions
+			row.LiquidityContractCount = lastLiquidity.LiquidityContractCount
+			row.LiquidityActiveContracts = lastLiquidity.LiquidityActiveContracts
+			row.LiquidityTradableContracts = lastLiquidity.LiquidityTradableContracts
+			row.LiquidityActivityRatio = lastLiquidity.LiquidityActivityRatio
+			row.LiquidityTradabilityRatio = lastLiquidity.LiquidityTradabilityRatio
+		}
+	}
+	return filled
+}
+
+func trimDailyPanelRange(rows []dto.FeatureDailyPanelRow, from, to time.Time) []dto.FeatureDailyPanelRow {
+	trimmed := make([]dto.FeatureDailyPanelRow, 0, len(rows))
+	for _, row := range rows {
+		if !row.Date.Before(from) && row.Date.Before(to) {
+			trimmed = append(trimmed, row)
+		}
+	}
+	return trimmed
+}
+
+func volatilityPriceGroupPresent(row dto.FeatureVolatilityHistoryRow) bool {
+	return row.HV10 != nil || row.HV20 != nil || row.HV30 != nil
+}
+
+func volatilityIVGroupPresent(row dto.FeatureVolatilityHistoryRow) bool {
+	return row.CurrentIV != nil || row.IVPercentile != nil || row.IVRank != nil
+}
+
+func dailyPanelVolatilityPricePresent(row dto.FeatureDailyPanelRow) bool {
+	return row.HV10 != nil || row.HV20 != nil || row.HV30 != nil
+}
+
+func dailyPanelVolatilityIVPresent(row dto.FeatureDailyPanelRow) bool {
+	return row.CurrentIV != nil || row.IVPercentile != nil || row.IVRank != nil
+}
+
+func dailyPanelSurfacePresent(row dto.FeatureDailyPanelRow) bool {
+	return row.FrontExpiration != nil || row.FrontDaysToExpiry != nil || row.FrontATMIV != nil || row.FrontPutCallSkew != nil || row.SurfaceContractCount != nil
+}
+
+func dailyPanelLiquidityPresent(row dto.FeatureDailyPanelRow) bool {
+	return row.LiquidityOpenInterest != nil || row.LiquidityRelativeSpread != nil || row.LiquidityTickCount > 0 || row.LiquidityVolume > 0 || row.LiquidityTransactions > 0 || row.LiquidityContractCount > 0 || row.LiquidityActiveContracts > 0 || row.LiquidityTradableContracts > 0 || row.LiquidityActivityRatio != nil || row.LiquidityTradabilityRatio != nil
 }
 
 func summarizeUSOptionsSurfaceHistory(rows []usOptionsSurfaceAggregateRow) map[string]featureSurfacePanelSummary {
