@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"sort"
 	"strings"
 	"time"
 
+	clickhouse "github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/Cyvadra/toktik/internal/cache"
 	"github.com/Cyvadra/toktik/internal/chquery"
 	"github.com/Cyvadra/toktik/internal/chrepo"
@@ -21,6 +23,21 @@ type ScreenerService struct {
 	repo        *chrepo.Repo
 	cache       cache.Store
 	companyInfo usStockCompanyProfileProvider
+}
+
+type usTurnoverStockCandidate struct {
+	Underlying       string
+	JoinUnderlying   string
+	StockTurnoverUSD float64
+	StockVolume      float64
+	StockTradingDays int
+}
+
+type usTurnoverOptionAggregate struct {
+	JoinUnderlying    string
+	OptionTurnoverUSD float64
+	OptionVolume      float64
+	OptionTradingDays int
 }
 
 func NewScreenerService(repo *chrepo.Repo, cacheStore ...cache.Store) *ScreenerService {
@@ -53,97 +70,46 @@ func (s *ScreenerService) ScreenUSTurnoverIntersection(ctx context.Context, req 
 		return cached, nil
 	}
 
-	query := fmt.Sprintf(`
-WITH stock_days AS (
-	SELECT market_date
-	FROM (
-		SELECT DISTINCT toDate(timestamp) AS market_date
-		FROM us_stocks_bar_1d
-		ORDER BY market_date DESC
-		LIMIT %d
-	)
-), option_days AS (
-	SELECT market_date
-	FROM (
-		SELECT DISTINCT toDate(timestamp) AS market_date
-		FROM us_options_bar_1d
-		ORDER BY market_date DESC
-		LIMIT %d
-	)
-)
-SELECT
-	stocks.underlying,
-	stocks.stock_turnover_usd,
-	stocks.stock_volume,
-	stocks.stock_trading_days,
-	options.option_turnover_usd,
-	options.option_volume,
-	options.option_trading_days,
-	stocks.stock_turnover_usd + options.option_turnover_usd AS combined_turnover_usd
-FROM (
-	SELECT
-		symbol AS underlying,
-		%s AS join_underlying,
-		sum(toFloat64(close) * toFloat64(volume)) AS stock_turnover_usd,
-		sum(toFloat64(volume)) AS stock_volume,
-		toUInt32(countDistinct(toDate(timestamp))) AS stock_trading_days
-	FROM us_stocks_bar_1d
-	WHERE toDate(timestamp) IN (SELECT market_date FROM stock_days)
-	%s
-	GROUP BY underlying, join_underlying
-	ORDER BY stock_turnover_usd DESC, underlying ASC
-	LIMIT %d
-) AS stocks
-INNER JOIN (
-	SELECT
-		underlying,
-		underlying AS join_underlying,
-		sum(toFloat64(close) * toFloat64(volume) * 100.0) AS option_turnover_usd,
-		sum(toFloat64(volume)) AS option_volume,
-		toUInt32(countDistinct(toDate(timestamp))) AS option_trading_days
-	FROM us_options_bar_1d
-	WHERE toDate(timestamp) IN (SELECT market_date FROM option_days)
-	GROUP BY underlying, join_underlying
-	ORDER BY option_turnover_usd DESC, underlying ASC
-	LIMIT %d
-) AS options ON stocks.join_underlying = options.join_underlying
-ORDER BY combined_turnover_usd DESC, stocks.underlying ASC
-LIMIT %d`, lookbackDays, lookbackDays, stockUnderlyingOptionAliasExpr("symbol"), stockUniverseFilter, candidateLimit, candidateLimit, limit)
-
-	rows, err := s.repo.Query(ctx, query)
+	stockCandidates, err := s.loadUSTurnoverIntersectionStockCandidates(ctx, lookbackDays, candidateLimit, stockUniverseFilter)
 	if err != nil {
-		return nil, fmt.Errorf("screen us turnover intersection: %w", err)
+		return nil, fmt.Errorf("screen us turnover intersection stock candidates: %w", err)
 	}
-	defer rows.Close()
-
 	results := make([]dto.ScreenedUSTurnoverIntersectionRow, 0, limit)
-	for rows.Next() {
-		var r dto.ScreenedUSTurnoverIntersectionRow
-		var stockTradingDays uint32
-		var optionTradingDays uint32
-		if err := rows.Scan(
-			&r.Underlying,
-			&r.StockTurnoverUSD,
-			&r.StockVolume,
-			&stockTradingDays,
-			&r.OptionTurnoverUSD,
-			&r.OptionVolume,
-			&optionTradingDays,
-			&r.CombinedTurnoverUSD,
-		); err != nil {
-			return nil, fmt.Errorf("scan us turnover intersection row: %w", err)
+	if len(stockCandidates) > 0 {
+		joinUnderlyings := make([]string, 0, len(stockCandidates))
+		for _, candidate := range stockCandidates {
+			joinUnderlyings = append(joinUnderlyings, candidate.JoinUnderlying)
 		}
-		r.StockTradingDays = int(stockTradingDays)
-		r.OptionTradingDays = int(optionTradingDays)
-		r.StockTurnoverUSD = sanitizeFloatValue(r.StockTurnoverUSD)
-		r.StockVolume = sanitizeFloatValue(r.StockVolume)
-		r.OptionTurnoverUSD = sanitizeFloatValue(r.OptionTurnoverUSD)
-		r.OptionVolume = sanitizeFloatValue(r.OptionVolume)
-		r.CombinedTurnoverUSD = sanitizeFloatValue(r.CombinedTurnoverUSD)
-		results = append(results, r)
+		optionAggregates, err := s.loadUSTurnoverIntersectionOptionAggregates(ctx, lookbackDays, joinUnderlyings)
+		if err != nil {
+			return nil, fmt.Errorf("screen us turnover intersection option aggregates: %w", err)
+		}
+		for _, candidate := range stockCandidates {
+			optionAggregate, ok := optionAggregates[candidate.JoinUnderlying]
+			if !ok {
+				continue
+			}
+			row := dto.ScreenedUSTurnoverIntersectionRow{
+				Underlying:          candidate.Underlying,
+				StockTurnoverUSD:    sanitizeFloatValue(candidate.StockTurnoverUSD),
+				StockVolume:         sanitizeFloatValue(candidate.StockVolume),
+				StockTradingDays:    candidate.StockTradingDays,
+				OptionTurnoverUSD:   sanitizeFloatValue(optionAggregate.OptionTurnoverUSD),
+				OptionVolume:        sanitizeFloatValue(optionAggregate.OptionVolume),
+				OptionTradingDays:   optionAggregate.OptionTradingDays,
+				CombinedTurnoverUSD: sanitizeFloatValue(candidate.StockTurnoverUSD + optionAggregate.OptionTurnoverUSD),
+			}
+			results = append(results, row)
+		}
 	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate us turnover intersection rows: %w", err)
+	sort.SliceStable(results, func(i, j int) bool {
+		if results[i].CombinedTurnoverUSD == results[j].CombinedTurnoverUSD {
+			return results[i].Underlying < results[j].Underlying
+		}
+		return results[i].CombinedTurnoverUSD > results[j].CombinedTurnoverUSD
+	})
+	if len(results) > limit {
+		results = results[:limit]
 	}
 	if req.NonETFOnly {
 		results = s.filterNonETFUSTurnoverResults(ctx, results)
@@ -160,6 +126,116 @@ LIMIT %d`, lookbackDays, lookbackDays, stockUnderlyingOptionAliasExpr("symbol"),
 	}
 	_ = s.storeUSTurnoverIntersectionInCache(ctx, cacheKey, resp)
 	return resp, nil
+}
+
+func (s *ScreenerService) loadUSTurnoverIntersectionStockCandidates(ctx context.Context, lookbackDays, candidateLimit int, stockUniverseFilter string) ([]usTurnoverStockCandidate, error) {
+	query := fmt.Sprintf(`
+WITH stock_start_date AS (
+	SELECT min(market_date) AS start_date
+	FROM (
+		SELECT DISTINCT toDate(timestamp) AS market_date
+		FROM us_stocks_bar_1d
+		ORDER BY market_date DESC
+		LIMIT %d
+	)
+)
+SELECT
+	symbol AS underlying,
+	%s AS join_underlying,
+	sum(toFloat64(close) * toFloat64(volume)) AS stock_turnover_usd,
+	sum(toFloat64(volume)) AS stock_volume,
+	toUInt32(countDistinct(toDate(timestamp))) AS stock_trading_days
+FROM us_stocks_bar_1d
+WHERE timestamp >= (
+	SELECT toDateTime(start_date, 'UTC')
+	FROM stock_start_date
+)
+%s
+GROUP BY underlying, join_underlying
+ORDER BY stock_turnover_usd DESC, underlying ASC
+LIMIT %d`, lookbackDays, stockUnderlyingOptionAliasExpr("symbol"), stockUniverseFilter, candidateLimit)
+
+	rows, err := s.repo.Query(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	results := make([]usTurnoverStockCandidate, 0, candidateLimit)
+	for rows.Next() {
+		var candidate usTurnoverStockCandidate
+		var stockTradingDays uint32
+		if err := rows.Scan(
+			&candidate.Underlying,
+			&candidate.JoinUnderlying,
+			&candidate.StockTurnoverUSD,
+			&candidate.StockVolume,
+			&stockTradingDays,
+		); err != nil {
+			return nil, fmt.Errorf("scan us turnover stock candidate: %w", err)
+		}
+		candidate.StockTradingDays = int(stockTradingDays)
+		results = append(results, candidate)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate us turnover stock candidates: %w", err)
+	}
+	return results, nil
+}
+
+func (s *ScreenerService) loadUSTurnoverIntersectionOptionAggregates(ctx context.Context, lookbackDays int, joinUnderlyings []string) (map[string]usTurnoverOptionAggregate, error) {
+	if len(joinUnderlyings) == 0 {
+		return map[string]usTurnoverOptionAggregate{}, nil
+	}
+	query := fmt.Sprintf(`
+WITH option_start_date AS (
+	SELECT min(market_date) AS start_date
+	FROM (
+		SELECT DISTINCT toDate(timestamp) AS market_date
+		FROM us_options_bar_1d
+		ORDER BY market_date DESC
+		LIMIT %d
+	)
+)
+SELECT
+	underlying AS join_underlying,
+	sum(toFloat64(close) * toFloat64(volume) * 100.0) AS option_turnover_usd,
+	sum(toFloat64(volume)) AS option_volume,
+	toUInt32(countDistinct(toDate(timestamp))) AS option_trading_days
+FROM us_options_bar_1d
+WHERE underlying IN ({underlyings:Array(String)})
+	AND timestamp >= (
+		SELECT toDateTime(start_date, 'UTC')
+		FROM option_start_date
+	)
+GROUP BY join_underlying
+ORDER BY option_turnover_usd DESC, join_underlying ASC`, lookbackDays)
+
+	rows, err := s.repo.Query(ctx, query, clickhouse.Named("underlyings", joinUnderlyings))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	results := make(map[string]usTurnoverOptionAggregate, len(joinUnderlyings))
+	for rows.Next() {
+		var aggregate usTurnoverOptionAggregate
+		var optionTradingDays uint32
+		if err := rows.Scan(
+			&aggregate.JoinUnderlying,
+			&aggregate.OptionTurnoverUSD,
+			&aggregate.OptionVolume,
+			&optionTradingDays,
+		); err != nil {
+			return nil, fmt.Errorf("scan us turnover option aggregate: %w", err)
+		}
+		aggregate.OptionTradingDays = int(optionTradingDays)
+		results[aggregate.JoinUnderlying] = aggregate
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate us turnover option aggregates: %w", err)
+	}
+	return results, nil
 }
 
 func (s *ScreenerService) ScreenUnderlyings(ctx context.Context, req dto.ScreenUnderlyingRequest) (*dto.ScreenUnderlyingResponse, error) {
