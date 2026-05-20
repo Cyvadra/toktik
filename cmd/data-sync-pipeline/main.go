@@ -926,6 +926,9 @@ func printIntegrityReport(report dataintegrity.Report) {
 		if len(finding.Samples) > 0 {
 			fmt.Printf("  samples: %s\n", strings.Join(finding.Samples, ", "))
 		}
+		if len(finding.Offenders) > 0 {
+			fmt.Printf("  offenders: %s\n", strings.Join(finding.Offenders, ", "))
+		}
 	}
 	for _, repair := range report.Repairs {
 		fmt.Printf("repair %-22s action=%q status=%s", repair.Target, repair.Action, repair.Status)

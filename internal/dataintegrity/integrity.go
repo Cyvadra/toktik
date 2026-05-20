@@ -101,6 +101,7 @@ type Finding struct {
 	FirstMissingDate string   `json:"first_missing_date,omitempty"`
 	LastMissingDate  string   `json:"last_missing_date,omitempty"`
 	Samples          []string `json:"samples,omitempty"`
+	Offenders        []string `json:"offenders,omitempty"`
 	// AffectedMonths lists the YYYYMM partitions (sorted) that contributed
 	// MissingKeys > 0 for this finding. Used by the repair path to scope
 	// rebuilds to only the partitions that need it.
@@ -837,6 +838,16 @@ LEFT JOIN factors ON stock_symbols.symbol = factors.symbol AND factor = factors.
 WHERE factors.symbol = ''
 ORDER BY stock_symbols.symbol, factor
 LIMIT %d`, whereStocks, whereFundamentals, req.MaxSamples)+req.clickhouseSettingsClause(), args)
+		findings[0].Offenders = c.bestEffortSamples(ctx, fmt.Sprintf(`WITH
+stock_symbols AS (SELECT symbol FROM us_stocks_bar_1m WHERE %s GROUP BY symbol),
+factors AS (SELECT symbol, factor_code FROM fundamental_observation WHERE %s GROUP BY symbol, factor_code)
+SELECT concat(stock_symbols.symbol, ':missing=', toString(count()))
+FROM stock_symbols ARRAY JOIN ['pe','pb'] AS factor
+LEFT JOIN factors ON stock_symbols.symbol = factors.symbol AND factor = factors.factor_code
+WHERE factors.symbol = ''
+GROUP BY stock_symbols.symbol
+ORDER BY count() DESC, stock_symbols.symbol ASC
+LIMIT %d`, whereStocks, whereFundamentals, req.MaxSamples)+req.clickhouseSettingsClause(), args)
 	}
 	findings = append(findings, Finding{
 		Target:      TargetFundamentals,
@@ -846,6 +857,20 @@ LIMIT %d`, whereStocks, whereFundamentals, req.MaxSamples)+req.clickhouseSetting
 		Table:       "fundamental_observation",
 		MissingKeys: staleFactors,
 	})
+	if staleFactors > 0 {
+		findings[1].Offenders = c.bestEffortSamples(ctx, fmt.Sprintf(`WITH latest AS (
+SELECT symbol, factor_code, max(known_at) AS latest_known
+FROM fundamental_observation
+WHERE %s
+GROUP BY symbol, factor_code
+)
+SELECT concat(symbol, ':stale=', toString(count()), ':latest_known=', toString(max(latest_known)))
+FROM latest
+WHERE latest_known < parseDateTimeBestEffort({stale_before:String})
+GROUP BY symbol
+ORDER BY count() DESC, symbol ASC
+LIMIT %d`, whereFundamentals, req.MaxSamples)+req.clickhouseSettingsClause(), args)
+	}
 	req.progressf("integrity progress: target=%s finished findings=%d", TargetFundamentals, len(findings))
 	return findings, nil
 }
@@ -898,6 +923,22 @@ WHERE %s`, where) + req.clickhouseSettingsClause()
 		featureFinding("volatility-iv-percentile-bounds", "feature_volatility_snapshot_daily", badPercentile, rows, "volatility rows have iv_percentile outside 0..100"),
 		featureFinding("volatility-iv-rank-bounds", "feature_volatility_snapshot_daily", badRank, rows, "volatility rows have iv_rank outside 0..100"),
 	}
+	if missingHV > 0 {
+		findings[0].Offenders = c.bestEffortSamples(ctx, fmt.Sprintf(`SELECT concat(underlying, ':missing_hv=', toString(count()), ':lt30_price_obs=', toString(countIf(price_observations < 30)))
+FROM feature_volatility_snapshot_daily
+WHERE %s AND (hv10 IS NULL OR hv20 IS NULL OR hv30 IS NULL)
+GROUP BY underlying
+ORDER BY count() DESC, underlying ASC
+LIMIT %d`, where, req.MaxSamples)+req.clickhouseSettingsClause(), args)
+	}
+	if missingIV > 0 {
+		findings[1].Offenders = c.bestEffortSamples(ctx, fmt.Sprintf(`SELECT concat(underlying, ':missing_iv=', toString(count()), ':zero_iv_obs=', toString(countIf(iv_observations = 0)))
+FROM feature_volatility_snapshot_daily
+WHERE %s AND current_iv IS NULL
+GROUP BY underlying
+ORDER BY count() DESC, underlying ASC
+LIMIT %d`, where, req.MaxSamples)+req.clickhouseSettingsClause(), args)
+	}
 	if isStaleDateTime(latestUpdate, req.FeatureStale) {
 		findings = append(findings, Finding{Target: TargetFeatures, Check: "volatility-freshness", Severity: SeverityWarning, Table: "feature_volatility_snapshot_daily", Message: fmt.Sprintf("latest volatility feature update %s is older than %s", latestUpdate, req.FeatureStale), MissingKeys: 1})
 	} else {
@@ -936,6 +977,30 @@ WHERE %s`, where) + req.clickhouseSettingsClause()
 		featureFinding("daily-panel-hv", "feature_daily_panel_daily", missingHV, rows, "daily panel rows missing one of hv10/hv20/hv30"),
 		featureFinding("daily-panel-iv", "feature_daily_panel_daily", missingIV, rows, "daily panel rows missing current_iv"),
 		featureFinding("daily-panel-liquidity", "feature_daily_panel_daily", missingLiquidity, rows, "daily panel rows have zero liquidity_contract_count"),
+	}
+	if missingHV > 0 {
+		findings[0].Offenders = c.bestEffortSamples(ctx, fmt.Sprintf(`SELECT concat(underlying, ':missing_hv=', toString(count()), ':lt30_price_obs=', toString(countIf(price_observations < 30)))
+FROM feature_daily_panel_daily
+WHERE %s AND (hv10 IS NULL OR hv20 IS NULL OR hv30 IS NULL)
+GROUP BY underlying
+ORDER BY count() DESC, underlying ASC
+LIMIT %d`, where, req.MaxSamples)+req.clickhouseSettingsClause(), args)
+	}
+	if missingIV > 0 {
+		findings[1].Offenders = c.bestEffortSamples(ctx, fmt.Sprintf(`SELECT concat(underlying, ':missing_iv=', toString(count()), ':zero_iv_obs=', toString(countIf(iv_observations = 0)))
+FROM feature_daily_panel_daily
+WHERE %s AND current_iv IS NULL
+GROUP BY underlying
+ORDER BY count() DESC, underlying ASC
+LIMIT %d`, where, req.MaxSamples)+req.clickhouseSettingsClause(), args)
+	}
+	if missingLiquidity > 0 {
+		findings[2].Offenders = c.bestEffortSamples(ctx, fmt.Sprintf(`SELECT concat(underlying, ':missing_liquidity=', toString(count()), ':zero_tradable=', toString(countIf(liquidity_tradable_contract_count = 0)), ':zero_surface=', toString(countIf(surface_contract_count <= 0)))
+FROM feature_daily_panel_daily
+WHERE %s AND liquidity_contract_count = 0
+GROUP BY underlying
+ORDER BY count() DESC, underlying ASC
+LIMIT %d`, where, req.MaxSamples)+req.clickhouseSettingsClause(), args)
 	}
 	if isStaleDateTime(latestUpdate, req.FeatureStale) {
 		findings = append(findings, Finding{Target: TargetFeatures, Check: "daily-panel-freshness", Severity: SeverityWarning, Table: "feature_daily_panel_daily", Message: fmt.Sprintf("latest daily panel update %s is older than %s", latestUpdate, req.FeatureStale), MissingKeys: 1})
