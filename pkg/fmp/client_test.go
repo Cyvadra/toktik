@@ -4,9 +4,42 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 )
+
+func TestProfilesUsesCommaSeparatedSymbolList(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/profile" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		if got := r.URL.Query().Get("symbol"); got != "AAPL,SLV" {
+			t.Fatalf("unexpected symbol query %q", got)
+		}
+		if got := r.URL.Query().Get("apikey"); got != "test-key" {
+			t.Fatalf("unexpected api key %q", got)
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`[{"symbol":"AAPL","sector":"Technology"},{"symbol":"SLV","isEtf":true}]`))
+	}))
+	defer server.Close()
+
+	client := New("test-key", WithHTTPClient(server.Client()), WithBaseURL(server.URL))
+	profiles, err := client.Profiles(context.Background(), []string{"AAPL", "SLV", "AAPL", " "})
+	if err != nil {
+		t.Fatalf("profiles: %v", err)
+	}
+	if len(profiles) != 2 {
+		t.Fatalf("expected 2 profiles, got %d", len(profiles))
+	}
+	if profiles[0].Symbol != "AAPL" || profiles[1].Symbol != "SLV" || !profiles[1].IsETF {
+		t.Fatalf("unexpected profiles: %#v", profiles)
+	}
+	if strings.TrimSpace(profiles[0].Sector) != "Technology" {
+		t.Fatalf("unexpected sector: %#v", profiles[0])
+	}
+}
 
 func TestClientUsesDiskCache(t *testing.T) {
 	var attempts int32

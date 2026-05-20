@@ -26,12 +26,16 @@ const (
 // FundamentalsService exposes catalog, series, snapshot and panel queries
 // over the symbol-bound fundamental observation store.
 type FundamentalsService struct {
-	repo *chrepo.Repo
+	repo     *chrepo.Repo
+	virtuals *virtualFundamentalsProvider
 }
 
 // NewFundamentalsService builds the service over the shared ClickHouse repo.
 func NewFundamentalsService(repo *chrepo.Repo) *FundamentalsService {
-	return &FundamentalsService{repo: repo}
+	return &FundamentalsService{
+		repo:     repo,
+		virtuals: newVirtualFundamentalsProvider(NewMacroService(repo)),
+	}
 }
 
 // ----- Catalog -----
@@ -76,6 +80,7 @@ func (s *FundamentalsService) ListFactors(ctx context.Context, req dto.Fundament
 		e.SLAHours = int(slaHours)
 		out.Data = append(out.Data, e)
 	}
+	out.Data = s.virtuals.appendCatalogEntries(out.Data, market)
 	return out, rows.Err()
 }
 
@@ -110,6 +115,17 @@ func (s *FundamentalsService) QuerySeries(ctx context.Context, req dto.Fundament
 		Market: market, Symbol: symbol, Factor: factor,
 		Mode: mode, AsOf: asOf,
 		Data: []dto.FundamentalSeriesPoint{},
+	}
+
+	if points, fillPolicy, handled, err := s.virtuals.querySeries(ctx, req, market, symbol, factor, mode); handled {
+		if err != nil {
+			return nil, err
+		}
+		if fillPolicy != "" {
+			resp.FillPolicy = fillPolicy
+		}
+		resp.Data = points
+		return resp, nil
 	}
 
 	if mode == fundamentalSeriesModeEvent {
@@ -202,27 +218,45 @@ func (s *FundamentalsService) QuerySnapshot(ctx context.Context, req dto.Fundame
 	if err != nil {
 		return nil, err
 	}
-	factors := normalizeStringList(req.Factors)
+	factors := splitFundamentalFactorSelection(normalizeStringList(req.Factors))
 
-	rows, err := s.repo.Query(ctx, chquery.FundamentalSnapshotQuery(),
-		clickhouse.Named("market", market),
-		clickhouse.Named("symbol", symbol),
-		clickhouse.Named("as_of", asOf.UTC().Format(time.RFC3339Nano)),
-		clickhouse.Named("factors", factors),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("query fundamental snapshot: %w", err)
-	}
-	defer rows.Close()
 	out := &dto.FundamentalSnapshotResponse{Market: market, Symbol: symbol, AsOf: asOf, Data: []dto.FundamentalSnapshotEntry{}}
-	for rows.Next() {
-		var e dto.FundamentalSnapshotEntry
-		if err := rows.Scan(&e.Factor, &e.EventTS, &e.KnownAt, &e.Value, &e.Source); err != nil {
-			return nil, fmt.Errorf("scan fundamental snapshot: %w", err)
+	shouldQueryBase := len(req.Factors) == 0 || len(factors.base) > 0
+	if shouldQueryBase {
+		rows, err := s.repo.Query(ctx, chquery.FundamentalSnapshotQuery(),
+			clickhouse.Named("market", market),
+			clickhouse.Named("symbol", symbol),
+			clickhouse.Named("as_of", asOf.UTC().Format(time.RFC3339Nano)),
+			clickhouse.Named("factors", factors.base),
+		)
+		if err != nil {
+			return nil, fmt.Errorf("query fundamental snapshot: %w", err)
 		}
-		out.Data = append(out.Data, e)
+		defer rows.Close()
+		for rows.Next() {
+			var e dto.FundamentalSnapshotEntry
+			if err := rows.Scan(&e.Factor, &e.EventTS, &e.KnownAt, &e.Value, &e.Source); err != nil {
+				return nil, fmt.Errorf("scan fundamental snapshot: %w", err)
+			}
+			out.Data = append(out.Data, e)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
 	}
-	return out, rows.Err()
+	if factors.includePE10Live {
+		entry, handled, err := s.virtuals.querySnapshot(ctx, market, symbol, virtualFundamentalFactorPE10Live, asOf)
+		if err != nil {
+			return nil, err
+		}
+		if handled && entry != nil {
+			out.Data = append(out.Data, *entry)
+		}
+	}
+	sort.Slice(out.Data, func(i, j int) bool {
+		return out.Data[i].Factor < out.Data[j].Factor
+	})
+	return out, nil
 }
 
 // ----- Panel -----
@@ -245,27 +279,46 @@ func (s *FundamentalsService) QueryPanel(ctx context.Context, req dto.Fundamenta
 	if err != nil {
 		return nil, err
 	}
-	factors := normalizeStringList(req.Factors)
+	factors := splitFundamentalFactorSelection(normalizeStringList(req.Factors))
 
-	rows, err := s.repo.Query(ctx, chquery.FundamentalPanelQuery(),
-		clickhouse.Named("market", market),
-		clickhouse.Named("symbols", symbols),
-		clickhouse.Named("as_of", asOf.UTC().Format(time.RFC3339Nano)),
-		clickhouse.Named("factors", factors),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("query fundamental panel: %w", err)
-	}
-	defer rows.Close()
 	out := &dto.FundamentalPanelResponse{Market: market, AsOf: asOf, Data: []dto.FundamentalPanelRow{}}
-	for rows.Next() {
-		var r dto.FundamentalPanelRow
-		if err := rows.Scan(&r.Symbol, &r.Factor, &r.EventTS, &r.KnownAt, &r.Value); err != nil {
-			return nil, fmt.Errorf("scan fundamental panel: %w", err)
+	shouldQueryBase := len(req.Factors) == 0 || len(factors.base) > 0
+	if shouldQueryBase {
+		rows, err := s.repo.Query(ctx, chquery.FundamentalPanelQuery(),
+			clickhouse.Named("market", market),
+			clickhouse.Named("symbols", symbols),
+			clickhouse.Named("as_of", asOf.UTC().Format(time.RFC3339Nano)),
+			clickhouse.Named("factors", factors.base),
+		)
+		if err != nil {
+			return nil, fmt.Errorf("query fundamental panel: %w", err)
 		}
-		out.Data = append(out.Data, r)
+		defer rows.Close()
+		for rows.Next() {
+			var r dto.FundamentalPanelRow
+			if err := rows.Scan(&r.Symbol, &r.Factor, &r.EventTS, &r.KnownAt, &r.Value); err != nil {
+				return nil, fmt.Errorf("scan fundamental panel: %w", err)
+			}
+			out.Data = append(out.Data, r)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
 	}
-	return out, rows.Err()
+	if factors.includePE10Live {
+		rows, err := s.virtuals.queryPanelRows(ctx, market, symbols, virtualFundamentalFactorPE10Live, asOf)
+		if err != nil {
+			return nil, err
+		}
+		out.Data = append(out.Data, rows...)
+	}
+	sort.Slice(out.Data, func(i, j int) bool {
+		if out.Data[i].Symbol == out.Data[j].Symbol {
+			return out.Data[i].Factor < out.Data[j].Factor
+		}
+		return out.Data[i].Symbol < out.Data[j].Symbol
+	})
+	return out, nil
 }
 
 // ----- Freshness -----

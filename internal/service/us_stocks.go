@@ -195,8 +195,8 @@ func (s *USStocksService) attachCompanyProfilesToSymbols(ctx context.Context, ro
 }
 
 func (s *USStocksService) attachFundamentals(ctx context.Context, symbol string, requestedFactors []string, bars []dto.USStockBarRow) error {
-	factors := normalizeRequestedFactors(requestedFactors)
-	if len(factors) == 0 || len(bars) == 0 {
+	bindings := resolveUSStockFundamentalBindings(symbol, requestedFactors)
+	if len(bindings) == 0 || len(bars) == 0 {
 		return nil
 	}
 	if s.fundamentals == nil {
@@ -205,30 +205,36 @@ func (s *USStocksService) attachFundamentals(ctx context.Context, symbol string,
 
 	startTS := bars[0].Timestamp.UTC()
 	endTS := bars[len(bars)-1].Timestamp.UTC().Add(time.Nanosecond)
+	sourceFactors := uniqueUSStockFundamentalSourceFactors(bindings)
 
 	snapshot, err := s.fundamentals.QuerySnapshot(ctx, dto.FundamentalSnapshotRequest{
 		Market:  "us-stocks",
 		Symbol:  symbol,
-		Factors: factors,
+		Factors: sourceFactors,
 		AsOf:    startTS.Format(time.RFC3339Nano),
 	})
 	if err != nil {
 		return fmt.Errorf("query US stock fundamentals snapshot: %w", err)
 	}
 
-	currentByFactor := make(map[string]dto.USStockBarFundamentalValue, len(factors))
+	currentByFactor := make(map[string]dto.USStockBarFundamentalValue, len(bindings))
 	for _, entry := range snapshot.Data {
-		currentByFactor[entry.Factor] = dto.USStockBarFundamentalValue{
-			EventTS: entry.EventTS,
-			KnownAt: entry.KnownAt,
-			Value:   entry.Value,
-			Source:  entry.Source,
-			Filled:  !entry.EventTS.Equal(startTS),
+		for _, binding := range bindings {
+			if binding.SourceFactor != entry.Factor {
+				continue
+			}
+			currentByFactor[binding.ResponseFactor] = dto.USStockBarFundamentalValue{
+				EventTS: entry.EventTS,
+				KnownAt: entry.KnownAt,
+				Value:   entry.Value,
+				Source:  entry.Source,
+				Filled:  !entry.EventTS.Equal(startTS),
+			}
 		}
 	}
 
-	eventsByFactor := make(map[string][]dto.FundamentalSeriesPoint, len(factors))
-	for _, factor := range factors {
+	sourceSeriesByFactor := make(map[string][]dto.FundamentalSeriesPoint, len(sourceFactors))
+	for _, factor := range sourceFactors {
 		series, err := s.fundamentals.QuerySeries(ctx, dto.FundamentalSeriesRequest{
 			Market: "us-stocks",
 			Symbol: symbol,
@@ -251,18 +257,25 @@ func (s *USStocksService) attachFundamentals(ctx context.Context, symbol string,
 			}
 			return events[i].EventTS.Before(events[j].EventTS)
 		})
-		eventsByFactor[factor] = events
+		sourceSeriesByFactor[factor] = events
 	}
-	denominatorByKey, err := s.loadPriceDerivedFundamentalDenominators(ctx, symbol, currentByFactor, eventsByFactor)
+	eventsByFactor := make(map[string][]dto.FundamentalSeriesPoint, len(bindings))
+	bindingByFactor := make(map[string]usStockFundamentalBinding, len(bindings))
+	for _, binding := range bindings {
+		bindingByFactor[binding.ResponseFactor] = binding
+		eventsByFactor[binding.ResponseFactor] = append([]dto.FundamentalSeriesPoint(nil), sourceSeriesByFactor[binding.SourceFactor]...)
+	}
+	denominatorByKey, err := s.loadPriceDerivedFundamentalDenominators(ctx, symbol, currentByFactor, eventsByFactor, bindingByFactor)
 	if err != nil {
 		return err
 	}
 
-	nextByFactor := make(map[string]int, len(factors))
+	nextByFactor := make(map[string]int, len(bindings))
 	for barIndex := range bars {
 		barTS := bars[barIndex].Timestamp.UTC()
 		barFundamentals := map[string]dto.USStockBarFundamentalValue{}
-		for _, factor := range factors {
+		for _, binding := range bindings {
+			factor := binding.ResponseFactor
 			events := eventsByFactor[factor]
 			for nextByFactor[factor] < len(events) {
 				candidate := events[nextByFactor[factor]]
@@ -279,7 +292,7 @@ func (s *USStocksService) attachFundamentals(ctx context.Context, symbol string,
 				nextByFactor[factor]++
 			}
 			if value, ok := currentByFactor[factor]; ok {
-				value.Value = priceDerivedFundamentalValue(factor, float64(bars[barIndex].Close), value, denominatorByKey)
+				value.Value = priceDerivedFundamentalValue(binding, float64(bars[barIndex].Close), value, denominatorByKey)
 				value.Filled = !value.EventTS.Equal(barTS)
 				barFundamentals[factor] = value
 			}
@@ -291,7 +304,7 @@ func (s *USStocksService) attachFundamentals(ctx context.Context, symbol string,
 	return nil
 }
 
-func (s *USStocksService) loadPriceDerivedFundamentalDenominators(ctx context.Context, symbol string, snapshot map[string]dto.USStockBarFundamentalValue, eventsByFactor map[string][]dto.FundamentalSeriesPoint) (map[string]float64, error) {
+func (s *USStocksService) loadPriceDerivedFundamentalDenominators(ctx context.Context, symbol string, snapshot map[string]dto.USStockBarFundamentalValue, eventsByFactor map[string][]dto.FundamentalSeriesPoint, bindingByFactor map[string]usStockFundamentalBinding) (map[string]float64, error) {
 	denominators := map[string]float64{}
 	if s.repo == nil {
 		return denominators, nil
@@ -299,12 +312,12 @@ func (s *USStocksService) loadPriceDerivedFundamentalDenominators(ctx context.Co
 
 	eventDates := map[time.Time]struct{}{}
 	for factor, value := range snapshot {
-		if isPriceDerivedFundamentalFactor(factor) && value.Value != 0 {
+		if isPriceDerivedFundamentalFactor(bindingByFactor[factor]) && value.Value != 0 {
 			eventDates[value.EventTS.UTC()] = struct{}{}
 		}
 	}
 	for factor, events := range eventsByFactor {
-		if !isPriceDerivedFundamentalFactor(factor) {
+		if !isPriceDerivedFundamentalFactor(bindingByFactor[factor]) {
 			continue
 		}
 		for _, event := range events {
@@ -329,7 +342,7 @@ func (s *USStocksService) loadPriceDerivedFundamentalDenominators(ctx context.Co
 		return nil, err
 	}
 	for factor, value := range snapshot {
-		if !isPriceDerivedFundamentalFactor(factor) || value.Value == 0 {
+		if !isPriceDerivedFundamentalFactor(bindingByFactor[factor]) || value.Value == 0 {
 			continue
 		}
 		if closePrice, ok := priceSeries.closeOnOrBefore(value.EventTS); ok && closePrice != 0 {
@@ -337,7 +350,7 @@ func (s *USStocksService) loadPriceDerivedFundamentalDenominators(ctx context.Co
 		}
 	}
 	for factor, events := range eventsByFactor {
-		if !isPriceDerivedFundamentalFactor(factor) {
+		if !isPriceDerivedFundamentalFactor(bindingByFactor[factor]) {
 			continue
 		}
 		for _, event := range events {
@@ -400,24 +413,15 @@ func (s usStockDailyCloseSeries) closeOnOrBefore(ts time.Time) (float64, bool) {
 	return s[idx].Close, true
 }
 
-func priceDerivedFundamentalValue(factor string, barClose float64, observation dto.USStockBarFundamentalValue, denominatorByKey map[string]float64) float64 {
-	if !isPriceDerivedFundamentalFactor(factor) {
+func priceDerivedFundamentalValue(binding usStockFundamentalBinding, barClose float64, observation dto.USStockBarFundamentalValue, denominatorByKey map[string]float64) float64 {
+	if !isPriceDerivedFundamentalFactor(binding) {
 		return observation.Value
 	}
-	denominator, ok := denominatorByKey[fundamentalObservationKey(factor, observation.EventTS)]
+	denominator, ok := denominatorByKey[fundamentalObservationKey(binding.ResponseFactor, observation.EventTS)]
 	if !ok || denominator == 0 {
 		return observation.Value
 	}
 	return barClose / denominator
-}
-
-func isPriceDerivedFundamentalFactor(factor string) bool {
-	switch factor {
-	case "pe", "pb":
-		return true
-	default:
-		return false
-	}
 }
 
 func fundamentalObservationKey(factor string, eventTS time.Time) string {

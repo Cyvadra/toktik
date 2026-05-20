@@ -141,3 +141,15 @@ func (s *stubUSStockCompanyProfileProviderFunc) IsETFLike(ctx context.Context, s
 	}
 	return isETFLikeUSStockProfile(profile), nil
 }
+
+func (s *stubUSStockCompanyProfileProviderFunc) IsETFLikeBySymbol(ctx context.Context, symbols []string) (map[string]bool, error) {
+	result := make(map[string]bool, len(symbols))
+	for _, symbol := range symbols {
+		isETFLike, err := s.IsETFLike(ctx, symbol)
+		if err != nil {
+			return nil, err
+		}
+		result[symbol] = isETFLike
+	}
+	return result, nil
+}

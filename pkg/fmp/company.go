@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"strings"
 )
 
 // Profile is a row returned by the FMP Profile endpoint.
@@ -90,6 +91,33 @@ func (c *Client) Profile(ctx context.Context, symbol string) (*Profile, error) {
 		return nil, fmt.Errorf("fmp: no result for Profile")
 	}
 	return &out[0], nil
+}
+
+// Profiles returns full company profiles for one or more symbols.
+func (c *Client) Profiles(ctx context.Context, symbols []string) ([]Profile, error) {
+	params := url.Values{}
+	normalized := make([]string, 0, len(symbols))
+	seen := make(map[string]struct{}, len(symbols))
+	for _, symbol := range symbols {
+		symbol = strings.TrimSpace(symbol)
+		if symbol == "" {
+			continue
+		}
+		if _, ok := seen[symbol]; ok {
+			continue
+		}
+		seen[symbol] = struct{}{}
+		normalized = append(normalized, symbol)
+	}
+	if len(normalized) == 0 {
+		return nil, nil
+	}
+	params.Set("symbol", strings.Join(normalized, ","))
+	var out []Profile
+	if err := c.get(ctx, "/profile", params, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // HistoricalMarketCap HistoricalMarketCap returns daily market-cap history.

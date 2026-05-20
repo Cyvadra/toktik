@@ -29,14 +29,50 @@ func (s *stubUSStockCompanyProfileProvider) IsETFLike(ctx context.Context, symbo
 	return isETFLikeUSStockProfile(profile), nil
 }
 
+func (s *stubUSStockCompanyProfileProvider) IsETFLikeBySymbol(ctx context.Context, symbols []string) (map[string]bool, error) {
+	result := make(map[string]bool, len(symbols))
+	for _, symbol := range symbols {
+		isETFLike, err := s.IsETFLike(ctx, symbol)
+		if err != nil {
+			return nil, err
+		}
+		result[symbol] = isETFLike
+	}
+	return result, nil
+}
+
 type stubFMPCompanyProfiler struct {
-	profile *dto.USStockCompanyProfile
-	count   int
+	profile  *dto.USStockCompanyProfile
+	profiles map[string]*dto.USStockCompanyProfile
+	count    int
 }
 
 func (s *stubFMPCompanyProfiler) Profile(_ context.Context, symbol string) (*fmp.Profile, error) {
 	s.count++
-	return &fmp.Profile{Symbol: symbol, Sector: s.profile.Sector, Industry: s.profile.Industry, IsETF: s.profile.IsETF, IsFund: s.profile.IsFund}, nil
+	profile := s.profileForSymbol(symbol)
+	return &fmp.Profile{Symbol: symbol, Sector: profile.Sector, Industry: profile.Industry, IsETF: profile.IsETF, IsFund: profile.IsFund}, nil
+}
+
+func (s *stubFMPCompanyProfiler) Profiles(_ context.Context, symbols []string) ([]fmp.Profile, error) {
+	s.count++
+	profiles := make([]fmp.Profile, 0, len(symbols))
+	for _, symbol := range symbols {
+		profile := s.profileForSymbol(symbol)
+		profiles = append(profiles, fmp.Profile{Symbol: symbol, Sector: profile.Sector, Industry: profile.Industry, IsETF: profile.IsETF, IsFund: profile.IsFund})
+	}
+	return profiles, nil
+}
+
+func (s *stubFMPCompanyProfiler) profileForSymbol(symbol string) *dto.USStockCompanyProfile {
+	if s.profiles != nil {
+		if profile, ok := s.profiles[symbol]; ok && profile != nil {
+			return profile
+		}
+	}
+	if s.profile != nil {
+		return s.profile
+	}
+	return &dto.USStockCompanyProfile{Symbol: symbol}
 }
 
 type stubUSStockFundamentals struct {
@@ -133,12 +169,68 @@ func TestPriceDerivedFundamentalValueUsesCurrentBarCloseForPEAndPB(t *testing.T)
 	denominators := map[string]float64{
 		fundamentalObservationKey("pe", observation.EventTS): 10,
 	}
-	got := priceDerivedFundamentalValue("pe", 250, observation, denominators)
+	got := priceDerivedFundamentalValue(usStockFundamentalBinding{ResponseFactor: "pe", PriceDerived: true}, 250, observation, denominators)
 	if got != 25 {
 		t.Fatalf("expected price-derived PE to be recomputed from bar close, got %v", got)
 	}
-	if got := priceDerivedFundamentalValue("market_cap", 250, observation, denominators); got != 20 {
+	if got := priceDerivedFundamentalValue(usStockFundamentalBinding{ResponseFactor: "market_cap"}, 250, observation, denominators); got != 20 {
 		t.Fatalf("expected non price-derived factor to keep stored value, got %v", got)
+	}
+}
+
+func TestResolveUSStockFundamentalBindingsMapsIndexPEToPE10Live(t *testing.T) {
+	bindings := resolveUSStockFundamentalBindings("QQQ", []string{"pe", "pb"})
+	if len(bindings) != 2 {
+		t.Fatalf("expected 2 bindings, got %d", len(bindings))
+	}
+	if bindings[0].ResponseFactor != "pe" || bindings[0].SourceFactor != virtualFundamentalFactorPE10Live || bindings[0].PriceDerived {
+		t.Fatalf("unexpected PE binding: %#v", bindings[0])
+	}
+	if bindings[1].ResponseFactor != "pb" || bindings[1].SourceFactor != "pb" || !bindings[1].PriceDerived {
+		t.Fatalf("unexpected PB binding: %#v", bindings[1])
+	}
+
+	nonIndex := resolveUSStockFundamentalBindings("AAPL", []string{"pe"})
+	if len(nonIndex) != 1 || nonIndex[0].SourceFactor != "pe" || !nonIndex[0].PriceDerived {
+		t.Fatalf("unexpected non-index binding: %#v", nonIndex)
+	}
+}
+
+func TestUSStocksAttachFundamentalsUsesPE10LiveForIndexPE(t *testing.T) {
+	start := time.Date(2026, 4, 30, 13, 30, 0, 0, time.UTC)
+	bars := []dto.USStockBarRow{
+		{Timestamp: start, Symbol: "QQQ", Close: 510},
+		{Timestamp: start.Add(24 * time.Hour), Symbol: "QQQ", Close: 520},
+	}
+
+	stub := &stubUSStockFundamentals{
+		snapshotResp: &dto.FundamentalSnapshotResponse{
+			Data: []dto.FundamentalSnapshotEntry{
+				{Factor: virtualFundamentalFactorPE10Live, EventTS: time.Date(2026, 4, 30, 0, 0, 0, 0, time.UTC), KnownAt: start, Value: 31.5, Source: macroVirtualFactorSource},
+			},
+		},
+		seriesResp: map[string]*dto.FundamentalSeriesResponse{
+			virtualFundamentalFactorPE10Live: {
+				Data: []dto.FundamentalSeriesPoint{{EventTS: time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC), KnownAt: start.Add(24 * time.Hour), Value: 32.25, Source: macroVirtualFactorSource}},
+			},
+		},
+	}
+
+	svc := NewUSStocksService(nil, stub)
+	if err := svc.attachFundamentals(context.Background(), "QQQ", []string{"pe"}, bars); err != nil {
+		t.Fatalf("attachFundamentals returned error: %v", err)
+	}
+	if len(stub.snapshotReqs) != 1 || len(stub.snapshotReqs[0].Factors) != 1 || stub.snapshotReqs[0].Factors[0] != virtualFundamentalFactorPE10Live {
+		t.Fatalf("expected snapshot request for pe10_live, got %#v", stub.snapshotReqs)
+	}
+	if len(stub.seriesReqs) != 1 || stub.seriesReqs[0].Factor != virtualFundamentalFactorPE10Live {
+		t.Fatalf("expected series request for pe10_live, got %#v", stub.seriesReqs)
+	}
+	if got := bars[0].Fundamentals["pe"].Value; got != 31.5 {
+		t.Fatalf("expected first index PE bar to use pe10_live, got %v", got)
+	}
+	if got := bars[1].Fundamentals["pe"].Value; got != 32.25 {
+		t.Fatalf("expected later index PE bar to use updated pe10_live, got %v", got)
 	}
 }
 
@@ -276,6 +368,46 @@ func TestCachedFMPUSStockCompanyProfileProviderIsETFLike(t *testing.T) {
 	}
 	if !got {
 		t.Fatal("expected SLV to be classified as ETF-like")
+	}
+}
+
+func TestCachedFMPUSStockCompanyProfileProviderIsETFLikeBySymbolUsesBatchRequest(t *testing.T) {
+	store := cache.NewMemoryStore()
+	client := &stubFMPCompanyProfiler{profiles: map[string]*dto.USStockCompanyProfile{
+		"SLV":  {Symbol: "SLV", IsETF: true},
+		"AAPL": {Symbol: "AAPL", Sector: "Technology", Industry: "Consumer Electronics"},
+		"PSLV": {Symbol: "PSLV", IsFund: true},
+	}}
+	provider := &cachedFMPUSStockCompanyProfileProvider{
+		client: client,
+		cache:  store,
+		ttlValue: func() time.Duration {
+			return time.Hour
+		},
+	}
+
+	got, err := provider.IsETFLikeBySymbol(context.Background(), []string{"SLV", "AAPL", "PSLV", "AAPL"})
+	if err != nil {
+		t.Fatalf("IsETFLikeBySymbol returned error: %v", err)
+	}
+	if !got["SLV"] || got["AAPL"] || !got["PSLV"] {
+		t.Fatalf("unexpected ETF-like map: %#v", got)
+	}
+	if client.count != 1 {
+		t.Fatalf("expected one batched upstream request, got %d", client.count)
+	}
+}
+
+func TestChunkUSStockCompanyProfileSymbols(t *testing.T) {
+	batches := chunkUSStockCompanyProfileSymbols([]string{"A", "B", "C", "D", "E"}, 2)
+	if len(batches) != 3 {
+		t.Fatalf("expected 3 batches, got %d", len(batches))
+	}
+	if len(batches[0]) != 2 || len(batches[1]) != 2 || len(batches[2]) != 1 {
+		t.Fatalf("unexpected batch sizes: %#v", batches)
+	}
+	if batches[2][0] != "E" {
+		t.Fatalf("unexpected final batch: %#v", batches[2])
 	}
 }
 

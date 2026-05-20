@@ -34,7 +34,8 @@ var supportedMacroDatasets = map[string]struct{}{
 }
 
 type MacroService struct {
-	repo *chrepo.Repo
+	repo     *chrepo.Repo
+	virtuals *macroVirtualFactorProvider
 }
 
 type macroFactorMeta struct {
@@ -49,16 +50,6 @@ type macroFactorMeta struct {
 	ReferenceMarket string
 	ReferenceSymbol string
 	RealtimeMode    string
-}
-
-type macroVirtualFactor struct {
-	Code        string
-	BaseFactor  string
-	DisplayName string
-	Description string
-	ValueType   string
-	Unit        string
-	Transform   func(float64) (float64, bool)
 }
 
 type macroObservation struct {
@@ -79,7 +70,7 @@ type macroReferenceBar struct {
 }
 
 func NewMacroService(repo *chrepo.Repo) *MacroService {
-	return &MacroService{repo: repo}
+	return &MacroService{repo: repo, virtuals: newMacroVirtualFactorProvider()}
 }
 
 func (s *MacroService) ListFactors(ctx context.Context, req dto.MacroFactorCatalogRequest) (*dto.MacroFactorCatalogResponse, error) {
@@ -138,23 +129,7 @@ func (s *MacroService) ListFactors(ctx context.Context, req dto.MacroFactorCatal
 	if virtualDataset == "" {
 		virtualDataset = macroDatasetGurufocusShiller
 	}
-	for _, factor := range virtualMacroFactorsForDataset(virtualDataset, out.Data) {
-		out.Data = append(out.Data, dto.MacroFactorCatalogEntry{
-			Dataset:            virtualDataset,
-			FactorCode:         factor.Code,
-			DisplayName:        factor.DisplayName,
-			Description:        factor.Description,
-			ValueType:          factor.ValueType,
-			Unit:               factor.Unit,
-			PreferredFrequency: "intraday",
-			FillPolicy:         "forward_fill",
-			PointInTime:        true,
-			Source:             macroVirtualFactorSource,
-			ReferenceMarket:    defaultMacroReferenceMarket,
-			RealtimeMode:       macroRealtimePriceScaled,
-			Active:             true,
-		})
-	}
+	out.Data = s.virtuals.appendCatalogEntries(virtualDataset, out.Data)
 	return out, rows.Err()
 }
 
@@ -186,7 +161,7 @@ func (s *MacroService) QuerySeries(ctx context.Context, req dto.MacroSeriesReque
 	if err != nil {
 		return nil, err
 	}
-	virtualByFactor := virtualMacroFactorsForDataset(dataset, nil)
+	virtualByFactor := s.virtuals.factorMap(dataset)
 	sourceFactors := make([]string, 0, len(requestedFactors))
 	seenSource := map[string]bool{}
 	for _, factor := range requestedFactors {
@@ -314,7 +289,7 @@ func (s *MacroService) loadFactorMeta(ctx context.Context, dataset string) (map[
 			RealtimeMode:    entry.RealtimeMode,
 		}
 	}
-	for code, virtual := range virtualMacroFactorsForDataset(dataset, nil) {
+	for code, virtual := range s.virtuals.factorMap(dataset) {
 		base := out[virtual.BaseFactor]
 		out[code] = macroFactorMeta{
 			Dataset:         dataset,
@@ -767,69 +742,6 @@ func normalizeMacroDataset(dataset string, required bool) (string, error) {
 		return "", dto.NewValidationError("unsupported macro dataset %q", dataset)
 	}
 	return dataset, nil
-}
-
-func virtualMacroFactorsForDataset(dataset string, _ []dto.MacroFactorCatalogEntry) map[string]macroVirtualFactor {
-	if dataset != "" {
-		if _, ok := supportedMacroDatasets[dataset]; !ok {
-			return map[string]macroVirtualFactor{}
-		}
-	} else {
-		dataset = macroDatasetGurufocusShiller
-	}
-	if dataset == "" {
-		return map[string]macroVirtualFactor{}
-	}
-	return map[string]macroVirtualFactor{
-		"pe10_live": {
-			Code:        "pe10_live",
-			BaseFactor:  "pe10",
-			DisplayName: "Shiller PE Live",
-			Description: "Realtime-updated CAPE using the latest reference price ratio applied to the monthly Shiller PE anchor.",
-			ValueType:   "ratio",
-			Transform: func(value float64) (float64, bool) {
-				return value, true
-			},
-		},
-		"pe_reg_live": {
-			Code:        "pe_reg_live",
-			BaseFactor:  "pe_reg",
-			DisplayName: "Regression PE Live",
-			Description: "Realtime-updated regression PE using the latest reference price ratio applied to the monthly regression anchor.",
-			ValueType:   "ratio",
-			Transform: func(value float64) (float64, bool) {
-				return value, true
-			},
-		},
-		"cape_earnings_yield_live": {
-			Code:        "cape_earnings_yield_live",
-			BaseFactor:  "pe10",
-			DisplayName: "CAPE Earnings Yield Live",
-			Description: "Realtime earnings-yield view computed as 100 / pe10_live.",
-			ValueType:   "percent",
-			Unit:        "%",
-			Transform: func(value float64) (float64, bool) {
-				if value == 0 || math.IsNaN(value) || math.IsInf(value, 0) {
-					return 0, false
-				}
-				return 100 / value, true
-			},
-		},
-		"regression_earnings_yield_live": {
-			Code:        "regression_earnings_yield_live",
-			BaseFactor:  "pe_reg",
-			DisplayName: "Regression Earnings Yield Live",
-			Description: "Realtime earnings-yield view computed as 100 / pe_reg_live.",
-			ValueType:   "percent",
-			Unit:        "%",
-			Transform: func(value float64) (float64, bool) {
-				if value == 0 || math.IsNaN(value) || math.IsInf(value, 0) {
-					return 0, false
-				}
-				return 100 / value, true
-			},
-		},
-	}
 }
 
 func resolveMacroReference(requestMarket, requestSymbol string, factors []string, metaByFactor map[string]macroFactorMeta) (string, string, error) {

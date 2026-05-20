@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"math"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/Cyvadra/toktik/internal/cache"
@@ -566,35 +565,17 @@ func (s *ScreenerService) filterNonETFUSTurnoverResults(ctx context.Context, row
 	if s == nil || s.companyInfo == nil || len(rows) == 0 {
 		return rows
 	}
-	const maxConcurrentProfileLookups = 12
-	excluded := make([]bool, len(rows))
-	sem := make(chan struct{}, maxConcurrentProfileLookups)
-	var wg sync.WaitGroup
-	for index, row := range rows {
-		index := index
-		row := row
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			select {
-			case sem <- struct{}{}:
-			case <-ctx.Done():
-				return
-			}
-			defer func() { <-sem }()
-			isETFLike, err := s.companyInfo.IsETFLike(ctx, row.Underlying)
-			if err != nil {
-				return
-			}
-			if isETFLike {
-				excluded[index] = true
-			}
-		}()
+	symbols := make([]string, 0, len(rows))
+	for _, row := range rows {
+		symbols = append(symbols, row.Underlying)
 	}
-	wg.Wait()
+	excludedBySymbol, err := s.companyInfo.IsETFLikeBySymbol(ctx, symbols)
+	if err != nil {
+		return rows
+	}
 	filtered := make([]dto.ScreenedUSTurnoverIntersectionRow, 0, len(rows))
-	for index, row := range rows {
-		if excluded[index] {
+	for _, row := range rows {
+		if excludedBySymbol[row.Underlying] {
 			continue
 		}
 		filtered = append(filtered, row)
