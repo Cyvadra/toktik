@@ -372,7 +372,7 @@ No parameters.
 - Tags: `Features`
 - Produces: `application/json`
 - Summary: Get volatility snapshot
-- Description: Returns current HV and IV regime metrics for an underlying.
+- Description: Returns current HV and IV regime metrics for an underlying. When the latest precomputed feature row has empty volatility fields, the server scans up to the prior 7 calendar days and uses the nearest valid values.
 
 #### Parameters
 
@@ -396,7 +396,7 @@ No parameters.
 - Tags: `Features`
 - Produces: `application/json`
 - Summary: Get volatility history
-- Description: Returns a range of daily HV and IV metrics for an underlying.
+- Description: Returns a range of daily HV and IV metrics for an underlying. Precomputed feature queries scan up to 7 calendar days before the requested start date so empty volatility fields can be backfilled from the nearest earlier valid row while keeping the response clipped to the requested range.
 
 #### Parameters
 
@@ -626,7 +626,7 @@ No parameters.
 - Tags: `Features`
 - Produces: `application/json`
 - Summary: Get daily feature panel
-- Description: Returns a consolidated daily panel with volatility, term structure, liquidity, and event features.
+- Description: Returns a consolidated daily panel with volatility, term structure, liquidity, and event features. Precomputed panel queries scan up to 7 calendar days before the requested start date so empty feature fields can be backfilled from the nearest earlier valid row while keeping the response clipped to the requested range.
 
 #### Parameters
 

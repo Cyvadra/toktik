@@ -408,7 +408,7 @@ func (h *Handler) GetDatasets(c *gin.Context) {
 // GetVolatilitySnapshot handles GET /api/v1/features/volatility-snapshot.
 //
 // @Summary      Get volatility snapshot
-// @Description  Returns current HV and IV regime metrics for an underlying.
+// @Description  Returns current HV and IV regime metrics for an underlying. When the latest precomputed feature row has empty volatility fields, the server scans up to the prior 7 calendar days and uses the nearest valid values.
 // @Tags         Features
 // @Produce      json
 // @Param        market         query     string  true   "Market (crypto-options, us-options)"
@@ -441,7 +441,7 @@ func (h *Handler) GetVolatilitySnapshot(c *gin.Context) {
 // GetVolatilityHistory handles GET /api/v1/features/volatility-history.
 //
 // @Summary      Get volatility history
-// @Description  Returns a range of daily HV and IV metrics for an underlying.
+// @Description  Returns a range of daily HV and IV metrics for an underlying. Precomputed feature queries scan up to 7 calendar days before the requested start date so empty volatility fields can be backfilled from the nearest earlier valid row while keeping the response clipped to the requested range.
 // @Tags         Features
 // @Produce      json
 // @Param        market         query     string  true   "Market (crypto-options, us-options)"
@@ -680,7 +680,7 @@ func (h *Handler) GetEventWindowHistory(c *gin.Context) {
 // GetDailyFeaturePanel handles GET /api/v1/features/daily-feature-panel.
 //
 // @Summary      Get daily feature panel
-// @Description  Returns a consolidated daily panel with volatility, term structure, liquidity, and event features.
+// @Description  Returns a consolidated daily panel with volatility, term structure, liquidity, and event features. Precomputed panel queries scan up to 7 calendar days before the requested start date so empty feature fields can be backfilled from the nearest earlier valid row while keeping the response clipped to the requested range.
 // @Tags         Features
 // @Produce      json
 // @Param        market               query     string  true   "Market (crypto-options, us-options)"

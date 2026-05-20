@@ -502,6 +502,8 @@ curl "http://localhost:9010/api/v1/markets/crypto-options/greeks?symbol=BTC-28MA
 curl "http://localhost:9010/api/v1/features/volatility-snapshot?market=us-options&underlying=SPY"
 ```
 
+If the latest precomputed volatility row has empty fields, the API scans up to the prior 7 calendar days and returns the nearest valid volatility values.
+
 Sample response:
 ```json
 {
@@ -525,6 +527,8 @@ Sample response:
 ```bash
 curl "http://localhost:9010/api/v1/features/volatility-history?market=crypto-options&underlying=BTC&from=2025-01-01&to=2025-03-01"
 ```
+
+History queries also scan up to 7 calendar days before `from` so empty volatility fields can be backfilled from the nearest earlier valid row; the response still only includes dates inside the requested range.
 
 **Get a term-structure snapshot:**
 ```bash
@@ -837,6 +841,8 @@ Notes:
 ```bash
 curl "http://localhost:9010/api/v1/features/daily-feature-panel?market=us-options&underlying=AAPL&from=2026-03-01&to=2026-04-01&min_days_to_expiry=7&max_days_to_expiry=60"
 ```
+
+Daily panel queries use the same 7-day lookback fill policy for empty precomputed feature fields, while keeping the returned rows inside the requested date range.
 
 Sample response:
 ```json
