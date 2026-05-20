@@ -41,6 +41,8 @@ type USStockCompanyProfile struct {
 	Symbol   string `json:"symbol"`
 	Sector   string `json:"sector,omitempty"`
 	Industry string `json:"industry,omitempty"`
+	IsETF    bool   `json:"is_etf,omitempty"`
+	IsFund   bool   `json:"is_fund,omitempty"`
 }
 
 // USStockBarMeta wraps optional metadata returned alongside bars.

@@ -7,7 +7,7 @@
 - Source Swagger: `docs/swagger.json`
 - API title: `Toktik Options Platform API`
 - API version: `1.0`
-- Generated at: `2026-05-20T11:34:27Z`
+- Generated at: `2026-05-20T15:35:10Z`
 
 ## Scope
 
@@ -856,6 +856,7 @@ No parameters.
 | --- | --- | --- | --- | --- |
 | limit | query | integer | no | Max rows to return (default 100) |
 | lookback_days | query | integer | no | Trailing trading days to aggregate (default 20) |
+| non_etf_only | query | boolean | no | Restrict to stock underlyings with PE/PB fundamentals coverage, then exclude ETF/fund classifications from cached company profiles |
 
 #### Responses
 

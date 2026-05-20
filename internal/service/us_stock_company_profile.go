@@ -19,6 +19,7 @@ const (
 
 type usStockCompanyProfileProvider interface {
 	CompanyProfile(ctx context.Context, symbol string) (*dto.USStockCompanyProfile, error)
+	IsETFLike(ctx context.Context, symbol string) (bool, error)
 }
 
 type fmpCompanyProfiler interface {
@@ -62,12 +63,28 @@ func (p *cachedFMPUSStockCompanyProfileProvider) CompanyProfile(ctx context.Cont
 		Symbol:   normalized,
 		Sector:   strings.TrimSpace(profile.Sector),
 		Industry: strings.TrimSpace(profile.Industry),
+		IsETF:    profile.IsETF,
+		IsFund:   profile.IsFund,
 	}
-	if classification.Sector == "" && classification.Industry == "" {
+	if classification.Sector == "" && classification.Industry == "" && !classification.IsETF && !classification.IsFund {
 		classification = nil
 	}
 	_ = p.storeInCache(ctx, normalized, classification)
 	return classification, nil
+}
+
+func (p *cachedFMPUSStockCompanyProfileProvider) IsETFLike(ctx context.Context, symbol string) (bool, error) {
+	profile, err := p.CompanyProfile(ctx, symbol)
+	if err != nil {
+		return false, err
+	}
+	return isETFLikeUSStockProfile(profile), nil
+}
+
+// isETFLikeUSStockProfile centralizes the ETF/fund classification rule so
+// other US-stock features can reuse a single definition.
+func isETFLikeUSStockProfile(profile *dto.USStockCompanyProfile) bool {
+	return profile != nil && (profile.IsETF || profile.IsFund)
 }
 
 func (p *cachedFMPUSStockCompanyProfileProvider) loadFromCache(ctx context.Context, symbol string) (*dto.USStockCompanyProfile, bool, error) {
@@ -101,7 +118,7 @@ func (p *cachedFMPUSStockCompanyProfileProvider) storeInCache(ctx context.Contex
 }
 
 func usStockCompanyProfileCacheKey(symbol string) string {
-	return "us-stocks:company-profile:" + normalizeUSStockCompanyProfileSymbol(symbol)
+	return "us-stocks:company-profile:v2:" + normalizeUSStockCompanyProfileSymbol(symbol)
 }
 
 func normalizeUSStockCompanyProfileSymbol(symbol string) string {

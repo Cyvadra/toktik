@@ -1106,13 +1106,13 @@ func TestScreenUSTurnoverIntersectionRoute(t *testing.T) {
 	)
 
 	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("GET", "/api/v1/screener/us-underlyings/turnover-intersection?limit=25&lookback_days=30", nil)
+	req, _ := http.NewRequest("GET", "/api/v1/screener/us-underlyings/turnover-intersection?limit=25&lookback_days=30&non_etf_only=true", nil)
 	r.ServeHTTP(w, req)
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
 	}
-	if mock.usTurnoverReq.Limit != 25 || mock.usTurnoverReq.LookbackDays != 30 {
+	if mock.usTurnoverReq.Limit != 25 || mock.usTurnoverReq.LookbackDays != 30 || !mock.usTurnoverReq.NonETFOnly {
 		t.Fatalf("unexpected request bind: %+v", mock.usTurnoverReq)
 	}
 	var resp dto.ScreenUSTurnoverIntersectionResponse

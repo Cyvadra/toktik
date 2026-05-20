@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Cyvadra/toktik/internal/cache"
@@ -18,8 +19,9 @@ const usTurnoverIntersectionCacheTTL = 6 * time.Hour
 
 // ScreenerService provides condition-based screening for underlyings and options.
 type ScreenerService struct {
-	repo  *chrepo.Repo
-	cache cache.Store
+	repo        *chrepo.Repo
+	cache       cache.Store
+	companyInfo usStockCompanyProfileProvider
 }
 
 func NewScreenerService(repo *chrepo.Repo, cacheStore ...cache.Store) *ScreenerService {
@@ -30,11 +32,23 @@ func NewScreenerService(repo *chrepo.Repo, cacheStore ...cache.Store) *ScreenerS
 	return service
 }
 
+func (s *ScreenerService) WithCompanyProfileProvider(provider usStockCompanyProfileProvider) *ScreenerService {
+	if s == nil {
+		return nil
+	}
+	s.companyInfo = provider
+	return s
+}
+
 func (s *ScreenerService) ScreenUSTurnoverIntersection(ctx context.Context, req dto.ScreenUSTurnoverIntersectionRequest) (*dto.ScreenUSTurnoverIntersectionResponse, error) {
 	limit := clamp(req.Limit, defaultSymbolLimit, maxSymbolLimit)
 	lookbackDays := clamp(req.LookbackDays, 20, 252)
 	candidateLimit := turnoverIntersectionCandidateLimit(limit)
-	cacheKey := usTurnoverIntersectionCacheKey(limit, lookbackDays)
+	cacheKey := usTurnoverIntersectionCacheKey(limit, lookbackDays, req.NonETFOnly)
+	stockUniverseFilter := ""
+	if req.NonETFOnly {
+		stockUniverseFilter = usStocksFundamentalsUniverseFilterClause("symbol")
+	}
 
 	if cached, ok, err := s.loadUSTurnoverIntersectionFromCache(ctx, cacheKey); err == nil && ok {
 		return cached, nil
@@ -76,6 +90,7 @@ FROM (
 		toUInt32(countDistinct(toDate(timestamp))) AS stock_trading_days
 	FROM us_stocks_bar_1d
 	WHERE toDate(timestamp) IN (SELECT market_date FROM stock_days)
+	%s
 	GROUP BY underlying, join_underlying
 	ORDER BY stock_turnover_usd DESC, underlying ASC
 	LIMIT %d
@@ -94,7 +109,7 @@ INNER JOIN (
 	LIMIT %d
 ) AS options ON stocks.join_underlying = options.join_underlying
 ORDER BY combined_turnover_usd DESC, stocks.underlying ASC
-LIMIT %d`, lookbackDays, lookbackDays, stockUnderlyingOptionAliasExpr("symbol"), candidateLimit, candidateLimit, limit)
+LIMIT %d`, lookbackDays, lookbackDays, stockUnderlyingOptionAliasExpr("symbol"), stockUniverseFilter, candidateLimit, candidateLimit, limit)
 
 	rows, err := s.repo.Query(ctx, query)
 	if err != nil {
@@ -130,6 +145,12 @@ LIMIT %d`, lookbackDays, lookbackDays, stockUnderlyingOptionAliasExpr("symbol"),
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate us turnover intersection rows: %w", err)
+	}
+	if req.NonETFOnly {
+		results = s.filterNonETFUSTurnoverResults(ctx, results)
+		if len(results) > limit {
+			results = results[:limit]
+		}
 	}
 
 	resp := &dto.ScreenUSTurnoverIntersectionResponse{
@@ -525,8 +546,60 @@ func turnoverIntersectionCandidateLimit(limit int) int {
 	return (limit*27 + 19) / 20
 }
 
-func usTurnoverIntersectionCacheKey(limit, lookbackDays int) string {
-	return fmt.Sprintf("screener:us-turnover-intersection:v2:limit=%d:lookback_days=%d", limit, lookbackDays)
+func usTurnoverIntersectionCacheKey(limit, lookbackDays int, nonETFOnly bool) string {
+	return fmt.Sprintf("screener:us-turnover-intersection:v5:limit=%d:lookback_days=%d:non_etf_only=%t", limit, lookbackDays, nonETFOnly)
+}
+
+func usStocksFundamentalsUniverseFilterClause(symbolColumn string) string {
+	return fmt.Sprintf(`
+		AND %s IN (
+			SELECT symbol
+			FROM fundamental_observation
+			WHERE market = 'us-stocks'
+				AND factor_code IN ('pe', 'pb')
+			GROUP BY symbol
+			HAVING countDistinct(factor_code) = 2
+		)`, symbolColumn)
+}
+
+func (s *ScreenerService) filterNonETFUSTurnoverResults(ctx context.Context, rows []dto.ScreenedUSTurnoverIntersectionRow) []dto.ScreenedUSTurnoverIntersectionRow {
+	if s == nil || s.companyInfo == nil || len(rows) == 0 {
+		return rows
+	}
+	const maxConcurrentProfileLookups = 12
+	excluded := make([]bool, len(rows))
+	sem := make(chan struct{}, maxConcurrentProfileLookups)
+	var wg sync.WaitGroup
+	for index, row := range rows {
+		index := index
+		row := row
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			select {
+			case sem <- struct{}{}:
+			case <-ctx.Done():
+				return
+			}
+			defer func() { <-sem }()
+			isETFLike, err := s.companyInfo.IsETFLike(ctx, row.Underlying)
+			if err != nil {
+				return
+			}
+			if isETFLike {
+				excluded[index] = true
+			}
+		}()
+	}
+	wg.Wait()
+	filtered := make([]dto.ScreenedUSTurnoverIntersectionRow, 0, len(rows))
+	for index, row := range rows {
+		if excluded[index] {
+			continue
+		}
+		filtered = append(filtered, row)
+	}
+	return filtered
 }
 
 func stockUnderlyingOptionAliasExpr(column string) string {

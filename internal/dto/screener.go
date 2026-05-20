@@ -46,8 +46,9 @@ type ScreenUnderlyingResponse struct {
 // ScreenUSTurnoverIntersectionRequest defines the query for the US
 // stocks/options turnover intersection screener.
 type ScreenUSTurnoverIntersectionRequest struct {
-	Limit        int `form:"limit" binding:"omitempty"`
-	LookbackDays int `form:"lookback_days" binding:"omitempty"`
+	Limit        int  `form:"limit" binding:"omitempty"`
+	LookbackDays int  `form:"lookback_days" binding:"omitempty"`
+	NonETFOnly   bool `form:"non_etf_only" binding:"omitempty"`
 }
 
 // ScreenedUSTurnoverIntersectionRow is one intersected US underlying result.

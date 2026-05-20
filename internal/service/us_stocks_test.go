@@ -21,6 +21,14 @@ func (s *stubUSStockCompanyProfileProvider) CompanyProfile(_ context.Context, sy
 	return s.profile, s.err
 }
 
+func (s *stubUSStockCompanyProfileProvider) IsETFLike(ctx context.Context, symbol string) (bool, error) {
+	profile, err := s.CompanyProfile(ctx, symbol)
+	if err != nil {
+		return false, err
+	}
+	return isETFLikeUSStockProfile(profile), nil
+}
+
 type stubFMPCompanyProfiler struct {
 	profile *dto.USStockCompanyProfile
 	count   int
@@ -28,7 +36,7 @@ type stubFMPCompanyProfiler struct {
 
 func (s *stubFMPCompanyProfiler) Profile(_ context.Context, symbol string) (*fmp.Profile, error) {
 	s.count++
-	return &fmp.Profile{Symbol: symbol, Sector: s.profile.Sector, Industry: s.profile.Industry}, nil
+	return &fmp.Profile{Symbol: symbol, Sector: s.profile.Sector, Industry: s.profile.Industry, IsETF: s.profile.IsETF, IsFund: s.profile.IsFund}, nil
 }
 
 type stubUSStockFundamentals struct {
@@ -195,6 +203,98 @@ func TestCachedFMPUSStockCompanyProfileProviderUsesCache(t *testing.T) {
 	}
 	if second.Symbol != "AAPL" || second.Sector != "Technology" || second.Industry != "Consumer Electronics" {
 		t.Fatalf("unexpected cached profile: %#v", second)
+	}
+}
+
+func TestCachedFMPUSStockCompanyProfileProviderKeepsETFClassification(t *testing.T) {
+	store := cache.NewMemoryStore()
+	client := &stubFMPCompanyProfiler{profile: &dto.USStockCompanyProfile{IsETF: true}}
+	provider := &cachedFMPUSStockCompanyProfileProvider{
+		client: client,
+		cache:  store,
+		ttlValue: func() time.Duration {
+			return time.Hour
+		},
+	}
+
+	profile, err := provider.CompanyProfile(context.Background(), "SLV")
+	if err != nil {
+		t.Fatalf("CompanyProfile returned error: %v", err)
+	}
+	if profile == nil || !profile.IsETF {
+		t.Fatalf("expected ETF classification to be cached, got %#v", profile)
+	}
+	if client.count != 1 {
+		t.Fatalf("expected one upstream FMP request, got %d", client.count)
+	}
+	profile, err = provider.CompanyProfile(context.Background(), "slv")
+	if err != nil {
+		t.Fatalf("second CompanyProfile returned error: %v", err)
+	}
+	if profile == nil || !profile.IsETF {
+		t.Fatalf("expected cached ETF classification, got %#v", profile)
+	}
+	if client.count != 1 {
+		t.Fatalf("expected cache hit on second request, got %d upstream calls", client.count)
+	}
+}
+
+func TestCachedFMPUSStockCompanyProfileProviderKeepsFundClassification(t *testing.T) {
+	store := cache.NewMemoryStore()
+	client := &stubFMPCompanyProfiler{profile: &dto.USStockCompanyProfile{IsFund: true}}
+	provider := &cachedFMPUSStockCompanyProfileProvider{
+		client: client,
+		cache:  store,
+		ttlValue: func() time.Duration {
+			return time.Hour
+		},
+	}
+
+	profile, err := provider.CompanyProfile(context.Background(), "SLV")
+	if err != nil {
+		t.Fatalf("CompanyProfile returned error: %v", err)
+	}
+	if profile == nil || !profile.IsFund {
+		t.Fatalf("expected fund classification to be cached, got %#v", profile)
+	}
+}
+
+func TestCachedFMPUSStockCompanyProfileProviderIsETFLike(t *testing.T) {
+	store := cache.NewMemoryStore()
+	client := &stubFMPCompanyProfiler{profile: &dto.USStockCompanyProfile{IsETF: true}}
+	provider := &cachedFMPUSStockCompanyProfileProvider{
+		client: client,
+		cache:  store,
+		ttlValue: func() time.Duration {
+			return time.Hour
+		},
+	}
+
+	got, err := provider.IsETFLike(context.Background(), "SLV")
+	if err != nil {
+		t.Fatalf("IsETFLike returned error: %v", err)
+	}
+	if !got {
+		t.Fatal("expected SLV to be classified as ETF-like")
+	}
+}
+
+func TestIsETFLikeUSStockProfile(t *testing.T) {
+	tests := []struct {
+		name    string
+		profile *dto.USStockCompanyProfile
+		want    bool
+	}{
+		{name: "nil", profile: nil, want: false},
+		{name: "equity", profile: &dto.USStockCompanyProfile{Symbol: "AAPL"}, want: false},
+		{name: "etf", profile: &dto.USStockCompanyProfile{Symbol: "SPY", IsETF: true}, want: true},
+		{name: "fund", profile: &dto.USStockCompanyProfile{Symbol: "PSLV", IsFund: true}, want: true},
+	}
+
+	for _, tt := range tests {
+		if got := isETFLikeUSStockProfile(tt.profile); got != tt.want {
+			t.Fatalf("%s: isETFLikeUSStockProfile() = %v, want %v", tt.name, got, tt.want)
+		}
 	}
 }
 

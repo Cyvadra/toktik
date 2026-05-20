@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/Cyvadra/toktik/internal/cache"
@@ -38,7 +39,7 @@ func TestTurnoverIntersectionCandidateLimit(t *testing.T) {
 func TestStoreUSTurnoverIntersectionInCacheSkipsEmptyResponses(t *testing.T) {
 	store := cache.NewMemoryStore()
 	svc := NewScreenerService(nil, store)
-	key := usTurnoverIntersectionCacheKey(100, 20)
+	key := usTurnoverIntersectionCacheKey(100, 20, false)
 	resp := &dto.ScreenUSTurnoverIntersectionResponse{}
 
 	if err := svc.storeUSTurnoverIntersectionInCache(context.Background(), key, resp); err != nil {
@@ -54,7 +55,7 @@ func TestStoreUSTurnoverIntersectionInCacheSkipsEmptyResponses(t *testing.T) {
 func TestUSTurnoverIntersectionCacheRoundTrip(t *testing.T) {
 	store := cache.NewMemoryStore()
 	svc := NewScreenerService(nil, store)
-	key := usTurnoverIntersectionCacheKey(100, 20)
+	key := usTurnoverIntersectionCacheKey(100, 20, false)
 	want := &dto.ScreenUSTurnoverIntersectionResponse{
 		LookbackDays:   20,
 		Limit:          100,
@@ -80,4 +81,63 @@ func TestUSTurnoverIntersectionCacheRoundTrip(t *testing.T) {
 	if len(got.Data) != 1 || got.Data[0].Underlying != "AAPL" || got.CandidateLimit != 135 {
 		t.Fatalf("unexpected cached response: %+v", got)
 	}
+}
+
+func TestUSTurnoverIntersectionCacheKeyIncludesUniverseFilter(t *testing.T) {
+	withETF := usTurnoverIntersectionCacheKey(100, 20, false)
+	nonETFOnly := usTurnoverIntersectionCacheKey(100, 20, true)
+
+	if withETF == nonETFOnly {
+		t.Fatalf("cache key should differ by universe filter: %q", withETF)
+	}
+}
+
+func TestUSStocksFundamentalsUniverseFilterClauseRequiresPEAndPB(t *testing.T) {
+	clause := usStocksFundamentalsUniverseFilterClause("symbol")
+	if !strings.Contains(clause, "factor_code IN ('pe', 'pb')") {
+		t.Fatalf("expected pe/pb filter in clause, got %q", clause)
+	}
+	if !strings.Contains(clause, "HAVING countDistinct(factor_code) = 2") {
+		t.Fatalf("expected both factors requirement in clause, got %q", clause)
+	}
+	if !strings.Contains(clause, "AND symbol IN") {
+		t.Fatalf("expected symbol column to be interpolated, got %q", clause)
+	}
+}
+
+func TestFilterNonETFUSTurnoverResultsDropsETFProfiles(t *testing.T) {
+	provider := &stubUSStockCompanyProfileProvider{}
+	provider.requests = nil
+	svc := NewScreenerService(nil).WithCompanyProfileProvider(provider)
+	rows := []dto.ScreenedUSTurnoverIntersectionRow{{Underlying: "AAPL"}, {Underlying: "SLV"}, {Underlying: "MSFT"}}
+	providerBySymbol := map[string]*dto.USStockCompanyProfile{
+		"AAPL": {Symbol: "AAPL"},
+		"SLV":  {Symbol: "SLV", IsETF: true},
+		"MSFT": {Symbol: "MSFT"},
+	}
+	providerFn := &stubUSStockCompanyProfileProviderFunc{fn: func(_ context.Context, symbol string) (*dto.USStockCompanyProfile, error) {
+		return providerBySymbol[symbol], nil
+	}}
+	svc.companyInfo = providerFn
+
+	got := svc.filterNonETFUSTurnoverResults(context.Background(), rows)
+	if len(got) != 2 || got[0].Underlying != "AAPL" || got[1].Underlying != "MSFT" {
+		t.Fatalf("unexpected filtered rows: %+v", got)
+	}
+}
+
+type stubUSStockCompanyProfileProviderFunc struct {
+	fn func(context.Context, string) (*dto.USStockCompanyProfile, error)
+}
+
+func (s *stubUSStockCompanyProfileProviderFunc) CompanyProfile(ctx context.Context, symbol string) (*dto.USStockCompanyProfile, error) {
+	return s.fn(ctx, symbol)
+}
+
+func (s *stubUSStockCompanyProfileProviderFunc) IsETFLike(ctx context.Context, symbol string) (bool, error) {
+	profile, err := s.CompanyProfile(ctx, symbol)
+	if err != nil {
+		return false, err
+	}
+	return isETFLikeUSStockProfile(profile), nil
 }

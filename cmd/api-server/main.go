@@ -111,8 +111,9 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("read FMP api key: %w", err)
 	}
+	companyProfileProvider := service.NewCachedFMPUSStockCompanyProfileProvider(fmpAPIKey, cacheStore)
 	usStocksSvc := service.NewUSStocksService(repo, fundamentalsSvc).
-		WithCompanyProfileProvider(service.NewCachedFMPUSStockCompanyProfileProvider(fmpAPIKey, cacheStore))
+		WithCompanyProfileProvider(companyProfileProvider)
 
 	deps := api.Deps{
 		Config:            runtimeCfg,
@@ -126,7 +127,7 @@ func run() error {
 		StrategyBacktests: service.NewPortfolioBacktestService(repo, factorStore),
 		CryptoSpot:        service.NewCryptoSpotService(repo),
 		Forex:             service.NewForexService(repo),
-		Screener:          service.NewScreenerService(repo, cacheStore),
+		Screener:          service.NewScreenerService(repo, cacheStore).WithCompanyProfileProvider(companyProfileProvider),
 		StrategyCatalog:   service.NewStrategyCatalogService(),
 		Factors:           service.NewFactorService(factorStore),
 		Fundamentals:      fundamentalsSvc,

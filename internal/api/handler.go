@@ -1589,6 +1589,7 @@ func (h *Handler) ScreenUnderlyings(c *gin.Context) {
 // @Produce      json
 // @Param        limit          query     int  false  "Max rows to return (default 100)"
 // @Param        lookback_days  query     int  false  "Trailing trading days to aggregate (default 20)"
+// @Param        non_etf_only   query     bool false  "Restrict to stock underlyings with PE/PB fundamentals coverage, then exclude ETF/fund classifications from cached company profiles"
 // @Success      200            {object}  dto.ScreenUSTurnoverIntersectionResponse
 // @Failure      400            {object}  dto.ErrorResponse
 // @Failure      500            {object}  dto.ErrorResponse
