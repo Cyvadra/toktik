@@ -113,6 +113,33 @@ func (s *USStocksService) QueryBars(ctx context.Context, req dto.USStockBarReque
 		}
 	}
 
+	fetchLimit := limit + 1
+	if isSyntheticVIXSymbol(req.Symbol) {
+		fetchLimit = syntheticVIXFetchLimit(limit)
+	}
+	bars, err := s.queryBarRows(ctx, tableName, req.Symbol, fromT, toT, session, fetchLimit)
+	if err != nil {
+		return nil, err
+	}
+	if isSyntheticVIXSymbol(req.Symbol) {
+		bars, err = s.mergeSyntheticVIXBars(ctx, tableName, fromT, toT, session, fetchLimit, bars)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	resp := &dto.USStockBarResponse{Data: make([]dto.USStockBarRow, 0)}
+	resp.Data, resp.NextCursor = applyTimeCursorPagination(bars, limit, func(r dto.USStockBarRow) string {
+		return encodeCursor(r.Timestamp)
+	})
+	if err := s.attachFundamentals(ctx, req.Symbol, req.Factors, req.Interval, resp.Data); err != nil {
+		return nil, err
+	}
+	s.attachCompanyProfile(ctx, req.Symbol, resp)
+	return resp, nil
+}
+
+func (s *USStocksService) queryBarRows(ctx context.Context, tableName, symbol string, fromT, toT time.Time, session string, limit int) ([]dto.USStockBarRow, error) {
 	query := fmt.Sprintf(`SELECT
     timestamp,
     symbol,
@@ -127,7 +154,7 @@ WHERE symbol = %s
   AND timestamp >= toDateTime(%s, 'UTC')
   AND timestamp < toDateTime(%s, 'UTC')%s
 ORDER BY timestamp
-LIMIT %s`, tableName, clickhouseStringLiteral(req.Symbol), clickhouseDateTimeLiteral(fromT), clickhouseDateTimeLiteral(toT), usSessionCondition(session), clickhouseUInt32Literal(limit+1))
+LIMIT %s`, tableName, clickhouseStringLiteral(symbol), clickhouseDateTimeLiteral(fromT), clickhouseDateTimeLiteral(toT), usSessionCondition(session), clickhouseUInt32Literal(limit))
 
 	rows, err := s.repo.Query(ctx, query)
 	if err != nil {
@@ -155,16 +182,7 @@ LIMIT %s`, tableName, clickhouseStringLiteral(req.Symbol), clickhouseDateTimeLit
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate US stock bar rows: %w", err)
 	}
-
-	resp := &dto.USStockBarResponse{Data: make([]dto.USStockBarRow, 0)}
-	resp.Data, resp.NextCursor = applyTimeCursorPagination(bars, limit, func(r dto.USStockBarRow) string {
-		return encodeCursor(r.Timestamp)
-	})
-	if err := s.attachFundamentals(ctx, req.Symbol, req.Factors, req.Interval, resp.Data); err != nil {
-		return nil, err
-	}
-	s.attachCompanyProfile(ctx, req.Symbol, resp)
-	return resp, nil
+	return bars, nil
 }
 
 func (s *USStocksService) attachCompanyProfile(ctx context.Context, symbol string, resp *dto.USStockBarResponse) {
