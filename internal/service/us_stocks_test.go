@@ -178,12 +178,12 @@ func TestPriceDerivedFundamentalValueUsesCurrentBarCloseForPEAndPB(t *testing.T)
 	}
 }
 
-func TestResolveUSStockFundamentalBindingsMapsIndexPEToPE10Live(t *testing.T) {
+func TestResolveUSStockFundamentalBindingsKeepsTrailingPEForIndexETFs(t *testing.T) {
 	bindings := resolveUSStockFundamentalBindings("QQQ", []string{"pe", "pb"})
 	if len(bindings) != 2 {
 		t.Fatalf("expected 2 bindings, got %d", len(bindings))
 	}
-	if bindings[0].ResponseFactor != "pe" || bindings[0].SourceFactor != virtualFundamentalFactorPE10Live || bindings[0].PriceDerived {
+	if bindings[0].ResponseFactor != "pe" || bindings[0].SourceFactor != "pe" || bindings[0].PriceDerived {
 		t.Fatalf("unexpected PE binding: %#v", bindings[0])
 	}
 	if bindings[0].SeriesMode != fundamentalSeriesModeFilled {
@@ -205,7 +205,7 @@ func TestResolveUSStockFundamentalBindingsMapsIndexPEToPE10Live(t *testing.T) {
 	}
 }
 
-func TestUSStocksAttachFundamentalsUsesPE10LiveForIndexPE(t *testing.T) {
+func TestUSStocksAttachFundamentalsUsesTrailingPEForIndexETFs(t *testing.T) {
 	start := time.Date(2026, 4, 30, 13, 30, 0, 0, time.UTC)
 	bars := []dto.USStockBarRow{
 		{Timestamp: start, Symbol: "QQQ", Close: 510},
@@ -215,12 +215,12 @@ func TestUSStocksAttachFundamentalsUsesPE10LiveForIndexPE(t *testing.T) {
 	stub := &stubUSStockFundamentals{
 		snapshotResp: &dto.FundamentalSnapshotResponse{
 			Data: []dto.FundamentalSnapshotEntry{
-				{Factor: virtualFundamentalFactorPE10Live, EventTS: time.Date(2026, 4, 30, 0, 0, 0, 0, time.UTC), KnownAt: start, Value: 31.5, Source: macroVirtualFactorSource},
+				{Factor: "pe", EventTS: time.Date(2026, 4, 30, 0, 0, 0, 0, time.UTC), KnownAt: start, Value: 31.5, Source: "fmp_etf_fundamentals"},
 			},
 		},
 		seriesResp: map[string]*dto.FundamentalSeriesResponse{
-			virtualFundamentalFactorPE10Live: {
-				Data: []dto.FundamentalSeriesPoint{{EventTS: time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC), KnownAt: start.Add(24 * time.Hour), Value: 32.25, Source: macroVirtualFactorSource}},
+			"pe": {
+				Data: []dto.FundamentalSeriesPoint{{EventTS: time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC), KnownAt: start.Add(24 * time.Hour), Value: 32.25, Source: "fmp_etf_fundamentals"}},
 			},
 		},
 	}
@@ -229,20 +229,64 @@ func TestUSStocksAttachFundamentalsUsesPE10LiveForIndexPE(t *testing.T) {
 	if err := svc.attachFundamentals(context.Background(), "QQQ", []string{"pe"}, "1d", bars); err != nil {
 		t.Fatalf("attachFundamentals returned error: %v", err)
 	}
-	if len(stub.snapshotReqs) != 1 || len(stub.snapshotReqs[0].Factors) != 1 || stub.snapshotReqs[0].Factors[0] != virtualFundamentalFactorPE10Live {
+	if len(stub.snapshotReqs) != 1 || len(stub.snapshotReqs[0].Factors) != 1 || stub.snapshotReqs[0].Factors[0] != "pe" {
+		t.Fatalf("expected snapshot request for trailing pe, got %#v", stub.snapshotReqs)
+	}
+	if len(stub.seriesReqs) != 1 || stub.seriesReqs[0].Factor != "pe" {
+		t.Fatalf("expected series request for trailing pe, got %#v", stub.seriesReqs)
+	}
+	if stub.seriesReqs[0].Mode != fundamentalSeriesModeFilled {
+		t.Fatalf("expected trailing pe series request to use filled mode, got %#v", stub.seriesReqs[0])
+	}
+	if got := bars[0].Fundamentals["pe"].Value; got != 31.5 {
+		t.Fatalf("expected first index PE bar to use trailing pe, got %v", got)
+	}
+	if got := bars[1].Fundamentals["pe"].Value; got != 32.25 {
+		t.Fatalf("expected later index PE bar to use updated trailing pe, got %v", got)
+	}
+}
+
+func TestUSStocksAttachFundamentalsAliasesQQQPE10LiveToTrailingPE(t *testing.T) {
+	start := time.Date(2026, 4, 30, 13, 30, 0, 0, time.UTC)
+	bars := []dto.USStockBarRow{
+		{Timestamp: start, Symbol: "QQQ", Close: 510},
+		{Timestamp: start.Add(24 * time.Hour), Symbol: "QQQ", Close: 520},
+	}
+
+	stub := &stubUSStockFundamentals{
+		snapshotResp: &dto.FundamentalSnapshotResponse{
+			Data: []dto.FundamentalSnapshotEntry{
+				{Factor: "pe10_live", EventTS: time.Date(2026, 4, 30, 0, 0, 0, 0, time.UTC), KnownAt: start, Value: 31.5, Source: "fmp"},
+			},
+		},
+		seriesResp: map[string]*dto.FundamentalSeriesResponse{
+			"pe10_live": {
+				Data: []dto.FundamentalSeriesPoint{{EventTS: time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC), KnownAt: start.Add(24 * time.Hour), Value: 32.25, Source: "fmp"}},
+			},
+		},
+	}
+
+	svc := NewUSStocksService(nil, stub)
+	if err := svc.attachFundamentals(context.Background(), "QQQ", []string{"pe10_live"}, "1d", bars); err != nil {
+		t.Fatalf("attachFundamentals returned error: %v", err)
+	}
+	if len(stub.snapshotReqs) != 1 || len(stub.snapshotReqs[0].Factors) != 1 || stub.snapshotReqs[0].Factors[0] != "pe10_live" {
 		t.Fatalf("expected snapshot request for pe10_live, got %#v", stub.snapshotReqs)
 	}
-	if len(stub.seriesReqs) != 1 || stub.seriesReqs[0].Factor != virtualFundamentalFactorPE10Live {
+	if len(stub.seriesReqs) != 1 || stub.seriesReqs[0].Factor != "pe10_live" {
 		t.Fatalf("expected series request for pe10_live, got %#v", stub.seriesReqs)
 	}
 	if stub.seriesReqs[0].Mode != fundamentalSeriesModeFilled {
 		t.Fatalf("expected pe10_live series request to use filled mode, got %#v", stub.seriesReqs[0])
 	}
-	if got := bars[0].Fundamentals["pe"].Value; got != 31.5 {
-		t.Fatalf("expected first index PE bar to use pe10_live, got %v", got)
+	if got := bars[0].Fundamentals["pe10_live"].Value; got != 31.5 {
+		t.Fatalf("expected first index pe10_live bar to use aliased trailing pe, got %v", got)
 	}
-	if got := bars[1].Fundamentals["pe"].Value; got != 32.25 {
-		t.Fatalf("expected later index PE bar to use updated pe10_live, got %v", got)
+	if got := bars[1].Fundamentals["pe10_live"].Value; got != 32.25 {
+		t.Fatalf("expected later index pe10_live bar to use updated aliased trailing pe, got %v", got)
+	}
+	if bars[1].Fundamentals["pe10_live"].Source != "fmp" {
+		t.Fatalf("expected pe10_live source to be preserved, got %#v", bars[1].Fundamentals["pe10_live"])
 	}
 }
 

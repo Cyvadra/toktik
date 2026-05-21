@@ -34,13 +34,16 @@ func TestResolveVirtualFundamentalMacroTarget(t *testing.T) {
 		wantOK        bool
 		wantDataset   string
 		wantRefSymbol string
+		wantMacro     string
 	}{
-		{name: "spy direct", market: "us-stocks", symbol: "SPY", factor: "pe10_live", wantOK: true, wantDataset: macroDatasetFMPSP500Shiller, wantRefSymbol: "SPY"},
-		{name: "spx alias", market: "us-stocks", symbol: "SPX", factor: "pe10_live", wantOK: true, wantDataset: macroDatasetFMPSP500Shiller, wantRefSymbol: "SPY"},
-		{name: "qqq direct", market: "us-stocks", symbol: "QQQ", factor: "pe10_live", wantOK: true, wantDataset: macroDatasetFMPNDXShiller, wantRefSymbol: "QQQ"},
-		{name: "ndx alias", market: "us-stocks", symbol: "NDX", factor: "pe10_live", wantOK: true, wantDataset: macroDatasetFMPNDXShiller, wantRefSymbol: "QQQ"},
+		{name: "spy direct", market: "us-stocks", symbol: "SPY", factor: "pe10_live", wantOK: true, wantDataset: macroDatasetFMPSP500Shiller, wantRefSymbol: "SPY", wantMacro: "pe10_live"},
+		{name: "spx alias", market: "us-stocks", symbol: "SPX", factor: "pe10_live", wantOK: true, wantDataset: macroDatasetFMPSP500Shiller, wantRefSymbol: "SPY", wantMacro: "pe10_live"},
+		{name: "qqq direct", market: "us-stocks", symbol: "QQQ", factor: "pe10_live", wantOK: true, wantDataset: macroDatasetFMPNDXShiller, wantRefSymbol: "QQQ", wantMacro: "pe"},
+		{name: "ndx alias", market: "us-stocks", symbol: "NDX", factor: "pe10_live", wantOK: true, wantDataset: macroDatasetFMPNDXShiller, wantRefSymbol: "QQQ", wantMacro: "pe"},
 		{name: "other symbol", market: "us-stocks", symbol: "IWM", factor: "pe10_live", wantOK: false},
-		{name: "other factor", market: "us-stocks", symbol: "SPY", factor: "pe", wantOK: false},
+		{name: "spy trailing pe", market: "us-stocks", symbol: "SPY", factor: "pe", wantOK: true, wantDataset: macroDatasetFMPSP500Shiller, wantRefSymbol: "SPY", wantMacro: "pe"},
+		{name: "ndx trailing pe", market: "us-stocks", symbol: "NDX", factor: "pe", wantOK: true, wantDataset: macroDatasetFMPNDXShiller, wantRefSymbol: "QQQ", wantMacro: "pe"},
+		{name: "other factor", market: "us-stocks", symbol: "SPY", factor: "pb", wantOK: false},
 		{name: "other market", market: "crypto-spot", symbol: "SPY", factor: "pe10_live", wantOK: false},
 	}
 
@@ -58,6 +61,9 @@ func TestResolveVirtualFundamentalMacroTarget(t *testing.T) {
 			}
 			if got.ReferenceSymbol != tc.wantRefSymbol {
 				t.Fatalf("reference symbol=%q want %q", got.ReferenceSymbol, tc.wantRefSymbol)
+			}
+			if got.MacroFactor != tc.wantMacro {
+				t.Fatalf("macro factor=%q want %q", got.MacroFactor, tc.wantMacro)
 			}
 		})
 	}
@@ -86,17 +92,23 @@ func TestAppendVirtualFundamentalCatalogEntries(t *testing.T) {
 
 func TestSplitFundamentalFactorSelection(t *testing.T) {
 	selection := splitFundamentalFactorSelection([]string{"pb", virtualFundamentalFactorPE10Live, "pe"})
+	if !selection.includePE {
+		t.Fatalf("expected virtual pe to be selected")
+	}
 	if !selection.includePE10Live {
 		t.Fatalf("expected virtual pe10_live to be selected")
 	}
-	if len(selection.base) != 2 {
-		t.Fatalf("len(base)=%d want 2", len(selection.base))
+	if len(selection.base) != 1 {
+		t.Fatalf("len(base)=%d want 1", len(selection.base))
 	}
-	if selection.base[0] != "pb" || selection.base[1] != "pe" {
-		t.Fatalf("base=%v want [pb pe]", selection.base)
+	if selection.base[0] != "pb" {
+		t.Fatalf("base=%v want [pb]", selection.base)
 	}
 
-	selection = splitFundamentalFactorSelection([]string{virtualFundamentalFactorPE10Live})
+	selection = splitFundamentalFactorSelection([]string{virtualFundamentalFactorPE, virtualFundamentalFactorPE10Live})
+	if !selection.includePE {
+		t.Fatalf("expected virtual-only selection to include pe")
+	}
 	if !selection.includePE10Live {
 		t.Fatalf("expected virtual-only selection to include pe10_live")
 	}
@@ -134,5 +146,69 @@ func TestVirtualFundamentalsQuerySeriesUsesDailyTimestampAsEventTS(t *testing.T)
 	}
 	if got := macro.reqs[0].To; got != "2026-01-08T00:00:00Z" {
 		t.Fatalf("expected expanded daily range end, got %s", got)
+	}
+}
+
+func TestVirtualFundamentalsQuerySeriesHandlesTrailingPE(t *testing.T) {
+	macro := &stubMacroSeriesProvider{
+		resp: &dto.MacroSeriesResponse{
+			Data: []dto.MacroSeriesPoint{{
+				Timestamp: time.Date(2026, 1, 5, 0, 0, 0, 0, time.UTC),
+				EventTS:   time.Date(2025, 11, 28, 17, 59, 0, 0, time.UTC),
+				KnownAt:   time.Date(2026, 1, 2, 14, 30, 0, 0, time.UTC),
+				Value:     31.82,
+				Source:    "fmp",
+			}},
+		},
+	}
+	provider := newVirtualFundamentalsProvider(macro)
+
+	points, fillPolicy, handled, err := provider.querySeries(context.Background(), dto.FundamentalSeriesRequest{From: "2026-01-02T00:00:00Z", To: "2026-01-07T00:00:00Z"}, "us-stocks", "QQQ", virtualFundamentalFactorPE, fundamentalSeriesModeFilled)
+	if err != nil {
+		t.Fatalf("querySeries returned error: %v", err)
+	}
+	if !handled {
+		t.Fatalf("expected virtual series to be handled")
+	}
+	if fillPolicy != fundamentalFillForwardFill {
+		t.Fatalf("fillPolicy=%q want %q", fillPolicy, fundamentalFillForwardFill)
+	}
+	if len(points) != 1 || points[0].Value != 31.82 {
+		t.Fatalf("unexpected points: %#v", points)
+	}
+	if got := macro.reqs[0].Factors; len(got) != 1 || got[0] != virtualFundamentalFactorPE {
+		t.Fatalf("unexpected macro factors: %v", got)
+	}
+}
+
+func TestVirtualFundamentalsQuerySeriesAliasesQQQPE10LiveToTrailingPE(t *testing.T) {
+	macro := &stubMacroSeriesProvider{
+		resp: &dto.MacroSeriesResponse{
+			Data: []dto.MacroSeriesPoint{{
+				Timestamp: time.Date(2026, 1, 5, 0, 0, 0, 0, time.UTC),
+				EventTS:   time.Date(2025, 11, 28, 17, 59, 0, 0, time.UTC),
+				KnownAt:   time.Date(2026, 1, 2, 14, 30, 0, 0, time.UTC),
+				Value:     31.82,
+				Source:    "fmp",
+			}},
+		},
+	}
+	provider := newVirtualFundamentalsProvider(macro)
+
+	points, _, handled, err := provider.querySeries(context.Background(), dto.FundamentalSeriesRequest{From: "2026-01-02T00:00:00Z", To: "2026-01-07T00:00:00Z"}, "us-stocks", "QQQ", virtualFundamentalFactorPE10Live, fundamentalSeriesModeFilled)
+	if err != nil {
+		t.Fatalf("querySeries returned error: %v", err)
+	}
+	if !handled {
+		t.Fatalf("expected virtual series to be handled")
+	}
+	if len(points) != 1 || points[0].Value != 31.82 {
+		t.Fatalf("unexpected points: %#v", points)
+	}
+	if got := macro.reqs[0].Factors; len(got) != 1 || got[0] != virtualFundamentalFactorPE {
+		t.Fatalf("expected qqq pe10_live to query trailing pe, got %v", got)
+	}
+	if got := macro.reqs[0].ReferenceSymbol; got != "QQQ" {
+		t.Fatalf("reference symbol=%q want QQQ", got)
 	}
 }

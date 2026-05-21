@@ -93,6 +93,7 @@ func (s *FundamentalsService) QuerySeries(ctx context.Context, req dto.Fundament
 	if err != nil {
 		return nil, err
 	}
+	storageSymbol := resolveFundamentalStorageSymbol(market, symbol, factor)
 	from, to, err := dto.ParseTimeRange(req.From, req.To)
 	if err != nil {
 		return nil, err
@@ -129,7 +130,7 @@ func (s *FundamentalsService) QuerySeries(ctx context.Context, req dto.Fundament
 	}
 
 	if mode == fundamentalSeriesModeEvent {
-		points, err := s.queryEventSeries(ctx, market, symbol, factor, from, to, asOf)
+		points, err := s.queryEventSeries(ctx, market, storageSymbol, factor, from, to, asOf)
 		if err != nil {
 			return nil, err
 		}
@@ -137,7 +138,7 @@ func (s *FundamentalsService) QuerySeries(ctx context.Context, req dto.Fundament
 		return resp, nil
 	}
 
-	asOfPoints, err := s.queryAsOfSeries(ctx, market, symbol, factor, from, to, asOf)
+	asOfPoints, err := s.queryAsOfSeries(ctx, market, storageSymbol, factor, from, to, asOf)
 	if err != nil {
 		return nil, err
 	}
@@ -214,6 +215,7 @@ func (s *FundamentalsService) QuerySnapshot(ctx context.Context, req dto.Fundame
 	if err != nil {
 		return nil, err
 	}
+	storageSymbol := resolveFundamentalStorageSymbol(market, symbol, "")
 	asOf, err := resolveAsOf(req.AsOf, time.Now().UTC())
 	if err != nil {
 		return nil, err
@@ -225,7 +227,7 @@ func (s *FundamentalsService) QuerySnapshot(ctx context.Context, req dto.Fundame
 	if shouldQueryBase {
 		rows, err := s.repo.Query(ctx, chquery.FundamentalSnapshotQuery(),
 			clickhouse.Named("market", market),
-			clickhouse.Named("symbol", symbol),
+			clickhouse.Named("symbol", storageSymbol),
 			clickhouse.Named("as_of", asOf.UTC().Format(time.RFC3339Nano)),
 			clickhouse.Named("factors", factors.base),
 		)
@@ -244,13 +246,22 @@ func (s *FundamentalsService) QuerySnapshot(ctx context.Context, req dto.Fundame
 			return nil, err
 		}
 	}
-	if factors.includePE10Live {
+	if len(req.Factors) == 0 || factors.includePE {
+		entry, handled, err := s.virtuals.querySnapshot(ctx, market, symbol, virtualFundamentalFactorPE, asOf)
+		if err != nil {
+			return nil, err
+		}
+		if handled && entry != nil {
+			upsertFundamentalSnapshotEntry(&out.Data, *entry)
+		}
+	}
+	if len(req.Factors) == 0 || factors.includePE10Live {
 		entry, handled, err := s.virtuals.querySnapshot(ctx, market, symbol, virtualFundamentalFactorPE10Live, asOf)
 		if err != nil {
 			return nil, err
 		}
 		if handled && entry != nil {
-			out.Data = append(out.Data, *entry)
+			upsertFundamentalSnapshotEntry(&out.Data, *entry)
 		}
 	}
 	sort.Slice(out.Data, func(i, j int) bool {
@@ -305,12 +316,19 @@ func (s *FundamentalsService) QueryPanel(ctx context.Context, req dto.Fundamenta
 			return nil, err
 		}
 	}
-	if factors.includePE10Live {
+	if len(req.Factors) == 0 || factors.includePE {
+		rows, err := s.virtuals.queryPanelRows(ctx, market, symbols, virtualFundamentalFactorPE, asOf)
+		if err != nil {
+			return nil, err
+		}
+		upsertFundamentalPanelRows(&out.Data, rows)
+	}
+	if len(req.Factors) == 0 || factors.includePE10Live {
 		rows, err := s.virtuals.queryPanelRows(ctx, market, symbols, virtualFundamentalFactorPE10Live, asOf)
 		if err != nil {
 			return nil, err
 		}
-		out.Data = append(out.Data, rows...)
+		upsertFundamentalPanelRows(&out.Data, rows)
 	}
 	sort.Slice(out.Data, func(i, j int) bool {
 		if out.Data[i].Symbol == out.Data[j].Symbol {
@@ -319,6 +337,32 @@ func (s *FundamentalsService) QueryPanel(ctx context.Context, req dto.Fundamenta
 		return out.Data[i].Symbol < out.Data[j].Symbol
 	})
 	return out, nil
+}
+
+func upsertFundamentalSnapshotEntry(entries *[]dto.FundamentalSnapshotEntry, entry dto.FundamentalSnapshotEntry) {
+	for index := range *entries {
+		if strings.EqualFold((*entries)[index].Factor, entry.Factor) {
+			(*entries)[index] = entry
+			return
+		}
+	}
+	*entries = append(*entries, entry)
+}
+
+func upsertFundamentalPanelRows(existing *[]dto.FundamentalPanelRow, rows []dto.FundamentalPanelRow) {
+	for _, row := range rows {
+		updated := false
+		for index := range *existing {
+			if strings.EqualFold((*existing)[index].Symbol, row.Symbol) && strings.EqualFold((*existing)[index].Factor, row.Factor) {
+				(*existing)[index] = row
+				updated = true
+				break
+			}
+		}
+		if !updated {
+			*existing = append(*existing, row)
+		}
+	}
 }
 
 // ----- Freshness -----
@@ -435,6 +479,23 @@ func normalizeFundamentalKey(market, symbol, factor string) (string, string, str
 		return "", "", "", dto.NewValidationError("factor is required")
 	}
 	return market, symbol, factor, nil
+}
+
+func resolveFundamentalStorageSymbol(market, symbol, factor string) string {
+	if !strings.EqualFold(market, "us-stocks") {
+		return symbol
+	}
+	if strings.EqualFold(factor, virtualFundamentalFactorPE10Live) {
+		return symbol
+	}
+	switch strings.ToUpper(strings.TrimSpace(symbol)) {
+	case "SPX":
+		return "SPY"
+	case "NDX":
+		return "QQQ"
+	default:
+		return symbol
+	}
 }
 
 func validateFundamentalMarket(market string) error {

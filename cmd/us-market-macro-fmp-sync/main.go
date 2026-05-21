@@ -32,8 +32,8 @@ const (
 	realtimeForwardFill     = "forward_fill"
 	realtimePriceScaled     = "price_scaled"
 	defaultWorkerCount      = 6
-	defaultRollingQuarters  = 8
-	defaultMinQuarters      = 4
+	defaultRollingQuarters  = 40
+	defaultMinQuarters      = 40
 	defaultDebugCSVFileName = "fmp_shiller_last_1y.csv"
 )
 
@@ -191,8 +191,8 @@ func main() {
 	dryRun := flag.Bool("dry-run", false, "Compute but do not write to ClickHouse")
 	debugCSV := flag.String("debug-csv", filepath.Join("reports", defaultDebugCSVFileName), "CSV path for last-year Shiller PE debug output")
 	debugLiveCSV := flag.String("debug-live-csv", filepath.Join("reports", "fmp_shiller_live_last_1y.csv"), "Daily live-series CSV path for debugging")
-	rollingQuarters := flag.Int("rolling-quarters", defaultRollingQuarters, "Quarter count used in the smoothed CAPE-like denominator")
-	minQuarters := flag.Int("min-quarters", defaultMinQuarters, "Minimum available quarters required before emitting PE")
+	rollingQuarters := flag.Int("rolling-quarters", defaultRollingQuarters, "Quarter count used in the 10-year CAPE denominator")
+	minQuarters := flag.Int("min-quarters", defaultMinQuarters, "Minimum available quarters required before emitting PE10")
 	symbolLimit := flag.Int("symbol-limit", 0, "Limit number of constituent symbols fetched for debugging (0 = all)")
 	flag.Parse()
 

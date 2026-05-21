@@ -21,8 +21,8 @@ const (
 	DefaultFMPNasdaq100Dataset = "fmp-nasdaq100-shiller"
 	fmpMacroSource             = "fmp"
 	defaultFMPMacroWorkers     = 6
-	defaultFMPRollingQuarters  = 8
-	defaultFMPMinimumQuarters  = 4
+	defaultFMPRollingQuarters  = 40
+	defaultFMPMinimumQuarters  = 40
 	defaultFMPMacroHTTPTimeout = 90 * time.Second
 )
 
@@ -109,6 +109,7 @@ type fmpMonthlyPoint struct {
 	CPI                 float64
 	RateGS10            float64
 	NominalEarnings     float64
+	PE                  float64
 	RealSP              float64
 	RealEarnings        float64
 	PE10                float64
@@ -419,7 +420,7 @@ func fetchFMPMacroSymbol(ctx context.Context, client *fmp.Client, symbol string,
 	}
 	quarterly := make([]fmpQuarterlyEarningsRecord, 0, len(incomeRows))
 	for _, row := range incomeRows {
-		knownAt := parseFMPMacroKnownAt(row.AcceptedDate, row.FilingDate, row.Date)
+		knownAt := parseFMPMacroKnownAt(row.AcceptedDate, row.FilingDate)
 		if knownAt.IsZero() {
 			continue
 		}
@@ -588,22 +589,45 @@ func buildFMPMonthlyPoints(from, to time.Time, prices, cpiSeries, rateSeries map
 		if nominalEarnings == 0 || math.IsNaN(nominalEarnings) || math.IsInf(nominalEarnings, 0) {
 			continue
 		}
+		pe := price / nominalEarnings
+		if pe <= 0 || math.IsNaN(pe) || math.IsInf(pe, 0) {
+			continue
+		}
 		realSP := price * latestCPI / cpi
 		realEarnings := nominalEarnings * latestCPI / cpi
-		points = append(points, fmpMonthlyPoint{Month: month, PeriodEnd: monthEnd, KnownAt: knownAt, AnchorValue: anchorValue, Price: price, CPI: cpi, RateGS10: rate, NominalEarnings: nominalEarnings, RealSP: realSP, RealEarnings: realEarnings, ConstituentCount: len(members), CoveredConstituents: covered, TotalMarketCap: totalMarketCap, TotalNetIncome: totalNetIncome})
+		points = append(points, fmpMonthlyPoint{Month: month, PeriodEnd: monthEnd, KnownAt: knownAt, AnchorValue: anchorValue, Price: price, CPI: cpi, RateGS10: rate, NominalEarnings: nominalEarnings, PE: pe, RealSP: realSP, RealEarnings: realEarnings, ConstituentCount: len(members), CoveredConstituents: covered, TotalMarketCap: totalMarketCap, TotalNetIncome: totalNetIncome})
 	}
 	rollingMonths := rollingQuarters * 3
 	minimumMonths := minQuarters * 3
-	realWindow := make([]float64, 0, rollingMonths)
+	windowStart := 0
 	for index := range points {
-		realWindow = append(realWindow, points[index].RealEarnings)
-		if len(realWindow) > rollingMonths {
-			realWindow = realWindow[1:]
+		if index-windowStart+1 > rollingMonths {
+			windowStart++
 		}
-		if len(realWindow) < minimumMonths {
+		windowLen := index - windowStart + 1
+		if windowLen < minimumMonths {
 			continue
 		}
-		avgRealEarnings := averageFMPMacro(realWindow)
+		currentCPI := points[index].CPI
+		if currentCPI <= 0 || math.IsNaN(currentCPI) || math.IsInf(currentCPI, 0) {
+			continue
+		}
+		adjustedWindow := make([]float64, 0, windowLen)
+		for windowIndex := windowStart; windowIndex <= index; windowIndex++ {
+			windowPoint := points[windowIndex]
+			if windowPoint.CPI <= 0 || math.IsNaN(windowPoint.CPI) || math.IsInf(windowPoint.CPI, 0) {
+				continue
+			}
+			adjusted := windowPoint.NominalEarnings * currentCPI / windowPoint.CPI
+			if adjusted <= 0 || math.IsNaN(adjusted) || math.IsInf(adjusted, 0) {
+				continue
+			}
+			adjustedWindow = append(adjustedWindow, adjusted)
+		}
+		if len(adjustedWindow) < minimumMonths {
+			continue
+		}
+		avgRealEarnings := averageFMPMacro(adjustedWindow)
 		if avgRealEarnings <= 0 {
 			continue
 		}
@@ -660,6 +684,7 @@ func buildFMPIndexCatalogRows(dataset string, universe fmpUniverseConfig, refere
 	definitions := []fmpFactorDefinition{
 		{Code: universe.PriceFactorCode, DisplayName: universe.DisplayName + " Price", Description: "Monthly " + universe.DisplayName + " level derived from FMP price history", ValueType: "index", RealtimeMode: realtimePriceScaled},
 		{Code: "earnings", DisplayName: "Earnings", Description: "Monthly index earnings-per-unit derived from FMP " + universe.DisplayName + " constituent penetration", ValueType: "float", RealtimeMode: realtimeForwardFill},
+		{Code: "pe", DisplayName: universe.DisplayName + " Trailing PE", Description: "Monthly holdings-aggregated trailing PE computed from FMP price and constituent TTM net income", ValueType: "ratio", RealtimeMode: realtimePriceScaled},
 		{Code: "CPI", DisplayName: "CPI", Description: "Monthly CPI field from FMP economic indicators", ValueType: "float", RealtimeMode: realtimeForwardFill},
 		{Code: "rate_GS10", DisplayName: "GS10 Rate", Description: "10-year treasury yield from FMP treasury rates", ValueType: "percent", Unit: "%", RealtimeMode: realtimeForwardFill},
 		{Code: "real_sp", DisplayName: "Real " + universe.DisplayName, Description: "Monthly inflation-adjusted " + universe.DisplayName + " level derived from FMP data", ValueType: "index", RealtimeMode: realtimePriceScaled},
@@ -675,7 +700,7 @@ func buildFMPIndexCatalogRows(dataset string, universe fmpUniverseConfig, refere
 }
 
 func buildFMPIndexObservationRows(dataset string, points []fmpMonthlyPoint, anchors map[string]fmpMonthAnchor, referenceSymbol, priceFactorCode string) []ObservationRow {
-	rows := make([]ObservationRow, 0, len(points)*8)
+	rows := make([]ObservationRow, 0, len(points)*9)
 	for _, point := range points {
 		monthKey := point.Month.Format("2006-01")
 		anchor, ok := anchors[monthKey]
@@ -684,6 +709,7 @@ func buildFMPIndexObservationRows(dataset string, points []fmpMonthlyPoint, anch
 		}
 		rows = appendFMPObservation(rows, dataset, priceFactorCode, point.Price, point.Month, point.PeriodEnd, anchor, referenceSymbol, true)
 		rows = appendFMPObservation(rows, dataset, "earnings", point.NominalEarnings, point.Month, point.PeriodEnd, anchor, referenceSymbol, false)
+		rows = appendFMPObservation(rows, dataset, "pe", point.PE, point.Month, point.PeriodEnd, anchor, referenceSymbol, true)
 		rows = appendFMPObservation(rows, dataset, "CPI", point.CPI, point.Month, point.PeriodEnd, anchor, referenceSymbol, false)
 		rows = appendFMPObservation(rows, dataset, "rate_GS10", point.RateGS10, point.Month, point.PeriodEnd, anchor, referenceSymbol, false)
 		rows = appendFMPObservation(rows, dataset, "real_sp", point.RealSP, point.Month, point.PeriodEnd, anchor, referenceSymbol, true)

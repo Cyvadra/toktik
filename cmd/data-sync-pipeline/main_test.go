@@ -46,6 +46,12 @@ func TestDefaultPipelineConfigEnablesFMPMacroJobs(t *testing.T) {
 		if job.ReferenceSymbol == "" || job.PriceSymbol == "" || job.ConstituentUniverse == "" {
 			t.Fatalf("expected %s to define reference_symbol, price_symbol, and constituent_universe", name)
 		}
+		if job.RollingQuarters != 40 || job.MinQuarters != 40 {
+			t.Fatalf("expected %s to use a full 10-year window, got rolling=%d min=%d", name, job.RollingQuarters, job.MinQuarters)
+		}
+		if job.ColdStartFloor != "2016-01-01" {
+			t.Fatalf("expected %s cold_start_floor=2016-01-01, got %q", name, job.ColdStartFloor)
+		}
 	}
 }
 

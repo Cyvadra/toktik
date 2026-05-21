@@ -9,6 +9,7 @@ import (
 )
 
 const (
+	virtualFundamentalFactorPE             = "pe"
 	virtualFundamentalFactorPE10Live       = "pe10_live"
 	virtualFundamentalSnapshotLookbackDays = 45
 )
@@ -25,10 +26,12 @@ type virtualFundamentalMacroTarget struct {
 	Dataset         string
 	ReferenceMarket string
 	ReferenceSymbol string
+	MacroFactor     string
 }
 
 type fundamentalFactorSelection struct {
 	base            []string
+	includePE       bool
 	includePE10Live bool
 }
 
@@ -49,7 +52,7 @@ func (p *virtualFundamentalsProvider) appendCatalogEntries(entries []dto.Fundame
 		Market:             "us-stocks",
 		FactorCode:         virtualFundamentalFactorPE10Live,
 		DisplayName:        "Index Shiller PE Live",
-		Description:        "Alias-aware daily Shiller PE live series for SPY/SPX and QQQ/NDX, derived from FMP constituent macro datasets.",
+		Description:        "Alias-aware daily index valuation series: SPY/SPX uses Shiller PE live, while QQQ/NDX currently aliases the traditional trailing PE series.",
 		ValueType:          "ratio",
 		PreferredFrequency: "1d",
 		FillPolicy:         fundamentalFillForwardFill,
@@ -75,7 +78,7 @@ func (p *virtualFundamentalsProvider) querySeries(ctx context.Context, req dto.F
 	}
 	resp, err := p.macro.QuerySeries(ctx, dto.MacroSeriesRequest{
 		Dataset:         target.Dataset,
-		Factors:         []string{factor},
+		Factors:         []string{target.MacroFactor},
 		From:            from,
 		To:              to,
 		AsOf:            req.AsOf,
@@ -152,7 +155,7 @@ func (p *virtualFundamentalsProvider) querySnapshotSeries(ctx context.Context, f
 	to := asOf.AddDate(0, 0, 1)
 	return p.macro.QuerySeries(ctx, dto.MacroSeriesRequest{
 		Dataset:         target.Dataset,
-		Factors:         []string{factor},
+		Factors:         []string{target.MacroFactor},
 		From:            from.UTC().Format(time.RFC3339Nano),
 		To:              to.UTC().Format(time.RFC3339Nano),
 		AsOf:            asOf.UTC().Format(time.RFC3339Nano),
@@ -164,7 +167,12 @@ func (p *virtualFundamentalsProvider) querySnapshotSeries(ctx context.Context, f
 }
 
 func resolveVirtualFundamentalMacroTarget(market, symbol, factor string) (virtualFundamentalMacroTarget, bool) {
-	if !strings.EqualFold(market, "us-stocks") || !strings.EqualFold(factor, virtualFundamentalFactorPE10Live) {
+	if !strings.EqualFold(market, "us-stocks") {
+		return virtualFundamentalMacroTarget{}, false
+	}
+	switch strings.ToLower(strings.TrimSpace(factor)) {
+	case virtualFundamentalFactorPE, virtualFundamentalFactorPE10Live:
+	default:
 		return virtualFundamentalMacroTarget{}, false
 	}
 	switch strings.ToUpper(strings.TrimSpace(symbol)) {
@@ -173,12 +181,18 @@ func resolveVirtualFundamentalMacroTarget(market, symbol, factor string) (virtua
 			Dataset:         macroDatasetFMPSP500Shiller,
 			ReferenceMarket: defaultMacroReferenceMarket,
 			ReferenceSymbol: "SPY",
+			MacroFactor:     factor,
 		}, true
 	case "QQQ", "NDX":
+		macroFactor := factor
+		if strings.EqualFold(strings.TrimSpace(factor), virtualFundamentalFactorPE10Live) {
+			macroFactor = virtualFundamentalFactorPE
+		}
 		return virtualFundamentalMacroTarget{
 			Dataset:         macroDatasetFMPNDXShiller,
 			ReferenceMarket: defaultMacroReferenceMarket,
 			ReferenceSymbol: "QQQ",
+			MacroFactor:     macroFactor,
 		}, true
 	default:
 		return virtualFundamentalMacroTarget{}, false
@@ -188,11 +202,14 @@ func resolveVirtualFundamentalMacroTarget(market, symbol, factor string) (virtua
 func splitFundamentalFactorSelection(factors []string) fundamentalFactorSelection {
 	selection := fundamentalFactorSelection{base: make([]string, 0, len(factors))}
 	for _, factor := range factors {
-		if factor == virtualFundamentalFactorPE10Live {
+		switch factor {
+		case virtualFundamentalFactorPE:
+			selection.includePE = true
+		case virtualFundamentalFactorPE10Live:
 			selection.includePE10Live = true
-			continue
+		default:
+			selection.base = append(selection.base, factor)
 		}
-		selection.base = append(selection.base, factor)
 	}
 	if len(selection.base) == 0 {
 		selection.base = nil

@@ -31,10 +31,14 @@ func resolveUSStockFundamentalBinding(symbol, factor string) usStockFundamentalB
 		PriceDerived:   defaultUSStockPriceDerivedFundamentalFactor(factor),
 		SeriesMode:     fundamentalSeriesModeEvent,
 	}
-	if isIndexPEProxyUSStockSymbol(symbol) && factor == "pe" {
-		binding.SourceFactor = virtualFundamentalFactorPE10Live
-		binding.PriceDerived = false
+	if factor == virtualFundamentalFactorPE10Live {
 		binding.SeriesMode = fundamentalSeriesModeFilled
+	}
+	if factor == virtualFundamentalFactorPE {
+		if _, ok := resolveVirtualFundamentalMacroTarget("us-stocks", symbol, factor); ok {
+			binding.PriceDerived = false
+			binding.SeriesMode = fundamentalSeriesModeFilled
+		}
 	}
 	if factor == virtualFundamentalFactorPE10Live {
 		binding.SeriesMode = fundamentalSeriesModeFilled
@@ -65,15 +69,6 @@ func isPriceDerivedFundamentalFactor(binding usStockFundamentalBinding) bool {
 func defaultUSStockPriceDerivedFundamentalFactor(factor string) bool {
 	switch factor {
 	case "pe", "pb":
-		return true
-	default:
-		return false
-	}
-}
-
-func isIndexPEProxyUSStockSymbol(symbol string) bool {
-	switch strings.ToUpper(strings.TrimSpace(symbol)) {
-	case "SPY", "SPX", "QQQ", "NDX":
 		return true
 	default:
 		return false
