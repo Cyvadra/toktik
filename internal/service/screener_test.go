@@ -40,6 +40,25 @@ func TestTurnoverIntersectionCandidateLimit(t *testing.T) {
 	}
 }
 
+func TestCanonicalUSTurnoverIntersectionCacheLimit(t *testing.T) {
+	tests := []struct {
+		limit int
+		want  int
+	}{
+		{limit: 0, want: 0},
+		{limit: 1, want: 60},
+		{limit: 30, want: 60},
+		{limit: 60, want: 60},
+		{limit: 61, want: 61},
+	}
+
+	for _, tt := range tests {
+		if got := canonicalUSTurnoverIntersectionCacheLimit(tt.limit); got != tt.want {
+			t.Fatalf("canonicalUSTurnoverIntersectionCacheLimit(%d) = %d, want %d", tt.limit, got, tt.want)
+		}
+	}
+}
+
 func TestStoreUSTurnoverIntersectionInCacheSkipsEmptyResponses(t *testing.T) {
 	store := cache.NewMemoryStore()
 	svc := NewScreenerService(nil, store)
@@ -75,7 +94,7 @@ func TestUSTurnoverIntersectionCacheRoundTrip(t *testing.T) {
 	if err := svc.storeUSTurnoverIntersectionInCache(context.Background(), key, want); err != nil {
 		t.Fatalf("storeUSTurnoverIntersectionInCache() error = %v", err)
 	}
-	got, ok, err := svc.loadUSTurnoverIntersectionFromCache(context.Background(), key)
+	got, ok, err := svc.loadUSTurnoverIntersectionFromCache(context.Background(), key, want.Limit)
 	if err != nil {
 		t.Fatalf("loadUSTurnoverIntersectionFromCache() error = %v", err)
 	}
@@ -84,6 +103,39 @@ func TestUSTurnoverIntersectionCacheRoundTrip(t *testing.T) {
 	}
 	if len(got.Data) != 1 || got.Data[0].Underlying != "AAPL" || got.CandidateLimit != 135 {
 		t.Fatalf("unexpected cached response: %+v", got)
+	}
+}
+
+func TestUSTurnoverIntersectionCacheRoundTripCanServeSmallerLimit(t *testing.T) {
+	store := cache.NewMemoryStore()
+	svc := NewScreenerService(nil, store)
+	key := usTurnoverIntersectionCacheKey(60, 20, true)
+	full := &dto.ScreenUSTurnoverIntersectionResponse{
+		LookbackDays:   20,
+		Limit:          60,
+		CandidateLimit: turnoverIntersectionCandidateLimit(60),
+		Data: []dto.ScreenedUSTurnoverIntersectionRow{
+			{Underlying: "AAPL", CombinedTurnoverUSD: 300},
+			{Underlying: "MSFT", CombinedTurnoverUSD: 200},
+			{Underlying: "NVDA", CombinedTurnoverUSD: 100},
+		},
+	}
+
+	if err := svc.storeUSTurnoverIntersectionInCache(context.Background(), key, full); err != nil {
+		t.Fatalf("storeUSTurnoverIntersectionInCache() error = %v", err)
+	}
+	got, ok, err := svc.loadUSTurnoverIntersectionFromCache(context.Background(), key, 2)
+	if err != nil {
+		t.Fatalf("loadUSTurnoverIntersectionFromCache() error = %v", err)
+	}
+	if !ok {
+		t.Fatalf("loadUSTurnoverIntersectionFromCache() ok = false, want true")
+	}
+	if got.Limit != 2 || got.CandidateLimit != turnoverIntersectionCandidateLimit(2) {
+		t.Fatalf("unexpected cached metadata: %+v", got)
+	}
+	if len(got.Data) != 2 || got.Data[0].Underlying != "AAPL" || got.Data[1].Underlying != "MSFT" {
+		t.Fatalf("unexpected cached slice: %+v", got.Data)
 	}
 }
 

@@ -16,7 +16,10 @@ import (
 	"github.com/Cyvadra/toktik/internal/dto"
 )
 
-const usTurnoverIntersectionCacheTTL = 6 * time.Hour
+const (
+	usTurnoverIntersectionCacheTTL       = 24 * time.Hour
+	usTurnoverIntersectionSharedTopLimit = 60
+)
 
 // ScreenerService provides condition-based screening for underlyings and options.
 type ScreenerService struct {
@@ -60,13 +63,14 @@ func (s *ScreenerService) ScreenUSTurnoverIntersection(ctx context.Context, req 
 	limit := clamp(req.Limit, defaultSymbolLimit, maxSymbolLimit)
 	lookbackDays := clamp(req.LookbackDays, 20, 252)
 	candidateLimit := turnoverIntersectionCandidateLimit(limit)
-	cacheKey := usTurnoverIntersectionCacheKey(limit, lookbackDays, req.NonETFOnly)
+	cacheLimit := canonicalUSTurnoverIntersectionCacheLimit(limit)
+	cacheKey := usTurnoverIntersectionCacheKey(cacheLimit, lookbackDays, req.NonETFOnly)
 	stockUniverseFilter := ""
 	if req.NonETFOnly {
 		stockUniverseFilter = usStocksFundamentalsUniverseFilterClause("symbol")
 	}
 
-	if cached, ok, err := s.loadUSTurnoverIntersectionFromCache(ctx, cacheKey); err == nil && ok {
+	if cached, ok, err := s.loadUSTurnoverIntersectionFromCache(ctx, cacheKey, limit); err == nil && ok {
 		return cached, nil
 	}
 
@@ -621,6 +625,16 @@ func turnoverIntersectionCandidateLimit(limit int) int {
 	return (limit*27 + 19) / 20
 }
 
+func canonicalUSTurnoverIntersectionCacheLimit(limit int) int {
+	if limit <= 0 {
+		return limit
+	}
+	if limit <= usTurnoverIntersectionSharedTopLimit {
+		return usTurnoverIntersectionSharedTopLimit
+	}
+	return limit
+}
+
 func usTurnoverIntersectionCacheKey(limit, lookbackDays int, nonETFOnly bool) string {
 	return fmt.Sprintf("screener:us-turnover-intersection:v5:limit=%d:lookback_days=%d:non_etf_only=%t", limit, lookbackDays, nonETFOnly)
 }
@@ -663,7 +677,7 @@ func stockUnderlyingOptionAliasExpr(column string) string {
 	return fmt.Sprintf("if(match(%s, '^[A-Z]+\\\\.[ABC]$'), replaceAll(%s, '.', ''), %s)", column, column, column)
 }
 
-func (s *ScreenerService) loadUSTurnoverIntersectionFromCache(ctx context.Context, key string) (*dto.ScreenUSTurnoverIntersectionResponse, bool, error) {
+func (s *ScreenerService) loadUSTurnoverIntersectionFromCache(ctx context.Context, key string, requestedLimit int) (*dto.ScreenUSTurnoverIntersectionResponse, bool, error) {
 	if s == nil || s.cache == nil {
 		return nil, false, nil
 	}
@@ -677,6 +691,13 @@ func (s *ScreenerService) loadUSTurnoverIntersectionFromCache(ctx context.Contex
 	}
 	if len(resp.Data) == 0 {
 		return nil, false, nil
+	}
+	if requestedLimit > 0 && len(resp.Data) > requestedLimit {
+		resp.Data = resp.Data[:requestedLimit]
+	}
+	if requestedLimit > 0 {
+		resp.Limit = requestedLimit
+		resp.CandidateLimit = turnoverIntersectionCandidateLimit(requestedLimit)
 	}
 	return &resp, true, nil
 }

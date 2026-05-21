@@ -33,9 +33,9 @@ jobs:
     reference_symbol: SPY
     workers: 6
     batch_size: 1000
-    rolling_quarters: 8
-    min_quarters: 4
-    cold_start_floor: 2023-05-01
+    rolling_quarters: 40
+    min_quarters: 40
+    cold_start_floor: 2016-01-01
 
   fmp_nasdaq100_macro:
     enabled: true
@@ -46,9 +46,9 @@ jobs:
     reference_symbol: QQQ
     workers: 6
     batch_size: 1000
-    rolling_quarters: 8
-    min_quarters: 4
-    cold_start_floor: 2023-05-01
+    rolling_quarters: 40
+    min_quarters: 40
+    cold_start_floor: 2016-01-01
 
   fmp_crypto_spot:
     enabled: false
@@ -93,6 +93,15 @@ jobs:
     batch_size: 1000
     qps: 10
     min_coverage: 0.8
+
+  fmp_economic_calendar:
+    enabled: true
+    cold_start_floor: 2026-01-01
+
+  fmp_observed_stock_calendar:
+    enabled: true
+    depends_on: [fmp_us_fundamentals]
+    cold_start_floor: 2026-01-01
 
   polygon_us_flatfiles:
     enabled: true

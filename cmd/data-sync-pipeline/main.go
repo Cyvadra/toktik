@@ -14,6 +14,7 @@ import (
 
 	clickhouse "github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+	"github.com/Cyvadra/toktik/internal/cache"
 	appCli "github.com/Cyvadra/toktik/internal/cli"
 	"github.com/Cyvadra/toktik/internal/config"
 	"github.com/Cyvadra/toktik/internal/cryptooptions"
@@ -537,8 +538,8 @@ func defaultPipelineConfig() pipelineConfig {
 			// for ETF underlyings such as SPY/IWM/QQQ now comes from
 			// fmp_etf_fundamentals into fundamental_observation.
 			"guru_macro":             {Enabled: true, BatchSize: 1000, URL: macro.DefaultGurufocusShillerURL, ReferenceSymbol: macro.DefaultReferenceSymbol, Dataset: macro.DefaultGurufocusShillerDataset},
-			"fmp_sp500_macro":        {Enabled: true, DependsOn: []string{"fmp_us_stocks"}, Dataset: macro.DefaultFMPSP500Dataset, ConstituentUniverse: "sp500", PriceSymbol: "SPY", ReferenceSymbol: "SPY", Workers: 6, BatchSize: 1000, RollingQuarters: 8, MinQuarters: 4, ColdStartFloor: "2023-05-01"},
-			"fmp_nasdaq100_macro":    {Enabled: true, DependsOn: []string{"fmp_us_stocks"}, Dataset: macro.DefaultFMPNasdaq100Dataset, ConstituentUniverse: "nasdaq100", PriceSymbol: "QQQ", ReferenceSymbol: "QQQ", Workers: 6, BatchSize: 1000, RollingQuarters: 8, MinQuarters: 4, ColdStartFloor: "2023-05-01"},
+			"fmp_sp500_macro":        {Enabled: true, DependsOn: []string{"fmp_us_stocks"}, Dataset: macro.DefaultFMPSP500Dataset, ConstituentUniverse: "sp500", PriceSymbol: "SPY", ReferenceSymbol: "SPY", Workers: 6, BatchSize: 1000, RollingQuarters: 40, MinQuarters: 40, ColdStartFloor: "2016-01-01"},
+			"fmp_nasdaq100_macro":    {Enabled: true, DependsOn: []string{"fmp_us_stocks"}, Dataset: macro.DefaultFMPNasdaq100Dataset, ConstituentUniverse: "nasdaq100", PriceSymbol: "QQQ", ReferenceSymbol: "QQQ", Workers: 6, BatchSize: 1000, RollingQuarters: 40, MinQuarters: 40, ColdStartFloor: "2016-01-01"},
 			"fmp_crypto_spot":        {Enabled: true, ResolveAtStartup: true, BatchSize: 50000, Interval: string(fmp.Interval1Min)},
 			"fmp_forex":              {Enabled: true, ResolveAtStartup: true, BatchSize: 50000, Interval: string(fmp.Interval1Min)},
 			"fmp_us_stocks":          {Enabled: true, DependsOn: []string{"polygon_us_flatfiles"}, ResolveAtStartup: true, IncludeOptionGapMappings: true, BatchSize: 50000, Interval: string(fmp.Interval1Min)},
@@ -715,6 +716,26 @@ func buildSyncer(runtimeCfg config.Runtime, name string, job jobConfig, apiKey, 
 		return pipelinejobs.NewFMPUSFundamentals(pipelinejobs.FMPUSFundamentalsConfig{Provider: usmarket.NewFMPPEBackfillProvider(apiKey, job.FMPQuarterLimit), DSN: dsn, Symbols: job.Symbols, IncrementalMode: job.IncrementalMode, DiscoveryPageSize: job.DiscoveryPageSize, DiscoveryPageLimit: job.DiscoveryPageLimit, Workers: job.Workers, BatchSize: job.BatchSize, PageSize: job.PageSize, QPS: job.QPS, LimitSymbols: job.LimitSymbols, DistributedLimiter: limiterCfg, ColdStartFloorUTC: parseColdStart(job.ColdStartFloor)})
 	case "fmp_etf_fundamentals":
 		return pipelinejobs.NewFMPETFFundamentals(pipelinejobs.FMPETFFundamentalsConfig{APIKey: apiKey, DSN: dsn, Symbols: job.Symbols, SymbolMappings: job.SymbolMappings, BatchSize: job.BatchSize, QPS: job.QPS, MinCoverage: job.MinCoverage, DistributedLimiter: limiterCfg, ColdStartFloorUTC: parseColdStart(job.ColdStartFloor)})
+	case "fmp_economic_calendar":
+		mysqlDSN, err := runtimeCfg.MySQLDSN()
+		if err != nil {
+			return nil, err
+		}
+		cacheStore, err := cache.NewStore(context.Background(), runtimeCfg)
+		if err != nil {
+			cacheStore = cache.NewMemoryStore()
+		}
+		return pipelinejobs.NewFMPEconomicCalendar(pipelinejobs.FMPEconomicCalendarConfig{APIKey: apiKey, FMPCacheDir: runtimeCfg.FMP.CacheDir, MySQLDSN: mysqlDSN, Cache: cacheStore, ColdStartFloorUTC: parseColdStart(job.ColdStartFloor)})
+	case "fmp_observed_stock_calendar":
+		mysqlDSN, err := runtimeCfg.MySQLDSN()
+		if err != nil {
+			return nil, err
+		}
+		cacheStore, err := cache.NewStore(context.Background(), runtimeCfg)
+		if err != nil {
+			cacheStore = cache.NewMemoryStore()
+		}
+		return pipelinejobs.NewFMPObservedStockCalendar(pipelinejobs.FMPObservedStockCalendarConfig{APIKey: apiKey, FMPCacheDir: runtimeCfg.FMP.CacheDir, MySQLDSN: mysqlDSN, Cache: cacheStore, ColdStartFloorUTC: parseColdStart(job.ColdStartFloor)})
 	case "fmp_sp500_macro", "fmp_nasdaq100_macro":
 		return pipelinejobs.NewGuruMacro(pipelinejobs.GuruMacroConfig{Dataset: job.Dataset, Source: "fmp", ColdStartFloorUTC: parseColdStart(job.ColdStartFloor), SyncFunc: func(ctx context.Context, conn driver.Conn, from, to time.Time, dryRun bool) (int64, error) {
 			res, err := macro.SyncFMPIndexShiller(ctx, conn, macro.FMPIndexShillerConfig{APIKey: apiKey, Dataset: job.Dataset, ConstituentUniverse: job.ConstituentUniverse, PriceSymbol: job.PriceSymbol, ReferenceSymbol: job.ReferenceSymbol, BatchSize: job.BatchSize, Workers: job.Workers, RollingQuarters: job.RollingQuarters, MinQuarters: job.MinQuarters}, from, to, dryRun)

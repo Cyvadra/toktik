@@ -264,10 +264,57 @@ bin/api-server \
 
 The server auto-detects `crypto_options.sql` from `paths.schema_dir`. Override with `--schema path/to/file.sql`.
 
+The finance calendar feature also needs MySQL runtime settings because events are stored outside ClickHouse:
+
+```yaml
+mysql:
+  dsn: ""
+  host: "127.0.0.1:3306"
+  user: "toktik"
+  password: "..."
+  database: "toktik"
+```
+
 Environment variable fallbacks:
 - `CLICKHOUSE_DSN` — ClickHouse connection string
 - `LISTEN_ADDR` — Server listen address
 - `TOKTIK_SCHEMA_DIR` — Base directory used for schema autodiscovery
+
+### 2.5 Finance Calendar Sync
+
+Toktik now supports a MySQL-backed finance calendar domain sourced from FMP. There are three operational entry points:
+
+- `api-server` request-triggered sync for `GET /api/v1/calendar/economic` and `POST /api/v1/calendar/stocks`
+- standalone CLI sync via `cmd/us-market-calendar-sync`
+- scheduled sync through `cmd/data-sync-pipeline`
+
+The observed stock watchlist used by the stock-calendar sync is derived from the US turnover intersection screener:
+
+- lookbacks: `20`, `60`, and `120` trading days
+- per-lookback universe: non-ETF only, `Top 60`
+- final pool: merge + de-duplicate all three result sets in first-seen order
+
+Cache behavior:
+
+- turnover intersection screener cache: `24h TTL`
+- requests up to `Top 60` share the same turnover cache entry, so `Top 30` can reuse `Top 60`
+- finance calendar sync marker cache: `12h TTL`
+- the `12h` cache skips repeated FMP syncs, but API responses still read from MySQL on every request
+
+Standalone sync examples:
+
+```bash
+go run ./cmd/us-market-calendar-sync --target economic
+go run ./cmd/us-market-calendar-sync --target watchlist
+go run ./cmd/us-market-calendar-sync --target all
+```
+
+Pipeline jobs enabled by default in `configs/data-sync-pipeline.yaml`:
+
+- `fmp_economic_calendar`
+- `fmp_observed_stock_calendar`
+
+Operational details and recommended usage are documented in [docs/finance-calendar-sync.md](docs/finance-calendar-sync.md).
 
 ### 3. Query the API
 

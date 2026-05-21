@@ -33,6 +33,7 @@ import (
 
 	"github.com/Cyvadra/toktik/internal/api"
 	"github.com/Cyvadra/toktik/internal/cache"
+	"github.com/Cyvadra/toktik/internal/calendarrepo"
 	"github.com/Cyvadra/toktik/internal/chrepo"
 	appCli "github.com/Cyvadra/toktik/internal/cli"
 	"github.com/Cyvadra/toktik/internal/config"
@@ -40,7 +41,10 @@ import (
 	_ "github.com/Cyvadra/toktik/pkg/dsl/catalog"
 	"github.com/Cyvadra/toktik/pkg/feeds"
 	_ "github.com/Cyvadra/toktik/pkg/feeds/dvol"
+	"github.com/Cyvadra/toktik/pkg/fmp"
 	"github.com/gin-gonic/gin"
+	"gorm.io/driver/mysql"
+	"gorm.io/gorm"
 )
 
 func main() {
@@ -72,6 +76,29 @@ func run() error {
 	}
 
 	ctx := context.Background()
+
+	mysqlDSN, err := runtimeCfg.MySQLDSN()
+	if err != nil {
+		return fmt.Errorf("build mysql dsn: %w", err)
+	}
+	gormDB, err := gorm.Open(mysql.Open(mysqlDSN), &gorm.Config{})
+	if err != nil {
+		return fmt.Errorf("connect mysql: %w", err)
+	}
+	sqlDB, err := gormDB.DB()
+	if err != nil {
+		return fmt.Errorf("mysql sql db: %w", err)
+	}
+	defer func() {
+		if closeErr := sqlDB.Close(); closeErr != nil {
+			slog.Error("close mysql", "error", closeErr)
+		}
+	}()
+
+	calendarRepo := calendarrepo.New(gormDB)
+	if err := calendarRepo.AutoMigrate(ctx); err != nil {
+		return fmt.Errorf("migrate finance calendar tables: %w", err)
+	}
 
 	conn, err := appCli.ConnectClickHouse(ctx, *dsn, &appCli.SchemaInit{
 		DDLFile:    ddlFile,
@@ -111,6 +138,8 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("read FMP api key: %w", err)
 	}
+	fmpClient := fmp.New(fmpAPIKey, fmp.WithCacheDir(runtimeCfg.FMP.CacheDir))
+	financeCalendarSvc := service.NewFinanceCalendarService(calendarRepo, fmpClient, cacheStore)
 	companyProfileProvider := service.NewCachedFMPUSStockCompanyProfileProvider(fmpAPIKey, cacheStore)
 	usStocksSvc := service.NewUSStocksService(repo, fundamentalsSvc).
 		WithCompanyProfileProvider(companyProfileProvider)
@@ -132,6 +161,7 @@ func run() error {
 		Factors:           service.NewFactorService(factorStore),
 		Fundamentals:      fundamentalsSvc,
 		Macro:             macroSvc,
+		FinanceCalendar:   financeCalendarSvc,
 	}
 
 	polygonSvc, err := service.NewPolygonServiceFromConfig(runtimeCfg, cacheStore)

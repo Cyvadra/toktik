@@ -22,6 +22,11 @@ func TestLoadRuntimeFromPathYAML(t *testing.T) {
 		"    - \"alpha\"\n" +
 		"    - \"beta\"\n" +
 		"  rate_limit_rps: 125\n" +
+		"mysql:\n" +
+		"  host: \"mysql.internal\"\n" +
+		"  user: \"runtime-user\"\n" +
+		"  password: \"runtime-pass\"\n" +
+		"  database: \"runtime-db\"\n" +
 		"paths:\n" +
 		"  schema_dir: \"/srv/toktik/schema\"\n" +
 		"deribit:\n" +
@@ -71,6 +76,20 @@ func TestLoadRuntimeFromPathYAML(t *testing.T) {
 	}
 	if cfg.API.RateLimitRPS != 125 {
 		t.Fatalf("unexpected api rate limit: %v", cfg.API.RateLimitRPS)
+	}
+	mysqlPassword, err := cfg.MySQLPassword()
+	if err != nil {
+		t.Fatalf("MySQLPassword failed: %v", err)
+	}
+	mysqlDSN, err := cfg.MySQLDSN()
+	if err != nil {
+		t.Fatalf("MySQLDSN failed: %v", err)
+	}
+	if cfg.MySQL.Host != "mysql.internal:3306" || cfg.MySQL.User != "runtime-user" || cfg.MySQL.Database != "runtime-db" || mysqlPassword != "runtime-pass" {
+		t.Fatalf("unexpected mysql config: %#v password=%q", cfg.MySQL, mysqlPassword)
+	}
+	if mysqlDSN != "runtime-user:runtime-pass@tcp(mysql.internal:3306)/runtime-db?charset=utf8mb4&parseTime=True&loc=Local" {
+		t.Fatalf("unexpected mysql dsn: %q", mysqlDSN)
 	}
 	if cfg.Paths.SchemaDir != "/srv/toktik/schema" {
 		t.Fatalf("unexpected schema dir: %q", cfg.Paths.SchemaDir)
@@ -123,6 +142,10 @@ func TestLoadRuntimeFromPathEnvOverrides(t *testing.T) {
 	t.Setenv(EnvCORSOrigins, "https://alpha.example, https://beta.example")
 	t.Setenv(EnvAPIKeys, "key-a, key-b")
 	t.Setenv(EnvRateLimitRPS, "75")
+	t.Setenv(EnvMySQLHost, "mysql-env.internal:3307")
+	t.Setenv(EnvMySQLUser, "env-user")
+	t.Setenv(EnvMySQLPassword, "env-pass")
+	t.Setenv(EnvMySQLDatabase, "env-db")
 	t.Setenv(EnvSchemaDir, "/opt/toktik/schema")
 	t.Setenv(EnvDeribitBaseURL, "https://deribit-env.example")
 	t.Setenv(EnvTigerID, "20109999")
@@ -160,6 +183,13 @@ func TestLoadRuntimeFromPathEnvOverrides(t *testing.T) {
 	}
 	if cfg.API.RateLimitRPS != 75 {
 		t.Fatalf("unexpected rate limit override: %v", cfg.API.RateLimitRPS)
+	}
+	mysqlPassword, err := cfg.MySQLPassword()
+	if err != nil {
+		t.Fatalf("MySQLPassword failed: %v", err)
+	}
+	if cfg.MySQL.Host != "mysql-env.internal:3307" || cfg.MySQL.User != "env-user" || cfg.MySQL.Database != "env-db" || mysqlPassword != "env-pass" {
+		t.Fatalf("unexpected mysql env override: %#v password=%q", cfg.MySQL, mysqlPassword)
 	}
 	if cfg.Paths.SchemaDir != "/opt/toktik/schema" {
 		t.Fatalf("unexpected schema dir override: %q", cfg.Paths.SchemaDir)
@@ -203,6 +233,7 @@ func TestRuntimeSecretAccessors(t *testing.T) {
 	cfg.SetPolygonFlatFilesAccessKey(" access-key ")
 	cfg.SetPolygonFlatFilesSecretKey(" secret-key ")
 	cfg.SetFMPAPIKey(" fmp-key ")
+	cfg.SetMySQLPassword(" mysql-pass ")
 
 	tigerPrivateKey, err := cfg.TigerPrivateKey()
 	if err != nil {
@@ -228,9 +259,27 @@ func TestRuntimeSecretAccessors(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FMPAPIKey failed: %v", err)
 	}
+	mysqlPassword, err := cfg.MySQLPassword()
+	if err != nil {
+		t.Fatalf("MySQLPassword failed: %v", err)
+	}
 
-	if tigerPrivateKey != "private-key" || tigerToken != "token" || polygonAPIKey != "polygon-key" || polygonAccessKey != "access-key" || polygonSecretKey != "secret-key" || fmpAPIKey != "fmp-key" {
+	if tigerPrivateKey != "private-key" || tigerToken != "token" || polygonAPIKey != "polygon-key" || polygonAccessKey != "access-key" || polygonSecretKey != "secret-key" || fmpAPIKey != "fmp-key" || mysqlPassword != "mysql-pass" {
 		t.Fatalf("unexpected secret accessor values")
+	}
+}
+
+func TestRuntimeMySQLDSNOverride(t *testing.T) {
+	cfg := DefaultRuntime()
+	cfg.MySQL.DSN = "custom-user:custom-pass@tcp(custom-host:3306)/custom-db"
+	cfg.SetMySQLPassword("ignored-pass")
+
+	got, err := cfg.MySQLDSN()
+	if err != nil {
+		t.Fatalf("MySQLDSN failed: %v", err)
+	}
+	if got != "custom-user:custom-pass@tcp(custom-host:3306)/custom-db" {
+		t.Fatalf("unexpected mysql dsn override: %q", got)
 	}
 }
 

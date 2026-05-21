@@ -106,6 +106,20 @@ Legend: ✅ implemented · ⚠️ accessible (endpoint verified) but not yet wra
 | Dividend calendar | `GET /dividends-calendar` | ⚠️ | — |
 | Stock splits | `GET /splits` | ⚠️ | — |
 
+### 7.1 Stable calendar endpoints verified for finance calendar
+
+All endpoints use the stable base URL and accept the API key as `apikey`. Date-window endpoints accept `from=YYYY-MM-DD` and `to=YYYY-MM-DD`.
+
+| Endpoint | Purpose | Response structure |
+| --- | --- | --- |
+| `GET /earnings-calendar` | Upcoming/historical earnings events by date window. | Array of `symbol`, `date`, `epsActual`, `epsEstimated`, `revenueActual`, `revenueEstimated`, `lastUpdated`. Actual values are often `null` for upcoming reports. |
+| `GET /economic-calendar` | Macro event calendar by date window, optionally filtered by `country`. | Array of `date`, `country`, `event`, `currency`, `previous`, `estimate`, `actual`, `change`, `impact`, `changePercentage`, `unit`. `date` can include time, for example `2026-05-22 19:30:00`. |
+| `GET /dividends-calendar` | Dividend events by date window. | Array of `symbol`, `date`, `recordDate`, `paymentDate`, `declarationDate`, `adjDividend`, `dividend`, `yield`, `frequency`. Some date fields can be empty strings. |
+| `GET /ipos-calendar` | IPO calendar by date window. | Array of `symbol`, `date`, `daa`, `company`, `exchange`, `actions`, `shares`, `priceRange`, `marketCap`. Numeric fields can be `null`. |
+| `GET /splits-calendar` | Stock split, stock dividend, and ADR change calendar by date window. | Array of `symbol`, `date`, `numerator`, `denominator`, `splitType`. Split ratios can be integer or decimal. |
+| `GET /financial-reports-dates?symbol=X` | Available financial report files for a symbol. | Array of `symbol`, `fiscalYear`, `period`, `linkJson`, `linkXlsx`. Links use an `apikey=YOUR_API_KEY` placeholder. |
+| `GET /financial-reports-json?symbol=X&year=Y&period=Z` | Full report JSON for a symbol/year/period. | Dynamic XBRL-like object. Fixed top-level keys are `symbol`, `period`, `year`; additional keys are report/footnote section names whose values are arrays. Store as raw JSON rather than a strict DTO. |
+
 ---
 
 ## 8. Analyst Data

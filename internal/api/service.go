@@ -123,6 +123,11 @@ type MacroProvider interface {
 	QuerySeries(ctx context.Context, req dto.MacroSeriesRequest) (*dto.MacroSeriesResponse, error)
 }
 
+type FinanceCalendarProvider interface {
+	QueryEconomicCalendar(ctx context.Context) (*dto.EconomicCalendarResponse, error)
+	QueryStockCalendar(ctx context.Context, req dto.StockCalendarRequest) (*dto.StockCalendarResponse, error)
+}
+
 type PolygonProvider interface {
 	QueryStockSnapshot(ctx context.Context, req dto.PolygonStockSnapshotRequest) (*dto.PolygonStockSnapshotResponse, error)
 	QueryStockAggregates(ctx context.Context, req dto.PolygonAggregateRequest) (*dto.PolygonAggregateResponse, error)

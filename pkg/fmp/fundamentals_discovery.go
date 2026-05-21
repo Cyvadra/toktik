@@ -9,9 +9,13 @@ import (
 // EarningsCalendarEntry is one row returned by FMP's earnings-calendar
 // endpoint. Incremental fundamentals discovery only needs symbol recency.
 type EarningsCalendarEntry struct {
-	Symbol      string `json:"symbol"`
-	Date        string `json:"date"`
-	LastUpdated string `json:"lastUpdated"`
+	Symbol           string   `json:"symbol"`
+	Date             string   `json:"date"`
+	EPSActual        *float64 `json:"epsActual"`
+	EPSEstimated     *float64 `json:"epsEstimated"`
+	RevenueActual    *int64   `json:"revenueActual"`
+	RevenueEstimated *int64   `json:"revenueEstimated"`
+	LastUpdated      string   `json:"lastUpdated"`
 }
 
 // SecFilingsFinancial is one row returned by FMP's sec-filings-financials

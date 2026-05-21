@@ -12,6 +12,8 @@ import (
 
 	clickhouse "github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+	"github.com/Cyvadra/toktik/internal/cache"
+	"github.com/Cyvadra/toktik/internal/calendarrepo"
 	"github.com/Cyvadra/toktik/internal/chrepo"
 	"github.com/Cyvadra/toktik/internal/cryptooptions"
 	"github.com/Cyvadra/toktik/internal/forexmarket"
@@ -19,6 +21,8 @@ import (
 	"github.com/Cyvadra/toktik/internal/syncpipeline"
 	"github.com/Cyvadra/toktik/internal/usmarket"
 	"github.com/Cyvadra/toktik/pkg/fmp"
+	"gorm.io/driver/mysql"
+	"gorm.io/gorm"
 )
 
 const defaultForexWatchlistFile = "signal-list/forex-fmp-watchlist.txt"
@@ -676,6 +680,130 @@ func (s *guruMacro) AuditTargets(string) []syncpipeline.AuditTarget {
 	return []syncpipeline.AuditTarget{{Table: "macro_observation", DateColumn: "toDate(event_ts)", KeyColumns: []string{"dataset", "factor_code", "event_ts", "known_at", "source", "revision"}, SourceFilter: fmt.Sprintf("dataset = '%s' AND source = '%s'", escapeStringLiteral(s.cfg.Dataset), escapeStringLiteral(s.cfg.Source))}}
 }
 func (s *guruMacro) MaxConcurrency() int { return 1 }
+
+type FMPEconomicCalendarConfig struct {
+	APIKey            string
+	FMPCacheDir       string
+	MySQLDSN          string
+	Cache             cache.Store
+	ColdStartFloorUTC time.Time
+}
+
+type fmpEconomicCalendar struct{ cfg FMPEconomicCalendarConfig }
+
+func NewFMPEconomicCalendar(cfg FMPEconomicCalendarConfig) (syncpipeline.Syncer, error) {
+	if strings.TrimSpace(cfg.APIKey) == "" {
+		return nil, fmt.Errorf("fmp_economic_calendar: APIKey is required")
+	}
+	if strings.TrimSpace(cfg.MySQLDSN) == "" {
+		return nil, fmt.Errorf("fmp_economic_calendar: MySQLDSN is required")
+	}
+	if cfg.ColdStartFloorUTC.IsZero() {
+		cfg.ColdStartFloorUTC = time.Now().UTC().Add(-24 * time.Hour)
+	}
+	return &fmpEconomicCalendar{cfg: cfg}, nil
+}
+
+func (s *fmpEconomicCalendar) Name() string { return "fmp_economic_calendar" }
+func (s *fmpEconomicCalendar) SourceKeys(context.Context, driver.Conn) ([]string, error) {
+	return []string{syncpipeline.SingletonSourceKey}, nil
+}
+func (s *fmpEconomicCalendar) ResolveCursor(context.Context, driver.Conn, string) (time.Time, bool, error) {
+	return time.Time{}, false, nil
+}
+func (s *fmpEconomicCalendar) ColdStartFloor(string) time.Time { return s.cfg.ColdStartFloorUTC }
+func (s *fmpEconomicCalendar) Sync(ctx context.Context, _ driver.Conn, req syncpipeline.SyncRequest) (syncpipeline.SyncResult, error) {
+	calendarSvc, closeFn, err := openFinanceCalendarService(s.cfg)
+	if err != nil {
+		return syncpipeline.SyncResult{SourceKey: req.SourceKey, From: req.From, To: req.To}, err
+	}
+	defer closeFn()
+	rows, err := calendarSvc.SyncEconomicCalendar(ctx)
+	return syncpipeline.SyncResult{SourceKey: req.SourceKey, From: req.From, To: req.To, RowsInserted: int64(rows)}, err
+}
+func (s *fmpEconomicCalendar) AuditTargets(string) []syncpipeline.AuditTarget { return nil }
+func (s *fmpEconomicCalendar) MaxConcurrency() int                            { return 1 }
+
+type FMPObservedStockCalendarConfig struct {
+	APIKey            string
+	FMPCacheDir       string
+	MySQLDSN          string
+	Cache             cache.Store
+	ColdStartFloorUTC time.Time
+}
+
+type fmpObservedStockCalendar struct {
+	cfg FMPObservedStockCalendarConfig
+}
+
+func NewFMPObservedStockCalendar(cfg FMPObservedStockCalendarConfig) (syncpipeline.Syncer, error) {
+	if strings.TrimSpace(cfg.APIKey) == "" {
+		return nil, fmt.Errorf("fmp_observed_stock_calendar: APIKey is required")
+	}
+	if strings.TrimSpace(cfg.MySQLDSN) == "" {
+		return nil, fmt.Errorf("fmp_observed_stock_calendar: MySQLDSN is required")
+	}
+	if cfg.ColdStartFloorUTC.IsZero() {
+		cfg.ColdStartFloorUTC = time.Now().UTC().Add(-24 * time.Hour)
+	}
+	return &fmpObservedStockCalendar{cfg: cfg}, nil
+}
+
+func (s *fmpObservedStockCalendar) Name() string { return "fmp_observed_stock_calendar" }
+func (s *fmpObservedStockCalendar) SourceKeys(context.Context, driver.Conn) ([]string, error) {
+	return []string{syncpipeline.SingletonSourceKey}, nil
+}
+func (s *fmpObservedStockCalendar) ResolveCursor(context.Context, driver.Conn, string) (time.Time, bool, error) {
+	return time.Time{}, false, nil
+}
+func (s *fmpObservedStockCalendar) ColdStartFloor(string) time.Time { return s.cfg.ColdStartFloorUTC }
+func (s *fmpObservedStockCalendar) Sync(ctx context.Context, conn driver.Conn, req syncpipeline.SyncRequest) (syncpipeline.SyncResult, error) {
+	calendarSvc, closeFn, err := openFinanceCalendarService(FMPEconomicCalendarConfig{
+		APIKey:      s.cfg.APIKey,
+		FMPCacheDir: s.cfg.FMPCacheDir,
+		MySQLDSN:    s.cfg.MySQLDSN,
+		Cache:       s.cfg.Cache,
+	})
+	if err != nil {
+		return syncpipeline.SyncResult{SourceKey: req.SourceKey, From: req.From, To: req.To}, err
+	}
+	defer closeFn()
+	companyProfileProvider := service.NewCachedFMPUSStockCompanyProfileProvider(s.cfg.APIKey, s.cfg.Cache)
+	screener := service.NewScreenerService(chrepo.NewRepo(conn), s.cfg.Cache).WithCompanyProfileProvider(companyProfileProvider)
+	symbols, err := service.ResolveObservedUSStockPool(ctx, screener)
+	if err != nil {
+		return syncpipeline.SyncResult{SourceKey: req.SourceKey, From: req.From, To: req.To}, err
+	}
+	rows, err := calendarSvc.SyncStockCalendar(ctx, symbols)
+	return syncpipeline.SyncResult{SourceKey: req.SourceKey, From: req.From, To: req.To, RowsInserted: int64(rows), Notes: []string{fmt.Sprintf("observed_symbols=%d", len(symbols))}}, err
+}
+func (s *fmpObservedStockCalendar) AuditTargets(string) []syncpipeline.AuditTarget { return nil }
+func (s *fmpObservedStockCalendar) MaxConcurrency() int                            { return 1 }
+
+func openFinanceCalendarService(cfg FMPEconomicCalendarConfig) (*service.FinanceCalendarService, func(), error) {
+	options := []fmp.Option{}
+	if strings.TrimSpace(cfg.FMPCacheDir) != "" {
+		options = append(options, fmp.WithCacheDir(strings.TrimSpace(cfg.FMPCacheDir)))
+	}
+	gormDB, err := gorm.Open(mysql.Open(cfg.MySQLDSN), &gorm.Config{})
+	if err != nil {
+		return nil, nil, fmt.Errorf("connect mysql: %w", err)
+	}
+	sqlDB, err := gormDB.DB()
+	if err != nil {
+		return nil, nil, fmt.Errorf("mysql sql db: %w", err)
+	}
+	repo := calendarrepo.New(gormDB)
+	if err := repo.AutoMigrate(context.Background()); err != nil {
+		_ = sqlDB.Close()
+		return nil, nil, fmt.Errorf("migrate finance calendar tables: %w", err)
+	}
+	closeFn := func() {
+		_ = sqlDB.Close()
+	}
+	client := fmp.New(cfg.APIKey, options...)
+	return service.NewFinanceCalendarService(repo, client, cfg.Cache), closeFn, nil
+}
 
 func queryLatestDate(ctx context.Context, conn driver.Conn, table, dateExpr, where string, args ...any) (time.Time, bool, error) {
 	query := fmt.Sprintf("SELECT toString(ifNull(maxOrNull(toDate(%s)), toDate('1970-01-01'))) FROM %s", dateExpr, table)

@@ -29,6 +29,7 @@ type Deps struct {
 	Factors           FactorProvider
 	Fundamentals      FundamentalsProvider
 	Macro             MacroProvider
+	FinanceCalendar   FinanceCalendarProvider
 	Polygon           PolygonProvider // optional
 
 	// Stop is closed when the server shuts down. Long-lived middleware
@@ -202,6 +203,10 @@ func registerRoutes(v1 *gin.RouterGroup, h *Handler) {
 	macroGroup := v1.Group("/macro")
 	macroGroup.GET("/factors", h.ListMacroFactors)
 	macroGroup.GET("/series", h.GetMacroSeries)
+
+	calendarGroup := v1.Group("/calendar")
+	calendarGroup.GET("/economic", h.GetEconomicCalendar)
+	calendarGroup.POST("/stocks", h.GetStockCalendar)
 
 	polygonGroup := v1.Group("/polygon")
 	polygonStocks := polygonGroup.Group("/stocks")

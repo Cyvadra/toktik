@@ -38,6 +38,7 @@ type Handler struct {
 	factors           FactorProvider
 	fundamentals      FundamentalsProvider
 	macro             MacroProvider
+	financeCalendar   FinanceCalendarProvider
 	polygon           PolygonProvider
 
 	// reportsRoot is the directory on disk under which all backtest
@@ -72,6 +73,7 @@ func NewHandler(d Deps) *Handler {
 		factors:           d.Factors,
 		fundamentals:      d.Fundamentals,
 		macro:             d.Macro,
+		financeCalendar:   d.FinanceCalendar,
 		polygon:           d.Polygon,
 		reportsRoot:       root,
 	}

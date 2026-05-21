@@ -17,6 +17,11 @@ import (
 const (
 	EnvConfigPath            = "TOKTIK_CONFIG"
 	EnvClickHouseDSN         = "CLICKHOUSE_DSN"
+	EnvMySQLDSN              = "MYSQL_DSN"
+	EnvMySQLHost             = "MYSQL_HOST"
+	EnvMySQLUser             = "MYSQL_USER"
+	EnvMySQLPassword         = "MYSQL_PASSWORD"
+	EnvMySQLDatabase         = "MYSQL_DATABASE"
 	EnvListenAddr            = "LISTEN_ADDR"
 	EnvCORSOrigins           = "CORS_ORIGINS"
 	EnvAPIKeys               = "API_KEYS"
@@ -49,6 +54,9 @@ const (
 	EnvAESKey                = "TOKTIK_AES_KEY"
 	defaultConfigPath        = "toktik.yaml"
 	defaultClickHouseDSN     = "clickhouse://default:@localhost:9000/default"
+	defaultMySQLHost         = "127.0.0.1:3306"
+	defaultMySQLUser         = "toktik"
+	defaultMySQLDatabase     = "toktik"
 	defaultListenAddr        = ":9010"
 	defaultSchemaDir         = "schema/clickhouse"
 	defaultDeribitBaseURL    = "https://www.deribit.com"
@@ -60,6 +68,7 @@ const (
 
 type Runtime struct {
 	ClickHouse ClickHouse `yaml:"clickhouse"`
+	MySQL      MySQL      `yaml:"mysql"`
 	APIServer  APIServer  `yaml:"api_server"`
 	API        API        `yaml:"api"`
 	Paths      Paths      `yaml:"paths"`
@@ -77,6 +86,14 @@ type Runtime struct {
 
 type ClickHouse struct {
 	DSN string `yaml:"dsn"`
+}
+
+type MySQL struct {
+	DSN      string `yaml:"dsn"`
+	Host     string `yaml:"host"`
+	User     string `yaml:"user"`
+	Database string `yaml:"database"`
+	password string
 }
 
 type APIServer struct {
@@ -138,6 +155,26 @@ type Polygon struct {
 type FMP struct {
 	CacheDir string `yaml:"cache_dir"`
 	apiKey   string
+}
+
+func (m *MySQL) UnmarshalYAML(value *yaml.Node) error {
+	type rawMySQL struct {
+		DSN      string `yaml:"dsn"`
+		Host     string `yaml:"host"`
+		User     string `yaml:"user"`
+		Password string `yaml:"password"`
+		Database string `yaml:"database"`
+	}
+	var raw rawMySQL
+	if err := value.Decode(&raw); err != nil {
+		return err
+	}
+	m.DSN = raw.DSN
+	m.Host = raw.Host
+	m.User = raw.User
+	m.password = raw.Password
+	m.Database = raw.Database
+	return nil
 }
 
 func (t *Tiger) UnmarshalYAML(value *yaml.Node) error {
@@ -236,6 +273,11 @@ func DefaultRuntime() Runtime {
 		ClickHouse: ClickHouse{
 			DSN: defaultClickHouseDSN,
 		},
+		MySQL: MySQL{
+			Host:     defaultMySQLHost,
+			User:     defaultMySQLUser,
+			Database: defaultMySQLDatabase,
+		},
 		APIServer: APIServer{
 			ListenAddr:               defaultListenAddr,
 			ReadHeaderTimeoutSeconds: 10,
@@ -313,6 +355,21 @@ func (c *Runtime) applyEnvOverrides() {
 	}
 	if value := strings.TrimSpace(os.Getenv(EnvClickHouseDSN)); value != "" {
 		c.ClickHouse.DSN = value
+	}
+	if value := strings.TrimSpace(os.Getenv(EnvMySQLDSN)); value != "" {
+		c.MySQL.DSN = value
+	}
+	if value := strings.TrimSpace(os.Getenv(EnvMySQLHost)); value != "" {
+		c.MySQL.Host = value
+	}
+	if value := strings.TrimSpace(os.Getenv(EnvMySQLUser)); value != "" {
+		c.MySQL.User = value
+	}
+	if value := os.Getenv(EnvMySQLPassword); value != "" {
+		c.SetMySQLPassword(value)
+	}
+	if value := strings.TrimSpace(os.Getenv(EnvMySQLDatabase)); value != "" {
+		c.MySQL.Database = value
 	}
 	if value := strings.TrimSpace(os.Getenv(EnvListenAddr)); value != "" {
 		c.APIServer.ListenAddr = value
@@ -449,6 +506,7 @@ func (c *Runtime) sealCredentials() error {
 	c.Polygon.flatFilesAccessKey = seal("polygon.flat_files_access_key", c.Polygon.flatFilesAccessKey)
 	c.Polygon.flatFilesSecretKey = seal("polygon.flat_files_secret_key", c.Polygon.flatFilesSecretKey)
 	c.FMP.apiKey = seal("fmp.api_key", c.FMP.apiKey)
+	c.MySQL.password = seal("mysql.password", c.MySQL.password)
 	c.Redis.Password = seal("redis.password", c.Redis.Password)
 	c.AESKey = "" // don't retain the key itself
 	return nil
@@ -460,6 +518,23 @@ func (c *Runtime) normalize() {
 	}
 	if strings.TrimSpace(c.ClickHouse.DSN) == "" {
 		c.ClickHouse.DSN = defaultClickHouseDSN
+	}
+	c.MySQL.DSN = strings.TrimSpace(c.MySQL.DSN)
+	c.MySQL.Host = strings.TrimSpace(c.MySQL.Host)
+	c.MySQL.User = strings.TrimSpace(c.MySQL.User)
+	c.MySQL.Database = strings.TrimSpace(c.MySQL.Database)
+	c.MySQL.password = strings.TrimSpace(c.MySQL.password)
+	if c.MySQL.Host == "" {
+		c.MySQL.Host = defaultMySQLHost
+	}
+	if !strings.Contains(c.MySQL.Host, ":") {
+		c.MySQL.Host += ":3306"
+	}
+	if c.MySQL.User == "" {
+		c.MySQL.User = defaultMySQLUser
+	}
+	if c.MySQL.Database == "" {
+		c.MySQL.Database = defaultMySQLDatabase
 	}
 	if strings.TrimSpace(c.APIServer.ListenAddr) == "" {
 		c.APIServer.ListenAddr = defaultListenAddr
@@ -551,6 +626,17 @@ func (c Runtime) Validate() error {
 	if strings.TrimSpace(c.ClickHouse.DSN) == "" {
 		return fmt.Errorf("clickhouse.dsn is required")
 	}
+	if strings.TrimSpace(c.MySQL.DSN) == "" {
+		if strings.TrimSpace(c.MySQL.Host) == "" {
+			return fmt.Errorf("mysql.host is required")
+		}
+		if strings.TrimSpace(c.MySQL.User) == "" {
+			return fmt.Errorf("mysql.user is required")
+		}
+		if strings.TrimSpace(c.MySQL.Database) == "" {
+			return fmt.Errorf("mysql.database is required")
+		}
+	}
 	if c.API.RateLimitRPS <= 0 {
 		return fmt.Errorf("api.rate_limit_rps must be greater than zero")
 	}
@@ -582,6 +668,21 @@ func (c Runtime) PolygonFlatFilesSecretKey() (string, error) {
 
 func (c Runtime) FMPAPIKey() (string, error) {
 	return c.secretValue("fmp.api_key", c.FMP.apiKey)
+}
+
+func (c Runtime) MySQLPassword() (string, error) {
+	return c.secretValue("mysql.password", c.MySQL.password)
+}
+
+func (c Runtime) MySQLDSN() (string, error) {
+	if dsn := strings.TrimSpace(c.MySQL.DSN); dsn != "" {
+		return dsn, nil
+	}
+	password, err := c.MySQLPassword()
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%s:%s@tcp(%s)/%s?charset=utf8mb4&parseTime=True&loc=Local", c.MySQL.User, password, c.MySQL.Host, c.MySQL.Database), nil
 }
 
 func (c *Runtime) SetTigerPrivateKey(value string) {
@@ -624,6 +725,13 @@ func (c *Runtime) SetFMPAPIKey(value string) {
 		return
 	}
 	c.setSecretValue("fmp.api_key", &c.FMP.apiKey, value)
+}
+
+func (c *Runtime) SetMySQLPassword(value string) {
+	if c == nil {
+		return
+	}
+	c.setSecretValue("mysql.password", &c.MySQL.password, value)
 }
 
 func (c Runtime) secretValue(field, fallback string) (string, error) {

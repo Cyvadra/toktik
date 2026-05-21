@@ -5,6 +5,13 @@
 clickhouse:
   dsn: "clickhouse://default:@localhost:9000/default"
 
+mysql:
+  dsn: ""
+  host: "127.0.0.1:3306"
+  user: "toktik"
+  password: ""
+  database: "toktik"
+
 api_server:
   listen_addr: ":9010"
   read_header_timeout_seconds: 10
