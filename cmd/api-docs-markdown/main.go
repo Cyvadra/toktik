@@ -132,6 +132,13 @@ var sections = []sectionSpec{
 			{Method: "GET", Path: "/screener/options", Label: "Option screener"},
 		},
 	},
+	{
+		Title: "Calendar",
+		Endpoints: []endpointSpec{
+			{Method: "GET", Path: "/calendar/economic", Label: "Economic calendar"},
+			{Method: "POST", Path: "/calendar/stocks", Label: "Stock calendar"},
+		},
+	},
 }
 
 func main() {

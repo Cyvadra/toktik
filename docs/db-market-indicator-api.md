@@ -7,7 +7,7 @@
 - Source Swagger: `docs/swagger.json`
 - API title: `Toktik Options Platform API`
 - API version: `1.0`
-- Generated at: `2026-05-20T15:35:10Z`
+- Generated at: `2026-05-21T10:20:07Z`
 
 ## Scope
 
@@ -22,6 +22,7 @@ This document exports the database-backed market data, technical indicator, feat
 - [US Stocks Market Data](#us-stocks-market-data)
 - [US Options Market Data](#us-options-market-data)
 - [Screeners](#screeners)
+- [Calendar](#calendar)
 
 ## Technical Indicators
 
@@ -893,6 +894,51 @@ No parameters.
 | Status | Schema | Description |
 | --- | --- | --- |
 | 200 | github_com_Cyvadra_toktik_internal_dto.ScreenOptionResponse | OK |
+| 400 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Bad Request |
+| 500 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Internal Server Error |
+
+## Calendar
+
+### Economic calendar
+
+- Endpoint: `GET /api/v1/calendar/economic`
+- Tags: `Calendar`
+- Produces: `application/json`
+- Summary: Get economic calendar
+- Description: Returns the macro economic calendar for the default window (today-7d to today+30d). The upstream FMP data is synced on demand with a 12h sync marker cache.
+
+#### Parameters
+
+No parameters.
+
+#### Responses
+
+| Status | Schema | Description |
+| --- | --- | --- |
+| 200 | github_com_Cyvadra_toktik_internal_dto.EconomicCalendarResponse | OK |
+| 400 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Bad Request |
+| 500 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Internal Server Error |
+
+### Stock calendar
+
+- Endpoint: `POST /api/v1/calendar/stocks`
+- Tags: `Calendar`
+- Consumes: `application/json`
+- Produces: `application/json`
+- Summary: Get stock calendar
+- Description: Returns calendar events for an observed US stock pool. The request body accepts a list of symbols and the service syncs the default stock window (today-30d to today+90d) before reading from MySQL.
+
+#### Parameters
+
+| Name | In | Type | Required | Description |
+| --- | --- | --- | --- | --- |
+| request | body | github_com_Cyvadra_toktik_internal_dto.StockCalendarRequest | yes | Stock calendar request |
+
+#### Responses
+
+| Status | Schema | Description |
+| --- | --- | --- |
+| 200 | github_com_Cyvadra_toktik_internal_dto.StockCalendarResponse | OK |
 | 400 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Bad Request |
 | 500 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Internal Server Error |
 
