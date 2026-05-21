@@ -502,3 +502,52 @@ func TestFillDailyPanelFallback(t *testing.T) {
 		t.Fatalf("expected panel fallback to stop after 7 days: %+v", rows[2])
 	}
 }
+
+func TestTrimDailyPanelTrailingEmptyRowsDropsEventOnlyTail(t *testing.T) {
+	hv20 := 0.24
+	daysFromPrev := 1
+	rows := trimDailyPanelTrailingEmptyRows([]dto.FeatureDailyPanelRow{
+		{
+			Date:              time.Date(2026, 5, 18, 16, 0, 0, 0, time.UTC),
+			PriceObservations: 199,
+			IVObservations:    199,
+			HV20:              &hv20,
+		},
+		{
+			Date:                time.Date(2026, 5, 19, 16, 0, 0, 0, time.UTC),
+			IsEarlyClose:        false,
+			DaysFromPrevHoliday: &daysFromPrev,
+		},
+	})
+
+	if len(rows) != 1 {
+		t.Fatalf("expected trailing empty row to be dropped, got %d rows", len(rows))
+	}
+	if rows[0].Date.Format(time.RFC3339) != "2026-05-18T16:00:00Z" {
+		t.Fatalf("unexpected retained row date: %s", rows[0].Date.Format(time.RFC3339))
+	}
+}
+
+func TestTrimDailyPanelTrailingEmptyRowsKeepsInteriorGap(t *testing.T) {
+	hv20 := 0.24
+	rows := trimDailyPanelTrailingEmptyRows([]dto.FeatureDailyPanelRow{
+		{
+			Date:              time.Date(2026, 5, 16, 16, 0, 0, 0, time.UTC),
+			PriceObservations: 199,
+			HV20:              &hv20,
+		},
+		{Date: time.Date(2026, 5, 17, 16, 0, 0, 0, time.UTC)},
+		{
+			Date:           time.Date(2026, 5, 18, 16, 0, 0, 0, time.UTC),
+			IVObservations: 199,
+		},
+		{Date: time.Date(2026, 5, 19, 16, 0, 0, 0, time.UTC)},
+	})
+
+	if len(rows) != 3 {
+		t.Fatalf("expected only trailing empty rows to be dropped, got %d rows", len(rows))
+	}
+	if rows[1].Date.Format(time.RFC3339) != "2026-05-17T16:00:00Z" {
+		t.Fatalf("expected interior gap to remain, got %s", rows[1].Date.Format(time.RFC3339))
+	}
+}

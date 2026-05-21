@@ -2659,6 +2659,7 @@ ORDER BY as_of_date ASC`, featureDailyPanelTable),
 	}
 	data = fillDailyPanelFallback(data, featureFallbackWindowDays)
 	data = trimDailyPanelRange(data, from, to)
+	data = trimDailyPanelTrailingEmptyRows(data)
 	if len(data) == 0 {
 		return nil, false, nil
 	}
@@ -3524,6 +3525,19 @@ func trimDailyPanelRange(rows []dto.FeatureDailyPanelRow, from, to time.Time) []
 	return trimmed
 }
 
+func trimDailyPanelTrailingEmptyRows(rows []dto.FeatureDailyPanelRow) []dto.FeatureDailyPanelRow {
+	lastValid := -1
+	for index, row := range rows {
+		if dailyPanelFeatureDataPresent(row) {
+			lastValid = index
+		}
+	}
+	if lastValid < 0 {
+		return nil
+	}
+	return append([]dto.FeatureDailyPanelRow(nil), rows[:lastValid+1]...)
+}
+
 func volatilityPriceGroupPresent(row dto.FeatureVolatilityHistoryRow) bool {
 	return row.HV10 != nil || row.HV20 != nil || row.HV30 != nil
 }
@@ -3546,6 +3560,10 @@ func dailyPanelSurfacePresent(row dto.FeatureDailyPanelRow) bool {
 
 func dailyPanelLiquidityPresent(row dto.FeatureDailyPanelRow) bool {
 	return row.LiquidityOpenInterest != nil || row.LiquidityRelativeSpread != nil || row.LiquidityTickCount > 0 || row.LiquidityVolume > 0 || row.LiquidityTransactions > 0 || row.LiquidityContractCount > 0 || row.LiquidityActiveContracts > 0 || row.LiquidityTradableContracts > 0 || row.LiquidityActivityRatio != nil || row.LiquidityTradabilityRatio != nil
+}
+
+func dailyPanelFeatureDataPresent(row dto.FeatureDailyPanelRow) bool {
+	return row.PriceObservations > 0 || row.IVObservations > 0 || dailyPanelVolatilityPricePresent(row) || dailyPanelVolatilityIVPresent(row) || dailyPanelSurfacePresent(row) || dailyPanelLiquidityPresent(row)
 }
 
 func summarizeUSOptionsSurfaceHistory(rows []usOptionsSurfaceAggregateRow) map[string]featureSurfacePanelSummary {
@@ -3829,7 +3847,7 @@ func (s *FeatureService) buildDailyFeaturePanelRowsWithInputs(ctx context.Contex
 			}
 		}
 	}
-	return mergeDailyFeaturePanelRows(volHistory, liquidityHistory, surfaceSummary, eventHistory), nil
+	return trimDailyPanelTrailingEmptyRows(mergeDailyFeaturePanelRows(volHistory, liquidityHistory, surfaceSummary, eventHistory)), nil
 }
 
 func mergeDailyFeaturePanelRows(volHistory []dto.FeatureVolatilityHistoryRow, liquidityHistory []dto.FeatureLiquidityHistoryRow, surfaceSummary map[string]featureSurfacePanelSummary, eventHistory map[string]dto.FeatureEventWindowHistoryRow) []dto.FeatureDailyPanelRow {
