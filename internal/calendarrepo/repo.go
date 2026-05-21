@@ -81,6 +81,9 @@ func (r *Repo) UpsertEvents(ctx context.Context, events []CalendarEvent) error {
 	if len(events) == 0 {
 		return nil
 	}
+	// MySQL limits prepared statements to 65 535 placeholders. With ~43 columns per
+	// row, a safe batch ceiling is 500 rows (500 × 43 = 21 500 placeholders).
+	const batchSize = 500
 	return r.db.WithContext(ctx).Clauses(clause.OnConflict{
 		Columns: []clause.Column{
 			{Name: "event_type"},
@@ -89,7 +92,7 @@ func (r *Repo) UpsertEvents(ctx context.Context, events []CalendarEvent) error {
 			{Name: "title"},
 		},
 		UpdateAll: true,
-	}).Create(&events).Error
+	}).CreateInBatches(&events, batchSize).Error
 }
 
 func (r *Repo) ListEconomicEvents(ctx context.Context, from, to time.Time) ([]CalendarEvent, error) {
