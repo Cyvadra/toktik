@@ -127,7 +127,7 @@ func TestUSStocksAttachFundamentalsAlignsPointInTimeValuesToBars(t *testing.T) {
 	}
 
 	svc := NewUSStocksService(nil, stub)
-	if err := svc.attachFundamentals(context.Background(), "AAPL", []string{"pe", "pb"}, bars); err != nil {
+	if err := svc.attachFundamentals(context.Background(), "AAPL", []string{"pe", "pb"}, "1d", bars); err != nil {
 		t.Fatalf("attachFundamentals returned error: %v", err)
 	}
 
@@ -186,13 +186,22 @@ func TestResolveUSStockFundamentalBindingsMapsIndexPEToPE10Live(t *testing.T) {
 	if bindings[0].ResponseFactor != "pe" || bindings[0].SourceFactor != virtualFundamentalFactorPE10Live || bindings[0].PriceDerived {
 		t.Fatalf("unexpected PE binding: %#v", bindings[0])
 	}
+	if bindings[0].SeriesMode != fundamentalSeriesModeFilled {
+		t.Fatalf("unexpected PE binding series mode: %#v", bindings[0])
+	}
 	if bindings[1].ResponseFactor != "pb" || bindings[1].SourceFactor != "pb" || !bindings[1].PriceDerived {
 		t.Fatalf("unexpected PB binding: %#v", bindings[1])
+	}
+	if bindings[1].SeriesMode != fundamentalSeriesModeEvent {
+		t.Fatalf("unexpected PB binding series mode: %#v", bindings[1])
 	}
 
 	nonIndex := resolveUSStockFundamentalBindings("AAPL", []string{"pe"})
 	if len(nonIndex) != 1 || nonIndex[0].SourceFactor != "pe" || !nonIndex[0].PriceDerived {
 		t.Fatalf("unexpected non-index binding: %#v", nonIndex)
+	}
+	if nonIndex[0].SeriesMode != fundamentalSeriesModeEvent {
+		t.Fatalf("unexpected non-index binding series mode: %#v", nonIndex[0])
 	}
 }
 
@@ -217,7 +226,7 @@ func TestUSStocksAttachFundamentalsUsesPE10LiveForIndexPE(t *testing.T) {
 	}
 
 	svc := NewUSStocksService(nil, stub)
-	if err := svc.attachFundamentals(context.Background(), "QQQ", []string{"pe"}, bars); err != nil {
+	if err := svc.attachFundamentals(context.Background(), "QQQ", []string{"pe"}, "1d", bars); err != nil {
 		t.Fatalf("attachFundamentals returned error: %v", err)
 	}
 	if len(stub.snapshotReqs) != 1 || len(stub.snapshotReqs[0].Factors) != 1 || stub.snapshotReqs[0].Factors[0] != virtualFundamentalFactorPE10Live {
@@ -226,11 +235,24 @@ func TestUSStocksAttachFundamentalsUsesPE10LiveForIndexPE(t *testing.T) {
 	if len(stub.seriesReqs) != 1 || stub.seriesReqs[0].Factor != virtualFundamentalFactorPE10Live {
 		t.Fatalf("expected series request for pe10_live, got %#v", stub.seriesReqs)
 	}
+	if stub.seriesReqs[0].Mode != fundamentalSeriesModeFilled {
+		t.Fatalf("expected pe10_live series request to use filled mode, got %#v", stub.seriesReqs[0])
+	}
 	if got := bars[0].Fundamentals["pe"].Value; got != 31.5 {
 		t.Fatalf("expected first index PE bar to use pe10_live, got %v", got)
 	}
 	if got := bars[1].Fundamentals["pe"].Value; got != 32.25 {
 		t.Fatalf("expected later index PE bar to use updated pe10_live, got %v", got)
+	}
+}
+
+func TestUSStockFundamentalKnownAtCutoffUsesDayEndForDailyBars(t *testing.T) {
+	barTS := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
+	if got := usStockFundamentalKnownAtCutoff(barTS, "1d"); !got.Equal(time.Date(2026, 1, 3, 0, 0, 0, 0, time.UTC)) {
+		t.Fatalf("unexpected 1d known_at cutoff: %s", got)
+	}
+	if got := usStockFundamentalKnownAtCutoff(barTS, "1h"); !got.Equal(barTS) {
+		t.Fatalf("unexpected intraday known_at cutoff: %s", got)
 	}
 }
 

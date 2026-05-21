@@ -1,6 +1,29 @@
 package service
 
-import "testing"
+import (
+	"context"
+	"testing"
+	"time"
+
+	"github.com/Cyvadra/toktik/internal/dto"
+)
+
+type stubMacroSeriesProvider struct {
+	resp *dto.MacroSeriesResponse
+	err  error
+	reqs []dto.MacroSeriesRequest
+}
+
+func (s *stubMacroSeriesProvider) QuerySeries(_ context.Context, req dto.MacroSeriesRequest) (*dto.MacroSeriesResponse, error) {
+	s.reqs = append(s.reqs, req)
+	if s.err != nil {
+		return nil, s.err
+	}
+	if s.resp == nil {
+		return &dto.MacroSeriesResponse{}, nil
+	}
+	return s.resp, nil
+}
 
 func TestResolveVirtualFundamentalMacroTarget(t *testing.T) {
 	tests := []struct {
@@ -79,5 +102,37 @@ func TestSplitFundamentalFactorSelection(t *testing.T) {
 	}
 	if selection.base != nil {
 		t.Fatalf("expected nil base factors for virtual-only selection, got %v", selection.base)
+	}
+}
+
+func TestVirtualFundamentalsQuerySeriesUsesDailyTimestampAsEventTS(t *testing.T) {
+	macro := &stubMacroSeriesProvider{
+		resp: &dto.MacroSeriesResponse{
+			Data: []dto.MacroSeriesPoint{{
+				Timestamp: time.Date(2026, 1, 5, 0, 0, 0, 0, time.UTC),
+				EventTS:   time.Date(2025, 11, 28, 17, 59, 0, 0, time.UTC),
+				KnownAt:   time.Date(2026, 1, 2, 14, 30, 0, 0, time.UTC),
+				Value:     39.18,
+				Source:    "fmp",
+			}},
+		},
+	}
+	provider := newVirtualFundamentalsProvider(macro)
+
+	points, _, handled, err := provider.querySeries(context.Background(), dto.FundamentalSeriesRequest{From: "2026-01-02T00:00:00Z", To: "2026-01-07T00:00:00.000000001Z"}, "us-stocks", "QQQ", virtualFundamentalFactorPE10Live, fundamentalSeriesModeFilled)
+	if err != nil {
+		t.Fatalf("querySeries returned error: %v", err)
+	}
+	if !handled {
+		t.Fatalf("expected virtual series to be handled")
+	}
+	if len(points) != 1 {
+		t.Fatalf("expected 1 point, got %d", len(points))
+	}
+	if !points[0].EventTS.Equal(time.Date(2026, 1, 5, 0, 0, 0, 0, time.UTC)) {
+		t.Fatalf("expected daily timestamp as event_ts, got %s", points[0].EventTS)
+	}
+	if got := macro.reqs[0].To; got != "2026-01-08T00:00:00Z" {
+		t.Fatalf("expected expanded daily range end, got %s", got)
 	}
 }

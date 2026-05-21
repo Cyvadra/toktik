@@ -66,15 +66,18 @@ func (p *virtualFundamentalsProvider) querySeries(ctx context.Context, req dto.F
 	}
 	interval := macroIntervalEvent
 	fillPolicy := ""
+	from := req.From
+	to := req.To
 	if mode != fundamentalSeriesModeEvent {
 		interval = "1d"
 		fillPolicy = fundamentalFillForwardFill
+		from, to = normalizeVirtualFundamentalDailyRange(req.From, req.To)
 	}
 	resp, err := p.macro.QuerySeries(ctx, dto.MacroSeriesRequest{
 		Dataset:         target.Dataset,
 		Factors:         []string{factor},
-		From:            req.From,
-		To:              req.To,
+		From:            from,
+		To:              to,
 		AsOf:            req.AsOf,
 		Interval:        interval,
 		ReferenceMarket: target.ReferenceMarket,
@@ -86,8 +89,12 @@ func (p *virtualFundamentalsProvider) querySeries(ctx context.Context, req dto.F
 	}
 	out := make([]dto.FundamentalSeriesPoint, 0, len(resp.Data))
 	for _, point := range resp.Data {
+		eventTS := point.EventTS
+		if mode != fundamentalSeriesModeEvent {
+			eventTS = point.Timestamp
+		}
 		out = append(out, dto.FundamentalSeriesPoint{
-			EventTS: point.EventTS,
+			EventTS: eventTS,
 			KnownAt: point.KnownAt,
 			Value:   point.Value,
 			Source:  point.Source,
@@ -112,7 +119,7 @@ func (p *virtualFundamentalsProvider) querySnapshot(ctx context.Context, market,
 	point := resp.Data[len(resp.Data)-1]
 	return &dto.FundamentalSnapshotEntry{
 		Factor:  factor,
-		EventTS: point.EventTS,
+		EventTS: point.Timestamp,
 		KnownAt: point.KnownAt,
 		Value:   point.Value,
 		Source:  point.Source,
@@ -191,4 +198,16 @@ func splitFundamentalFactorSelection(factors []string) fundamentalFactorSelectio
 		selection.base = nil
 	}
 	return selection
+}
+
+func normalizeVirtualFundamentalDailyRange(rawFrom, rawTo string) (string, string) {
+	if isDateOnlyTimeInput(rawTo) {
+		return rawFrom, rawTo
+	}
+	to, err := parseFundamentalTime(rawTo)
+	if err != nil {
+		return rawFrom, rawTo
+	}
+	dayEnd := time.Date(to.UTC().Year(), to.UTC().Month(), to.UTC().Day()+1, 0, 0, 0, 0, time.UTC)
+	return rawFrom, dayEnd.Format(time.RFC3339Nano)
 }

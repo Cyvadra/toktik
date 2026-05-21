@@ -160,7 +160,7 @@ LIMIT %s`, tableName, clickhouseStringLiteral(req.Symbol), clickhouseDateTimeLit
 	resp.Data, resp.NextCursor = applyTimeCursorPagination(bars, limit, func(r dto.USStockBarRow) string {
 		return encodeCursor(r.Timestamp)
 	})
-	if err := s.attachFundamentals(ctx, req.Symbol, req.Factors, resp.Data); err != nil {
+	if err := s.attachFundamentals(ctx, req.Symbol, req.Factors, req.Interval, resp.Data); err != nil {
 		return nil, err
 	}
 	s.attachCompanyProfile(ctx, req.Symbol, resp)
@@ -194,7 +194,7 @@ func (s *USStocksService) attachCompanyProfilesToSymbols(ctx context.Context, ro
 	}
 }
 
-func (s *USStocksService) attachFundamentals(ctx context.Context, symbol string, requestedFactors []string, bars []dto.USStockBarRow) error {
+func (s *USStocksService) attachFundamentals(ctx context.Context, symbol string, requestedFactors []string, interval string, bars []dto.USStockBarRow) error {
 	bindings := resolveUSStockFundamentalBindings(symbol, requestedFactors)
 	if len(bindings) == 0 || len(bars) == 0 {
 		return nil
@@ -205,13 +205,14 @@ func (s *USStocksService) attachFundamentals(ctx context.Context, symbol string,
 
 	startTS := bars[0].Timestamp.UTC()
 	endTS := bars[len(bars)-1].Timestamp.UTC().Add(time.Nanosecond)
+	firstBarKnownAtCutoff := usStockFundamentalKnownAtCutoff(startTS, interval)
 	sourceFactors := uniqueUSStockFundamentalSourceFactors(bindings)
 
 	snapshot, err := s.fundamentals.QuerySnapshot(ctx, dto.FundamentalSnapshotRequest{
 		Market:  "us-stocks",
 		Symbol:  symbol,
 		Factors: sourceFactors,
-		AsOf:    startTS.Format(time.RFC3339Nano),
+		AsOf:    firstBarKnownAtCutoff.Format(time.RFC3339Nano),
 	})
 	if err != nil {
 		return fmt.Errorf("query US stock fundamentals snapshot: %w", err)
@@ -235,13 +236,20 @@ func (s *USStocksService) attachFundamentals(ctx context.Context, symbol string,
 
 	sourceSeriesByFactor := make(map[string][]dto.FundamentalSeriesPoint, len(sourceFactors))
 	for _, factor := range sourceFactors {
+		seriesMode := fundamentalSeriesModeEvent
+		for _, binding := range bindings {
+			if binding.SourceFactor == factor {
+				seriesMode = binding.SeriesMode
+				break
+			}
+		}
 		series, err := s.fundamentals.QuerySeries(ctx, dto.FundamentalSeriesRequest{
 			Market: "us-stocks",
 			Symbol: symbol,
 			Factor: factor,
 			From:   startTS.Format(time.RFC3339Nano),
 			To:     endTS.Format(time.RFC3339Nano),
-			Mode:   "event",
+			Mode:   seriesMode,
 			AsOf:   endTS.Format(time.RFC3339Nano),
 		})
 		if err != nil {
@@ -273,13 +281,14 @@ func (s *USStocksService) attachFundamentals(ctx context.Context, symbol string,
 	nextByFactor := make(map[string]int, len(bindings))
 	for barIndex := range bars {
 		barTS := bars[barIndex].Timestamp.UTC()
+		knownAtCutoff := usStockFundamentalKnownAtCutoff(barTS, interval)
 		barFundamentals := map[string]dto.USStockBarFundamentalValue{}
 		for _, binding := range bindings {
 			factor := binding.ResponseFactor
 			events := eventsByFactor[factor]
 			for nextByFactor[factor] < len(events) {
 				candidate := events[nextByFactor[factor]]
-				if candidate.KnownAt.After(barTS) || candidate.EventTS.After(barTS) {
+				if candidate.KnownAt.After(knownAtCutoff) || candidate.EventTS.After(barTS) {
 					break
 				}
 				currentByFactor[factor] = dto.USStockBarFundamentalValue{

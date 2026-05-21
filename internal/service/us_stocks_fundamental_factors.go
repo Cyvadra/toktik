@@ -1,11 +1,15 @@
 package service
 
-import "strings"
+import (
+	"strings"
+	"time"
+)
 
 type usStockFundamentalBinding struct {
 	ResponseFactor string
 	SourceFactor   string
 	PriceDerived   bool
+	SeriesMode     string
 }
 
 func resolveUSStockFundamentalBindings(symbol string, requestedFactors []string) []usStockFundamentalBinding {
@@ -25,10 +29,15 @@ func resolveUSStockFundamentalBinding(symbol, factor string) usStockFundamentalB
 		ResponseFactor: factor,
 		SourceFactor:   factor,
 		PriceDerived:   defaultUSStockPriceDerivedFundamentalFactor(factor),
+		SeriesMode:     fundamentalSeriesModeEvent,
 	}
 	if isIndexPEProxyUSStockSymbol(symbol) && factor == "pe" {
 		binding.SourceFactor = virtualFundamentalFactorPE10Live
 		binding.PriceDerived = false
+		binding.SeriesMode = fundamentalSeriesModeFilled
+	}
+	if factor == virtualFundamentalFactorPE10Live {
+		binding.SeriesMode = fundamentalSeriesModeFilled
 	}
 	return binding
 }
@@ -69,4 +78,12 @@ func isIndexPEProxyUSStockSymbol(symbol string) bool {
 	default:
 		return false
 	}
+}
+
+func usStockFundamentalKnownAtCutoff(barTS time.Time, interval string) time.Time {
+	if strings.EqualFold(strings.TrimSpace(interval), "1d") {
+		day := barTS.UTC()
+		return time.Date(day.Year(), day.Month(), day.Day()+1, 0, 0, 0, 0, time.UTC)
+	}
+	return barTS.UTC()
 }
