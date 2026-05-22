@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Dispatch, ReactNode, SetStateAction } from 'react';
-import { CandlestickSeries, ColorType, HistogramSeries, createChart } from 'lightweight-charts';
+import { CandlestickSeries, ColorType, HistogramSeries, LineSeries, createChart } from 'lightweight-charts';
 import type { CandlestickData, HistogramData, UTCTimestamp } from 'lightweight-charts';
 import { Activity, Database, Play, RefreshCw, Save, Search } from 'lucide-react';
 import { api, getStoredApiKey, setStoredApiKey } from './api';
@@ -17,6 +17,9 @@ import type {
   BrowserValueListResponse,
   ChainResponse,
   DatasetCatalogResponse,
+  FundamentalFactorCatalogEntry,
+  FundamentalFactorCatalogResponse,
+  FundamentalSeriesResponse,
   MarketSymbolResponse,
   MarketSymbolRow,
 } from './types';
@@ -84,12 +87,29 @@ type BizMarketGapRow = {
 type BizBootstrapCache = {
   cachedAt: number;
   datasets: BrowserDataset[];
-  catalog: DatasetCatalogResponse;
+  catalog?: DatasetCatalogResponse;
+};
+
+type MarketSeriesResult = {
+  market: string;
+  response: BarResponse;
+  fundamentals: FundamentalSeriesResponse | undefined;
+};
+
+type FundamentalChartPoint = {
+  eventTS: string;
+  knownAt: string;
+  time: UTCTimestamp;
+  value: number;
+  filled: boolean;
+  source?: string;
+  revision?: number;
 };
 
 const defaultIntervals = ['1m', '5m', '15m', '30m', '1h', '2h', '3h', '4h', '6h', '8h', '12h', '1d'];
 const forexIntervals = ['1m', '5m', '15m', '30m', '1h', '2h', '4h', '1d'];
-const bizBootstrapCacheKey = 'toktik.biz_data_browser_bootstrap.v1';
+const bizBootstrapCacheKey = 'toktik.biz_data_browser_bootstrap.v2';
+const bizBootstrapCacheMaxAgeMs = 1000 * 60 * 60 * 6;
 
 const tabs: Array<{ id: Tab; label: string }> = [
   { id: 'schema', label: 'Schema' },
@@ -112,7 +132,7 @@ export default function App() {
   const cachedBootstrap = readBizBootstrapCache();
   const [apiKey, setApiKey] = useState(getStoredApiKey());
   const [status, setStatus] = useState<'checking' | 'ready' | 'error'>(cachedBootstrap ? 'ready' : 'checking');
-  const [statusError, setStatusError] = useState('');
+  const [statusError, setStatusError] = useState(cachedBootstrap?.catalog ? '' : '');
   const [datasets, setDatasets] = useState<BrowserDataset[]>(cachedBootstrap?.datasets ?? []);
   const [catalog, setCatalog] = useState<DatasetCatalogResponse | undefined>(cachedBootstrap?.catalog);
   const [activeName, setActiveName] = useState('');
@@ -150,14 +170,27 @@ export default function App() {
   }, [datasets, filter]);
 
   async function refreshBootstrap() {
-    setStatus('checking');
+    if (!cachedBootstrap) {
+      setStatus('checking');
+    }
     setStatusError('');
     try {
-      const [ready, presets, catalogResp] = await Promise.all([api.ready(), api.presets(), api.datasets()]);
+      const [ready, presets] = await Promise.all([api.ready(), api.presets()]);
       setStatus(ready.status === 'ready' ? 'ready' : 'error');
       setDatasets(presets.datasets);
-      setCatalog(catalogResp);
-      writeBizBootstrapCache({ cachedAt: Date.now(), datasets: presets.datasets, catalog: catalogResp });
+      writeBizBootstrapCache({ cachedAt: Date.now(), datasets: presets.datasets, catalog: cachedBootstrap?.catalog });
+
+      void api.datasets()
+        .then((catalogResp) => {
+          setCatalog(catalogResp);
+          setStatusError('');
+          writeBizBootstrapCache({ cachedAt: Date.now(), datasets: presets.datasets, catalog: catalogResp });
+        })
+        .catch((error) => {
+          if (!cachedBootstrap?.catalog) {
+            setStatusError(`Dataset catalog unavailable: ${errorMessage(error)}. Showing preset-only view.`);
+          }
+        });
     } catch (error) {
       setStatus('error');
       setStatusError(errorMessage(error));
@@ -166,11 +199,13 @@ export default function App() {
 
   function saveApiKey() {
     setStoredApiKey(apiKey);
+    clearBizBootstrapCache();
     setRefreshToken((value) => value + 1);
   }
 
   function refreshAll() {
     api.clearCache();
+    clearBizBootstrapCache();
     setRefreshToken((value) => value + 1);
   }
 
@@ -424,19 +459,30 @@ function ValidityPanel({ dataset, dateWindow }: { dataset: BrowserDataset; dateW
 
 function MarketPanel({ dataset, catalogDataset, dateWindow, selection }: { dataset: BrowserDataset; catalogDataset?: CatalogDataset; dateWindow: DateWindow; selection?: BrowserSelection }) {
   const market = browserDatasetToMarket(dataset);
+  const supportsFundamentals = market === 'us-stocks';
   const [symbol, setSymbol] = useState(defaultMarketSymbol(dataset));
   const [symbolSearch, setSymbolSearch] = useState(defaultMarketSymbol(dataset));
   const [interval, setInterval] = useState('1h');
   const [from, setFrom] = useState(dateWindow.from);
   const [to, setTo] = useState(dateWindow.to);
   const [limit, setLimit] = useState(1000);
-  const [state, setState] = useQueryState<{ market: string; response: BarResponse }>();
+  const [factor, setFactor] = useState('none');
+  const [state, setState] = useQueryState<MarketSeriesResult>();
   const [symbolState, setSymbolState] = useQueryState<MarketSymbolResponse>();
+  const [factorState, setFactorState] = useQueryState<FundamentalFactorCatalogResponse>();
   const [bizQueryRows, setBizQueryRows] = useState<BizMarketQueryRow[]>([]);
   const symbolRequestIDRef = useRef(0);
   const intervals = marketIntervals(market);
   const symbolListID = `market-symbols-${market}`;
   const bizDatasetRows = useMemo(() => [toBizDatasetRow(dataset, catalogDataset, intervals)], [dataset, catalogDataset, intervals]);
+  const factorOptions = useMemo(
+    () => (factorState.data?.data ?? []).filter((entry) => entry.active && entry.market === 'us-stocks'),
+    [factorState.data],
+  );
+  const selectedFactor = useMemo(
+    () => factorOptions.find((entry) => entry.factor_code === factor),
+    [factor, factorOptions],
+  );
 
   useEffect(() => {
     const fallback = defaultMarketSymbol(dataset);
@@ -449,6 +495,28 @@ function MarketPanel({ dataset, catalogDataset, dateWindow, selection }: { datas
       setInterval(defaultMarketInterval(market));
     }
   }, [interval, intervals, market]);
+
+  useEffect(() => {
+    if (!supportsFundamentals) {
+      setFactor('none');
+      return;
+    }
+    runQuery(setFactorState, () => api.fundamentalFactors('us-stocks'));
+  }, [supportsFundamentals, setFactorState]);
+
+  useEffect(() => {
+    if (!supportsFundamentals) {
+      return;
+    }
+    if (factorOptions.length === 0) {
+      setFactor('none');
+      return;
+    }
+    if (factor !== 'none' && factorOptions.some((entry) => entry.factor_code === factor)) {
+      return;
+    }
+    setFactor(factorOptions.find((entry) => entry.factor_code === 'pe')?.factor_code ?? factorOptions[0].factor_code);
+  }, [factor, factorOptions, supportsFundamentals]);
 
   useEffect(() => {
     const handle = setTimeout(() => {
@@ -498,7 +566,11 @@ function MarketPanel({ dataset, catalogDataset, dateWindow, selection }: { datas
   }, [selection]);
 
   async function runMarketBars() {
-    const result = { market, response: await api.bars(market, { symbol, interval, from, to, limit }) };
+    const response = await api.bars(market, { symbol, interval, from, to, limit });
+    const fundamentals = supportsFundamentals && factor !== 'none'
+      ? await api.fundamentalSeries({ market: 'us-stocks', symbol, factor, from, to, mode: 'filled' })
+      : undefined;
+    const result = { market, response, fundamentals };
     const bars = toChartBars(result.response.data);
     const requestKey = marketQueryKey({ market, symbol, interval, from, to, limit });
     setBizQueryRows((current) => upsertBizQueryRows(current, {
@@ -514,7 +586,7 @@ function MarketPanel({ dataset, catalogDataset, dateWindow, selection }: { datas
         to,
         limit,
         bars: bars.length,
-        last_price: bars.at(-1) ? formatPrice(bars.at(-1)!.close) : 'n/a',
+        last_price: bars.length > 0 ? formatPrice(bars[bars.length - 1].close) : 'n/a',
       }).slice(0, 8));
     return result;
   }
@@ -548,12 +620,21 @@ function MarketPanel({ dataset, catalogDataset, dateWindow, selection }: { datas
         <Control label="From"><input value={from} onChange={(event) => setFrom(event.target.value)} type="date" /></Control>
         <Control label="To"><input value={to} onChange={(event) => setTo(event.target.value)} type="date" /></Control>
         <Control label="Limit"><input value={limit} onChange={(event) => setLimit(Number(event.target.value))} type="number" min={50} max={10000} step={50} /></Control>
+        {supportsFundamentals && (
+          <Control label="Fundamental">
+            <select value={factor} onChange={(event) => setFactor(event.target.value)}>
+              <option value="none">none</option>
+              {factorOptions.map((entry) => <option key={entry.factor_code} value={entry.factor_code}>{fundamentalFactorLabel(entry)}</option>)}
+            </select>
+          </Control>
+        )}
       </QueryControls>
+      {supportsFundamentals && factorState.error && <div className="error-state inline-error">Fundamentals catalog unavailable: {factorState.error}</div>}
       <div className="biz-table-grid">
         <BizTable title="biz_market_dataset" rows={bizDatasetRows} columns={['biz_table', 'market', 'relation', 'status', 'freshness', 'row_count', 'last_timestamp', 'intervals']} />
         <BizTable title="biz_market_query_cache" rows={bizQueryRows} columns={['biz_request_key', 'cache_status', 'hits', 'market', 'symbol', 'interval', 'bars', 'last_price', 'last_loaded_at']} emptyText="Run a market query to populate the prefixed business cache table." />
       </div>
-      {state.data && <SeriesView rows={state.data.response.data} interval={interval} />}
+      {state.data && <SeriesView rows={state.data.response.data} interval={interval} fundamentals={state.data.fundamentals} factorEntry={selectedFactor} />}
     </Panel>
   );
 }
@@ -668,10 +749,10 @@ function ValidityView({ data }: { data: BrowserValidCountResponse }) {
   );
 }
 
-function SeriesView({ rows, interval }: { rows: BarRow[]; interval: string }) {
+function SeriesView({ rows, interval, fundamentals, factorEntry }: { rows: BarRow[]; interval: string; fundamentals?: FundamentalSeriesResponse; factorEntry?: FundamentalFactorCatalogEntry }) {
   const bars = toChartBars(rows);
   const gaps = toGapRows(bars, interval);
-  const latest = bars.at(-1);
+  const latest = bars.length > 0 ? bars[bars.length - 1] : undefined;
   const first = bars[0];
   const volume = bars.reduce((total, bar) => total + bar.volume, 0);
   return (
@@ -686,8 +767,44 @@ function SeriesView({ rows, interval }: { rows: BarRow[]; interval: string }) {
         <BizTable title="biz_market_gap_diagnostics" rows={gaps.slice(0, 12)} columns={['biz_gap', 'from', 'to', 'missing_span']} />
       )}
       <div className="chart market-chart"><MarketCandlestickChart bars={bars} /></div>
+      {fundamentals && <FundamentalSeriesSection response={fundamentals} factorEntry={factorEntry} />}
       <DataTable rows={rows.slice(0, 200) as Array<Record<string, unknown>>} columns={inferColumns(rows)} />
     </>
+  );
+}
+
+function FundamentalSeriesSection({ response, factorEntry }: { response: FundamentalSeriesResponse; factorEntry?: FundamentalFactorCatalogEntry }) {
+  const points = toFundamentalChartPoints(response.data);
+  const latest = points.length > 0 ? points[points.length - 1] : undefined;
+  const filledCount = points.filter((point) => point.filled).length;
+  const tableRows = response.data.slice(-200).reverse().map((point) => ({
+    event_ts: point.event_ts,
+    known_at: point.known_at,
+    value: formatFundamentalValue(point.value, factorEntry),
+    filled: point.filled ? 'yes' : 'no',
+    source: point.source ?? '',
+    revision: point.revision ?? '',
+  }));
+
+  return (
+    <section className="fundamentals-section">
+      <div className="fundamentals-header">
+        <h4>{factorEntry?.display_name ?? response.factor} fundamentals</h4>
+        <div className="fundamental-chip-row">
+          <span className="subtle-chip">symbol {response.symbol}</span>
+          <span className="subtle-chip">mode {response.mode}</span>
+          {response.fill_policy && <span className="subtle-chip">fill {response.fill_policy}</span>}
+        </div>
+      </div>
+      <div className="coverage-grid fundamentals-summary">
+        <Stat label="Latest" value={latest ? formatFundamentalValue(latest.value, factorEntry) : 'n/a'} />
+        <Stat label="Points" value={formatNumber(points.length)} />
+        <Stat label="Filled" value={formatNumber(filledCount)} />
+        <Stat label="Latest event" value={latest ? compactDate(latest.eventTS) : 'n/a'} />
+      </div>
+      <div className="chart fundamentals-chart"><FundamentalLineChart points={points} label={factorEntry?.display_name ?? response.factor} /></div>
+      <BizTable title="biz_fundamental_series" rows={tableRows} columns={['event_ts', 'known_at', 'value', 'filled', 'source', 'revision']} emptyText="No fundamentals data returned for the selected symbol and date window." />
+    </section>
   );
 }
 
@@ -831,6 +948,65 @@ function MarketCandlestickChart({ bars }: { bars: ChartBar[] }) {
   return <div className="market-chart-canvas" ref={containerRef} aria-label="Candlestick price chart" />;
 }
 
+function FundamentalLineChart({ points, label }: { points: FundamentalChartPoint[]; label: string }) {
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container || points.length === 0) {
+      return;
+    }
+
+    const chart = createChart(container, {
+      width: container.clientWidth,
+      height: 220,
+      autoSize: true,
+      layout: {
+        background: { type: ColorType.Solid, color: '#fbfcfd' },
+        textColor: '#415066',
+      },
+      grid: {
+        vertLines: { color: '#edf2f6' },
+        horzLines: { color: '#edf2f6' },
+      },
+      rightPriceScale: {
+        borderColor: '#d8e0e7',
+        scaleMargins: { top: 0.12, bottom: 0.12 },
+      },
+      timeScale: {
+        borderColor: '#d8e0e7',
+        timeVisible: true,
+        secondsVisible: false,
+      },
+      crosshair: {
+        vertLine: { color: '#9aa9b8', labelBackgroundColor: '#155d8b' },
+        horzLine: { color: '#9aa9b8', labelBackgroundColor: '#155d8b' },
+      },
+    });
+
+    const lineSeries = chart.addSeries(LineSeries, {
+      color: '#7f3c8d',
+      lineWidth: 2,
+      crosshairMarkerRadius: 4,
+      lastValueVisible: true,
+      priceLineVisible: true,
+      title: label,
+    });
+    lineSeries.setData(points.map((point) => ({ time: point.time, value: point.value })));
+
+    chart.timeScale().fitContent();
+
+    return () => {
+      chart.remove();
+    };
+  }, [label, points]);
+
+  if (points.length === 0) {
+    return <div className="empty-state">No fundamentals data returned for this symbol and date range.</div>;
+  }
+  return <div className="fundamental-chart-canvas" ref={containerRef} aria-label="Fundamentals line chart" />;
+}
+
 function DataTable({ rows, columns }: { rows: Array<Record<string, unknown>>; columns: string[] }) {
   if (!rows.length) {
     return <div className="empty-state">No rows to display.</div>;
@@ -963,6 +1139,37 @@ function upsertBizQueryRows(rows: BizMarketQueryRow[], next: BizMarketQueryRow) 
   return [updated, ...rows.filter((row) => row.biz_request_key !== next.biz_request_key)];
 }
 
+function toFundamentalChartPoints(points: FundamentalSeriesResponse['data']) {
+  return points
+    .filter((point) => Number.isFinite(point.value) && !Number.isNaN(Date.parse(point.event_ts)))
+    .map((point) => ({
+      eventTS: point.event_ts,
+      knownAt: point.known_at,
+      time: Math.floor(Date.parse(point.event_ts) / 1000) as UTCTimestamp,
+      value: point.value,
+      filled: point.filled ?? false,
+      source: point.source,
+      revision: point.revision,
+    }));
+}
+
+function fundamentalFactorLabel(entry: FundamentalFactorCatalogEntry) {
+  return entry.unit ? `${entry.display_name} (${entry.factor_code}, ${entry.unit})` : `${entry.display_name} (${entry.factor_code})`;
+}
+
+function formatFundamentalValue(value: number, factorEntry?: FundamentalFactorCatalogEntry) {
+  if (!Number.isFinite(value)) {
+    return 'n/a';
+  }
+  const maximumFractionDigits = factorEntry?.unit === '%' ? 2 : value >= 100 ? 1 : 2;
+  const minimumFractionDigits = factorEntry?.unit === '%' || value < 100 ? 2 : 1;
+  const formatted = new Intl.NumberFormat('en-US', { maximumFractionDigits, minimumFractionDigits }).format(value);
+  if (!factorEntry?.unit) {
+    return formatted;
+  }
+  return factorEntry.unit === '%' ? `${formatted}%` : `${formatted} ${factorEntry.unit}`;
+}
+
 function toBizDatasetRow(dataset: BrowserDataset, catalogDataset: CatalogDataset | undefined, intervals: string[]) {
   return {
     biz_table: `biz_${dataset.name}`,
@@ -991,26 +1198,30 @@ function defaultDateWindow(lastTimestamp?: string): DateWindow {
 
 function readBizBootstrapCache() {
   try {
-    const raw = sessionStorage.getItem(bizBootstrapCacheKey);
+    const raw = localStorage.getItem(bizBootstrapCacheKey);
     if (!raw) return undefined;
     const cache = JSON.parse(raw) as BizBootstrapCache;
-    if (Date.now() - cache.cachedAt > 300_000) {
-      sessionStorage.removeItem(bizBootstrapCacheKey);
+    if (Date.now() - cache.cachedAt > bizBootstrapCacheMaxAgeMs) {
+      localStorage.removeItem(bizBootstrapCacheKey);
       return undefined;
     }
     return cache;
   } catch {
-    sessionStorage.removeItem(bizBootstrapCacheKey);
+    localStorage.removeItem(bizBootstrapCacheKey);
     return undefined;
   }
 }
 
 function writeBizBootstrapCache(cache: BizBootstrapCache) {
   try {
-    sessionStorage.setItem(bizBootstrapCacheKey, JSON.stringify(cache));
+    localStorage.setItem(bizBootstrapCacheKey, JSON.stringify(cache));
   } catch {
     // Ignore quota errors; the API request cache still handles de-duplication.
   }
+}
+
+function clearBizBootstrapCache() {
+  localStorage.removeItem(bizBootstrapCacheKey);
 }
 
 async function resolveDefaultMarketSymbol(dataset: BrowserDataset, dateWindow: DateWindow) {

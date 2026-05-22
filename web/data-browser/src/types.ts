@@ -192,3 +192,44 @@ export type MarketSymbolResponse = {
   data: MarketSymbolRow[];
   next_cursor?: string;
 };
+
+export type FundamentalFactorCatalogEntry = {
+  market: string;
+  factor_code: string;
+  display_name: string;
+  description?: string;
+  value_type: string;
+  unit?: string;
+  preferred_frequency: string;
+  fill_policy: string;
+  fill_max_days?: number;
+  point_in_time: boolean;
+  source?: string;
+  active: boolean;
+  sla_hours?: number;
+  metadata?: string;
+  updated_at: string;
+};
+
+export type FundamentalFactorCatalogResponse = {
+  data: FundamentalFactorCatalogEntry[];
+};
+
+export type FundamentalSeriesPoint = {
+  event_ts: string;
+  known_at: string;
+  value: number;
+  source?: string;
+  revision?: number;
+  filled?: boolean;
+};
+
+export type FundamentalSeriesResponse = {
+  market: string;
+  symbol: string;
+  factor: string;
+  mode: string;
+  as_of: string;
+  fill_policy?: string;
+  data: FundamentalSeriesPoint[];
+};
