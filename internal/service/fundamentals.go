@@ -153,7 +153,11 @@ func (s *FundamentalsService) QuerySeries(ctx context.Context, req dto.Fundament
 		return nil, err
 	}
 	resp.FillPolicy = policy
-	resp.Data = applyForwardFill(asOfPoints, policy, maxDays)
+	filled, err := s.buildFilledSeries(ctx, market, symbol, factor, from, to, asOf, asOfPoints, policy, maxDays)
+	if err != nil {
+		return nil, err
+	}
+	resp.Data = filled
 	return resp, nil
 }
 
@@ -264,6 +268,12 @@ func (s *FundamentalsService) QuerySnapshot(ctx context.Context, req dto.Fundame
 			upsertFundamentalSnapshotEntry(&out.Data, *entry)
 		}
 	}
+	if market == "us-stocks" {
+		out.Data, err = s.revalueSnapshotEntries(ctx, symbol, asOf, out.Data)
+		if err != nil {
+			return nil, err
+		}
+	}
 	sort.Slice(out.Data, func(i, j int) bool {
 		return out.Data[i].Factor < out.Data[j].Factor
 	})
@@ -329,6 +339,12 @@ func (s *FundamentalsService) QueryPanel(ctx context.Context, req dto.Fundamenta
 			return nil, err
 		}
 		upsertFundamentalPanelRows(&out.Data, rows)
+	}
+	if market == "us-stocks" {
+		out.Data, err = s.revaluePanelRows(ctx, asOf, out.Data)
+		if err != nil {
+			return nil, err
+		}
 	}
 	sort.Slice(out.Data, func(i, j int) bool {
 		if out.Data[i].Symbol == out.Data[j].Symbol {
@@ -449,20 +465,270 @@ func (s *FundamentalsService) lookupFillPolicy(ctx context.Context, market, fact
 	return fundamentalFillForwardFill, 0, nil
 }
 
-// applyForwardFill emits the input series unchanged when policy is event_only,
-// otherwise carries the most recent value forward, optionally bounded by
-// maxDays for limited_forward_fill. Input must already be sorted ascending.
-func applyForwardFill(in []dto.FundamentalSeriesPoint, policy string, maxDays int) []dto.FundamentalSeriesPoint {
-	if len(in) == 0 || policy == fundamentalFillEventOnly {
-		return in
+func (s *FundamentalsService) buildFilledSeries(ctx context.Context, market, symbol, factor string, from, to, asOf time.Time, asOfPoints []dto.FundamentalSeriesPoint, policy string, maxDays int) ([]dto.FundamentalSeriesPoint, error) {
+	points, err := s.withSeriesSeed(ctx, market, symbol, factor, from, asOf, asOfPoints)
+	if err != nil {
+		return nil, err
 	}
-	// For now, fill marks rows as Filled=false; downstream consumers (e.g. the
-	// backtest factor bridge) align onto bar timestamps and decide per-bar.
-	// At the API layer, the as_of series is already the natural per-event_ts
-	// projection; we expose a `Filled` flag for future expansion when callers
-	// request evenly-spaced output explicitly.
-	_ = maxDays
-	return in
+	if len(points) == 0 || policy == fundamentalFillEventOnly {
+		return asOfPoints, nil
+	}
+	grid, prices, err := s.resolveFillGrid(ctx, market, symbol, from, to)
+	if err != nil {
+		return nil, err
+	}
+	if len(grid) == 0 {
+		return asOfPoints, nil
+	}
+	var transform func(time.Time, dto.FundamentalSeriesPoint) float64
+	if market == "us-stocks" && defaultUSStockPriceDerivedFundamentalFactor(factor) {
+		denominators, err := s.loadPriceDerivedDenominators(ctx, symbol, factor, points, grid)
+		if err != nil {
+			return nil, err
+		}
+		transform = func(gridTS time.Time, point dto.FundamentalSeriesPoint) float64 {
+			return revaluePriceDerivedFundamental(factor, gridTS, point, denominators, prices)
+		}
+	}
+	return buildFilledFundamentalSeries(grid, points, policy, maxDays, transform), nil
+}
+
+func (s *FundamentalsService) withSeriesSeed(ctx context.Context, market, symbol, factor string, from, asOf time.Time, points []dto.FundamentalSeriesPoint) ([]dto.FundamentalSeriesPoint, error) {
+	out := append([]dto.FundamentalSeriesPoint(nil), points...)
+	seed, err := s.querySnapshotEntry(ctx, market, resolveFundamentalStorageSymbol(market, symbol, factor), factor, from)
+	if err != nil {
+		return nil, err
+	}
+	if seed == nil || seed.EventTS.After(from) || seed.EventTS.Equal(from) {
+		return out, nil
+	}
+	for _, point := range out {
+		if point.EventTS.Equal(seed.EventTS) && point.KnownAt.Equal(seed.KnownAt) {
+			return out, nil
+		}
+	}
+	seedPoint := dto.FundamentalSeriesPoint{
+		EventTS: seed.EventTS,
+		KnownAt: seed.KnownAt,
+		Value:   seed.Value,
+		Source:  seed.Source,
+	}
+	out = append([]dto.FundamentalSeriesPoint{seedPoint}, out...)
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].EventTS.Equal(out[j].EventTS) {
+			return out[i].KnownAt.Before(out[j].KnownAt)
+		}
+		return out[i].EventTS.Before(out[j].EventTS)
+	})
+	_ = asOf
+	return out, nil
+}
+
+func (s *FundamentalsService) resolveFillGrid(ctx context.Context, market, symbol string, from, to time.Time) ([]time.Time, map[time.Time]float64, error) {
+	if market == "us-stocks" {
+		series, err := NewUSStocksService(s.repo).loadUSStockDailyCloses(ctx, symbol, from, to)
+		if err != nil {
+			return nil, nil, err
+		}
+		grid := make([]time.Time, 0, len(series))
+		prices := make(map[time.Time]float64, len(series))
+		for _, point := range series {
+			ts := point.Timestamp.UTC()
+			grid = append(grid, ts)
+			prices[ts] = point.Close
+		}
+		return grid, prices, nil
+	}
+	grid := make([]time.Time, 0, int(to.Sub(from).Hours()/24)+1)
+	prices := map[time.Time]float64{}
+	for day := time.Date(from.UTC().Year(), from.UTC().Month(), from.UTC().Day(), 0, 0, 0, 0, time.UTC); day.Before(to); day = day.AddDate(0, 0, 1) {
+		grid = append(grid, day)
+	}
+	return grid, prices, nil
+}
+
+func (s *FundamentalsService) loadPriceDerivedDenominators(ctx context.Context, symbol, factor string, points []dto.FundamentalSeriesPoint, grid []time.Time) (map[string]float64, error) {
+	denominators := map[string]float64{}
+	if len(points) == 0 {
+		return denominators, nil
+	}
+	minTS := points[0].EventTS.UTC()
+	maxTS := points[0].EventTS.UTC()
+	for _, point := range points[1:] {
+		if point.EventTS.Before(minTS) {
+			minTS = point.EventTS.UTC()
+		}
+		if point.EventTS.After(maxTS) {
+			maxTS = point.EventTS.UTC()
+		}
+	}
+	if len(grid) > 0 && grid[len(grid)-1].After(maxTS) {
+		maxTS = grid[len(grid)-1].UTC()
+	}
+	series, err := NewUSStocksService(s.repo).loadUSStockDailyCloses(ctx, symbol, minTS.AddDate(0, 0, -14), maxTS.AddDate(0, 0, 1))
+	if err != nil {
+		return nil, err
+	}
+	for _, point := range points {
+		if point.Value == 0 {
+			continue
+		}
+		if closePrice, ok := series.closeOnOrBefore(point.EventTS); ok && closePrice != 0 {
+			denominators[fundamentalObservationKey(factor, point.EventTS)] = closePrice / point.Value
+		}
+	}
+	return denominators, nil
+}
+
+func (s *FundamentalsService) querySnapshotEntry(ctx context.Context, market, symbol, factor string, asOf time.Time) (*dto.FundamentalSnapshotEntry, error) {
+	rows, err := s.repo.Query(ctx, chquery.FundamentalSnapshotQuery(),
+		clickhouse.Named("market", market),
+		clickhouse.Named("symbol", symbol),
+		clickhouse.Named("as_of", asOf.UTC().Format(time.RFC3339Nano)),
+		clickhouse.Named("factors", []string{factor}),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query fundamental snapshot entry: %w", err)
+	}
+	defer rows.Close()
+	if rows.Next() {
+		var entry dto.FundamentalSnapshotEntry
+		if err := rows.Scan(&entry.Factor, &entry.EventTS, &entry.KnownAt, &entry.Value, &entry.Source); err != nil {
+			return nil, fmt.Errorf("scan fundamental snapshot entry: %w", err)
+		}
+		return &entry, nil
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return nil, nil
+}
+
+func (s *FundamentalsService) revalueSnapshotEntries(ctx context.Context, symbol string, asOf time.Time, entries []dto.FundamentalSnapshotEntry) ([]dto.FundamentalSnapshotEntry, error) {
+	if len(entries) == 0 {
+		return entries, nil
+	}
+	minEventTS := time.Time{}
+	hasPriceDerived := false
+	for _, entry := range entries {
+		if !defaultUSStockPriceDerivedFundamentalFactor(entry.Factor) {
+			continue
+		}
+		hasPriceDerived = true
+		if minEventTS.IsZero() || entry.EventTS.Before(minEventTS) {
+			minEventTS = entry.EventTS.UTC()
+		}
+	}
+	if !hasPriceDerived {
+		return entries, nil
+	}
+	prices, err := NewUSStocksService(s.repo).loadUSStockDailyCloses(ctx, symbol, minEventTS.AddDate(0, 0, -14), asOf.AddDate(0, 0, 1))
+	if err != nil {
+		return nil, err
+	}
+	currentPrice, ok := prices.closeOnOrBefore(asOf)
+	if !ok || currentPrice == 0 {
+		return entries, nil
+	}
+	for index, entry := range entries {
+		if !defaultUSStockPriceDerivedFundamentalFactor(entry.Factor) || entry.Value == 0 {
+			continue
+		}
+		if closePrice, ok := prices.closeOnOrBefore(entry.EventTS); ok && closePrice != 0 {
+			entries[index].Value = currentPrice / (closePrice / entry.Value)
+		}
+	}
+	return entries, nil
+}
+
+func (s *FundamentalsService) revaluePanelRows(ctx context.Context, asOf time.Time, rows []dto.FundamentalPanelRow) ([]dto.FundamentalPanelRow, error) {
+	if len(rows) == 0 {
+		return rows, nil
+	}
+	bySymbol := map[string][]int{}
+	for index, row := range rows {
+		if !defaultUSStockPriceDerivedFundamentalFactor(row.Factor) {
+			continue
+		}
+		bySymbol[row.Symbol] = append(bySymbol[row.Symbol], index)
+	}
+	for symbol, indexes := range bySymbol {
+		minEventTS := rows[indexes[0]].EventTS.UTC()
+		for _, index := range indexes[1:] {
+			if rows[index].EventTS.Before(minEventTS) {
+				minEventTS = rows[index].EventTS.UTC()
+			}
+		}
+		prices, err := NewUSStocksService(s.repo).loadUSStockDailyCloses(ctx, symbol, minEventTS.AddDate(0, 0, -14), asOf.AddDate(0, 0, 1))
+		if err != nil {
+			return nil, err
+		}
+		currentPrice, ok := prices.closeOnOrBefore(asOf)
+		if !ok || currentPrice == 0 {
+			continue
+		}
+		for _, index := range indexes {
+			if rows[index].Value == 0 {
+				continue
+			}
+			if closePrice, ok := prices.closeOnOrBefore(rows[index].EventTS); ok && closePrice != 0 {
+				rows[index].Value = currentPrice / (closePrice / rows[index].Value)
+			}
+		}
+	}
+	return rows, nil
+}
+
+func buildFilledFundamentalSeries(grid []time.Time, points []dto.FundamentalSeriesPoint, policy string, maxDays int, valueTransform func(time.Time, dto.FundamentalSeriesPoint) float64) []dto.FundamentalSeriesPoint {
+	if len(points) == 0 {
+		return nil
+	}
+	if len(grid) == 0 || policy == fundamentalFillEventOnly {
+		return append([]dto.FundamentalSeriesPoint(nil), points...)
+	}
+	out := make([]dto.FundamentalSeriesPoint, 0, len(grid))
+	currentIndex := -1
+	for _, gridTS := range grid {
+		for currentIndex+1 < len(points) && !points[currentIndex+1].EventTS.After(gridTS) {
+			currentIndex++
+		}
+		if currentIndex < 0 {
+			continue
+		}
+		current := points[currentIndex]
+		if policy == fundamentalFillForwardLimited && maxDays > 0 {
+			if gridTS.Sub(current.EventTS.UTC()) > time.Duration(maxDays)*24*time.Hour {
+				continue
+			}
+		}
+		filledPoint := dto.FundamentalSeriesPoint{
+			EventTS: gridTS.UTC(),
+			KnownAt: current.KnownAt,
+			Value:   current.Value,
+			Source:  current.Source,
+			Filled:  !current.EventTS.Equal(gridTS),
+		}
+		if valueTransform != nil {
+			filledPoint.Value = valueTransform(gridTS, current)
+		}
+		out = append(out, filledPoint)
+	}
+	return out
+}
+
+func revaluePriceDerivedFundamental(factor string, gridTS time.Time, point dto.FundamentalSeriesPoint, denominators map[string]float64, prices map[time.Time]float64) float64 {
+	if !defaultUSStockPriceDerivedFundamentalFactor(factor) {
+		return point.Value
+	}
+	denominator, ok := denominators[fundamentalObservationKey(factor, point.EventTS)]
+	if !ok || denominator == 0 {
+		return point.Value
+	}
+	price, ok := prices[gridTS.UTC()]
+	if !ok || price == 0 {
+		return point.Value
+	}
+	return price / denominator
 }
 
 func normalizeFundamentalKey(market, symbol, factor string) (string, string, string, error) {

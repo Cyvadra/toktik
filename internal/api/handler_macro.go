@@ -49,7 +49,7 @@ func (h *Handler) ListMacroFactors(c *gin.Context) {
 // @Param        as_of             query     string    false  "Point-in-time cutoff (defaults to to)"
 // @Param        interval          query     string    false  "event or a US stock interval such as 1m/5m/1h/1d"
 // @Param        reference_market  query     string    false  "Reference market for expanded realtime queries (currently us-stocks)"
-// @Param        reference_symbol  query     string    false  "Reference symbol for expanded realtime queries (for example SPX)"
+// @Param        reference_symbol  query     string    false  "Reference symbol for expanded realtime queries (for example SPY)"
 // @Param        limit             query     int       false  "Maximum returned rows"
 // @Success      200               {object}  dto.MacroSeriesResponse
 // @Failure      400               {object}  dto.ErrorResponse

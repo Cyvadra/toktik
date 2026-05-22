@@ -39,7 +39,8 @@ func (h *Handler) ListFundamentalFactors(c *gin.Context) {
 // GetFundamentalSeries handles GET /api/v1/fundamentals/series.
 //
 // @Summary      Get fundamental factor series
-// @Description  Returns event/as_of/filled series for one (market, symbol, factor). Point-in-time enforced via known_at.
+// @Description  Returns event/as_of/filled series for one (market, symbol, factor). `event` is sparse raw observations, `as_of` collapses revisions per event_ts, and `filled` expands to a daily point-in-time series using the catalog fill policy. Point-in-time enforced via known_at.
+// @Description  Returns event/as_of/filled series for one (market, symbol, factor). Point-in-time enforced via known_at. For us-stocks, filled series project onto daily price dates, and price-derived factors such as PE/PB are revalued from the daily close at each returned timestamp rather than copying the raw event-day ratio.
 // @Tags         Fundamentals
 // @Produce      json
 // @Param        market  query     string  true   "Market (us-stocks | crypto-spot)"
@@ -75,6 +76,7 @@ func (h *Handler) GetFundamentalSeries(c *gin.Context) {
 //
 // @Summary      Get fundamental snapshot for one symbol
 // @Description  Returns latest known value per factor for one (market, symbol) at as_of.
+// @Description  Returns latest known value per factor for one (market, symbol) at as_of. For us-stocks, price-derived factors such as PE/PB are revalued from the latest close on or before as_of.
 // @Tags         Fundamentals
 // @Produce      json
 // @Param        market  query     string    true   "Market (us-stocks | crypto-spot)"
@@ -107,6 +109,7 @@ func (h *Handler) GetFundamentalSnapshot(c *gin.Context) {
 //
 // @Summary      Get fundamental panel across symbols
 // @Description  Returns latest known values per (symbol, factor) at as_of.
+// @Description  Returns latest known values per (symbol, factor) at as_of. For us-stocks, price-derived factors such as PE/PB are revalued from the latest close on or before as_of for each symbol.
 // @Tags         Fundamentals
 // @Produce      json
 // @Param        market  query     string    true   "Market (us-stocks | crypto-spot)"

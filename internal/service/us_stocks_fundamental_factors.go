@@ -25,6 +25,16 @@ func resolveUSStockFundamentalBindings(symbol string, requestedFactors []string)
 }
 
 func resolveUSStockFundamentalBinding(symbol, factor string) usStockFundamentalBinding {
+	if strings.EqualFold(strings.TrimSpace(factor), "pe10") {
+		if _, ok := resolveVirtualFundamentalMacroTarget("us-stocks", symbol, virtualFundamentalFactorPE); ok {
+			return usStockFundamentalBinding{
+				ResponseFactor: factor,
+				SourceFactor:   virtualFundamentalFactorPE,
+				PriceDerived:   false,
+				SeriesMode:     fundamentalSeriesModeFilled,
+			}
+		}
+	}
 	binding := usStockFundamentalBinding{
 		ResponseFactor: factor,
 		SourceFactor:   factor,

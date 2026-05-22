@@ -40,7 +40,8 @@ type FundamentalFactorCatalogResponse struct {
 // `Mode` is one of:
 //   - "event"  : raw observations only (sparse)
 //   - "as_of"  : latest known-value per event_ts (no fill applied)
-//   - "filled" : as_of plus forward-fill respecting the catalog policy
+//   - "filled" : daily point-in-time series, seeded from the latest known
+//     observation before the range and forward-filled per catalog policy
 //
 // `AsOf` is the point-in-time cutoff; defaults to To when omitted.
 type FundamentalSeriesRequest struct {
@@ -54,6 +55,8 @@ type FundamentalSeriesRequest struct {
 }
 
 // FundamentalSeriesPoint is one observation in a fundamental series.
+// In filled mode, EventTS is the emitted day on the expanded daily grid while
+// Filled reports whether the value was carried forward from an earlier event.
 type FundamentalSeriesPoint struct {
 	EventTS  time.Time `json:"event_ts"`
 	KnownAt  time.Time `json:"known_at"`
@@ -63,7 +66,7 @@ type FundamentalSeriesPoint struct {
 	Filled   bool      `json:"filled,omitempty"`
 }
 
-// FundamentalSeriesResponse returns a sparse or filled series for one factor.
+// FundamentalSeriesResponse returns a sparse, as-of, or filled series for one factor.
 type FundamentalSeriesResponse struct {
 	Market     string                   `json:"market"`
 	Symbol     string                   `json:"symbol"`

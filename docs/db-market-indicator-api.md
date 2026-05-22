@@ -7,7 +7,7 @@
 - Source Swagger: `docs/swagger.json`
 - API title: `Toktik Options Platform API`
 - API version: `1.0`
-- Generated at: `2026-05-21T10:20:07Z`
+- Generated at: `2026-05-22T10:51:32Z`
 
 ## Scope
 
@@ -216,7 +216,8 @@ No parameters.
 - Tags: `Fundamentals`
 - Produces: `application/json`
 - Summary: Get fundamental factor series
-- Description: Returns event/as_of/filled series for one (market, symbol, factor). Point-in-time enforced via known_at.
+- Description: Returns event/as_of/filled series for one (market, symbol, factor). `event` is sparse raw observations, `as_of` collapses revisions per event_ts, and `filled` expands to a daily point-in-time series using the catalog fill policy. Point-in-time enforced via known_at.
+Returns event/as_of/filled series for one (market, symbol, factor). Point-in-time enforced via known_at. For us-stocks, filled series project onto daily price dates, and price-derived factors such as PE/PB are revalued from the daily close at each returned timestamp rather than copying the raw event-day ratio.
 
 #### Parameters
 
@@ -245,6 +246,7 @@ No parameters.
 - Produces: `application/json`
 - Summary: Get fundamental snapshot for one symbol
 - Description: Returns latest known value per factor for one (market, symbol) at as_of.
+Returns latest known value per factor for one (market, symbol) at as_of. For us-stocks, price-derived factors such as PE/PB are revalued from the latest close on or before as_of.
 
 #### Parameters
 
@@ -270,6 +272,7 @@ No parameters.
 - Produces: `application/json`
 - Summary: Get fundamental panel across symbols
 - Description: Returns latest known values per (symbol, factor) at as_of.
+Returns latest known values per (symbol, factor) at as_of. For us-stocks, price-derived factors such as PE/PB are revalued from the latest close on or before as_of for each symbol.
 
 #### Parameters
 
@@ -354,7 +357,7 @@ No parameters.
 | as_of | query | string | no | Point-in-time cutoff (defaults to to) |
 | interval | query | string | no | event or a US stock interval such as 1m/5m/1h/1d |
 | reference_market | query | string | no | Reference market for expanded realtime queries (currently us-stocks) |
-| reference_symbol | query | string | no | Reference symbol for expanded realtime queries (for example SPX) |
+| reference_symbol | query | string | no | Reference symbol for expanded realtime queries (for example SPY) |
 | limit | query | integer | no | Maximum returned rows |
 
 #### Responses

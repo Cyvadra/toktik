@@ -46,6 +46,19 @@ func (r *Repo) RelationExists(ctx context.Context, relation string) (bool, error
 
 // RelationLastTimestamp returns the maximum value of timeField in the given relation.
 func (r *Repo) RelationLastTimestamp(ctx context.Context, relation, timeField string) (time.Time, bool, error) {
+	partRows, err := r.Conn.Query(ctx, chquery.RelationPartLastTimestamp, clickhouse.Named("relation", relation))
+	if err == nil {
+		defer partRows.Close()
+		if partRows.Next() {
+			var partLastTS time.Time
+			if err := partRows.Scan(&partLastTS); err == nil {
+				if !partLastTS.IsZero() && partLastTS.UTC().Unix() != 0 {
+					return partLastTS.UTC(), true, nil
+				}
+			}
+		}
+	}
+
 	query := chquery.RelationLastTimestamp(relation, timeField)
 	rows, err := r.Conn.Query(ctx, query)
 	if err != nil {
@@ -67,8 +80,7 @@ func (r *Repo) RelationLastTimestamp(ctx context.Context, relation, timeField st
 
 // RelationRowCount returns the total row count in the given relation.
 func (r *Repo) RelationRowCount(ctx context.Context, relation string) (uint64, error) {
-	query := chquery.RelationRowCount(relation)
-	rows, err := r.Conn.Query(ctx, query)
+	rows, err := r.Conn.Query(ctx, chquery.RelationRowCount, clickhouse.Named("relation", relation))
 	if err != nil {
 		return 0, err
 	}

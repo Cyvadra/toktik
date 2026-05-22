@@ -21,7 +21,7 @@ jobs:
     enabled: true
     dataset: gurufocus-shiller
     url: "https://www.gurufocus.cn/_api/indicator/shiller_pe/data?locale=zh-hans"
-    reference_symbol: SPX
+    reference_symbol: SPY
     batch_size: 1000
 
   fmp_sp500_macro:

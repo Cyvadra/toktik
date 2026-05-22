@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Cyvadra/toktik/internal/chquery"
@@ -14,15 +15,18 @@ import (
 
 // InfraService exposes non-business infrastructure endpoints.
 type InfraService struct {
-	repo *chrepo.Repo
+	repo             *chrepo.Repo
+	inspectDatasetFn func(context.Context, infraDatasetSpec) (dto.DatasetDescriptor, error)
 }
 
 type infraDatasetSpec struct {
-	Name      string
-	Market    string
-	Relation  string
-	TimeField string
-	MaxAge    time.Duration
+	Name             string
+	Market           string
+	Relation         string
+	InspectRelation  string
+	TimeField        string
+	InspectTimeField string
+	MaxAge           time.Duration
 }
 
 var infraDatasetSpecs = []infraDatasetSpec{
@@ -31,7 +35,7 @@ var infraDatasetSpecs = []infraDatasetSpec{
 	{Name: "forex-bars", Market: "forex", Relation: chquery.ForexBar1m, TimeField: "timestamp", MaxAge: 96 * time.Hour},
 	{Name: "us-stocks-bars", Market: "us-stocks", Relation: chquery.USStocksBar1m, TimeField: "timestamp", MaxAge: 96 * time.Hour},
 	{Name: "us-options-bars", Market: "us-options", Relation: chquery.USOptionsBar1m, TimeField: "timestamp", MaxAge: 96 * time.Hour},
-	{Name: "us-options-chain", Market: "us-options", Relation: chquery.USOptionsChain1d, TimeField: "timestamp", MaxAge: 10 * 24 * time.Hour},
+	{Name: "us-options-chain", Market: "us-options", Relation: chquery.USOptionsChain1d, InspectRelation: "us_options_chain_1d_agg", TimeField: "timestamp", InspectTimeField: "ts", MaxAge: 10 * 24 * time.Hour},
 	{Name: "feature-volatility-snapshots", Market: "feature-store", Relation: chquery.FeatureVolatilitySnapshotDaily, TimeField: "updated_at", MaxAge: 48 * time.Hour},
 	{Name: "feature-term-structure-snapshots", Market: "feature-store", Relation: chquery.FeatureTermStructureSnapshotDaily, TimeField: "updated_at", MaxAge: 48 * time.Hour},
 	{Name: "feature-skew-snapshots", Market: "feature-store", Relation: chquery.FeatureSkewSnapshotDaily, TimeField: "updated_at", MaxAge: 48 * time.Hour},
@@ -85,15 +89,12 @@ func (s *InfraService) ListMarkets(_ context.Context) (*dto.MarketCatalogRespons
 func (s *InfraService) ListDatasets(ctx context.Context, req dto.DatasetQueryRequest) (*dto.DatasetCatalogResponse, error) {
 	marketFilter := strings.ToLower(strings.TrimSpace(req.Market))
 	statusFilter := strings.ToLower(strings.TrimSpace(req.Status))
-	datasets := make([]dto.DatasetDescriptor, 0, len(infraDatasetSpecs))
-	for _, spec := range infraDatasetSpecs {
-		dataset, err := s.inspectDataset(ctx, spec)
-		if err != nil {
-			return nil, err
-		}
-		if marketFilter != "" && strings.ToLower(dataset.Market) != marketFilter {
-			continue
-		}
+	inspected, err := s.inspectDatasets(ctx, filterInfraDatasetSpecs(marketFilter))
+	if err != nil {
+		return nil, err
+	}
+	datasets := make([]dto.DatasetDescriptor, 0, len(inspected))
+	for _, dataset := range inspected {
 		if statusFilter != "" && strings.ToLower(dataset.Status) != statusFilter {
 			continue
 		}
@@ -103,8 +104,62 @@ func (s *InfraService) ListDatasets(ctx context.Context, req dto.DatasetQueryReq
 	return &dto.DatasetCatalogResponse{Summary: summary, Datasets: datasets}, nil
 }
 
+func filterInfraDatasetSpecs(marketFilter string) []infraDatasetSpec {
+	if marketFilter == "" {
+		return infraDatasetSpecs
+	}
+	filtered := make([]infraDatasetSpec, 0, len(infraDatasetSpecs))
+	for _, spec := range infraDatasetSpecs {
+		if strings.ToLower(spec.Market) == marketFilter {
+			filtered = append(filtered, spec)
+		}
+	}
+	return filtered
+}
+
+func (s *InfraService) inspectDatasets(ctx context.Context, specs []infraDatasetSpec) ([]dto.DatasetDescriptor, error) {
+	if len(specs) == 0 {
+		return []dto.DatasetDescriptor{}, nil
+	}
+	inspect := s.inspectDataset
+	if s.inspectDatasetFn != nil {
+		inspect = s.inspectDatasetFn
+	}
+	datasets := make([]dto.DatasetDescriptor, len(specs))
+	errCh := make(chan error, 1)
+	var wg sync.WaitGroup
+	for index, spec := range specs {
+		index := index
+		spec := spec
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			dataset, err := inspect(ctx, spec)
+			if err != nil {
+				select {
+				case errCh <- err:
+				default:
+				}
+				return
+			}
+			datasets[index] = dataset
+		}()
+	}
+	wg.Wait()
+	select {
+	case err := <-errCh:
+		return nil, err
+	default:
+		return datasets, nil
+	}
+}
+
 func (s *InfraService) inspectDataset(ctx context.Context, spec infraDatasetSpec) (dto.DatasetDescriptor, error) {
-	exists, err := s.relationExists(ctx, spec.Relation)
+	inspectRelation := spec.Relation
+	if spec.InspectRelation != "" {
+		inspectRelation = spec.InspectRelation
+	}
+	exists, err := s.relationExists(ctx, inspectRelation)
 	if err != nil {
 		return dto.DatasetDescriptor{}, fmt.Errorf("inspect dataset %s existence: %w", spec.Name, err)
 	}
@@ -119,17 +174,20 @@ func (s *InfraService) inspectDataset(ctx context.Context, spec infraDatasetSpec
 		return dataset, nil
 	}
 
-	rowCount, err := s.relationRowCount(ctx, spec.Relation)
+	rowCount, err := s.relationRowCount(ctx, inspectRelation)
 	if err != nil {
 		return dto.DatasetDescriptor{}, fmt.Errorf("inspect dataset %s row count: %w", spec.Name, err)
 	}
 	dataset.RowCount = rowCount
 
 	timeField := spec.TimeField
+	if spec.InspectTimeField != "" {
+		timeField = spec.InspectTimeField
+	}
 	if timeField == "" {
 		timeField = "timestamp"
 	}
-	lastTS, hasData, err := s.relationLastTimestamp(ctx, spec.Relation, timeField)
+	lastTS, hasData, err := s.relationLastTimestamp(ctx, inspectRelation, timeField)
 	if err != nil {
 		return dto.DatasetDescriptor{}, fmt.Errorf("inspect dataset %s freshness: %w", spec.Name, err)
 	}

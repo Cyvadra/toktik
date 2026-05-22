@@ -1902,7 +1902,7 @@ func TestGetMacroSeriesRoute(t *testing.T) {
 		Dataset:         "gurufocus-shiller",
 		Interval:        "1m",
 		ReferenceMarket: "us-stocks",
-		ReferenceSymbol: "SPX",
+		ReferenceSymbol: "SPY",
 		AsOf:            time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC),
 		Data: []dto.MacroSeriesPoint{{
 			Factor:          "pe10",
@@ -1913,7 +1913,7 @@ func TestGetMacroSeriesRoute(t *testing.T) {
 			Filled:          true,
 			Realtime:        true,
 			ReferenceMarket: "us-stocks",
-			ReferenceSymbol: "SPX",
+			ReferenceSymbol: "SPY",
 		}},
 	}}
 
@@ -1928,7 +1928,7 @@ func TestGetMacroSeriesRoute(t *testing.T) {
 	})
 
 	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("GET", "/api/v1/macro/series?dataset=gurufocus-shiller&factor=pe10&from=2026-04-01&to=2026-05-01&interval=1m&reference_symbol=SPX", nil)
+	req, _ := http.NewRequest("GET", "/api/v1/macro/series?dataset=gurufocus-shiller&factor=pe10&from=2026-04-01&to=2026-05-01&interval=1m&reference_symbol=SPY", nil)
 	r.ServeHTTP(w, req)
 
 	if w.Code != http.StatusOK {
@@ -1937,7 +1937,7 @@ func TestGetMacroSeriesRoute(t *testing.T) {
 	if macro.seriesReq.Dataset != "gurufocus-shiller" {
 		t.Fatalf("expected dataset to bind, got %+v", macro.seriesReq)
 	}
-	if macro.seriesReq.ReferenceSymbol != "SPX" {
+	if macro.seriesReq.ReferenceSymbol != "SPY" {
 		t.Fatalf("expected reference symbol to bind, got %+v", macro.seriesReq)
 	}
 	var resp dto.MacroSeriesResponse

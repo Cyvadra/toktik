@@ -23,11 +23,12 @@ import (
 const (
 	gurufocusShillerDataset = "gurufocus-shiller"
 	gurufocusShillerURL     = "https://www.gurufocus.cn/_api/indicator/shiller_pe/data?locale=zh-hans"
-	defaultReferenceSymbol  = "SPX"
+	defaultReferenceSymbol  = "SPY"
 	defaultReferenceMarket  = "us-stocks"
 	macroSourceName         = "gurufocus"
 	realtimeForwardFill     = "forward_fill"
 	realtimePriceScaled     = "price_scaled"
+	gurufocusPublicationDay = 12
 )
 
 type rawMonthlyRecord map[string]json.RawMessage
@@ -82,6 +83,13 @@ type monthAnchor struct {
 	LastTS     time.Time
 	LastClose  float64
 	FirstTS    time.Time
+}
+
+type tradingDayAnchor struct {
+	TradingDay time.Time
+	FirstTS    time.Time
+	LastTS     time.Time
+	LastClose  float64
 }
 
 func main() {
@@ -180,20 +188,21 @@ func loadMonthAnchors(ctx context.Context, conn driver.Conn, referenceSymbol str
 		return nil, err
 	}
 	queryStart := firstMonth.UTC()
-	queryEnd := lastMonth.AddDate(0, 2, 0).UTC()
+	queryEnd := lastMonth.AddDate(0, 1, 0).UTC()
 
 	rows, err := conn.Query(ctx, `SELECT
 		toStartOfMonth(timestamp) AS month_start,
+		toDate(timestamp) AS trading_day,
+		min(timestamp) AS first_ts,
 		max(timestamp) AS last_ts,
-		toFloat64(argMax(close, timestamp)) AS last_close,
-		min(timestamp) AS first_ts
+		toFloat64(argMax(close, timestamp)) AS last_close
 	FROM us_stocks_bar_1m
 	WHERE symbol = {symbol:String}
 	  AND timestamp >= toDateTime({from:String}, 'UTC')
 	  AND timestamp < toDateTime({to:String}, 'UTC')
 	  AND is_regular_session = 1
-	GROUP BY month_start
-	ORDER BY month_start`,
+	GROUP BY month_start, trading_day
+	ORDER BY month_start, trading_day`,
 		clickhouse.Named("symbol", referenceSymbol),
 		clickhouse.Named("from", queryStart.Format("2006-01-02 15:04:05")),
 		clickhouse.Named("to", queryEnd.Format("2006-01-02 15:04:05")),
@@ -203,38 +212,59 @@ func loadMonthAnchors(ctx context.Context, conn driver.Conn, referenceSymbol str
 	}
 	defer rows.Close()
 
-	monthly := map[string]monthAnchor{}
-	ordered := make([]string, 0)
+	monthDays := map[string][]tradingDayAnchor{}
 	for rows.Next() {
 		var (
 			monthStart time.Time
+			tradingDay time.Time
+			firstTS    time.Time
 			lastTS     time.Time
 			lastClose  float64
-			firstTS    time.Time
 		)
-		if err := rows.Scan(&monthStart, &lastTS, &lastClose, &firstTS); err != nil {
+		if err := rows.Scan(&monthStart, &tradingDay, &firstTS, &lastTS, &lastClose); err != nil {
 			return nil, err
 		}
 		key := monthStart.UTC().Format("2006-01")
-		monthly[key] = monthAnchor{StartMonth: monthStart.UTC(), LastTS: lastTS.UTC(), LastClose: lastClose, FirstTS: firstTS.UTC()}
-		ordered = append(ordered, key)
+		monthDays[key] = append(monthDays[key], tradingDayAnchor{TradingDay: tradingDay.UTC(), FirstTS: firstTS.UTC(), LastTS: lastTS.UTC(), LastClose: lastClose})
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	if len(monthly) == 0 {
+	if len(monthDays) == 0 {
 		return nil, fmt.Errorf("no us_stocks_bar_1m anchors found for %s", referenceSymbol)
 	}
-	for monthKey, anchor := range monthly {
-		nextMonth := anchor.StartMonth.AddDate(0, 1, 0).Format("2006-01")
-		if next, ok := monthly[nextMonth]; ok {
-			anchor.FirstTS = next.FirstTS
-		} else if anchor.FirstTS.IsZero() {
-			anchor.FirstTS = anchor.LastTS
+	monthly := make(map[string]monthAnchor, len(monthDays))
+	for monthKey, days := range monthDays {
+		monthStart, err := decodeMonthString(monthKey)
+		if err != nil {
+			return nil, err
+		}
+		anchor, ok := selectGurufocusMonthAnchor(monthStart, days)
+		if !ok {
+			continue
 		}
 		monthly[monthKey] = anchor
 	}
+	if len(monthly) == 0 {
+		return nil, fmt.Errorf("no publication-day anchors found for %s", referenceSymbol)
+	}
 	return monthly, nil
+}
+
+func selectGurufocusMonthAnchor(monthStart time.Time, days []tradingDayAnchor) (monthAnchor, bool) {
+	if len(days) == 0 {
+		return monthAnchor{}, false
+	}
+	sort.Slice(days, func(i, j int) bool { return days[i].TradingDay.Before(days[j].TradingDay) })
+	targetDay := time.Date(monthStart.UTC().Year(), monthStart.UTC().Month(), gurufocusPublicationDay, 0, 0, 0, 0, time.UTC)
+	selected := days[len(days)-1]
+	for _, candidate := range days {
+		selected = candidate
+		if !candidate.TradingDay.Before(targetDay) {
+			break
+		}
+	}
+	return monthAnchor{StartMonth: monthStart.UTC(), LastTS: selected.LastTS.UTC(), LastClose: selected.LastClose, FirstTS: selected.FirstTS.UTC()}, true
 }
 
 func buildRows(records []rawMonthlyRecord, anchors map[string]monthAnchor, referenceSymbol string) ([]macroCatalogRow, []macroObservationRow, error) {

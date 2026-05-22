@@ -52,7 +52,7 @@ func (p *virtualFundamentalsProvider) appendCatalogEntries(entries []dto.Fundame
 		Market:             "us-stocks",
 		FactorCode:         virtualFundamentalFactorPE10Live,
 		DisplayName:        "Index Shiller PE Live",
-		Description:        "Alias-aware daily index valuation series: SPY/SPX uses Shiller PE live, while QQQ/NDX currently aliases the traditional trailing PE series.",
+		Description:        "Alias-aware daily index valuation series backed by monthly Shiller-style PE anchors for SPY/SPX.",
 		ValueType:          "ratio",
 		PreferredFrequency: "1d",
 		FillPolicy:         fundamentalFillForwardFill,
@@ -184,15 +184,14 @@ func resolveVirtualFundamentalMacroTarget(market, symbol, factor string) (virtua
 			MacroFactor:     factor,
 		}, true
 	case "QQQ", "NDX":
-		macroFactor := factor
-		if strings.EqualFold(strings.TrimSpace(factor), virtualFundamentalFactorPE10Live) {
-			macroFactor = virtualFundamentalFactorPE
+		if !strings.EqualFold(strings.TrimSpace(factor), virtualFundamentalFactorPE) {
+			return virtualFundamentalMacroTarget{}, false
 		}
 		return virtualFundamentalMacroTarget{
 			Dataset:         macroDatasetFMPNDXShiller,
 			ReferenceMarket: defaultMacroReferenceMarket,
 			ReferenceSymbol: "QQQ",
-			MacroFactor:     macroFactor,
+			MacroFactor:     virtualFundamentalFactorPE,
 		}, true
 	default:
 		return virtualFundamentalMacroTarget{}, false
@@ -204,6 +203,7 @@ func splitFundamentalFactorSelection(factors []string) fundamentalFactorSelectio
 	for _, factor := range factors {
 		switch factor {
 		case virtualFundamentalFactorPE:
+			selection.base = append(selection.base, factor)
 			selection.includePE = true
 		case virtualFundamentalFactorPE10Live:
 			selection.includePE10Live = true
