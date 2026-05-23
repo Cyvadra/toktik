@@ -49,7 +49,7 @@ SELECT
 FROM macro_observation
 WHERE dataset = 'gurufocus-shiller'
   AND source = 'gurufocus'
-  AND reference_symbol = 'SPX'
+    AND reference_symbol = 'SPY'
   AND factor_code IN ('pe10', 'sp500', 'earnings')
   AND event_ts >= toDateTime('{start.isoformat()} 00:00:00', 'UTC')
   AND event_ts < toDateTime('{end.isoformat()} 00:00:00', 'UTC')

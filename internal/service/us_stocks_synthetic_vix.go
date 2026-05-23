@@ -13,6 +13,19 @@ import (
 
 var syntheticVIXProxySymbols = []string{"VXX", "UVXY", "SVXY", "SVIX", "UVIX", "VIXY", "VIXM", "VXZ"}
 
+const syntheticVIXDefaultIntercept = 1.8440597565739756
+
+var syntheticVIXDefaultWeights = []float64{
+	0.052353322743221596,
+	0.16069138845108125,
+	-0.001736387659850588,
+	-0.2562511526964353,
+	0.07196676003259866,
+	-0.08179678276671708,
+	0.39965159680959056,
+	0.0406842402699849,
+}
+
 type syntheticVIXModel struct {
 	Intercept float64
 	Symbols   []string
@@ -35,9 +48,7 @@ func (s *USStocksService) mergeSyntheticVIXBars(ctx context.Context, tableName s
 	if err != nil {
 		return nil, err
 	}
-	if model == nil {
-		return actual, nil
-	}
+	model = resolveSyntheticVIXModel(model)
 
 	proxySeries, err := s.loadSyntheticVIXProxySeries(ctx, tableName, fromT, toT, session, limit, model.Symbols)
 	if err != nil {
@@ -155,6 +166,21 @@ ORDER BY v.timestamp`
 		return nil, nil
 	}
 	return &syntheticVIXModel{Intercept: weights[0], Symbols: append([]string(nil), syntheticVIXProxySymbols...), Weights: append([]float64(nil), weights[1:]...)}, nil
+}
+
+func resolveSyntheticVIXModel(model *syntheticVIXModel) *syntheticVIXModel {
+	if model != nil && len(model.Symbols) > 0 && len(model.Symbols) == len(model.Weights) {
+		return model
+	}
+	return defaultSyntheticVIXModel()
+}
+
+func defaultSyntheticVIXModel() *syntheticVIXModel {
+	return &syntheticVIXModel{
+		Intercept: syntheticVIXDefaultIntercept,
+		Symbols:   append([]string(nil), syntheticVIXProxySymbols...),
+		Weights:   append([]float64(nil), syntheticVIXDefaultWeights...),
+	}
 }
 
 func (s *USStocksService) loadSyntheticVIXProxySeries(ctx context.Context, tableName string, fromT, toT time.Time, session string, limit int, symbols []string) (map[time.Time]map[string]dto.USStockBarRow, error) {

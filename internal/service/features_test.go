@@ -103,34 +103,35 @@ func TestBuildUSOptionsCurrentIVSeriesUsesNearest30DayATM(t *testing.T) {
 	atmNear := 0.49
 	atmNext := 0.45
 	atmNextNear := 0.44
+	utcPlus8 := time.FixedZone("UTC+8", 8*60*60)
 	series := buildUSOptionsCurrentIVSeries([]usOptionsSurfaceAggregateRow{
 		{
-			AsOfDate:     time.Date(2026, 5, 15, 0, 0, 0, 0, time.UTC),
-			Expiration:   time.Date(2026, 5, 23, 0, 0, 0, 0, time.UTC),
+			AsOfDate:     time.Date(2026, 5, 15, 0, 0, 0, 0, utcPlus8),
+			Expiration:   time.Date(2026, 5, 23, 0, 0, 0, 0, utcPlus8),
 			DaysToExpiry: 8,
 			ATMIV:        &atmFar,
 		},
 		{
-			AsOfDate:     time.Date(2026, 5, 15, 0, 0, 0, 0, time.UTC),
-			Expiration:   time.Date(2026, 6, 12, 0, 0, 0, 0, time.UTC),
+			AsOfDate:     time.Date(2026, 5, 15, 0, 0, 0, 0, utcPlus8),
+			Expiration:   time.Date(2026, 6, 12, 0, 0, 0, 0, utcPlus8),
 			DaysToExpiry: 28,
 			ATMIV:        &atmNear,
 		},
 		{
-			AsOfDate:     time.Date(2026, 5, 16, 0, 0, 0, 0, time.UTC),
-			Expiration:   time.Date(2026, 5, 23, 0, 0, 0, 0, time.UTC),
+			AsOfDate:     time.Date(2026, 5, 16, 0, 0, 0, 0, utcPlus8),
+			Expiration:   time.Date(2026, 5, 23, 0, 0, 0, 0, utcPlus8),
 			DaysToExpiry: 7,
 			ATMIV:        &atmNext,
 		},
 		{
-			AsOfDate:     time.Date(2026, 5, 16, 0, 0, 0, 0, time.UTC),
-			Expiration:   time.Date(2026, 6, 13, 0, 0, 0, 0, time.UTC),
+			AsOfDate:     time.Date(2026, 5, 16, 0, 0, 0, 0, utcPlus8),
+			Expiration:   time.Date(2026, 6, 13, 0, 0, 0, 0, utcPlus8),
 			DaysToExpiry: 28,
 			ATMIV:        &atmNextNear,
 		},
 		{
-			AsOfDate:     time.Date(2026, 5, 17, 0, 0, 0, 0, time.UTC),
-			Expiration:   time.Date(2026, 6, 14, 0, 0, 0, 0, time.UTC),
+			AsOfDate:     time.Date(2026, 5, 17, 0, 0, 0, 0, utcPlus8),
+			Expiration:   time.Date(2026, 6, 14, 0, 0, 0, 0, utcPlus8),
 			DaysToExpiry: 28,
 			ATMIV:        nil,
 		},
@@ -172,10 +173,11 @@ func TestBuildTermStructureSnapshotRows(t *testing.T) {
 	atmIV := 0.24
 	callIV := 0.22
 	putIV := 0.26
+	utcPlus8 := time.FixedZone("UTC+8", 8*60*60)
 	rows := buildTermStructureSnapshotRows([]usOptionsSurfaceAggregateRow{
 		{
 			AsOfDate:      time.Date(2026, 4, 3, 0, 0, 0, 0, time.UTC),
-			Expiration:    time.Date(2026, 4, 17, 0, 0, 0, 0, time.UTC),
+			Expiration:    time.Date(2026, 4, 17, 0, 0, 0, 0, utcPlus8),
 			DaysToExpiry:  14,
 			ATMIV:         &atmIV,
 			CallIV:        &callIV,
@@ -189,6 +191,9 @@ func TestBuildTermStructureSnapshotRows(t *testing.T) {
 	if rows[0].ATMIV == nil || *rows[0].ATMIV != atmIV {
 		t.Fatalf("unexpected atm iv: %+v", rows[0].ATMIV)
 	}
+	if !rows[0].Expiration.Equal(time.Date(2026, 4, 17, 0, 0, 0, 0, time.UTC)) {
+		t.Fatalf("expected normalized expiration date, got %+v", rows[0].Expiration)
+	}
 	if rows[0].ContractCount != 18 {
 		t.Fatalf("unexpected contract count: %+v", rows[0])
 	}
@@ -197,10 +202,11 @@ func TestBuildTermStructureSnapshotRows(t *testing.T) {
 func TestBuildSkewSnapshotRows(t *testing.T) {
 	otmCallIV := 0.19
 	otmPutIV := 0.31
+	utcPlus8 := time.FixedZone("UTC+8", 8*60*60)
 	rows := buildSkewSnapshotRows([]usOptionsSurfaceAggregateRow{
 		{
 			AsOfDate:      time.Date(2026, 4, 3, 0, 0, 0, 0, time.UTC),
-			Expiration:    time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC),
+			Expiration:    time.Date(2026, 5, 1, 0, 0, 0, 0, utcPlus8),
 			DaysToExpiry:  28,
 			OTMCallIV:     &otmCallIV,
 			OTMPutIV:      &otmPutIV,
@@ -215,6 +221,9 @@ func TestBuildSkewSnapshotRows(t *testing.T) {
 	}
 	if *rows[0].PutCallSkew != 0.12 {
 		t.Fatalf("unexpected put-call skew: %v", *rows[0].PutCallSkew)
+	}
+	if !rows[0].Expiration.Equal(time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)) {
+		t.Fatalf("expected normalized expiration date, got %+v", rows[0].Expiration)
 	}
 	if rows[0].ContractCount != 24 {
 		t.Fatalf("unexpected contract count: %+v", rows[0])
@@ -337,7 +346,7 @@ func TestActivityRatioValue(t *testing.T) {
 
 func TestBuildLiquidityHistoryRows(t *testing.T) {
 	rows := buildLiquidityHistoryRows([]cryptoLiquidityAggregateRow{{
-		AsOfDate:              time.Date(2026, 4, 3, 0, 0, 0, 0, time.UTC),
+		AsOfDate:              time.Date(2026, 4, 3, 0, 0, 0, 0, time.FixedZone("UTC+8", 8*60*60)),
 		Expiration:            time.Date(2026, 4, 26, 8, 0, 0, 0, time.UTC),
 		DaysToExpiry:          23,
 		Volume:                100,
@@ -351,6 +360,9 @@ func TestBuildLiquidityHistoryRows(t *testing.T) {
 	}
 	if rows[0].AsOfDate.Format("2006-01-02") != "2026-04-03" {
 		t.Fatalf("unexpected as_of_date: %+v", rows[0].AsOfDate)
+	}
+	if !rows[0].AsOfDate.Equal(time.Date(2026, 4, 3, 0, 0, 0, 0, time.UTC)) {
+		t.Fatalf("expected normalized UTC midnight, got %+v", rows[0].AsOfDate)
 	}
 	if rows[0].ActivityRatio == nil || *rows[0].ActivityRatio != 0.5 {
 		t.Fatalf("unexpected history activity ratio: %+v", rows[0].ActivityRatio)
@@ -431,6 +443,24 @@ func TestMergeDailyFeaturePanelRows(t *testing.T) {
 	}
 	if !row.IsEarlyClose || row.DaysFromPrevHoliday == nil || *row.DaysFromPrevHoliday != daysFromPrev || row.DaysToNextHoliday == nil || *row.DaysToNextHoliday != daysToNext {
 		t.Fatalf("unexpected event payload: %+v", row)
+	}
+}
+
+func TestFilterDailyPanelRowsToMarketSessions(t *testing.T) {
+	rows := []dto.FeatureDailyPanelRow{
+		{Date: time.Date(2026, 5, 17, 0, 0, 0, 0, time.UTC), LiquidityContractCount: 10},
+		{Date: time.Date(2026, 5, 18, 0, 0, 0, 0, time.UTC), LiquidityContractCount: 12},
+	}
+	sessions := map[string]dto.FeatureEventWindowHistoryRow{
+		"2026-05-18": {Date: time.Date(2026, 5, 18, 0, 0, 0, 0, time.UTC)},
+	}
+
+	filtered := filterDailyPanelRowsToMarketSessions(rows, sessions)
+	if len(filtered) != 1 {
+		t.Fatalf("expected 1 trading-day row, got %d", len(filtered))
+	}
+	if !filtered[0].Date.Equal(time.Date(2026, 5, 18, 0, 0, 0, 0, time.UTC)) {
+		t.Fatalf("unexpected filtered row date: %+v", filtered[0].Date)
 	}
 }
 

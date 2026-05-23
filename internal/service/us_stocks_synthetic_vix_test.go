@@ -61,3 +61,35 @@ func TestBuildSyntheticVIXBarUsesProxyModel(t *testing.T) {
 		t.Fatalf("expected synthetic bar to zero out volume and transactions: %#v", bar)
 	}
 }
+
+func TestResolveSyntheticVIXModelFallsBackToDefault(t *testing.T) {
+	model := resolveSyntheticVIXModel(nil)
+	if model == nil {
+		t.Fatal("expected fallback model")
+	}
+	if model.Intercept != syntheticVIXDefaultIntercept {
+		t.Fatalf("unexpected fallback intercept: %v", model.Intercept)
+	}
+	if len(model.Symbols) != len(syntheticVIXProxySymbols) || len(model.Weights) != len(syntheticVIXDefaultWeights) {
+		t.Fatalf("unexpected fallback dimensions: %#v", model)
+	}
+	for i, symbol := range syntheticVIXProxySymbols {
+		if model.Symbols[i] != symbol {
+			t.Fatalf("unexpected fallback symbol order: %#v", model.Symbols)
+		}
+		if model.Weights[i] != syntheticVIXDefaultWeights[i] {
+			t.Fatalf("unexpected fallback weights: %#v", model.Weights)
+		}
+	}
+}
+
+func TestResolveSyntheticVIXModelKeepsFittedModel(t *testing.T) {
+	fitted := &syntheticVIXModel{
+		Intercept: 0.5,
+		Symbols:   []string{"VXX", "UVXY"},
+		Weights:   []float64{1.25, -0.75},
+	}
+	if got := resolveSyntheticVIXModel(fitted); got != fitted {
+		t.Fatalf("expected fitted model to be preserved, got %#v", got)
+	}
+}

@@ -567,7 +567,7 @@ ORDER BY as_of_date ASC, expiration ASC`, featureTermStructureTable),
 		if err := rows.Scan(&row.AsOfDate, &row.Expiration, &daysToExpiry, &row.ATMIV, &row.CallIV, &row.PutIV, &contractCount); err != nil {
 			return nil, fmt.Errorf("scan term structure history row: %w", err)
 		}
-		row.AsOfDate = row.AsOfDate.UTC()
+		row.AsOfDate = normalizeCalendarDate(row.AsOfDate)
 		row.Expiration = row.Expiration.UTC()
 		row.DaysToExpiry = int(daysToExpiry)
 		row.ContractCount = int(contractCount)
@@ -643,7 +643,7 @@ ORDER BY as_of_date ASC, expiration ASC`, featureSkewTable),
 		if err := rows.Scan(&row.AsOfDate, &row.Expiration, &daysToExpiry, &row.OTMCallIV, &row.OTMPutIV, &row.PutCallSkew, &contractCount); err != nil {
 			return nil, fmt.Errorf("scan skew history row: %w", err)
 		}
-		row.AsOfDate = row.AsOfDate.UTC()
+		row.AsOfDate = normalizeCalendarDate(row.AsOfDate)
 		row.Expiration = row.Expiration.UTC()
 		row.DaysToExpiry = int(daysToExpiry)
 		row.ContractCount = int(contractCount)
@@ -1460,7 +1460,7 @@ WHERE underlying = {underlying:String}
 	if asOf.IsZero() || asOf.UTC().Unix() == 0 {
 		return time.Time{}, false, nil
 	}
-	return asOf.UTC(), true, nil
+	return normalizeCalendarDate(asOf), true, nil
 }
 
 func (s *FeatureService) latestCryptoOptionsFeatureDate(ctx context.Context, underlying string) (time.Time, bool, error) {
@@ -1483,7 +1483,7 @@ WHERE base_asset = {underlying:String}`,
 	if asOf.IsZero() || asOf.UTC().Unix() == 0 {
 		return time.Time{}, false, nil
 	}
-	return asOf.UTC(), true, nil
+	return normalizeCalendarDate(asOf), true, nil
 }
 
 func (s *FeatureService) latestUSStocksFeatureDate(ctx context.Context, underlying string) (time.Time, bool, error) {
@@ -1505,7 +1505,7 @@ WHERE symbol = {underlying:String}
 	if asOf.IsZero() || asOf.UTC().Unix() == 0 {
 		return time.Time{}, false, nil
 	}
-	return asOf.UTC(), true, nil
+	return normalizeCalendarDate(asOf), true, nil
 }
 
 func (s *FeatureService) latestLiquidityFeatureDate(ctx context.Context, market, underlying string) (time.Time, bool, error) {
@@ -1709,7 +1709,7 @@ ORDER BY as_of_date ASC, expiration ASC`
 		if err := rows.Scan(&row.AsOfDate, &row.Expiration, &row.DaysToExpiry, &row.AvgBidClose, &row.AvgAskClose, &row.AvgMarkClose, &row.RelativeSpread, &row.OpenInterest, &tickCount, &contractCount, &tradableContractCount); err != nil {
 			return nil, fmt.Errorf("scan crypto-options liquidity aggregate row: %w", err)
 		}
-		row.AsOfDate = row.AsOfDate.UTC()
+		row.AsOfDate = normalizeCalendarDate(row.AsOfDate)
 		row.Expiration = row.Expiration.UTC()
 		row.TickCount = int(tickCount)
 		row.Volume = int(tickCount)
@@ -1806,7 +1806,7 @@ ORDER BY as_of_date ASC, expiration ASC`
 		if err := rows.Scan(&row.AsOfDate, &row.Expiration, &daysToExpiry, &row.AvgBidClose, &row.AvgAskClose, &row.AvgMarkClose, &row.RelativeSpread, &openInterest, &volume, &transactions, &contractCount, &activeContractCount, &tradableContractCount); err != nil {
 			return nil, fmt.Errorf("scan us-options liquidity aggregate row: %w", err)
 		}
-		row.AsOfDate = row.AsOfDate.UTC()
+		row.AsOfDate = normalizeCalendarDate(row.AsOfDate)
 		row.Expiration = row.Expiration.UTC()
 		row.DaysToExpiry = int(daysToExpiry)
 		row.Volume = int(volume)
@@ -2054,7 +2054,8 @@ func buildUSOptionsCurrentIVSeries(aggregates []usOptionsSurfaceAggregateRow, ta
 	}
 
 	for _, row := range aggregates {
-		dayKey := row.AsOfDate.UTC().Format("2006-01-02")
+		normalizedAsOfDate := normalizeCalendarDate(row.AsOfDate)
+		dayKey := normalizedAsOfDate.Format("2006-01-02")
 		if dayKey != currentDay {
 			flush()
 			currentDay = dayKey
@@ -2068,7 +2069,7 @@ func buildUSOptionsCurrentIVSeries(aggregates []usOptionsSurfaceAggregateRow, ta
 			distance = -distance
 		}
 		if !haveBest || distance < bestDistance {
-			best = featurePoint{Date: row.AsOfDate.UTC(), Value: *row.ATMIV}
+			best = featurePoint{Date: normalizedAsOfDate, Value: *row.ATMIV}
 			bestDistance = distance
 			haveBest = true
 		}
@@ -2161,7 +2162,7 @@ LIMIT %d`, featureSnapshotTable, featureFallbackWindowDays),
 		resp.HV10 = priceRow.HV10
 		resp.HV20 = priceRow.HV20
 		resp.HV30 = priceRow.HV30
-		date := priceRow.Date.UTC()
+		date := normalizeCalendarDate(priceRow.Date)
 		resp.PriceAsOf = &date
 	}
 	if ivRow != nil {
@@ -2169,7 +2170,7 @@ LIMIT %d`, featureSnapshotTable, featureFallbackWindowDays),
 		resp.CurrentIV = ivRow.CurrentIV
 		resp.IVPercentile = ivRow.IVPercentile
 		resp.IVRank = ivRow.IVRank
-		date := ivRow.Date.UTC()
+		date := normalizeCalendarDate(ivRow.Date)
 		resp.IVAsOf = &date
 	}
 	return resp, true, nil
@@ -2479,7 +2480,7 @@ ORDER BY as_of_date ASC, expiration ASC`, featureLiquidityTable),
 		if err := rows.Scan(&row.AsOfDate, &row.Expiration, &daysToExpiry, &row.AvgBidClose, &row.AvgAskClose, &row.AvgMarkClose, &row.RelativeSpread, &row.OpenInterest, &tickCount, &volume, &transactions, &contractCount, &activeContractCount, &tradableContractCount, &row.ActivityRatio, &row.TradabilityRatio); err != nil {
 			return nil, false, fmt.Errorf("scan precomputed liquidity history row: %w", err)
 		}
-		row.AsOfDate = row.AsOfDate.UTC()
+		row.AsOfDate = normalizeCalendarDate(row.AsOfDate)
 		row.Expiration = row.Expiration.UTC()
 		row.DaysToExpiry = int(daysToExpiry)
 		row.TickCount = int(tickCount)
@@ -2608,7 +2609,7 @@ ORDER BY as_of_date ASC`, featureDailyPanelTable),
 		); err != nil {
 			return nil, false, fmt.Errorf("scan precomputed daily feature panel row: %w", err)
 		}
-		row.Date = row.Date.UTC()
+		row.Date = normalizeCalendarDate(row.Date)
 		// Sanitize float64 pointers that ClickHouse may have stored as NaN/Inf.
 		row.HV10 = sanitizeF64Ptr(row.HV10)
 		row.HV20 = sanitizeF64Ptr(row.HV20)
@@ -2713,7 +2714,7 @@ WHERE market = {market:String}
 	if asOf.IsZero() || asOf.UTC().Unix() == 0 {
 		return time.Time{}, false, nil
 	}
-	return asOf.UTC(), true, nil
+	return normalizeCalendarDate(asOf), true, nil
 }
 
 func (s *FeatureService) precomputedVolatilityRowsExist(ctx context.Context, market, underlying string, from, to time.Time, lookbackDays int) (bool, error) {
@@ -2908,7 +2909,7 @@ func (s *FeatureService) insertPrecomputedVolatilityRows(ctx context.Context, ma
 			market,
 			underlying,
 			uint16(lookbackDays),
-			row.Date.UTC(),
+			normalizeCalendarDate(row.Date),
 			uint32(row.PriceObservations),
 			uint32(row.IVObservations),
 			nullableFloat64(row.HV10),
@@ -2949,8 +2950,8 @@ func (s *FeatureService) insertPrecomputedTermStructureRows(ctx context.Context,
 		if err := batch.Append(
 			market,
 			underlying,
-			row.AsOfDate.UTC(),
-			row.Expiration.UTC(),
+			normalizeCalendarDate(row.AsOfDate),
+			normalizeCalendarDate(row.Expiration),
 			uint16(row.DaysToExpiry),
 			nullableFloat64(row.ATMIV),
 			nullableFloat64(row.CallIV),
@@ -2988,8 +2989,8 @@ func (s *FeatureService) insertPrecomputedSkewRows(ctx context.Context, market, 
 		if err := batch.Append(
 			market,
 			underlying,
-			row.AsOfDate.UTC(),
-			row.Expiration.UTC(),
+			normalizeCalendarDate(row.AsOfDate),
+			normalizeCalendarDate(row.Expiration),
 			uint16(row.DaysToExpiry),
 			nullableFloat64(row.OTMCallIV),
 			nullableFloat64(row.OTMPutIV),
@@ -3037,7 +3038,7 @@ func (s *FeatureService) insertPrecomputedLiquidityRows(ctx context.Context, mar
 		if err := batch.Append(
 			market,
 			underlying,
-			row.AsOfDate.UTC(),
+			normalizeCalendarDate(row.AsOfDate),
 			row.Expiration.UTC(),
 			uint16(row.DaysToExpiry),
 			nullableFloat64(row.AvgBidClose),
@@ -3111,7 +3112,7 @@ func (s *FeatureService) insertPrecomputedDailyPanelRows(ctx context.Context, ma
 			uint16(lookbackDays),
 			minDTE,
 			maxDTE,
-			row.Date.UTC(),
+			normalizeCalendarDate(row.Date),
 			uint32(row.PriceObservations),
 			uint32(row.IVObservations),
 			nullableFloat64(row.HV10),
@@ -3218,17 +3219,19 @@ func buildVolatilityHistoryRows(priceSeries, ivSeries []featurePoint, from, to t
 	ivIndex := make(map[string]int, len(ivSeries))
 	targetDates := make(map[string]time.Time, len(priceSeries)+len(ivSeries))
 	for index, point := range priceSeries {
-		key := point.Date.UTC().Format("2006-01-02")
+		normalizedDate := normalizeCalendarDate(point.Date)
+		key := normalizedDate.Format("2006-01-02")
 		priceIndex[key] = index
 		if withinFeatureRange(point.Date, from, to) {
-			targetDates[key] = point.Date.UTC()
+			targetDates[key] = normalizedDate
 		}
 	}
 	for index, point := range ivSeries {
-		key := point.Date.UTC().Format("2006-01-02")
+		normalizedDate := normalizeCalendarDate(point.Date)
+		key := normalizedDate.Format("2006-01-02")
 		ivIndex[key] = index
 		if withinFeatureRange(point.Date, from, to) {
-			targetDates[key] = point.Date.UTC()
+			targetDates[key] = normalizedDate
 		}
 	}
 
@@ -3266,7 +3269,7 @@ func buildTermStructureSnapshotRows(aggregates []usOptionsSurfaceAggregateRow) [
 	rows := make([]dto.FeatureTermStructureSnapshotRow, 0, len(aggregates))
 	for _, aggregate := range aggregates {
 		rows = append(rows, dto.FeatureTermStructureSnapshotRow{
-			Expiration:    aggregate.Expiration.UTC(),
+			Expiration:    normalizeCalendarDate(aggregate.Expiration),
 			DaysToExpiry:  aggregate.DaysToExpiry,
 			ATMIV:         aggregate.ATMIV,
 			CallIV:        aggregate.CallIV,
@@ -3281,7 +3284,7 @@ func buildSkewSnapshotRows(aggregates []usOptionsSurfaceAggregateRow) []dto.Feat
 	rows := make([]dto.FeatureSkewSnapshotRow, 0, len(aggregates))
 	for _, aggregate := range aggregates {
 		rows = append(rows, dto.FeatureSkewSnapshotRow{
-			Expiration:    aggregate.Expiration.UTC(),
+			Expiration:    normalizeCalendarDate(aggregate.Expiration),
 			DaysToExpiry:  aggregate.DaysToExpiry,
 			OTMCallIV:     aggregate.OTMCallIV,
 			OTMPutIV:      aggregate.OTMPutIV,
@@ -3320,7 +3323,7 @@ func buildLiquidityHistoryRows(aggregates []cryptoLiquidityAggregateRow) []dto.F
 	rows := make([]dto.FeatureLiquidityHistoryRow, 0, len(aggregates))
 	for _, aggregate := range aggregates {
 		rows = append(rows, dto.FeatureLiquidityHistoryRow{
-			AsOfDate: aggregate.AsOfDate.UTC(),
+			AsOfDate: normalizeCalendarDate(aggregate.AsOfDate),
 			FeatureLiquiditySnapshotRow: dto.FeatureLiquiditySnapshotRow{
 				Expiration:            aggregate.Expiration.UTC(),
 				DaysToExpiry:          aggregate.DaysToExpiry,
@@ -3400,11 +3403,12 @@ func latestValidVolatilitySnapshotRows(rowsDesc []dto.FeatureVolatilityHistoryRo
 		return nil, nil
 	}
 	latestDate := rowsDesc[0].Date.UTC()
+	latestDate = normalizeCalendarDate(latestDate)
 	var priceRow *dto.FeatureVolatilityHistoryRow
 	var ivRow *dto.FeatureVolatilityHistoryRow
 	for index := range rowsDesc {
 		row := rowsDesc[index]
-		if latestDate.Sub(row.Date.UTC()) > time.Duration(maxDays)*24*time.Hour {
+		if latestDate.Sub(normalizeCalendarDate(row.Date)) > time.Duration(maxDays)*24*time.Hour {
 			break
 		}
 		if priceRow == nil && volatilityPriceGroupPresent(row) {
@@ -3431,7 +3435,7 @@ func fillVolatilityHistoryFallback(rows []dto.FeatureVolatilityHistoryRow, maxDa
 		if volatilityPriceGroupPresent(*row) {
 			copy := *row
 			lastPrice = &copy
-		} else if lastPrice != nil && row.Date.UTC().Sub(lastPrice.Date.UTC()) <= time.Duration(maxDays)*24*time.Hour {
+		} else if lastPrice != nil && normalizeCalendarDate(row.Date).Sub(normalizeCalendarDate(lastPrice.Date)) <= time.Duration(maxDays)*24*time.Hour {
 			row.PriceObservations = lastPrice.PriceObservations
 			row.HV10 = lastPrice.HV10
 			row.HV20 = lastPrice.HV20
@@ -3440,7 +3444,7 @@ func fillVolatilityHistoryFallback(rows []dto.FeatureVolatilityHistoryRow, maxDa
 		if volatilityIVGroupPresent(*row) {
 			copy := *row
 			lastIV = &copy
-		} else if lastIV != nil && row.Date.UTC().Sub(lastIV.Date.UTC()) <= time.Duration(maxDays)*24*time.Hour {
+		} else if lastIV != nil && normalizeCalendarDate(row.Date).Sub(normalizeCalendarDate(lastIV.Date)) <= time.Duration(maxDays)*24*time.Hour {
 			row.IVObservations = lastIV.IVObservations
 			row.CurrentIV = lastIV.CurrentIV
 			row.IVPercentile = lastIV.IVPercentile
@@ -3471,7 +3475,7 @@ func fillDailyPanelFallback(rows []dto.FeatureDailyPanelRow, maxDays int) []dto.
 		if dailyPanelVolatilityPricePresent(*row) {
 			copy := *row
 			lastVolPrice = &copy
-		} else if lastVolPrice != nil && row.Date.UTC().Sub(lastVolPrice.Date.UTC()) <= time.Duration(maxDays)*24*time.Hour {
+		} else if lastVolPrice != nil && normalizeCalendarDate(row.Date).Sub(normalizeCalendarDate(lastVolPrice.Date)) <= time.Duration(maxDays)*24*time.Hour {
 			row.PriceObservations = lastVolPrice.PriceObservations
 			row.HV10 = lastVolPrice.HV10
 			row.HV20 = lastVolPrice.HV20
@@ -3480,7 +3484,7 @@ func fillDailyPanelFallback(rows []dto.FeatureDailyPanelRow, maxDays int) []dto.
 		if dailyPanelVolatilityIVPresent(*row) {
 			copy := *row
 			lastVolIV = &copy
-		} else if lastVolIV != nil && row.Date.UTC().Sub(lastVolIV.Date.UTC()) <= time.Duration(maxDays)*24*time.Hour {
+		} else if lastVolIV != nil && normalizeCalendarDate(row.Date).Sub(normalizeCalendarDate(lastVolIV.Date)) <= time.Duration(maxDays)*24*time.Hour {
 			row.IVObservations = lastVolIV.IVObservations
 			row.CurrentIV = lastVolIV.CurrentIV
 			row.IVPercentile = lastVolIV.IVPercentile
@@ -3489,7 +3493,7 @@ func fillDailyPanelFallback(rows []dto.FeatureDailyPanelRow, maxDays int) []dto.
 		if dailyPanelSurfacePresent(*row) {
 			copy := *row
 			lastSurface = &copy
-		} else if lastSurface != nil && row.Date.UTC().Sub(lastSurface.Date.UTC()) <= time.Duration(maxDays)*24*time.Hour {
+		} else if lastSurface != nil && normalizeCalendarDate(row.Date).Sub(normalizeCalendarDate(lastSurface.Date)) <= time.Duration(maxDays)*24*time.Hour {
 			row.FrontExpiration = lastSurface.FrontExpiration
 			row.FrontDaysToExpiry = lastSurface.FrontDaysToExpiry
 			row.FrontATMIV = lastSurface.FrontATMIV
@@ -3499,7 +3503,7 @@ func fillDailyPanelFallback(rows []dto.FeatureDailyPanelRow, maxDays int) []dto.
 		if dailyPanelLiquidityPresent(*row) {
 			copy := *row
 			lastLiquidity = &copy
-		} else if lastLiquidity != nil && row.Date.UTC().Sub(lastLiquidity.Date.UTC()) <= time.Duration(maxDays)*24*time.Hour {
+		} else if lastLiquidity != nil && normalizeCalendarDate(row.Date).Sub(normalizeCalendarDate(lastLiquidity.Date)) <= time.Duration(maxDays)*24*time.Hour {
 			row.LiquidityOpenInterest = lastLiquidity.LiquidityOpenInterest
 			row.LiquidityRelativeSpread = lastLiquidity.LiquidityRelativeSpread
 			row.LiquidityTickCount = lastLiquidity.LiquidityTickCount
@@ -3573,7 +3577,7 @@ func summarizeUSOptionsSurfaceHistory(rows []usOptionsSurfaceAggregateRow) map[s
 		if _, exists := result[key]; exists {
 			continue
 		}
-		expiration := row.Expiration.UTC()
+		expiration := normalizeCalendarDate(row.Expiration)
 		dte := row.DaysToExpiry
 		contracts := row.ContractCount
 		result[key] = featureSurfacePanelSummary{
@@ -3669,11 +3673,12 @@ ORDER BY as_of_date ASC, expiration ASC`
 		if err := rows.Scan(&asOfDate, &expiration, &daysToExpiry, &atmIV, &contractCount); err != nil {
 			return nil, false, fmt.Errorf("scan precomputed panel term structure summary row: %w", err)
 		}
-		key := asOfDate.UTC().Format("2006-01-02")
+		normalizedAsOfDate := normalizeCalendarDate(asOfDate)
+		key := normalizedAsOfDate.Format("2006-01-02")
 		if _, exists := result[key]; exists {
 			continue
 		}
-		expiration = expiration.UTC()
+		expiration = normalizeCalendarDate(expiration)
 		dte := int(daysToExpiry)
 		contracts := int(contractCount)
 		result[key] = featureSurfacePanelSummary{
@@ -3739,7 +3744,7 @@ ORDER BY as_of_date ASC, expiration ASC`
 		if err := rows.Scan(&asOfDate, &putCallSkew, &contractCount, &expiration); err != nil {
 			return nil, false, fmt.Errorf("scan precomputed panel skew summary row: %w", err)
 		}
-		key := asOfDate.UTC().Format("2006-01-02")
+		key := normalizeCalendarDate(asOfDate).Format("2006-01-02")
 		if _, exists := result[key]; exists {
 			continue
 		}
@@ -3847,7 +3852,11 @@ func (s *FeatureService) buildDailyFeaturePanelRowsWithInputs(ctx context.Contex
 			}
 		}
 	}
-	return trimDailyPanelTrailingEmptyRows(mergeDailyFeaturePanelRows(volHistory, liquidityHistory, surfaceSummary, eventHistory)), nil
+	rows := mergeDailyFeaturePanelRows(volHistory, liquidityHistory, surfaceSummary, eventHistory)
+	if market == "us-options" {
+		rows = filterDailyPanelRowsToMarketSessions(rows, eventHistory)
+	}
+	return trimDailyPanelTrailingEmptyRows(rows), nil
 }
 
 func mergeDailyFeaturePanelRows(volHistory []dto.FeatureVolatilityHistoryRow, liquidityHistory []dto.FeatureLiquidityHistoryRow, surfaceSummary map[string]featureSurfacePanelSummary, eventHistory map[string]dto.FeatureEventWindowHistoryRow) []dto.FeatureDailyPanelRow {
@@ -3876,7 +3885,7 @@ func mergeDailyFeaturePanelRows(volHistory []dto.FeatureVolatilityHistoryRow, li
 	panelRows := make([]dto.FeatureDailyPanelRow, 0, len(sortedDates))
 	for _, date := range sortedDates {
 		key := date.Format("2006-01-02")
-		row := dto.FeatureDailyPanelRow{Date: date.UTC()}
+		row := dto.FeatureDailyPanelRow{Date: normalizeCalendarDate(date)}
 		if volRow, ok := volIndex[key]; ok {
 			row.PriceObservations = volRow.PriceObservations
 			row.IVObservations = volRow.IVObservations
@@ -3916,6 +3925,19 @@ func mergeDailyFeaturePanelRows(volHistory []dto.FeatureVolatilityHistoryRow, li
 	return panelRows
 }
 
+func filterDailyPanelRowsToMarketSessions(rows []dto.FeatureDailyPanelRow, sessions map[string]dto.FeatureEventWindowHistoryRow) []dto.FeatureDailyPanelRow {
+	if len(rows) == 0 || len(sessions) == 0 {
+		return rows
+	}
+	filtered := make([]dto.FeatureDailyPanelRow, 0, len(rows))
+	for _, row := range rows {
+		if _, ok := sessions[row.Date.Format("2006-01-02")]; ok {
+			filtered = append(filtered, row)
+		}
+	}
+	return filtered
+}
+
 func (s *FeatureService) queryEventWindowHistoryRows(ctx context.Context, market, underlying string, from, to time.Time) ([]dto.FeatureEventWindowHistoryRow, error) {
 	rows, err := s.repo.Query(ctx, `SELECT market_date, is_early_close
 FROM us_equity_sessions
@@ -3944,7 +3966,7 @@ ORDER BY market_date ASC`)
 		if err := holidayRows.Scan(&holiday); err != nil {
 			return nil, fmt.Errorf("scan holiday calendar row: %w", err)
 		}
-		holidays = append(holidays, holiday.UTC())
+		holidays = append(holidays, normalizeCalendarDate(holiday))
 	}
 	if err := holidayRows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate holiday calendar rows: %w", err)
@@ -3958,16 +3980,17 @@ ORDER BY market_date ASC`)
 		if err := rows.Scan(&date, &isEarlyClose); err != nil {
 			return nil, fmt.Errorf("scan event-window history row: %w", err)
 		}
+		normalizedDate := normalizeCalendarDate(date)
 		row := dto.FeatureEventWindowHistoryRow{
-			Date: date.UTC(),
+			Date: normalizedDate,
 			FeatureEventWindowSnapshotResponse: dto.FeatureEventWindowSnapshotResponse{
 				Market:       market,
 				Underlying:   underlying,
-				AsOfDate:     timePtr(date.UTC()),
+				AsOfDate:     timePtr(normalizedDate),
 				IsEarlyClose: isEarlyClose == 1,
 			},
 		}
-		applyHolidayDistance(&row.FeatureEventWindowSnapshotResponse, holidays, date.UTC())
+		applyHolidayDistance(&row.FeatureEventWindowSnapshotResponse, holidays, normalizedDate)
 		result = append(result, row)
 	}
 	if err := rows.Err(); err != nil {
@@ -3982,13 +4005,13 @@ func applyHolidayDistance(resp *dto.FeatureEventWindowSnapshotResponse, holidays
 		index++
 	}
 	if index > 0 {
-		prev := holidays[index-1].UTC()
+		prev := normalizeCalendarDate(holidays[index-1])
 		resp.PreviousHolidayDate = &prev
 		days := int(asOf.Sub(prev).Hours() / 24)
 		resp.DaysFromPrevHoliday = &days
 	}
 	if index < len(holidays) {
-		next := holidays[index].UTC()
+		next := normalizeCalendarDate(holidays[index])
 		resp.NextHolidayDate = &next
 		days := int(next.Sub(asOf).Hours() / 24)
 		resp.DaysToNextHoliday = &days
@@ -4072,7 +4095,7 @@ WHERE market_date = toDate({as_of:String})`, clickhouse.Named("as_of", asOf.UTC(
 		return err
 	}
 	if hasPrev {
-		prev := prevHoliday.UTC()
+		prev := normalizeCalendarDate(prevHoliday)
 		resp.PreviousHolidayDate = &prev
 		days := int(asOf.Sub(prevHoliday).Hours() / 24)
 		resp.DaysFromPrevHoliday = &days
@@ -4082,7 +4105,7 @@ WHERE market_date = toDate({as_of:String})`, clickhouse.Named("as_of", asOf.UTC(
 		return err
 	}
 	if hasNext {
-		next := nextHoliday.UTC()
+		next := normalizeCalendarDate(nextHoliday)
 		resp.NextHolidayDate = &next
 		days := int(nextHoliday.Sub(asOf).Hours() / 24)
 		resp.DaysToNextHoliday = &days
@@ -4121,7 +4144,7 @@ WHERE is_holiday = 1`
 	if holiday.IsZero() || holiday.UTC().Unix() == 0 {
 		return time.Time{}, false, nil
 	}
-	return holiday.UTC(), true, nil
+	return normalizeCalendarDate(holiday), true, nil
 }
 
 func withinFeatureRange(value, from, to time.Time) bool {
