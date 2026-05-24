@@ -141,20 +141,22 @@ func (s *USStocksService) QueryBars(ctx context.Context, req dto.USStockBarReque
 
 func (s *USStocksService) queryBarRows(ctx context.Context, tableName, symbol string, fromT, toT time.Time, session string, limit int) ([]dto.USStockBarRow, error) {
 	query := fmt.Sprintf(`SELECT
-    timestamp,
-    symbol,
-    open,
-    high,
-    low,
-    close,
-	toFloat64(volume) AS volume,
-    toUInt64(transactions) AS transactions
-FROM %s
-WHERE symbol = %s
-  AND timestamp >= toDateTime(%s, 'UTC')
-  AND timestamp < toDateTime(%s, 'UTC')%s
-ORDER BY timestamp
-LIMIT %s`, tableName, clickhouseStringLiteral(symbol), clickhouseDateTimeLiteral(fromT), clickhouseDateTimeLiteral(toT), usSessionCondition(session), clickhouseUInt32Literal(limit))
+		b.timestamp,
+		b.symbol,
+		toFloat32(%s) AS open,
+		toFloat32(%s) AS high,
+		toFloat32(%s) AS low,
+		toFloat32(%s) AS close,
+	toFloat64(b.volume) AS volume,
+		toUInt64(b.transactions) AS transactions
+FROM %s AS b
+%s
+WHERE b.symbol = %s
+	AND b.timestamp >= toDateTime(%s, 'UTC')
+	AND b.timestamp < toDateTime(%s, 'UTC')%s
+GROUP BY b.timestamp, b.symbol, b.open, b.high, b.low, b.close, b.volume, b.transactions
+ORDER BY b.timestamp
+LIMIT %s`, chquery.USStockAdjustedPriceSQL("b", "open", "sp"), chquery.USStockAdjustedPriceSQL("b", "high", "sp"), chquery.USStockAdjustedPriceSQL("b", "low", "sp"), chquery.USStockAdjustedPriceSQL("b", "close", "sp"), tableName, chquery.USStockSplitJoinSQL("b", "sp"), clickhouseStringLiteral(symbol), clickhouseDateTimeLiteral(fromT), clickhouseDateTimeLiteral(toT), strings.ReplaceAll(usSessionCondition(session), " AND ", " AND b."), clickhouseUInt32Literal(limit))
 
 	rows, err := s.repo.Query(ctx, query)
 	if err != nil {
@@ -401,13 +403,15 @@ type usStockDailyCloseSeries []usStockDailyClose
 
 func (s *USStocksService) loadUSStockDailyCloses(ctx context.Context, symbol string, from, to time.Time) (usStockDailyCloseSeries, error) {
 	query := fmt.Sprintf(`SELECT
-    timestamp,
-    toFloat64(close) AS close
-FROM %s
-WHERE symbol = %s
-  AND timestamp >= toDateTime(%s, 'UTC')
-  AND timestamp < toDateTime(%s, 'UTC')
-ORDER BY timestamp`, chquery.USStockIntervals["1d"], clickhouseStringLiteral(symbol), clickhouseDateTimeLiteral(from), clickhouseDateTimeLiteral(to))
+		b.timestamp,
+		%s AS close
+FROM %s AS b
+%s
+WHERE b.symbol = %s
+	AND b.timestamp >= toDateTime(%s, 'UTC')
+	AND b.timestamp < toDateTime(%s, 'UTC')
+GROUP BY b.timestamp, b.symbol, b.close
+ORDER BY b.timestamp`, chquery.USStockAdjustedPriceSQL("b", "close", "sp"), chquery.USStockIntervals["1d"], chquery.USStockSplitJoinSQL("b", "sp"), clickhouseStringLiteral(symbol), clickhouseDateTimeLiteral(from), clickhouseDateTimeLiteral(to))
 
 	rows, err := s.repo.Query(ctx, query)
 	if err != nil {

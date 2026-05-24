@@ -71,6 +71,14 @@ jobs:
     interval: 1min
     batch_size: 50000
 
+  fmp_us_stock_splits:
+    enabled: true
+    depends_on: [fmp_us_stocks]
+    resolve_at_startup: true
+    overlap_days: 3
+    batch_size: 1000
+    cold_start_floor: 1990-01-01
+
   fmp_us_fundamentals:
     enabled: true
     depends_on: [fmp_us_stocks]

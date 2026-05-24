@@ -144,20 +144,29 @@ WITH stock_start_date AS (
 	)
 )
 SELECT
-	symbol AS underlying,
+	underlying,
 	%s AS join_underlying,
-	sum(toFloat64(close) * toFloat64(volume)) AS stock_turnover_usd,
-	sum(toFloat64(volume)) AS stock_volume,
-	toUInt32(countDistinct(toDate(timestamp))) AS stock_trading_days
-FROM us_stocks_bar_1d
-WHERE timestamp >= (
-	SELECT toDateTime(start_date, 'UTC')
-	FROM stock_start_date
+	sum(close * volume) AS stock_turnover_usd,
+	sum(volume) AS stock_volume,
+	toUInt32(countDistinct(day)) AS stock_trading_days
+FROM (
+	SELECT
+		b.symbol AS underlying,
+		toDate(b.timestamp) AS day,
+		%s AS close,
+		toFloat64(b.volume) AS volume
+	FROM us_stocks_bar_1d AS b
+	%s
+	WHERE b.timestamp >= (
+		SELECT toDateTime(start_date, 'UTC')
+		FROM stock_start_date
+	)
+	%s
+	GROUP BY b.symbol, b.timestamp, b.close, b.volume
 )
-%s
 GROUP BY underlying, join_underlying
 ORDER BY stock_turnover_usd DESC, underlying ASC
-LIMIT %d`, lookbackDays, stockUnderlyingOptionAliasExpr("symbol"), stockUniverseFilter, candidateLimit)
+LIMIT %d`, lookbackDays, stockUnderlyingOptionAliasExpr("underlying"), chquery.USStockAdjustedPriceSQL("b", "close", "sp"), chquery.USStockSplitJoinSQL("b", "sp"), strings.ReplaceAll(stockUniverseFilter, "symbol", "b.symbol"), candidateLimit)
 
 	rows, err := s.repo.Query(ctx, query)
 	if err != nil {

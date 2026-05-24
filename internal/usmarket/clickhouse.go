@@ -122,6 +122,10 @@ const stockBarInsertSQL = `INSERT INTO us_stocks_bar_1m (
 	market_date, session_kind, is_regular_session, session_open, session_seq
 )`
 
+const stockSplitInsertSQL = `INSERT INTO us_stock_splits (
+	symbol, split_date, numerator, denominator, split_type, source, source_hash, updated_at
+)`
+
 // InsertOptionBars batch-inserts option bars from a channel into us_options_bar_1m.
 func InsertOptionBars(ctx context.Context, conn driver.Conn, bars <-chan OptionBar1m, batchSize int) (int64, error) {
 	var totalRows int64
@@ -236,6 +240,60 @@ func InsertStockBars(ctx context.Context, conn driver.Conn, bars <-chan StockBar
 		log.Printf("[clickhouse] inserted final %d stock rows (total: %d)", batchCount, totalRows)
 	}
 
+	return totalRows, nil
+}
+
+// InsertStockSplits batch-inserts stock split events into us_stock_splits.
+func InsertStockSplits(ctx context.Context, conn driver.Conn, splits []StockSplit, batchSize int) (int64, error) {
+	if len(splits) == 0 {
+		return 0, nil
+	}
+	if batchSize <= 0 {
+		batchSize = 1000
+	}
+	var totalRows int64
+	batch, err := conn.PrepareBatch(ctx, stockSplitInsertSQL)
+	if err != nil {
+		return 0, fmt.Errorf("prepare stock split batch: %w", err)
+	}
+	batchCount := 0
+	for _, split := range splits {
+		if split.UpdatedAt.IsZero() {
+			split.UpdatedAt = time.Now().UTC()
+		}
+		if split.Source == "" {
+			split.Source = "fmp"
+		}
+		if err := batch.Append(
+			split.Symbol,
+			split.SplitDate,
+			split.Numerator,
+			split.Denominator,
+			split.SplitType,
+			split.Source,
+			split.SourceHash,
+			split.UpdatedAt,
+		); err != nil {
+			return totalRows, fmt.Errorf("append stock split row: %w", err)
+		}
+		batchCount++
+		totalRows++
+		if batchCount >= batchSize {
+			if err := batch.Send(); err != nil {
+				return totalRows, fmt.Errorf("send stock split batch: %w", err)
+			}
+			batchCount = 0
+			batch, err = conn.PrepareBatch(ctx, stockSplitInsertSQL)
+			if err != nil {
+				return totalRows, fmt.Errorf("prepare next stock split batch: %w", err)
+			}
+		}
+	}
+	if batchCount > 0 {
+		if err := batch.Send(); err != nil {
+			return totalRows, fmt.Errorf("send final stock split batch: %w", err)
+		}
+	}
 	return totalRows, nil
 }
 

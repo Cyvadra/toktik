@@ -5,6 +5,7 @@ package tigerapi
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -236,10 +237,7 @@ func New(cfg Config) (*Client, error) {
 
 	httpClient := tigerclient.NewHttpClient(sdkConfig)
 	quoteHTTPClient := tigerclient.NewQuoteHttpClient(sdkConfig)
-	quoteClient, err := quote.NewQuoteClientWithPermissions(quoteHTTPClient)
-	if err != nil {
-		return nil, fmt.Errorf("init tiger quote permissions: %w", err)
-	}
+	quoteClient := quote.NewQuoteClient(quoteHTTPClient)
 	return &Client{
 		config:          cfg,
 		sdkConfig:       sdkConfig,
@@ -266,7 +264,7 @@ func (c *Client) MarketState(market string) ([]MarketState, error) {
 	if market == "" {
 		return nil, fmt.Errorf("market is required")
 	}
-	data, err := c.quoteClient.MarketState(market)
+	data, err := c.execute("market_state", map[string]any{"market": market})
 	if err != nil {
 		return nil, fmt.Errorf("query tiger market_state: %w", err)
 	}
@@ -282,7 +280,7 @@ func (c *Client) StockQuotes(symbols []string) ([]StockQuote, error) {
 	if err != nil {
 		return nil, err
 	}
-	data, err := c.quoteClient.QuoteRealTime(normalized)
+	data, err := c.execute("quote_real_time", map[string]any{"symbols": normalized})
 	if err != nil {
 		return nil, fmt.Errorf("query tiger quote_real_time: %w", err)
 	}
@@ -345,7 +343,7 @@ func (c *Client) StockTimeline(symbols []string) ([]TimelinePoint, error) {
 	if err != nil {
 		return nil, err
 	}
-	data, err := c.quoteClient.Timeline(normalized)
+	data, err := c.execute("timeline", map[string]any{"symbols": normalized})
 	if err != nil {
 		return nil, fmt.Errorf("query tiger timeline: %w", err)
 	}
@@ -361,7 +359,7 @@ func (c *Client) StockTradeTicks(symbols []string) ([]TradeTick, error) {
 	if err != nil {
 		return nil, err
 	}
-	data, err := c.quoteClient.TradeTick(normalized)
+	data, err := c.execute("trade_tick", map[string]any{"symbols": normalized})
 	if err != nil {
 		return nil, fmt.Errorf("query tiger trade_tick: %w", err)
 	}
@@ -377,7 +375,7 @@ func (c *Client) StockDepth(symbol string) (*QuoteDepth, error) {
 	if symbol == "" {
 		return nil, fmt.Errorf("symbol is required")
 	}
-	data, err := c.quoteClient.QuoteDepth(symbol)
+	data, err := c.execute("quote_depth", map[string]any{"symbol": symbol})
 	if err != nil {
 		return nil, fmt.Errorf("query tiger quote_depth: %w", err)
 	}
@@ -393,7 +391,7 @@ func (c *Client) OptionExpirations(underlying string) ([]string, error) {
 	if underlying == "" {
 		return nil, fmt.Errorf("underlying symbol is required")
 	}
-	data, err := c.quoteClient.OptionExpiration(underlying)
+	data, err := c.execute("option_expiration", map[string]any{"symbols": []string{underlying}})
 	if err != nil {
 		return nil, fmt.Errorf("query tiger option_expiration: %w", err)
 	}
@@ -413,11 +411,16 @@ func (c *Client) OptionChain(underlying string, expiry string) ([]OptionContract
 	if expiry == "" {
 		return nil, fmt.Errorf("expiry is required")
 	}
-	data, err := c.quoteClient.OptionChain(underlying, expiry)
+	data, err := c.ExecuteRawResponseVersioned("option_chain", map[string]any{
+		"option_basic": []map[string]any{{
+			"symbol": underlying,
+			"expiry": expiry,
+		}},
+	}, "3.0")
 	if err != nil {
 		return nil, fmt.Errorf("query tiger option_chain: %w", err)
 	}
-	out, err := decodeOptionChainContracts(data)
+	out, err := decodeOptionChainContracts(json.RawMessage(data))
 	if err != nil {
 		return nil, fmt.Errorf("decode tiger option_chain response: %w", err)
 	}
@@ -429,12 +432,14 @@ func (c *Client) OptionQuotes(identifiers []string) ([]OptionQuote, error) {
 	if err != nil {
 		return nil, err
 	}
-	data, err := c.quoteClient.OptionBrief(normalized)
+	data, err := c.ExecuteRawResponseVersioned("option_brief", map[string]any{
+		"option_basic": identifiersToOptionBasic(normalized),
+	}, "3.0")
 	if err != nil {
 		return nil, fmt.Errorf("query tiger option_brief: %w", err)
 	}
 	var out []OptionQuote
-	if err := decodeJSON(data, &out); err != nil {
+	if err := decodeJSON(json.RawMessage(data), &out); err != nil {
 		return nil, fmt.Errorf("decode tiger option_brief response: %w", err)
 	}
 	return out, nil
@@ -449,11 +454,18 @@ func (c *Client) OptionKlines(req OptionKlineRequest) ([]KlineBar, error) {
 	if period == "" {
 		return nil, fmt.Errorf("period is required")
 	}
-	data, err := c.quoteClient.OptionKline(identifier, period)
+	basic, err := optionBasicFromIdentifier(identifier)
+	if err != nil {
+		return nil, err
+	}
+	basic["period"] = period
+	data, err := c.ExecuteRawResponseVersioned("option_kline", map[string]any{
+		"option_query": []map[string]any{basic},
+	}, "2.0")
 	if err != nil {
 		return nil, fmt.Errorf("query tiger option_kline: %w", err)
 	}
-	page, err := decodeKlinePage(data)
+	page, err := decodeKlinePage(json.RawMessage(data))
 	if err != nil {
 		return nil, fmt.Errorf("decode tiger option_kline response: %w", err)
 	}
@@ -667,6 +679,56 @@ func marshalBizParams(bizParams any) (string, error) {
 		return "", fmt.Errorf("encode tiger raw request: %w", err)
 	}
 	return request.BizContent, nil
+}
+
+func identifiersToOptionBasic(identifiers []string) []map[string]any {
+	optionBasics := make([]map[string]any, 0, len(identifiers))
+	for _, identifier := range identifiers {
+		basic, err := optionBasicFromIdentifier(identifier)
+		if err != nil {
+			continue
+		}
+		optionBasics = append(optionBasics, basic)
+	}
+	return optionBasics
+}
+
+func optionBasicFromIdentifier(identifier string) (map[string]any, error) {
+	parts := strings.Fields(strings.TrimSpace(identifier))
+	if len(parts) != 2 {
+		return nil, fmt.Errorf("invalid option identifier %q", identifier)
+	}
+	underlying := strings.ToUpper(strings.TrimSpace(parts[0]))
+	contract := strings.TrimSpace(parts[1])
+	if underlying == "" || len(contract) < 15 {
+		return nil, fmt.Errorf("invalid option identifier %q", identifier)
+	}
+	rightCode := contract[len(contract)-9 : len(contract)-8]
+	right := ""
+	switch rightCode {
+	case "C":
+		right = "CALL"
+	case "P":
+		right = "PUT"
+	default:
+		return nil, fmt.Errorf("invalid option identifier %q", identifier)
+	}
+	strikeDigits := contract[len(contract)-8:]
+	strikeValue, err := strconv.ParseInt(strikeDigits, 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("invalid option identifier %q: %w", identifier, err)
+	}
+	expiryToken := contract[:6]
+	expiryTime, err := time.Parse("060102", expiryToken)
+	if err != nil {
+		return nil, fmt.Errorf("invalid option identifier %q: %w", identifier, err)
+	}
+	return map[string]any{
+		"symbol": underlying,
+		"expiry": expiryTime.UnixMilli(),
+		"right":  right,
+		"strike": float64(strikeValue) / 1000.0,
+	}, nil
 }
 
 func usesQuoteGateway(method string) bool {

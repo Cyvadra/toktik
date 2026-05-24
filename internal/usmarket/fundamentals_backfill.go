@@ -921,6 +921,14 @@ func BackfillUSStockPE(ctx context.Context, cfg USFundamentalsBackfillConfig) (U
 // ClickHouse. When symbols is non-empty it simply normalizes/deduplicates the
 // provided values.
 func ResolveUSStockSymbols(ctx context.Context, conn driver.Conn, symbols []string, limit int) ([]string, error) {
+	targets, err := ResolveUSStockSyncTargets(ctx, conn, symbols, limit, false)
+	if err != nil {
+		return nil, err
+	}
+	return storeSymbolsFromSyncTargets(targets), nil
+}
+
+func resolveStoredUSStockSymbols(ctx context.Context, conn driver.Conn, symbols []string, limit int) ([]string, error) {
 	if len(symbols) > 0 {
 		return normalizeFundamentalSymbols(symbols), nil
 	}

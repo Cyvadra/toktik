@@ -48,3 +48,15 @@ type StockBar1m struct {
 	SessionOpen      time.Time
 	SessionSeq       uint16
 }
+
+// StockSplit is a US stock split event used to front-adjust stock prices.
+type StockSplit struct {
+	Symbol      string
+	SplitDate   time.Time
+	Numerator   float64
+	Denominator float64
+	SplitType   string
+	Source      string
+	SourceHash  string
+	UpdatedAt   time.Time
+}

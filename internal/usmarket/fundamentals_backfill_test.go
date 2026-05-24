@@ -94,6 +94,22 @@ func TestFilterFMPFundamentalSymbolsExcludesUnitsAndWarrants(t *testing.T) {
 	}
 }
 
+func TestResolveUSStockSymbolsExplicitUsesStoreSymbolsFromTargets(t *testing.T) {
+	got, err := ResolveUSStockSymbols(context.Background(), nil, []string{" spx ", "AAPL", "SPX"}, 0)
+	if err != nil {
+		t.Fatalf("resolve explicit symbols: %v", err)
+	}
+	want := []string{"AAPL", "SPX"}
+	if len(got) != len(want) {
+		t.Fatalf("expected %d symbols, got %d: %#v", len(want), len(got), got)
+	}
+	for index := range want {
+		if got[index] != want[index] {
+			t.Fatalf("unexpected symbols: want %#v got %#v", want, got)
+		}
+	}
+}
+
 func TestNormalizeFMPDiscoveryPageLimit(t *testing.T) {
 	if got := normalizeFMPDiscoveryPageLimit(0); got != maxFMPDiscoveryPages {
 		t.Fatalf("expected zero to use max discovery pages, got %d", got)

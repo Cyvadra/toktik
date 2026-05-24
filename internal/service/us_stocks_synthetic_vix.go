@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Cyvadra/toktik/internal/chquery"
 	"github.com/Cyvadra/toktik/internal/dto"
 )
 
@@ -100,7 +101,17 @@ func (s *USStocksService) loadSyntheticVIXModel(ctx context.Context) (*synthetic
 	if s == nil || s.repo == nil {
 		return nil, nil
 	}
-	query := `SELECT
+	query := fmt.Sprintf(`WITH adjusted_daily AS (
+	SELECT
+		b.timestamp,
+		b.symbol,
+		%s AS close
+	FROM us_stocks_bar_1d AS b
+	%s
+	WHERE b.symbol IN ('VIX', 'VXX', 'UVXY', 'SVXY', 'SVIX', 'UVIX', 'VIXY', 'VIXM', 'VXZ')
+	GROUP BY b.timestamp, b.symbol, b.close
+)
+SELECT
 	v.timestamp,
 	toFloat64(v.close) AS vix,
 	toFloat64(anyIf(p.close, p.symbol = 'VXX')) AS vxx,
@@ -111,12 +122,12 @@ func (s *USStocksService) loadSyntheticVIXModel(ctx context.Context) (*synthetic
 	toFloat64(anyIf(p.close, p.symbol = 'VIXY')) AS vixy,
 	toFloat64(anyIf(p.close, p.symbol = 'VIXM')) AS vixm,
 	toFloat64(anyIf(p.close, p.symbol = 'VXZ')) AS vxz
-FROM us_stocks_bar_1d v
-INNER JOIN us_stocks_bar_1d p ON v.timestamp = p.timestamp
+FROM adjusted_daily v
+INNER JOIN adjusted_daily p ON v.timestamp = p.timestamp
 WHERE v.symbol = 'VIX'
 	AND p.symbol IN ('VXX', 'UVXY', 'SVXY', 'SVIX', 'UVIX', 'VIXY', 'VIXM', 'VXZ')
 GROUP BY v.timestamp, v.close
-ORDER BY v.timestamp`
+ORDER BY v.timestamp`, chquery.USStockAdjustedPriceSQL("b", "close", "sp"), chquery.USStockSplitJoinSQL("b", "sp"))
 	rows, err := s.repo.Query(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("query synthetic VIX training rows: %w", err)

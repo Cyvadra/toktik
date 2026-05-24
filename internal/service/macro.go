@@ -369,15 +369,17 @@ func (s *MacroService) queryReferenceBars(ctx context.Context, tableName, symbol
 	}
 
 	query := fmt.Sprintf(`SELECT
-		timestamp,
-		toFloat64(close) AS close
-	FROM %s
-	WHERE symbol = %s
-	  AND timestamp >= toDateTime(%s, 'UTC')
-	  AND timestamp < toDateTime(%s, 'UTC')
+		b.timestamp,
+		%s AS close
+	FROM %s AS b
+	%s
+	WHERE b.symbol = %s
+	  AND b.timestamp >= toDateTime(%s, 'UTC')
+	  AND b.timestamp < toDateTime(%s, 'UTC')
 	  %s
+	GROUP BY b.timestamp, b.symbol, b.close
 	ORDER BY timestamp
-	LIMIT %s`, tableName, clickhouseStringLiteral(symbol), clickhouseDateTimeLiteral(from), clickhouseDateTimeLiteral(to), sessionCondition, clickhouseUInt32Literal(limit))
+	LIMIT %s`, chquery.USStockAdjustedPriceSQL("b", "close", "sp"), tableName, chquery.USStockSplitJoinSQL("b", "sp"), clickhouseStringLiteral(symbol), clickhouseDateTimeLiteral(from), clickhouseDateTimeLiteral(to), strings.ReplaceAll(sessionCondition, " AND ", " AND b."), clickhouseUInt32Literal(limit))
 
 	rows, err := s.repo.Query(ctx, query)
 	if err != nil {
@@ -388,13 +390,15 @@ func (s *MacroService) queryReferenceBars(ctx context.Context, tableName, symbol
 	out := make([]macroReferenceBar, 0, limit)
 	if includeSeed {
 		seedQuery := fmt.Sprintf(`SELECT
-			timestamp,
-			toFloat64(close) AS close
-		FROM %s
-		WHERE symbol = %s
-		  AND timestamp < toDateTime(%s, 'UTC')
+			b.timestamp,
+			%s AS close
+		FROM %s AS b
+		%s
+		WHERE b.symbol = %s
+		  AND b.timestamp < toDateTime(%s, 'UTC')
+		GROUP BY b.timestamp, b.symbol, b.close
 		ORDER BY timestamp DESC
-		LIMIT 1`, tableName, clickhouseStringLiteral(symbol), clickhouseDateTimeLiteral(from))
+		LIMIT 1`, chquery.USStockAdjustedPriceSQL("b", "close", "sp"), tableName, chquery.USStockSplitJoinSQL("b", "sp"), clickhouseStringLiteral(symbol), clickhouseDateTimeLiteral(from))
 
 		seedRows, err := s.repo.Query(ctx, seedQuery)
 		if err != nil {

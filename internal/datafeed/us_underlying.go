@@ -8,6 +8,7 @@ import (
 	clickhouse "github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/Cyvadra/toktik/internal/backtest"
+	"github.com/Cyvadra/toktik/internal/chquery"
 )
 
 var usStockPrecomputedIntervals = map[string]string{
@@ -50,18 +51,20 @@ func (f *USUnderlyingDataFeed) Load(ctx context.Context, req backtest.DataReques
 	}
 
 	query := fmt.Sprintf(`SELECT
-    timestamp,
-    open,
-    high,
-    low,
-    close,
-    volume,
-    transactions
-FROM %s
-WHERE symbol = {symbol:String}
-  AND timestamp >= toDateTime({from:String}, 'UTC')
-  AND timestamp < toDateTime({to:String}, 'UTC')
-ORDER BY timestamp`, tableName)
+		b.timestamp,
+		toFloat32(%s) AS open,
+		toFloat32(%s) AS high,
+		toFloat32(%s) AS low,
+		toFloat32(%s) AS close,
+		b.volume,
+		b.transactions
+FROM %s AS b
+%s
+WHERE b.symbol = {symbol:String}
+	AND b.timestamp >= toDateTime({from:String}, 'UTC')
+	AND b.timestamp < toDateTime({to:String}, 'UTC')
+GROUP BY b.timestamp, b.symbol, b.open, b.high, b.low, b.close, b.volume, b.transactions
+ORDER BY b.timestamp`, chquery.USStockAdjustedPriceSQL("b", "open", "sp"), chquery.USStockAdjustedPriceSQL("b", "high", "sp"), chquery.USStockAdjustedPriceSQL("b", "low", "sp"), chquery.USStockAdjustedPriceSQL("b", "close", "sp"), tableName, chquery.USStockSplitJoinSQL("b", "sp"))
 
 	rows, err := f.conn.Query(ctx, query,
 		clickhouse.Named("symbol", req.Symbol),

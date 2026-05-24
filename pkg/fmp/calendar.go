@@ -36,6 +36,15 @@ type SplitsCalendarEvent struct {
 	SplitType   string  `json:"splitType"`
 }
 
+// StockSplit is one row from /stable/splits for a symbol.
+type StockSplit struct {
+	Symbol      string  `json:"symbol"`
+	Date        string  `json:"date"`
+	Numerator   float64 `json:"numerator"`
+	Denominator float64 `json:"denominator"`
+	SplitType   string  `json:"splitType"`
+}
+
 // FinancialReportDate is one row from /stable/financial-reports-dates.
 type FinancialReportDate struct {
 	Symbol     string `json:"symbol"`
@@ -67,6 +76,18 @@ func (c *Client) SplitsCalendar(ctx context.Context, from, to string) ([]SplitsC
 	params := dateRangeParams(from, to)
 	var out []SplitsCalendarEvent
 	if err := c.get(ctx, "/splits-calendar", params, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *Client) Splits(ctx context.Context, symbol string) ([]StockSplit, error) {
+	params := url.Values{}
+	if symbol != "" {
+		params.Set("symbol", symbol)
+	}
+	var out []StockSplit
+	if err := c.get(ctx, "/splits", params, &out); err != nil {
 		return nil, err
 	}
 	return out, nil

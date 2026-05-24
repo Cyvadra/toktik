@@ -12,6 +12,7 @@ import (
 
 	clickhouse "github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+	"github.com/Cyvadra/toktik/internal/chquery"
 	"github.com/Cyvadra/toktik/internal/chrepo"
 	"github.com/Cyvadra/toktik/internal/dto"
 	"github.com/Cyvadra/toktik/internal/usmarket"
@@ -1968,23 +1969,25 @@ ORDER BY day ASC`
 		query = `SELECT day, close
 FROM (
 	SELECT
-		toDate(timestamp) AS day,
-		toFloat64(close) AS close
-	FROM us_stocks_bar_1d
-	WHERE symbol = {symbol:String}
+		toDate(b.timestamp) AS day,
+		` + chquery.USStockAdjustedPriceSQL("b", "close", "sp") + ` AS close
+	FROM us_stocks_bar_1d AS b
+	` + chquery.USStockSplitJoinSQL("b", "sp") + `
+	WHERE b.symbol = {symbol:String}
 	`
 		args = []interface{}{clickhouse.Named("symbol", underlying)}
 		if !from.IsZero() {
 			query += `
-	  AND timestamp >= toDateTime({from:String}, 'UTC')`
+	  AND b.timestamp >= toDateTime({from:String}, 'UTC')`
 			args = append(args, clickhouse.Named("from", from.UTC().Format("2006-01-02 15:04:05")))
 		}
 		if !to.IsZero() {
 			query += `
-	  AND timestamp < toDateTime({to:String}, 'UTC')`
+	  AND b.timestamp < toDateTime({to:String}, 'UTC')`
 			args = append(args, clickhouse.Named("to", to.UTC().Format("2006-01-02 15:04:05")))
 		}
 		query += `
+	GROUP BY b.timestamp, b.symbol, b.close
 )
 ORDER BY day ASC`
 	default:

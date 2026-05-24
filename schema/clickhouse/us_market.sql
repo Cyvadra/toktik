@@ -44,6 +44,25 @@ ORDER BY market_date
 SETTINGS index_granularity = 8192;
 
 -- -------------------------------------------------------
+-- US Stocks: split events used for front-adjusted prices
+-- -------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS us_stock_splits
+(
+    symbol      LowCardinality(String),
+    split_date  Date,
+    numerator   Float64,
+    denominator Float64,
+    split_type  String DEFAULT '',
+    source      LowCardinality(String) DEFAULT 'fmp',
+    source_hash String DEFAULT '',
+    updated_at  DateTime64(3, 'UTC') DEFAULT now64(3)
+)
+ENGINE = ReplacingMergeTree(updated_at)
+ORDER BY (symbol, split_date)
+SETTINGS index_granularity = 8192;
+
+-- -------------------------------------------------------
 -- US Options: 1-minute bars from Polygon OPRA flatfiles
 -- -------------------------------------------------------
 

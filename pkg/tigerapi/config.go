@@ -186,7 +186,6 @@ func (c Config) toSDKOptions() []tigerconfig.Option {
 		tigerconfig.WithPrivateKey(c.PrivateKey),
 		tigerconfig.WithAccount(c.Account),
 		tigerconfig.WithLicense(c.License),
-		tigerconfig.WithSandboxDebug(c.sandboxDebug()),
 		tigerconfig.WithEnableDynamicDomain(c.EnableDynamicDomain),
 	}
 	if c.Language != "" {
@@ -200,6 +199,9 @@ func (c Config) toSDKOptions() []tigerconfig.Option {
 	}
 	if c.Token != "" {
 		opts = append(opts, tigerconfig.WithToken(c.Token))
+	}
+	if c.DeviceID != "" {
+		opts = append(opts, tigerconfig.WithDeviceID(c.DeviceID))
 	}
 	return opts
 }

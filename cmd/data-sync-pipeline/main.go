@@ -543,6 +543,7 @@ func defaultPipelineConfig() pipelineConfig {
 			"fmp_crypto_spot":        {Enabled: true, ResolveAtStartup: true, BatchSize: 50000, Interval: string(fmp.Interval1Min)},
 			"fmp_forex":              {Enabled: true, ResolveAtStartup: true, BatchSize: 50000, Interval: string(fmp.Interval1Min)},
 			"fmp_us_stocks":          {Enabled: true, DependsOn: []string{"polygon_us_flatfiles"}, ResolveAtStartup: true, IncludeOptionGapMappings: true, BatchSize: 50000, Interval: string(fmp.Interval1Min)},
+			"fmp_us_stock_splits":    {Enabled: true, DependsOn: []string{"fmp_us_stocks"}, ResolveAtStartup: true, BatchSize: 1000, OverlapDays: 3, ColdStartFloor: "1990-01-01"},
 			"fmp_us_fundamentals":    {Enabled: true, DependsOn: []string{"fmp_us_stocks"}, Provider: "fmp", Workers: 2, BatchSize: 1000, PageSize: 251, QPS: 10, FMPQuarterLimit: 40, IncrementalMode: "sec-filings-financials", DiscoveryPageSize: 250, DiscoveryPageLimit: 0},
 			"fmp_etf_fundamentals":   {Enabled: true, DependsOn: []string{"fmp_us_fundamentals"}, Symbols: []string{"SPY", "IWM", "NDX", "FIX", "KWEB"}, SymbolMappings: map[string]string{"NDX": "QQQ"}, BatchSize: 1000, QPS: 10, MinCoverage: 0.8},
 			"polygon_us_flatfiles":   {Enabled: true, BatchSize: 100000, Workers: 2, RiskFreeRate: 0.05, SyncStocks: false},
@@ -592,6 +593,10 @@ func normalizePipelineConfig(cfg *pipelineConfig) error {
 	if job, ok := cfg.Jobs["fmp_us_fundamentals"]; ok && job.Enabled {
 		job.DependsOn = replaceDependency(job.DependsOn, "fmp_us_stocks", stockDependency)
 		cfg.Jobs["fmp_us_fundamentals"] = job
+	}
+	if job, ok := cfg.Jobs["fmp_us_stock_splits"]; ok && job.Enabled {
+		job.DependsOn = replaceDependency(job.DependsOn, "fmp_us_stocks", stockDependency)
+		cfg.Jobs["fmp_us_stock_splits"] = job
 	}
 	for _, name := range []string{"fmp_sp500_macro", "fmp_nasdaq100_macro"} {
 		if job, ok := cfg.Jobs[name]; ok && job.Enabled {
@@ -712,6 +717,8 @@ func buildSyncer(runtimeCfg config.Runtime, name string, job jobConfig, apiKey, 
 		return pipelinejobs.NewFMPForex(pipelinejobs.FMPForexConfig{APIKey: apiKey, Symbols: job.Symbols, SymbolsFile: job.SymbolsFile, ResolveAtStartup: job.ResolveAtStartup, LimitSymbols: job.LimitSymbols, Interval: fmp.IntradayInterval(job.Interval), BatchSize: job.BatchSize, ColdStartFloorUTC: parseColdStart(job.ColdStartFloor)})
 	case "fmp_us_stocks":
 		return pipelinejobs.NewFMPUSStocks(pipelinejobs.FMPUSStocksConfig{APIKey: apiKey, Symbols: job.Symbols, ResolveAtStartup: job.ResolveAtStartup, IncludeOptionGapMappings: job.IncludeOptionGapMappings, LimitSymbols: job.LimitSymbols, Interval: fmp.IntradayInterval(job.Interval), BatchSize: job.BatchSize, ColdStartFloorUTC: parseColdStart(job.ColdStartFloor)})
+	case "fmp_us_stock_splits":
+		return pipelinejobs.NewFMPUSStockSplits(pipelinejobs.FMPUSStockSplitsConfig{APIKey: apiKey, Symbols: job.Symbols, ResolveAtStartup: job.ResolveAtStartup, IncludeOptionGapMappings: job.IncludeOptionGapMappings, LimitSymbols: job.LimitSymbols, BatchSize: job.BatchSize, ColdStartFloorUTC: parseColdStart(job.ColdStartFloor)})
 	case "fmp_us_fundamentals":
 		return pipelinejobs.NewFMPUSFundamentals(pipelinejobs.FMPUSFundamentalsConfig{Provider: usmarket.NewFMPPEBackfillProvider(apiKey, job.FMPQuarterLimit), DSN: dsn, Symbols: job.Symbols, IncrementalMode: job.IncrementalMode, DiscoveryPageSize: job.DiscoveryPageSize, DiscoveryPageLimit: job.DiscoveryPageLimit, Workers: job.Workers, BatchSize: job.BatchSize, PageSize: job.PageSize, QPS: job.QPS, LimitSymbols: job.LimitSymbols, DistributedLimiter: limiterCfg, ColdStartFloorUTC: parseColdStart(job.ColdStartFloor)})
 	case "fmp_etf_fundamentals":
@@ -787,7 +794,7 @@ func initSelectedSchemas(ctx context.Context, conn driver.Conn, cfg pipelineConf
 			continue
 		}
 		switch name {
-		case "fmp_us_stocks", "polygon_us_flatfiles", "polygon_us_greeks", "guru_macro", "fmp_sp500_macro", "fmp_nasdaq100_macro":
+		case "fmp_us_stocks", "fmp_us_stock_splits", "polygon_us_flatfiles", "polygon_us_greeks", "guru_macro", "fmp_sp500_macro", "fmp_nasdaq100_macro":
 			needsUSMarket = true
 		case "feature_store_backfill":
 			needsFeatureStore = true
@@ -1065,6 +1072,8 @@ func snapshotTargetsForJob(spec syncpipeline.JobSpec) []snapshotTarget {
 		return []snapshotTarget{{Dataset: "forex", Table: "forex_bar_1m", DateExpr: "market_date"}}
 	case "fmp_us_stocks":
 		return []snapshotTarget{{Dataset: "US stocks", Table: "us_stocks_bar_1m", DateExpr: "market_date"}}
+	case "fmp_us_stock_splits":
+		return []snapshotTarget{{Dataset: "US stock splits", Table: "us_stock_splits", DateExpr: "split_date"}}
 	case "fmp_us_fundamentals":
 		return []snapshotTarget{{Dataset: "US fundamentals", Table: "fundamental_observation", DateExpr: "event_ts", WhereSQL: "market = {market:String} AND factor_code IN ('pe','pb')", Args: []any{clickhouse.Named("market", "us-stocks")}, Qualifier: "pe/pb"}}
 	case "guru_macro":

@@ -222,24 +222,7 @@ func NewFMPUSStocks(cfg FMPUSStocksConfig) (syncpipeline.Syncer, error) {
 
 func (s *fmpUSStocks) Name() string { return "fmp_us_stocks" }
 func (s *fmpUSStocks) SourceKeys(ctx context.Context, conn driver.Conn) ([]string, error) {
-	targets, err := usmarket.ResolveUSStockSyncTargets(ctx, conn, s.cfg.Symbols, s.cfg.LimitSymbols, len(s.cfg.Symbols) == 0 && s.cfg.IncludeOptionGapMappings)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]string, 0, len(targets))
-	seen := map[string]struct{}{}
-	for _, target := range targets {
-		symbol := strings.ToUpper(strings.TrimSpace(target.StoreSymbol))
-		if symbol == "" {
-			continue
-		}
-		if _, ok := seen[symbol]; ok {
-			continue
-		}
-		seen[symbol] = struct{}{}
-		out = append(out, symbol)
-	}
-	return out, nil
+	return resolveUSStockSourceKeys(ctx, conn, s.cfg.Symbols, s.cfg.LimitSymbols, len(s.cfg.Symbols) == 0 && s.cfg.IncludeOptionGapMappings)
 }
 func (s *fmpUSStocks) ResolveCursor(ctx context.Context, conn driver.Conn, sourceKey string) (time.Time, bool, error) {
 	return queryLatestDate(ctx, conn, "us_stocks_bar_1m", "market_date", "symbol = {symbol:String}", clickhouse.Named("symbol", strings.ToUpper(strings.TrimSpace(sourceKey))))
@@ -257,6 +240,67 @@ func (s *fmpUSStocks) AuditTargets(sourceKey string) []syncpipeline.AuditTarget 
 	return []syncpipeline.AuditTarget{{Table: "us_stocks_bar_1m", DateColumn: "market_date", KeyColumns: []string{"timestamp", "symbol"}, SourceFilter: fmt.Sprintf("symbol = '%s'", escapeStringLiteral(strings.ToUpper(strings.TrimSpace(sourceKey))))}}
 }
 func (s *fmpUSStocks) MaxConcurrency() int { return 4 }
+
+type FMPUSStockSplitsConfig struct {
+	APIKey                   string
+	Symbols                  []string
+	ResolveAtStartup         bool
+	IncludeOptionGapMappings bool
+	LimitSymbols             int
+	BatchSize                int
+	ColdStartFloorUTC        time.Time
+}
+
+type fmpUSStockSplits struct{ cfg FMPUSStockSplitsConfig }
+
+func NewFMPUSStockSplits(cfg FMPUSStockSplitsConfig) (syncpipeline.Syncer, error) {
+	if strings.TrimSpace(cfg.APIKey) == "" {
+		return nil, fmt.Errorf("fmp_us_stock_splits: APIKey is required")
+	}
+	cfg.Symbols = normalizeSymbols(cfg.Symbols)
+	if len(cfg.Symbols) == 0 && !cfg.ResolveAtStartup {
+		return nil, fmt.Errorf("fmp_us_stock_splits: Symbols is empty and ResolveAtStartup is false")
+	}
+	if cfg.BatchSize <= 0 {
+		cfg.BatchSize = 1000
+	}
+	if cfg.ColdStartFloorUTC.IsZero() {
+		cfg.ColdStartFloorUTC = time.Date(1990, 1, 1, 0, 0, 0, 0, time.UTC)
+	}
+	return &fmpUSStockSplits{cfg: cfg}, nil
+}
+
+func (s *fmpUSStockSplits) Name() string { return "fmp_us_stock_splits" }
+func (s *fmpUSStockSplits) SourceKeys(ctx context.Context, conn driver.Conn) ([]string, error) {
+	return resolveUSStockSourceKeys(ctx, conn, s.cfg.Symbols, s.cfg.LimitSymbols, len(s.cfg.Symbols) == 0 && s.cfg.IncludeOptionGapMappings)
+}
+func (s *fmpUSStockSplits) ResolveCursor(ctx context.Context, conn driver.Conn, sourceKey string) (time.Time, bool, error) {
+	normalizedSource := strings.ToUpper(strings.TrimSpace(sourceKey))
+	latest, ok, err := queryLatestSuccessfulLedgerDate(ctx, conn, s.Name(), normalizedSource)
+	if err != nil || !ok {
+		latest, ok, err = queryLatestDate(ctx, conn, "us_stock_splits", "updated_at", "symbol = {symbol:String}", clickhouse.Named("symbol", normalizedSource))
+		if err != nil || !ok {
+			return latest, ok, err
+		}
+	}
+	if !latest.Before(time.Now().UTC().AddDate(0, 0, -3)) {
+		return time.Now().UTC(), true, nil
+	}
+	return latest, true, nil
+}
+func (s *fmpUSStockSplits) ColdStartFloor(string) time.Time { return s.cfg.ColdStartFloorUTC }
+func (s *fmpUSStockSplits) Sync(ctx context.Context, conn driver.Conn, req syncpipeline.SyncRequest) (syncpipeline.SyncResult, error) {
+	targets, err := usmarket.ResolveUSStockSyncTargets(ctx, conn, []string{req.SourceKey}, 0, false)
+	if err != nil {
+		return syncpipeline.SyncResult{}, err
+	}
+	res, err := usmarket.SyncFMPStockSplits(ctx, conn, usmarket.FMPStockSplitsSyncConfig{APIKey: s.cfg.APIKey, Targets: targets, BatchSize: s.cfg.BatchSize, DryRun: req.DryRun})
+	return syncResult(req, res.RowsInserted), err
+}
+func (s *fmpUSStockSplits) AuditTargets(sourceKey string) []syncpipeline.AuditTarget {
+	return []syncpipeline.AuditTarget{{Table: "us_stock_splits", DateColumn: "split_date", KeyColumns: []string{"symbol", "split_date"}, SourceFilter: fmt.Sprintf("symbol = '%s'", escapeStringLiteral(strings.ToUpper(strings.TrimSpace(sourceKey))))}}
+}
+func (s *fmpUSStockSplits) MaxConcurrency() int { return 4 }
 
 type FMPUSFundamentalsConfig struct {
 	Provider           usmarket.PEBackfillProvider
@@ -343,14 +387,14 @@ func (s *fmpETFFundamentals) ResolveCursor(ctx context.Context, conn driver.Conn
 }
 func (s *fmpETFFundamentals) ColdStartFloor(string) time.Time { return s.cfg.ColdStartFloorUTC }
 func (s *fmpETFFundamentals) Sync(ctx context.Context, conn driver.Conn, req syncpipeline.SyncRequest) (syncpipeline.SyncResult, error) {
-	symbols := make([]string, 0, len(s.cfg.Symbols))
-	for _, symbol := range s.cfg.Symbols {
-		fetch := strings.ToUpper(strings.TrimSpace(symbol))
-		if mapped := strings.TrimSpace(s.cfg.SymbolMappings[fetch]); mapped != "" {
-			fetch = strings.ToUpper(mapped)
-		}
-		symbols = append(symbols, fetch)
+	targets, err := usmarket.ResolveUSStockSyncTargetsWithOptions(ctx, conn, s.cfg.Symbols, 0, usmarket.USStockSyncTargetResolverOptions{
+		Provider:       usmarket.USStockSyncTargetProviderFMP,
+		FetchOverrides: s.cfg.SymbolMappings,
+	})
+	if err != nil {
+		return syncpipeline.SyncResult{}, err
 	}
+	symbols := usmarket.FetchSymbolsFromSyncTargets(targets)
 	res, err := usmarket.BackfillUSStockPE(ctx, usmarket.USFundamentalsBackfillConfig{Conn: conn, DSN: s.cfg.DSN, Provider: usmarket.NewFMPPEBackfillProvider(s.cfg.APIKey, 40), StartDate: req.From, EndDate: req.To, Symbols: symbols, Workers: 1, BatchSize: s.cfg.BatchSize, PageSize: 251, QPS: s.cfg.QPS, DryRun: req.DryRun, DistributedLimiter: s.cfg.DistributedLimiter})
 	return syncResult(req, res.InsertedRows), err
 }
@@ -824,6 +868,26 @@ func queryLatestDate(ctx context.Context, conn driver.Conn, table, dateExpr, whe
 	return parsed.UTC(), true, nil
 }
 
+func queryLatestSuccessfulLedgerDate(ctx context.Context, conn driver.Conn, importerName, sourceKey string) (time.Time, bool, error) {
+	query := `SELECT toString(ifNull(maxOrNull(toDate(completed_at)), toDate('1970-01-01')))
+FROM import_ledger FINAL
+WHERE importer_name = {importer_name:String}
+  AND source_key = {source_key:String}
+  AND status = 'success'`
+	var latest string
+	if err := conn.QueryRow(ctx, query, clickhouse.Named("importer_name", strings.TrimSpace(importerName)), clickhouse.Named("source_key", strings.TrimSpace(sourceKey))).Scan(&latest); err != nil {
+		return time.Time{}, false, err
+	}
+	if latest == "" || latest == "1970-01-01" {
+		return time.Time{}, false, nil
+	}
+	parsed, err := time.Parse("2006-01-02", latest)
+	if err != nil {
+		return time.Time{}, false, err
+	}
+	return parsed.UTC(), true, nil
+}
+
 func queryDistinctSymbols(ctx context.Context, conn driver.Conn, table, column string, limit int, suffix string) ([]string, error) {
 	query := fmt.Sprintf("SELECT %s FROM %s GROUP BY %s ORDER BY %s", column, table, column, column)
 	if limit > 0 {
@@ -867,6 +931,27 @@ func normalizeSymbols(symbols []string) []string {
 		out = append(out, symbol)
 	}
 	return out
+}
+
+func resolveUSStockSourceKeys(ctx context.Context, conn driver.Conn, symbols []string, limit int, includeOptionGapMappings bool) ([]string, error) {
+	targets, err := usmarket.ResolveUSStockSyncTargets(ctx, conn, symbols, limit, includeOptionGapMappings)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(targets))
+	seen := map[string]struct{}{}
+	for _, target := range targets {
+		symbol := strings.ToUpper(strings.TrimSpace(target.StoreSymbol))
+		if symbol == "" {
+			continue
+		}
+		if _, ok := seen[symbol]; ok {
+			continue
+		}
+		seen[symbol] = struct{}{}
+		out = append(out, symbol)
+	}
+	return out, nil
 }
 
 func syncResult(req syncpipeline.SyncRequest, rows int64) syncpipeline.SyncResult {

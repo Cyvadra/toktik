@@ -65,3 +65,23 @@ func TestFMPForexSourceKeysPrefersExplicitSymbols(t *testing.T) {
 		t.Fatalf("SourceKeys = %#v, want %#v", keys, want)
 	}
 }
+
+func TestFMPUSStockSplitsSourceKeysPrefersExplicitSymbols(t *testing.T) {
+	syncer, err := NewFMPUSStockSplits(FMPUSStockSplitsConfig{
+		APIKey:           "test-key",
+		Symbols:          []string{"aapl", "MSFT", "aapl"},
+		ResolveAtStartup: true,
+	})
+	if err != nil {
+		t.Fatalf("NewFMPUSStockSplits returned error: %v", err)
+	}
+
+	keys, err := syncer.SourceKeys(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("SourceKeys returned error: %v", err)
+	}
+	want := []string{"AAPL", "MSFT"}
+	if !reflect.DeepEqual(keys, want) {
+		t.Fatalf("SourceKeys = %#v, want %#v", keys, want)
+	}
+}
