@@ -121,6 +121,7 @@ type USFundamentalsBackfillConfig struct {
 	StartDate          time.Time
 	EndDate            time.Time
 	Symbols            []string
+	Targets            []FMPStockSyncTarget
 	IncrementalMode    string
 	DiscoveryPageSize  int
 	DiscoveryPageLimit int
@@ -170,6 +171,11 @@ type usFundamentalsBackfillStats struct {
 	InsertedRows  int
 	SkippedRows   int
 	Diagnostics   PEFetchDiagnostics
+}
+
+type fundamentalsSymbolTarget struct {
+	StoreSymbol string
+	FetchSymbol string
 }
 
 type fundamentalObservationKey struct {
@@ -714,10 +720,12 @@ func BackfillUSStockPE(ctx context.Context, cfg USFundamentalsBackfillConfig) (U
 	}
 
 	var discovery fmpFundamentalsDiscoveryResult
-	var symbols []string
+	var targets []fundamentalsSymbolTarget
 	var err error
 	hasExistingFMPFundamentals := false
-	if incrementalMode != "" && strings.EqualFold(cfg.Provider.Name(), "fmp") && len(cfg.Symbols) == 0 {
+	if len(cfg.Targets) > 0 {
+		targets = normalizeFundamentalsSymbolTargets(cfg.Targets)
+	} else if incrementalMode != "" && strings.EqualFold(cfg.Provider.Name(), "fmp") && len(cfg.Symbols) == 0 {
 		hasExistingFMPFundamentals, err = hasExistingFMPFundamentalObservations(ctx, cfg.Conn)
 		if err != nil {
 			return USFundamentalsBackfillResult{}, err
@@ -731,31 +739,35 @@ func BackfillUSStockPE(ctx context.Context, cfg USFundamentalsBackfillConfig) (U
 			if err != nil {
 				return USFundamentalsBackfillResult{}, err
 			}
-			symbols = discovery.Symbols
-			log.Printf("FMP fundamentals discovery mode=%s pages=%d rows=%d candidates=%d skipped_fresh=%d tasks=%d", discovery.Mode, discovery.PagesFetched, discovery.RowsScanned, discovery.CandidateSymbols, discovery.SkippedFresh, len(symbols))
+			targets = buildFundamentalsSymbolTargets(discovery.Symbols)
+			log.Printf("FMP fundamentals discovery mode=%s pages=%d rows=%d candidates=%d skipped_fresh=%d tasks=%d", discovery.Mode, discovery.PagesFetched, discovery.RowsScanned, discovery.CandidateSymbols, discovery.SkippedFresh, len(targets))
 		} else {
 			log.Printf("FMP fundamentals discovery disabled for cold start: no existing FMP PE/PB observations")
+			var symbols []string
 			symbols, err = ResolveUSStockSymbols(ctx, cfg.Conn, cfg.Symbols, cfg.LimitSymbols)
 			if err != nil {
 				return USFundamentalsBackfillResult{}, err
 			}
+			targets = buildFundamentalsSymbolTargets(symbols)
 		}
 	} else {
+		var symbols []string
 		symbols, err = ResolveUSStockSymbols(ctx, cfg.Conn, cfg.Symbols, cfg.LimitSymbols)
 		if err != nil {
 			return USFundamentalsBackfillResult{}, err
 		}
+		targets = buildFundamentalsSymbolTargets(symbols)
 	}
 	filteredSymbols := int64(0)
 	if strings.EqualFold(cfg.Provider.Name(), "fmp") {
-		originalCount := len(symbols)
-		symbols = filterFMPFundamentalSymbols(symbols)
-		if dropped := originalCount - len(symbols); dropped > 0 {
+		originalCount := len(targets)
+		targets = filterFMPFundamentalTargets(targets)
+		if dropped := originalCount - len(targets); dropped > 0 {
 			filteredSymbols = int64(dropped)
 			log.Printf("Filtered %d non-common-share symbols from FMP fundamentals universe", dropped)
 		}
 	}
-	if len(symbols) == 0 {
+	if len(targets) == 0 {
 		return USFundamentalsBackfillResult{FilteredSymbols: filteredSymbols, DiscoveryPages: int64(discovery.PagesFetched), DiscoveryRows: int64(discovery.RowsScanned), DiscoverySymbols: int64(discovery.CandidateSymbols), SkippedFresh: int64(discovery.SkippedFresh)}, nil
 	}
 
@@ -773,13 +785,13 @@ func BackfillUSStockPE(ctx context.Context, cfg USFundamentalsBackfillConfig) (U
 		}
 	}
 
-	log.Printf("Found %d US symbols to backfill fundamentals between %s and %s using provider=%s", len(symbols), cfg.StartDate.Format("2006-01-02"), cfg.EndDate.Format("2006-01-02"), cfg.Provider.Name())
+	log.Printf("Found %d US symbols to backfill fundamentals between %s and %s using provider=%s", len(targets), cfg.StartDate.Format("2006-01-02"), cfg.EndDate.Format("2006-01-02"), cfg.Provider.Name())
 	fetchStartDate := cfg.StartDate
 	if !discovery.MinPeriodDate.IsZero() && discovery.MinPeriodDate.Before(fetchStartDate) {
 		fetchStartDate = discovery.MinPeriodDate
 	}
 
-	taskCh := make(chan string)
+	taskCh := make(chan fundamentalsSymbolTarget)
 	var (
 		wg               sync.WaitGroup
 		processedSymbols int64
@@ -805,32 +817,32 @@ func BackfillUSStockPE(ctx context.Context, cfg USFundamentalsBackfillConfig) (U
 			workerConn, err := ConnectClickHouse(ctx, cfg.DSN)
 			if err != nil {
 				log.Printf("[ERROR] worker %d connect ClickHouse: %v", workerID, err)
-				atomic.AddInt64(&failedSymbols, int64(len(symbols)))
+				atomic.AddInt64(&failedSymbols, int64(len(targets)))
 				return
 			}
 
 			providerWorker, err := cfg.Provider.NewWorker(ctx)
 			if err != nil {
 				log.Printf("[ERROR] worker %d init provider %s: %v", workerID, cfg.Provider.Name(), err)
-				atomic.AddInt64(&failedSymbols, int64(len(symbols)))
+				atomic.AddInt64(&failedSymbols, int64(len(targets)))
 				return
 			}
 
-			for symbol := range taskCh {
-				stats, err := backfillUSStockSymbolPE(ctx, workerConn, providerWorker, symbol, fetchStartDate, cfg.EndDate, cfg.PageSize, cfg.BatchSize, limiter, cfg.DryRun)
+			for task := range taskCh {
+				stats, err := backfillUSStockSymbolPE(ctx, workerConn, providerWorker, task.StoreSymbol, task.FetchSymbol, fetchStartDate, cfg.EndDate, cfg.PageSize, cfg.BatchSize, limiter, cfg.DryRun)
 				if err != nil {
-					log.Printf("[ERROR] %s: %v", symbol, err)
+					log.Printf("[ERROR] %s <= %s: %v", task.StoreSymbol, task.FetchSymbol, err)
 					atomic.AddInt64(&failedSymbols, 1)
 					if fmp.IsHTTPStatus(err, http.StatusTooManyRequests) {
 						throttledMu.Lock()
-						throttledSymbols[symbol] = struct{}{}
+						throttledSymbols[task.StoreSymbol] = struct{}{}
 						throttledMu.Unlock()
 						cooldown := fmp.RetryAfterDelay(err)
 						if cooldown <= 0 {
 							cooldown = 30 * time.Second
 						}
 						if backoffErr := limiter.Backoff(ctx, cooldown); backoffErr != nil {
-							log.Printf("[WARN] %s: apply FMP limiter backoff: %v", symbol, backoffErr)
+							log.Printf("[WARN] %s <= %s: apply FMP limiter backoff: %v", task.StoreSymbol, task.FetchSymbol, backoffErr)
 						}
 					}
 					if strings.Contains(strings.ToLower(err.Error()), "decode response") {
@@ -853,9 +865,10 @@ func BackfillUSStockPE(ctx context.Context, cfg USFundamentalsBackfillConfig) (U
 				if cfg.DryRun {
 					mode = "DRYRUN"
 				}
-				log.Printf("[%s] %s: scanned_bars=%d candidate_rows=%d inserted_rows=%d skipped_rows=%d",
+				log.Printf("[%s] %s <= %s: scanned_bars=%d candidate_rows=%d inserted_rows=%d skipped_rows=%d",
 					mode,
-					symbol,
+					task.StoreSymbol,
+					task.FetchSymbol,
 					stats.ScannedBars,
 					stats.CandidateRows,
 					stats.InsertedRows,
@@ -865,8 +878,8 @@ func BackfillUSStockPE(ctx context.Context, cfg USFundamentalsBackfillConfig) (U
 		}(i + 1)
 	}
 
-	for _, symbol := range symbols {
-		taskCh <- symbol
+	for _, target := range targets {
+		taskCh <- target
 	}
 	close(taskCh)
 	wg.Wait()
@@ -1100,8 +1113,8 @@ func ensureFundamentalFactorCatalogRow(ctx context.Context, conn driver.Conn, fa
 	return nil
 }
 
-func backfillUSStockSymbolPE(ctx context.Context, conn driver.Conn, worker PEBackfillWorker, symbol string, startDate, endDate time.Time, pageSize, batchSize int, limiter backfillRateLimiter, dryRun bool) (usFundamentalsBackfillStats, error) {
-	fetched, err := worker.FetchSymbolPE(ctx, symbol, startDate, endDate, pageSize, limiter)
+func backfillUSStockSymbolPE(ctx context.Context, conn driver.Conn, worker PEBackfillWorker, storeSymbol, fetchSymbol string, startDate, endDate time.Time, pageSize, batchSize int, limiter backfillRateLimiter, dryRun bool) (usFundamentalsBackfillStats, error) {
+	fetched, err := worker.FetchSymbolPE(ctx, fetchSymbol, startDate, endDate, pageSize, limiter)
 	if err != nil {
 		return usFundamentalsBackfillStats{}, err
 	}
@@ -1115,8 +1128,9 @@ func backfillUSStockSymbolPE(ctx context.Context, conn driver.Conn, worker PEBac
 	if len(observations) == 0 {
 		return stats, nil
 	}
+	rebindFundamentalObservationSymbols(observations, storeSymbol)
 
-	existing, err := loadExistingFundamentalObservations(ctx, conn, symbol, observations[0].Source, startDate, endDate.AddDate(0, 0, 1))
+	existing, err := loadExistingFundamentalObservations(ctx, conn, storeSymbol, observations[0].Source, startDate, endDate.AddDate(0, 0, 1))
 	if err != nil {
 		return stats, err
 	}
@@ -1134,6 +1148,47 @@ func backfillUSStockSymbolPE(ctx context.Context, conn driver.Conn, worker PEBac
 	}
 	stats.InsertedRows = int(inserted)
 	return stats, nil
+}
+
+func buildFundamentalsSymbolTargets(symbols []string) []fundamentalsSymbolTarget {
+	targets := make([]fundamentalsSymbolTarget, 0, len(symbols))
+	for _, symbol := range symbols {
+		normalized := strings.ToUpper(strings.TrimSpace(symbol))
+		if normalized == "" {
+			continue
+		}
+		targets = append(targets, fundamentalsSymbolTarget{StoreSymbol: normalized, FetchSymbol: normalized})
+	}
+	return targets
+}
+
+func normalizeFundamentalsSymbolTargets(targets []FMPStockSyncTarget) []fundamentalsSymbolTarget {
+	normalizedTargets := NormalizeUSStockSyncTargets(targets)
+	out := make([]fundamentalsSymbolTarget, 0, len(normalizedTargets))
+	for _, target := range normalizedTargets {
+		out = append(out, fundamentalsSymbolTarget{StoreSymbol: target.StoreSymbol, FetchSymbol: target.FetchSymbol})
+	}
+	return out
+}
+
+func filterFMPFundamentalTargets(targets []fundamentalsSymbolTarget) []fundamentalsSymbolTarget {
+	filtered := make([]fundamentalsSymbolTarget, 0, len(targets))
+	for _, target := range targets {
+		if isFMPFundamentalSymbolSupported(target.FetchSymbol) {
+			filtered = append(filtered, target)
+		}
+	}
+	return filtered
+}
+
+func rebindFundamentalObservationSymbols(observations []fundamentalObservationInsert, symbol string) {
+	normalized := strings.ToUpper(strings.TrimSpace(symbol))
+	if normalized == "" {
+		return
+	}
+	for index := range observations {
+		observations[index].Symbol = normalized
+	}
 }
 
 // fetchTigerStockPEBars is intentionally Tiger-specific. The provider

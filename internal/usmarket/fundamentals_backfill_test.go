@@ -110,6 +110,43 @@ func TestResolveUSStockSymbolsExplicitUsesStoreSymbolsFromTargets(t *testing.T) 
 	}
 }
 
+func TestNormalizeFundamentalsSymbolTargetsPreservesStoreFetchSemantics(t *testing.T) {
+	got := normalizeFundamentalsSymbolTargets([]FMPStockSyncTarget{{StoreSymbol: "NDX", FetchSymbol: "QQQ"}, {StoreSymbol: "ndx", FetchSymbol: "^IXIC"}, {StoreSymbol: "SPY"}})
+	if len(got) != 2 {
+		t.Fatalf("expected 2 targets, got %d: %#v", len(got), got)
+	}
+	if got[0].StoreSymbol != "NDX" || got[0].FetchSymbol != "QQQ" {
+		t.Fatalf("unexpected first target: %#v", got[0])
+	}
+	if got[1].StoreSymbol != "SPY" || got[1].FetchSymbol != "SPY" {
+		t.Fatalf("unexpected second target: %#v", got[1])
+	}
+}
+
+func TestFilterFMPFundamentalTargetsUsesFetchSymbolSupport(t *testing.T) {
+	targets := []fundamentalsSymbolTarget{
+		{StoreSymbol: "NDX", FetchSymbol: "QQQ"},
+		{StoreSymbol: "AAC.U", FetchSymbol: "AAC.U"},
+	}
+	filtered := filterFMPFundamentalTargets(targets)
+	if len(filtered) != 1 {
+		t.Fatalf("expected 1 target after filter, got %d: %#v", len(filtered), filtered)
+	}
+	if filtered[0].StoreSymbol != "NDX" || filtered[0].FetchSymbol != "QQQ" {
+		t.Fatalf("unexpected filtered target: %#v", filtered[0])
+	}
+}
+
+func TestRebindFundamentalObservationSymbols(t *testing.T) {
+	rows := []fundamentalObservationInsert{{Symbol: "QQQ", FactorCode: usStocksPEFactorCode}, {Symbol: "QQQ", FactorCode: usStocksPBFactorCode}}
+	rebindFundamentalObservationSymbols(rows, " ndx ")
+	for _, row := range rows {
+		if row.Symbol != "NDX" {
+			t.Fatalf("expected symbol to be rebound to NDX, got %#v", rows)
+		}
+	}
+}
+
 func TestNormalizeFMPDiscoveryPageLimit(t *testing.T) {
 	if got := normalizeFMPDiscoveryPageLimit(0); got != maxFMPDiscoveryPages {
 		t.Fatalf("expected zero to use max discovery pages, got %d", got)

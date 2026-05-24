@@ -19,7 +19,6 @@ import (
 // session classification using the existing SessionMap pipeline.
 type FMPStockKlineSyncConfig struct {
 	APIKey    string
-	Symbols   []string
 	Targets   []FMPStockSyncTarget
 	From      time.Time // inclusive UTC date
 	To        time.Time // inclusive UTC date
@@ -49,10 +48,8 @@ func SyncFMPStockKlines(ctx context.Context, conn driver.Conn, cfg FMPStockKline
 	if cfg.APIKey == "" {
 		return FMPStockKlineSyncResult{}, fmt.Errorf("FMP API key is required")
 	}
-	if len(cfg.Symbols) == 0 {
-		if len(cfg.Targets) == 0 {
-			return FMPStockKlineSyncResult{}, fmt.Errorf("at least one symbol or target is required")
-		}
+	if len(cfg.Targets) == 0 {
+		return FMPStockKlineSyncResult{}, fmt.Errorf("at least one target is required")
 	}
 	if cfg.From.IsZero() || cfg.To.IsZero() || cfg.To.Before(cfg.From) {
 		return FMPStockKlineSyncResult{}, fmt.Errorf("from/to must be set and to >= from")
@@ -71,13 +68,7 @@ func SyncFMPStockKlines(ctx context.Context, conn driver.Conn, cfg FMPStockKline
 	client := fmp.New(cfg.APIKey)
 	var result FMPStockKlineSyncResult
 	throttled := make(map[string]struct{})
-	targets := cfg.Targets
-	if len(targets) == 0 {
-		targets = make([]FMPStockSyncTarget, 0, len(cfg.Symbols))
-		for _, symbol := range cfg.Symbols {
-			targets = append(targets, FMPStockSyncTarget{StoreSymbol: symbol, FetchSymbol: symbol, Source: "legacy-symbol"})
-		}
-	}
+	targets := NormalizeUSStockSyncTargets(cfg.Targets)
 
 	for _, target := range targets {
 		storeSymbol := strings.ToUpper(strings.TrimSpace(target.StoreSymbol))

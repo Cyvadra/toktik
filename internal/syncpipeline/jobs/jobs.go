@@ -394,8 +394,7 @@ func (s *fmpETFFundamentals) Sync(ctx context.Context, conn driver.Conn, req syn
 	if err != nil {
 		return syncpipeline.SyncResult{}, err
 	}
-	symbols := usmarket.FetchSymbolsFromSyncTargets(targets)
-	res, err := usmarket.BackfillUSStockPE(ctx, usmarket.USFundamentalsBackfillConfig{Conn: conn, DSN: s.cfg.DSN, Provider: usmarket.NewFMPPEBackfillProvider(s.cfg.APIKey, 40), StartDate: req.From, EndDate: req.To, Symbols: symbols, Workers: 1, BatchSize: s.cfg.BatchSize, PageSize: 251, QPS: s.cfg.QPS, DryRun: req.DryRun, DistributedLimiter: s.cfg.DistributedLimiter})
+	res, err := usmarket.BackfillUSStockPE(ctx, usmarket.USFundamentalsBackfillConfig{Conn: conn, DSN: s.cfg.DSN, Provider: usmarket.NewFMPPEBackfillProvider(s.cfg.APIKey, 40), StartDate: req.From, EndDate: req.To, Targets: targets, Workers: 1, BatchSize: s.cfg.BatchSize, PageSize: 251, QPS: s.cfg.QPS, DryRun: req.DryRun, DistributedLimiter: s.cfg.DistributedLimiter})
 	return syncResult(req, res.InsertedRows), err
 }
 func (s *fmpETFFundamentals) AuditTargets(string) []syncpipeline.AuditTarget {

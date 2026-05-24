@@ -84,3 +84,37 @@ func TestResolveUSStockSyncTargetsWithOptionsOverrideWinsAlias(t *testing.T) {
 		t.Fatalf("unexpected second target: %+v", targets[1])
 	}
 }
+
+func TestNormalizeUSStockSyncTargetsDeduplicatesByStoreAndUppercasesFetch(t *testing.T) {
+	targets := []FMPStockSyncTarget{
+		{StoreSymbol: " ndx ", FetchSymbol: "qqq", Source: "a"},
+		{StoreSymbol: "NDX", FetchSymbol: "^IXIC", Source: "b"},
+		{StoreSymbol: "spy", FetchSymbol: "", Source: "c"},
+	}
+	got := NormalizeUSStockSyncTargets(targets)
+	if len(got) != 2 {
+		t.Fatalf("expected 2 targets, got %d: %#v", len(got), got)
+	}
+	if got[0].StoreSymbol != "NDX" || got[0].FetchSymbol != "QQQ" || got[0].Source != "a" {
+		t.Fatalf("unexpected first target: %+v", got[0])
+	}
+	if got[1].StoreSymbol != "SPY" || got[1].FetchSymbol != "SPY" || got[1].Source != "c" {
+		t.Fatalf("unexpected second target: %+v", got[1])
+	}
+}
+
+func TestResolveUSStockSyncTargetsWithOptionsNormalizesOverrideKeys(t *testing.T) {
+	targets, err := ResolveUSStockSyncTargetsWithOptions(context.Background(), nil, []string{"NDX"}, 0, USStockSyncTargetResolverOptions{
+		Provider:       USStockSyncTargetProviderFMP,
+		FetchOverrides: map[string]string{" ndx ": " qqq "},
+	})
+	if err != nil {
+		t.Fatalf("resolve targets: %v", err)
+	}
+	if len(targets) != 1 {
+		t.Fatalf("expected 1 target, got %d: %#v", len(targets), targets)
+	}
+	if targets[0].FetchSymbol != "QQQ" {
+		t.Fatalf("expected normalized override fetch symbol QQQ, got %+v", targets[0])
+	}
+}
