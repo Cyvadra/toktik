@@ -60,8 +60,8 @@ func RelationFieldProfile(relation, field, fieldType, whereSQL string) string {
     %[4]s AS zero_count,
     %[5]s AS empty_count,
     toUInt64(uniqCombined64(%[2]s)) AS distinct_count,
-    min(%[2]s) AS min_value,
-    max(%[2]s) AS max_value
+	CAST(minOrNull(%[2]s), 'Nullable(String)') AS min_value,
+	CAST(maxOrNull(%[2]s), 'Nullable(String)') AS max_value
 FROM %[1]s%[3]s`, relation, field, whereSQL, zeroExpr, emptyExpr)
 }
 

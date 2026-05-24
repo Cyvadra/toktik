@@ -2,10 +2,12 @@ package service
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -205,7 +207,7 @@ func (s *DataBrowserService) QueryFieldProfile(ctx context.Context, req dto.Brow
 	resp := &dto.BrowserFieldProfileResponse{Dataset: describeBrowserDataset(spec), Field: req.Field, Type: column.Type}
 	if rows.Next() {
 		var zeroCount, emptyCount uint64
-		var minValue, maxValue any
+		var minValue, maxValue sql.NullString
 		if err := rows.Scan(&resp.RowCount, &resp.NullCount, &zeroCount, &emptyCount, &resp.DistinctCount, &minValue, &maxValue); err != nil {
 			return nil, err
 		}
@@ -215,8 +217,8 @@ func (s *DataBrowserService) QueryFieldProfile(ctx context.Context, req dto.Brow
 		if browserIsString(column.Type) {
 			resp.EmptyCount = &emptyCount
 		}
-		resp.Min = normalizeBrowserValue(minValue)
-		resp.Max = normalizeBrowserValue(maxValue)
+		resp.Min = decodeBrowserProfileValue(minValue, column.Type)
+		resp.Max = decodeBrowserProfileValue(maxValue, column.Type)
 	}
 	return resp, rows.Err()
 }
@@ -528,6 +530,19 @@ func normalizeBrowserValue(value any) any {
 	default:
 		return v
 	}
+}
+
+func decodeBrowserProfileValue(raw sql.NullString, columnType string) any {
+	if !raw.Valid {
+		return nil
+	}
+	if browserIsNumeric(columnType) {
+		value, err := strconv.ParseFloat(raw.String, 64)
+		if err == nil {
+			return value
+		}
+	}
+	return raw.String
 }
 
 func browserIsNumeric(t string) bool {

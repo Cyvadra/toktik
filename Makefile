@@ -3,9 +3,9 @@ BUILD_DIR := bin
 GOFLAGS := -trimpath
 LDFLAGS := -s -w
 
-`.PHONY: build-convert build-import build-missing-days build-kline-backfill build-kline-migrate-utc build-symbol-id-migrate build-volume-migrate build-api build-backtest-example build-backtest-portfolio build-backtest-btc-portfolio build-us-market-import build-feature-store-backfill web-install web-dev web-build swagger-docs export-market-api-md refresh-api-docs build-all build-win-arm clean
+`.PHONY: build-convert build-import build-missing-days build-kline-backfill build-kline-migrate-utc build-symbol-id-migrate build-volume-migrate build-api build-api-smoke build-backtest-example build-backtest-portfolio build-backtest-btc-portfolio build-us-market-import build-feature-store-backfill web-install web-dev web-build swagger-docs export-market-api-md refresh-api-docs build-all build-win-arm clean
 
-build-all: build-convert build-import build-missing-days build-kline-backfill build-kline-migrate-utc build-symbol-id-migrate build-volume-migrate build-api build-backtest-example build-backtest-portfolio build-us-market-import build-feature-store-backfill
+build-all: build-convert build-import build-missing-days build-kline-backfill build-kline-migrate-utc build-symbol-id-migrate build-volume-migrate build-api build-api-smoke build-backtest-example build-backtest-portfolio build-us-market-import build-feature-store-backfill
 
 build-convert:
 	@mkdir -p $(BUILD_DIR)
@@ -38,6 +38,10 @@ build-volume-migrate:
 build-api:
 	@mkdir -p $(BUILD_DIR)
 	go build $(GOFLAGS) -ldflags '$(LDFLAGS)' -o $(BUILD_DIR)/api-server ./cmd/api-server
+
+build-api-smoke:
+	@mkdir -p $(BUILD_DIR)
+	go build $(GOFLAGS) -ldflags '$(LDFLAGS)' -o $(BUILD_DIR)/api-smoke ./cmd/api-smoke
 
 build-backtest-example:
 	@mkdir -p $(BUILD_DIR)

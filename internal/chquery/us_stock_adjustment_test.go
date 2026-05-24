@@ -1,6 +1,9 @@
 package chquery
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestUSStockSplitPriceFactor(t *testing.T) {
 	tests := []struct {
@@ -20,5 +23,28 @@ func TestUSStockSplitPriceFactor(t *testing.T) {
 		if ok != tt.wantOK || got != tt.want {
 			t.Fatalf("%s: factor=%v ok=%v, want factor=%v ok=%v", tt.name, got, ok, tt.want, tt.wantOK)
 		}
+	}
+}
+
+func TestUSStockSplitJoinSQLUsesDistinctAggregateAliases(t *testing.T) {
+	query := USStockSplitJoinSQL("b", "sp")
+
+	if !strings.Contains(query, "argMax(numerator, updated_at) AS latest_numerator") {
+		t.Fatalf("expected latest_numerator alias in split query, got %q", query)
+	}
+	if !strings.Contains(query, "argMax(denominator, updated_at) AS latest_denominator") {
+		t.Fatalf("expected latest_denominator alias in split query, got %q", query)
+	}
+	if strings.Contains(query, "argMax(numerator, updated_at) AS numerator") {
+		t.Fatalf("unexpected aggregate alias reuse for numerator in split query: %q", query)
+	}
+	if strings.Contains(query, "argMax(denominator, updated_at) AS denominator") {
+		t.Fatalf("unexpected aggregate alias reuse for denominator in split query: %q", query)
+	}
+	if !strings.Contains(USStockSplitFactorSQL("sp"), "sp.latest_numerator") {
+		t.Fatalf("expected factor SQL to reference latest_numerator alias")
+	}
+	if !strings.Contains(USStockSplitFactorSQL("sp"), "sp.latest_denominator") {
+		t.Fatalf("expected factor SQL to reference latest_denominator alias")
 	}
 }

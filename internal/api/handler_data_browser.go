@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"reflect"
 
 	"github.com/Cyvadra/toktik/internal/dto"
 	"github.com/gin-gonic/gin"
@@ -216,13 +217,35 @@ func (h *Handler) GetBrowserDatasetValues(c *gin.Context) {
 }
 
 func bindBrowserRequest(c *gin.Context, req any) bool {
-	if err := c.ShouldBindUri(req); err != nil {
+	var pathReq dto.BrowserDatasetPathRequest
+	if err := c.ShouldBindUri(&pathReq); err != nil {
 		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: err.Error()})
+		return false
+	}
+	if !setBrowserDataset(req, pathReq.Dataset) {
+		c.JSON(http.StatusInternalServerError, dto.ErrorResponse{Error: "browser request missing dataset field"})
 		return false
 	}
 	if err := c.ShouldBindQuery(req); err != nil {
 		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: err.Error()})
 		return false
 	}
+	return true
+}
+
+func setBrowserDataset(req any, dataset string) bool {
+	value := reflect.ValueOf(req)
+	if value.Kind() != reflect.Pointer || value.IsNil() {
+		return false
+	}
+	elem := value.Elem()
+	if elem.Kind() != reflect.Struct {
+		return false
+	}
+	field := elem.FieldByName("Dataset")
+	if !field.IsValid() || !field.CanSet() || field.Kind() != reflect.String {
+		return false
+	}
+	field.SetString(dataset)
 	return true
 }

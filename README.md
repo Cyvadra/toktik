@@ -549,6 +549,21 @@ curl "http://localhost:9010/api/v1/markets/crypto-options/greeks?symbol=BTC-28MA
 curl "http://localhost:9010/api/v1/features/volatility-snapshot?market=us-options&underlying=SPY"
 ```
 
+**Run smoke checks against a live api-server:**
+```bash
+go run ./cmd/api-smoke --base-url http://localhost:9010
+```
+
+Useful variants:
+```bash
+go run ./cmd/api-smoke --list
+go run ./cmd/api-smoke --suite core,markets --verbose
+go run ./cmd/api-smoke --only us-stocks-bars,feature-volatility-snapshot
+go run ./cmd/api-smoke --base-url http://localhost:9010 --api-key "$TOKTIK_API_KEY"
+```
+
+The smoke checker sends real HTTP requests to the running server and validates status codes plus a few basic business invariants in the JSON payload. It is meant for regression checks after data syncs, schema changes, or query refactors.
+
 If the latest precomputed volatility row has empty fields, the API scans up to the prior 7 calendar days and returns the nearest valid volatility values.
 
 Sample response:
