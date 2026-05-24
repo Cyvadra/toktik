@@ -47,6 +47,60 @@ import (
 	"gorm.io/gorm"
 )
 
+type apiCoreServices struct {
+	fundamentals    *service.FundamentalsService
+	macro           *service.MacroService
+	financeCalendar *service.FinanceCalendarService
+	usStocks        *service.USStocksService
+	screener        *service.ScreenerService
+}
+
+func buildAPICoreServices(runtimeCfg config.Runtime, repo *chrepo.Repo, calendarRepo *calendarrepo.Repo, cacheStore cache.Store) (*apiCoreServices, error) {
+	fundamentalsSvc := service.NewFundamentalsService(repo)
+	macroSvc := service.NewMacroService(repo)
+	fmpAPIKey, err := runtimeCfg.FMPAPIKey()
+	if err != nil {
+		return nil, fmt.Errorf("read FMP api key: %w", err)
+	}
+	fmpClient := fmp.New(fmpAPIKey, fmp.WithCacheDir(runtimeCfg.FMP.CacheDir))
+	financeCalendarSvc := service.NewFinanceCalendarService(calendarRepo, fmpClient, cacheStore)
+	companyProfileProvider := service.NewCachedFMPUSStockCompanyProfileProvider(fmpAPIKey, cacheStore)
+
+	return &apiCoreServices{
+		fundamentals:    fundamentalsSvc,
+		macro:           macroSvc,
+		financeCalendar: financeCalendarSvc,
+		usStocks: service.NewUSStocksService(repo, fundamentalsSvc).
+			WithCompanyProfileProvider(companyProfileProvider),
+		screener: service.NewScreenerService(repo, cacheStore).
+			WithCompanyProfileProvider(companyProfileProvider),
+	}, nil
+}
+
+func buildAPIDeps(runtimeCfg config.Runtime, repo *chrepo.Repo, factorStore *feeds.Store, services *apiCoreServices, polygon api.PolygonProvider, stop chan struct{}) api.Deps {
+	return api.Deps{
+		Config:            runtimeCfg,
+		CryptoOptions:     service.NewCryptoOptionsService(repo),
+		USStocks:          services.usStocks,
+		USOptions:         service.NewUSOptionsService(repo),
+		Infra:             service.NewInfraService(repo),
+		DataBrowser:       service.NewDataBrowserService(repo),
+		Features:          service.NewFeatureService(repo),
+		Indicators:        service.NewIndicatorService(repo),
+		StrategyBacktests: service.NewPortfolioBacktestService(repo, factorStore),
+		CryptoSpot:        service.NewCryptoSpotService(repo),
+		Forex:             service.NewForexService(repo),
+		Screener:          services.screener,
+		StrategyCatalog:   service.NewStrategyCatalogService(),
+		Factors:           service.NewFactorService(factorStore),
+		Fundamentals:      services.fundamentals,
+		Macro:             services.macro,
+		FinanceCalendar:   services.financeCalendar,
+		Polygon:           polygon,
+		Stop:              stop,
+	}
+}
+
 func main() {
 	if err := run(); err != nil {
 		slog.Error("fatal", "error", err)
@@ -132,47 +186,19 @@ func run() error {
 	}()
 
 	repo := chrepo.NewRepo(conn)
-	fundamentalsSvc := service.NewFundamentalsService(repo)
-	macroSvc := service.NewMacroService(repo)
-	fmpAPIKey, err := runtimeCfg.FMPAPIKey()
+	apiServices, err := buildAPICoreServices(runtimeCfg, repo, calendarRepo, cacheStore)
 	if err != nil {
-		return fmt.Errorf("read FMP api key: %w", err)
-	}
-	fmpClient := fmp.New(fmpAPIKey, fmp.WithCacheDir(runtimeCfg.FMP.CacheDir))
-	financeCalendarSvc := service.NewFinanceCalendarService(calendarRepo, fmpClient, cacheStore)
-	companyProfileProvider := service.NewCachedFMPUSStockCompanyProfileProvider(fmpAPIKey, cacheStore)
-	usStocksSvc := service.NewUSStocksService(repo, fundamentalsSvc).
-		WithCompanyProfileProvider(companyProfileProvider)
-
-	deps := api.Deps{
-		Config:            runtimeCfg,
-		CryptoOptions:     service.NewCryptoOptionsService(repo),
-		USStocks:          usStocksSvc,
-		USOptions:         service.NewUSOptionsService(repo),
-		Infra:             service.NewInfraService(repo),
-		DataBrowser:       service.NewDataBrowserService(repo),
-		Features:          service.NewFeatureService(repo),
-		Indicators:        service.NewIndicatorService(repo),
-		StrategyBacktests: service.NewPortfolioBacktestService(repo, factorStore),
-		CryptoSpot:        service.NewCryptoSpotService(repo),
-		Forex:             service.NewForexService(repo),
-		Screener:          service.NewScreenerService(repo, cacheStore).WithCompanyProfileProvider(companyProfileProvider),
-		StrategyCatalog:   service.NewStrategyCatalogService(),
-		Factors:           service.NewFactorService(factorStore),
-		Fundamentals:      fundamentalsSvc,
-		Macro:             macroSvc,
-		FinanceCalendar:   financeCalendarSvc,
+		return err
 	}
 
 	polygonSvc, err := service.NewPolygonServiceFromConfig(runtimeCfg, cacheStore)
 	if err != nil {
 		return fmt.Errorf("init polygon service: %w", err)
 	}
-	deps.Polygon = polygonSvc
 
 	stop := make(chan struct{})
 	defer close(stop)
-	deps.Stop = stop
+	deps := buildAPIDeps(runtimeCfg, repo, factorStore, apiServices, polygonSvc, stop)
 
 	router := api.NewRouterFromDeps(deps)
 

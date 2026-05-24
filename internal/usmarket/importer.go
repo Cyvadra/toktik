@@ -286,12 +286,12 @@ func ImportOptionFile(ctx context.Context, dsn, path string, batchSize int, skip
 
 	rows, err := InsertOptionBars(ctx, conn, enrichedBarCh, batchSize)
 	if err != nil {
-		_ = ledger.MarkFailed(ctx, importledger.CompletionRequest{ImporterName: optionImporterName, SourceKey: sourceHash, ScopeKey: scopeKey, ImportID: importID, SourceHash: sourceHash, RowsInserted: importledger.NonNegativeRows(rows), ErrorMessage: err.Error()})
-		return rows, false, fmt.Errorf("insert: %w", err)
+		failure := importledger.RecordFailure(ctx, ledger, importledger.CompletionRequest{ImporterName: optionImporterName, SourceKey: sourceHash, ScopeKey: scopeKey, ImportID: importID, SourceHash: sourceHash, RowsInserted: importledger.NonNegativeRows(rows), ErrorMessage: err.Error()}, err)
+		return rows, false, fmt.Errorf("insert: %w", failure)
 	}
 	if *readErr != nil {
-		_ = ledger.MarkFailed(ctx, importledger.CompletionRequest{ImporterName: optionImporterName, SourceKey: sourceHash, ScopeKey: scopeKey, ImportID: importID, SourceHash: sourceHash, RowsInserted: importledger.NonNegativeRows(rows), ErrorMessage: (*readErr).Error()})
-		return rows, false, fmt.Errorf("read: %w", *readErr)
+		failure := importledger.RecordFailure(ctx, ledger, importledger.CompletionRequest{ImporterName: optionImporterName, SourceKey: sourceHash, ScopeKey: scopeKey, ImportID: importID, SourceHash: sourceHash, RowsInserted: importledger.NonNegativeRows(rows), ErrorMessage: (*readErr).Error()}, *readErr)
+		return rows, false, fmt.Errorf("read: %w", failure)
 	}
 	if *enrichWarn != nil {
 		log.Printf("[WARN] %s: %v", baseName, *enrichWarn)
@@ -357,12 +357,12 @@ func ImportStockFile(ctx context.Context, dsn, path string, batchSize int, skipE
 	sessionedBarCh := EnrichStockBarsWithSession(barCh, sessions)
 	rows, err := InsertStockBars(ctx, conn, sessionedBarCh, batchSize)
 	if err != nil {
-		_ = ledger.MarkFailed(ctx, importledger.CompletionRequest{ImporterName: stockImporterName, SourceKey: sourceHash, ScopeKey: scopeKey, ImportID: importID, SourceHash: sourceHash, RowsInserted: importledger.NonNegativeRows(rows), ErrorMessage: err.Error()})
-		return rows, false, fmt.Errorf("insert: %w", err)
+		failure := importledger.RecordFailure(ctx, ledger, importledger.CompletionRequest{ImporterName: stockImporterName, SourceKey: sourceHash, ScopeKey: scopeKey, ImportID: importID, SourceHash: sourceHash, RowsInserted: importledger.NonNegativeRows(rows), ErrorMessage: err.Error()}, err)
+		return rows, false, fmt.Errorf("insert: %w", failure)
 	}
 	if *readErr != nil {
-		_ = ledger.MarkFailed(ctx, importledger.CompletionRequest{ImporterName: stockImporterName, SourceKey: sourceHash, ScopeKey: scopeKey, ImportID: importID, SourceHash: sourceHash, RowsInserted: importledger.NonNegativeRows(rows), ErrorMessage: (*readErr).Error()})
-		return rows, false, fmt.Errorf("read: %w", *readErr)
+		failure := importledger.RecordFailure(ctx, ledger, importledger.CompletionRequest{ImporterName: stockImporterName, SourceKey: sourceHash, ScopeKey: scopeKey, ImportID: importID, SourceHash: sourceHash, RowsInserted: importledger.NonNegativeRows(rows), ErrorMessage: (*readErr).Error()}, *readErr)
+		return rows, false, fmt.Errorf("read: %w", failure)
 	}
 
 	log.Printf("[IMPORT] %s: %d stock rows in %s", baseName, rows, time.Since(fileStart).Round(time.Second))

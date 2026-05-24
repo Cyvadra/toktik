@@ -1,12 +1,26 @@
 package importledger
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 )
+
+type stubFailureRecorder struct {
+	err    error
+	got    CompletionRequest
+	called bool
+}
+
+func (s *stubFailureRecorder) MarkFailed(_ context.Context, req CompletionRequest) error {
+	s.called = true
+	s.got = req
+	return s.err
+}
 
 func TestNormalizeKeyDefaultsScope(t *testing.T) {
 	importerName, sourceKey, scopeKey, err := normalizeKey(" crypto-options ", " file.parquet ", " ")
@@ -67,5 +81,36 @@ func TestNonNegativeRows(t *testing.T) {
 	}
 	if got := NonNegativeRows(7); got != 7 {
 		t.Fatalf("NonNegativeRows(7) = %d, want 7", got)
+	}
+}
+
+func TestRecordFailureReturnsCauseWhenRecorderSucceeds(t *testing.T) {
+	recorder := &stubFailureRecorder{}
+	cause := errors.New("insert failed")
+	req := CompletionRequest{ImporterName: "job", SourceKey: "source", ScopeKey: "scope", ImportID: "import-id"}
+
+	err := RecordFailure(context.Background(), recorder, req, cause)
+	if !errors.Is(err, cause) {
+		t.Fatalf("RecordFailure() error = %v, want cause %v", err, cause)
+	}
+	if !recorder.called {
+		t.Fatal("expected MarkFailed to be called")
+	}
+	if recorder.got.ImportID != req.ImportID {
+		t.Fatalf("import id = %q, want %q", recorder.got.ImportID, req.ImportID)
+	}
+}
+
+func TestRecordFailureJoinsRecorderError(t *testing.T) {
+	markErr := errors.New("ledger write failed")
+	recorder := &stubFailureRecorder{err: markErr}
+	cause := errors.New("insert failed")
+
+	err := RecordFailure(context.Background(), recorder, CompletionRequest{ImporterName: "job", SourceKey: "source", ScopeKey: "scope", ImportID: "import-id"}, cause)
+	if !errors.Is(err, cause) {
+		t.Fatalf("RecordFailure() error = %v, want to include cause %v", err, cause)
+	}
+	if !errors.Is(err, markErr) {
+		t.Fatalf("RecordFailure() error = %v, want to include recorder error %v", err, markErr)
 	}
 }

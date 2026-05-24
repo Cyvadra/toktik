@@ -175,17 +175,20 @@ WHERE status = 'pending' AND started_at < parseDateTimeBestEffortOrNull({cutoff:
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
+	var markErr error
 	for _, lock := range locks {
-		_ = importledger.New(h.conn).MarkFailed(ctx, importledger.CompletionRequest{
+		if err := importledger.New(h.conn).MarkFailed(ctx, importledger.CompletionRequest{
 			ImporterName: lock.ImporterName,
 			SourceKey:    lock.SourceKey,
 			ScopeKey:     lock.ScopeKey,
 			ImportID:     "force-unlock",
 			ErrorMessage: "force-unlock stale pending row",
 			CompletedAt:  time.Now().UTC(),
-		})
+		}); err != nil {
+			markErr = errors.Join(markErr, fmt.Errorf("mark stale lock failed for %s/%s/%s: %w", lock.ImporterName, lock.SourceKey, lock.ScopeKey, err))
+		}
 	}
-	return locks, nil
+	return locks, markErr
 }
 
 func (r *Runner) Run(ctx context.Context, specs []JobSpec) (RunReport, error) {
@@ -369,7 +372,7 @@ func (r *Runner) runSource(ctx context.Context, spec JobSpec, ledger *importledg
 	res, err := spec.Syncer.Sync(sourceCtx, r.conn, SyncRequest{SourceKey: sourceKey, From: from, To: to, DryRun: r.opts.DryRun})
 	if err != nil {
 		if !r.opts.DryRun {
-			_ = ledger.MarkFailed(context.Background(), importledger.CompletionRequest{ImporterName: spec.Name, SourceKey: sourceKey, ScopeKey: scope, ImportID: importID, SourceHash: sourceHash, RowsInserted: importledger.NonNegativeRows(res.RowsInserted), ErrorMessage: err.Error(), CompletedAt: time.Now().UTC()})
+			err = importledger.RecordFailure(context.Background(), ledger, importledger.CompletionRequest{ImporterName: spec.Name, SourceKey: sourceKey, ScopeKey: scope, ImportID: importID, SourceHash: sourceHash, RowsInserted: importledger.NonNegativeRows(res.RowsInserted), ErrorMessage: err.Error(), CompletedAt: time.Now().UTC()}, err)
 		}
 		return SourceReport{SourceKey: sourceKey, From: from, To: to, Status: JobStatusFailed, RowsInserted: res.RowsInserted, Err: err.Error(), Notes: res.Notes}
 	}

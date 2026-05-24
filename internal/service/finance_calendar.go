@@ -22,10 +22,12 @@ const (
 )
 
 type FinanceCalendarService struct {
-	repo  *calendarrepo.Repo
-	fmp   *fmp.Client
-	cache cache.Store
-	now   func() time.Time
+	repo                   *calendarrepo.Repo
+	fmp                    *fmp.Client
+	cache                  cache.Store
+	now                    func() time.Time
+	syncEconomicCalendarFn func(context.Context, time.Time, time.Time) (int, error)
+	syncStockCalendarFn    func(context.Context, time.Time, time.Time, []string) (int, error)
 }
 
 func NewFinanceCalendarService(repo *calendarrepo.Repo, fmpClient *fmp.Client, cacheStore ...cache.Store) *FinanceCalendarService {
@@ -93,7 +95,9 @@ func (s *FinanceCalendarService) SyncEconomicCalendar(ctx context.Context) (int,
 	if err != nil {
 		return 0, err
 	}
-	_ = s.storeSyncMarker(ctx, cacheKey)
+	if err := s.storeSyncMarker(ctx, cacheKey); err != nil {
+		return rows, fmt.Errorf("store economic calendar sync marker: %w", err)
+	}
 	return rows, nil
 }
 
@@ -110,11 +114,13 @@ func (s *FinanceCalendarService) SyncStockCalendar(ctx context.Context, symbols 
 	if fresh, _ := s.loadSyncMarker(ctx, cacheKey); fresh {
 		return 0, nil
 	}
-	rows, err := s.syncStockCalendar(ctx, from, to, normalized)
+	rows, err := s.runSyncStockCalendar(ctx, from, to, normalized)
 	if err != nil {
 		return 0, err
 	}
-	_ = s.storeSyncMarker(ctx, cacheKey)
+	if err := s.storeSyncMarker(ctx, cacheKey); err != nil {
+		return rows, fmt.Errorf("store stock calendar sync marker: %w", err)
+	}
 	return rows, nil
 }
 
@@ -123,10 +129,12 @@ func (s *FinanceCalendarService) ensureEconomicCalendarSynced(ctx context.Contex
 	if fresh, _ := s.loadSyncMarker(ctx, cacheKey); fresh {
 		return nil
 	}
-	if _, err := s.syncEconomicCalendar(ctx, from, to); err != nil {
+	if _, err := s.runSyncEconomicCalendar(ctx, from, to); err != nil {
 		return err
 	}
-	_ = s.storeSyncMarker(ctx, cacheKey)
+	if err := s.storeSyncMarker(ctx, cacheKey); err != nil {
+		return fmt.Errorf("store economic calendar sync marker: %w", err)
+	}
 	return nil
 }
 
@@ -135,11 +143,27 @@ func (s *FinanceCalendarService) ensureStockCalendarSynced(ctx context.Context, 
 	if fresh, _ := s.loadSyncMarker(ctx, cacheKey); fresh {
 		return nil
 	}
-	if _, err := s.syncStockCalendar(ctx, from, to, symbols); err != nil {
+	if _, err := s.runSyncStockCalendar(ctx, from, to, symbols); err != nil {
 		return err
 	}
-	_ = s.storeSyncMarker(ctx, cacheKey)
+	if err := s.storeSyncMarker(ctx, cacheKey); err != nil {
+		return fmt.Errorf("store stock calendar sync marker: %w", err)
+	}
 	return nil
+}
+
+func (s *FinanceCalendarService) runSyncEconomicCalendar(ctx context.Context, from, to time.Time) (int, error) {
+	if s != nil && s.syncEconomicCalendarFn != nil {
+		return s.syncEconomicCalendarFn(ctx, from, to)
+	}
+	return s.syncEconomicCalendar(ctx, from, to)
+}
+
+func (s *FinanceCalendarService) runSyncStockCalendar(ctx context.Context, from, to time.Time, symbols []string) (int, error) {
+	if s != nil && s.syncStockCalendarFn != nil {
+		return s.syncStockCalendarFn(ctx, from, to, symbols)
+	}
+	return s.syncStockCalendar(ctx, from, to, symbols)
 }
 
 func (s *FinanceCalendarService) syncEconomicCalendar(ctx context.Context, from, to time.Time) (int, error) {

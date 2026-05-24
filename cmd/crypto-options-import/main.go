@@ -267,8 +267,8 @@ func importOptionFile(ctx context.Context, dsn, pqPath string, batchSize int) (i
 
 	rowCount, err := cryptooptions.InsertBars(ctx, conn, barSendCh, batchSize)
 	if err != nil {
-		_ = ledger.MarkFailed(ctx, importledger.CompletionRequest{ImporterName: optionImporterName, SourceKey: sourceHash, ScopeKey: "default", ImportID: importID, SourceHash: sourceHash, RowsInserted: importledger.NonNegativeRows(rowCount), ErrorMessage: err.Error()})
-		return rowCount, false, fmt.Errorf("insert bars: %w", err)
+		failure := importledger.RecordFailure(ctx, ledger, importledger.CompletionRequest{ImporterName: optionImporterName, SourceKey: sourceHash, ScopeKey: "default", ImportID: importID, SourceHash: sourceHash, RowsInserted: importledger.NonNegativeRows(rowCount), ErrorMessage: err.Error()}, err)
+		return rowCount, false, fmt.Errorf("insert bars: %w", failure)
 	}
 	if err := ledger.MarkSuccess(ctx, importledger.CompletionRequest{ImporterName: optionImporterName, SourceKey: sourceHash, ScopeKey: "default", ImportID: importID, SourceHash: sourceHash, RowsInserted: uint64(rowCount)}); err != nil {
 		return rowCount, false, fmt.Errorf("mark import success: %w", err)
@@ -350,8 +350,8 @@ func importSpotFile(ctx context.Context, dsn, pqPath string, batchSize int) (int
 
 	rowCount, err := cryptooptions.InsertSpotBars(ctx, conn, barSendCh, batchSize)
 	if err != nil {
-		_ = ledger.MarkFailed(ctx, importledger.CompletionRequest{ImporterName: spotImporterName, SourceKey: sourceHash, ScopeKey: "default", ImportID: importID, SourceHash: sourceHash, RowsInserted: importledger.NonNegativeRows(rowCount), ErrorMessage: err.Error()})
-		return rowCount, false, fmt.Errorf("insert spot bars: %w", err)
+		failure := importledger.RecordFailure(ctx, ledger, importledger.CompletionRequest{ImporterName: spotImporterName, SourceKey: sourceHash, ScopeKey: "default", ImportID: importID, SourceHash: sourceHash, RowsInserted: importledger.NonNegativeRows(rowCount), ErrorMessage: err.Error()}, err)
+		return rowCount, false, fmt.Errorf("insert spot bars: %w", failure)
 	}
 	if err := ledger.MarkSuccess(ctx, importledger.CompletionRequest{ImporterName: spotImporterName, SourceKey: sourceHash, ScopeKey: "default", ImportID: importID, SourceHash: sourceHash, RowsInserted: uint64(rowCount)}); err != nil {
 		return rowCount, false, fmt.Errorf("mark import success: %w", err)

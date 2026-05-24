@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -45,6 +46,10 @@ const (
 
 type Repository struct {
 	conn driver.Conn
+}
+
+type FailureRecorder interface {
+	MarkFailed(ctx context.Context, req CompletionRequest) error
 }
 
 func New(conn driver.Conn) *Repository {
@@ -142,6 +147,19 @@ func (r *Repository) MarkSuccess(ctx context.Context, req CompletionRequest) err
 
 func (r *Repository) MarkFailed(ctx context.Context, req CompletionRequest) error {
 	return r.complete(ctx, req, StatusFailed)
+}
+
+func RecordFailure(ctx context.Context, recorder FailureRecorder, req CompletionRequest, cause error) error {
+	if cause == nil {
+		return nil
+	}
+	if recorder == nil {
+		return cause
+	}
+	if err := recorder.MarkFailed(ctx, req); err != nil {
+		return errors.Join(cause, fmt.Errorf("record import failure: %w", err))
+	}
+	return cause
 }
 
 func (r *Repository) complete(ctx context.Context, req CompletionRequest, status Status) error {
