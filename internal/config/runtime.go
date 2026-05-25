@@ -282,12 +282,12 @@ func DefaultRuntime() Runtime {
 			ListenAddr:               defaultListenAddr,
 			ReadHeaderTimeoutSeconds: 10,
 			ReadTimeoutSeconds:       30,
-			WriteTimeoutSeconds:      60,
+			WriteTimeoutSeconds:      180,
 			IdleTimeoutSeconds:       120,
 		},
 		API: API{
 			RateLimitRPS:          50,
-			RequestTimeoutSeconds: 30,
+			RequestTimeoutSeconds: 180,
 		},
 		Paths: Paths{
 			SchemaDir:   defaultSchemaDir,
@@ -558,7 +558,7 @@ func (c *Runtime) normalize() {
 		c.API.RateLimitRPS = 50
 	}
 	if c.API.RequestTimeoutSeconds <= 0 {
-		c.API.RequestTimeoutSeconds = 30
+		c.API.RequestTimeoutSeconds = 180
 	}
 	if strings.TrimSpace(c.Paths.SchemaDir) == "" {
 		c.Paths.SchemaDir = defaultSchemaDir

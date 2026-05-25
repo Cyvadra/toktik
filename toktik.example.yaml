@@ -16,13 +16,14 @@ api_server:
   listen_addr: ":9010"
   read_header_timeout_seconds: 10
   read_timeout_seconds: 30
-  write_timeout_seconds: 60
+  write_timeout_seconds: 180
   idle_timeout_seconds: 120
 
 api:
   cors_origins: []
   api_keys: []
   rate_limit_rps: 50
+  request_timeout_seconds: 180
 
 paths:
   schema_dir: "schema/clickhouse"

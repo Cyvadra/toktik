@@ -44,3 +44,19 @@ func ResolveObservedUSStockPool(ctx context.Context, screener usTurnoverIntersec
 	}
 	return pool, nil
 }
+
+func WarmUSTurnoverIntersectionCache(ctx context.Context, screener usTurnoverIntersectionScreener, nonETFOnly bool) error {
+	if screener == nil {
+		return fmt.Errorf("us turnover intersection screener not configured")
+	}
+	for _, lookbackDays := range observedUSStockPoolLookbackDays {
+		if _, err := screener.ScreenUSTurnoverIntersection(ctx, dto.ScreenUSTurnoverIntersectionRequest{
+			Limit:        observedUSStockPoolTopLimit,
+			LookbackDays: lookbackDays,
+			NonETFOnly:   nonETFOnly,
+		}); err != nil {
+			return fmt.Errorf("warm us turnover intersection cache for %d-day lookback: %w", lookbackDays, err)
+		}
+	}
+	return nil
+}

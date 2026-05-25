@@ -62,7 +62,7 @@ func TestCanonicalUSTurnoverIntersectionCacheLimit(t *testing.T) {
 func TestStoreUSTurnoverIntersectionInCacheSkipsEmptyResponses(t *testing.T) {
 	store := cache.NewMemoryStore()
 	svc := NewScreenerService(nil, store)
-	key := usTurnoverIntersectionCacheKey(100, 20, false)
+	key := usTurnoverIntersectionCacheKey(20, false)
 	resp := &dto.ScreenUSTurnoverIntersectionResponse{}
 
 	if err := svc.storeUSTurnoverIntersectionInCache(context.Background(), key, resp); err != nil {
@@ -78,7 +78,7 @@ func TestStoreUSTurnoverIntersectionInCacheSkipsEmptyResponses(t *testing.T) {
 func TestUSTurnoverIntersectionCacheRoundTrip(t *testing.T) {
 	store := cache.NewMemoryStore()
 	svc := NewScreenerService(nil, store)
-	key := usTurnoverIntersectionCacheKey(100, 20, false)
+	key := usTurnoverIntersectionCacheKey(20, false)
 	want := &dto.ScreenUSTurnoverIntersectionResponse{
 		LookbackDays:   20,
 		Limit:          100,
@@ -109,7 +109,7 @@ func TestUSTurnoverIntersectionCacheRoundTrip(t *testing.T) {
 func TestUSTurnoverIntersectionCacheRoundTripCanServeSmallerLimit(t *testing.T) {
 	store := cache.NewMemoryStore()
 	svc := NewScreenerService(nil, store)
-	key := usTurnoverIntersectionCacheKey(60, 20, true)
+	key := usTurnoverIntersectionCacheKey(20, true)
 	full := &dto.ScreenUSTurnoverIntersectionResponse{
 		LookbackDays:   20,
 		Limit:          60,
@@ -139,12 +139,72 @@ func TestUSTurnoverIntersectionCacheRoundTripCanServeSmallerLimit(t *testing.T) 
 	}
 }
 
+func TestUSTurnoverIntersectionCacheMissesWhenRequestedLimitExceedsCachedCoverage(t *testing.T) {
+	store := cache.NewMemoryStore()
+	svc := NewScreenerService(nil, store)
+	key := usTurnoverIntersectionCacheKey(20, false)
+	full := &dto.ScreenUSTurnoverIntersectionResponse{
+		LookbackDays:   20,
+		Limit:          60,
+		CandidateLimit: turnoverIntersectionCandidateLimit(60),
+		Data:           make([]dto.ScreenedUSTurnoverIntersectionRow, 60),
+	}
+	for index := range full.Data {
+		full.Data[index] = dto.ScreenedUSTurnoverIntersectionRow{Underlying: fmt.Sprintf("SYM%d", index)}
+	}
+
+	if err := svc.storeUSTurnoverIntersectionInCache(context.Background(), key, full); err != nil {
+		t.Fatalf("storeUSTurnoverIntersectionInCache() error = %v", err)
+	}
+	if _, ok, err := svc.loadUSTurnoverIntersectionFromCache(context.Background(), key, 80); err != nil {
+		t.Fatalf("loadUSTurnoverIntersectionFromCache() error = %v", err)
+	} else if ok {
+		t.Fatalf("loadUSTurnoverIntersectionFromCache() ok = true, want false when requested limit exceeds cached coverage")
+	}
+}
+
+func TestUSTurnoverIntersectionCacheCanServeLargerLimitWhenDatasetExhausted(t *testing.T) {
+	store := cache.NewMemoryStore()
+	svc := NewScreenerService(nil, store)
+	key := usTurnoverIntersectionCacheKey(20, false)
+	full := &dto.ScreenUSTurnoverIntersectionResponse{
+		LookbackDays:   20,
+		Limit:          60,
+		CandidateLimit: turnoverIntersectionCandidateLimit(60),
+		Data: []dto.ScreenedUSTurnoverIntersectionRow{
+			{Underlying: "AAPL"},
+			{Underlying: "MSFT"},
+		},
+	}
+
+	if err := svc.storeUSTurnoverIntersectionInCache(context.Background(), key, full); err != nil {
+		t.Fatalf("storeUSTurnoverIntersectionInCache() error = %v", err)
+	}
+	got, ok, err := svc.loadUSTurnoverIntersectionFromCache(context.Background(), key, 80)
+	if err != nil {
+		t.Fatalf("loadUSTurnoverIntersectionFromCache() error = %v", err)
+	}
+	if !ok {
+		t.Fatalf("loadUSTurnoverIntersectionFromCache() ok = false, want true for exhausted dataset")
+	}
+	if len(got.Data) != 2 || got.Limit != 80 {
+		t.Fatalf("unexpected cached exhausted response: %+v", got)
+	}
+}
+
 func TestUSTurnoverIntersectionCacheKeyIncludesUniverseFilter(t *testing.T) {
-	withETF := usTurnoverIntersectionCacheKey(100, 20, false)
-	nonETFOnly := usTurnoverIntersectionCacheKey(100, 20, true)
+	withETF := usTurnoverIntersectionCacheKey(20, false)
+	nonETFOnly := usTurnoverIntersectionCacheKey(20, true)
 
 	if withETF == nonETFOnly {
 		t.Fatalf("cache key should differ by universe filter: %q", withETF)
+	}
+}
+
+func TestUSTurnoverIntersectionCacheKeyIgnoresLimit(t *testing.T) {
+	key := usTurnoverIntersectionCacheKey(20, false)
+	if key != usTurnoverIntersectionCacheKey(20, false) {
+		t.Fatalf("cache key should be stable for the same lookback/universe")
 	}
 }
 
@@ -208,6 +268,9 @@ func TestScreenUSTurnoverIntersectionUsesCandidateFilteredOptionQuery(t *testing
 	}
 	if !strings.Contains(conn.queries[0], "timestamp >=") || !strings.Contains(conn.queries[1], "timestamp >=") {
 		t.Fatalf("expected range-based timestamp filtering, got stock=%q option=%q", conn.queries[0], conn.queries[1])
+	}
+	if strings.Contains(conn.queries[0], "SELECT DISTINCT toDate(timestamp)") || strings.Contains(conn.queries[1], "SELECT DISTINCT toDate(timestamp)") {
+		t.Fatalf("expected daily bucket timestamp lookback window, got stock=%q option=%q", conn.queries[0], conn.queries[1])
 	}
 	if len(resp.Data) != 2 {
 		t.Fatalf("expected 2 rows, got %d", len(resp.Data))

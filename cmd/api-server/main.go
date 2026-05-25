@@ -55,6 +55,11 @@ type apiCoreServices struct {
 	screener        *service.ScreenerService
 }
 
+const (
+	redisStartupRetryCount = 10
+	redisStartupRetryDelay = 3 * time.Second
+)
+
 func buildAPICoreServices(runtimeCfg config.Runtime, repo *chrepo.Repo, calendarRepo *calendarrepo.Repo, cacheStore cache.Store) (*apiCoreServices, error) {
 	fundamentalsSvc := service.NewFundamentalsService(repo)
 	macroSvc := service.NewMacroService(repo)
@@ -99,6 +104,34 @@ func buildAPIDeps(runtimeCfg config.Runtime, repo *chrepo.Repo, factorStore *fee
 		Polygon:           polygon,
 		Stop:              stop,
 	}
+}
+
+func initAPIStore(ctx context.Context, runtimeCfg config.Runtime) (cache.Store, error) {
+	if !runtimeCfg.Redis.Enabled {
+		return cache.NewMemoryStore(), nil
+	}
+
+	var lastErr error
+	for attempt := 1; attempt <= redisStartupRetryCount; attempt++ {
+		store, err := cache.NewRedisStore(ctx, runtimeCfg)
+		if err == nil {
+			if attempt > 1 {
+				slog.Info("redis cache connection recovered", "attempt", attempt)
+			}
+			return store, nil
+		}
+		lastErr = err
+		slog.Warn("redis cache connection failed", "attempt", attempt, "max_attempts", redisStartupRetryCount, "retry_delay", redisStartupRetryDelay.String(), "error", err)
+		if attempt == redisStartupRetryCount {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return nil, fmt.Errorf("init redis cache store: %w", ctx.Err())
+		case <-time.After(redisStartupRetryDelay):
+		}
+	}
+	return nil, fmt.Errorf("init redis cache store after %d attempts: %w", redisStartupRetryCount, lastErr)
 }
 
 func main() {
@@ -174,10 +207,9 @@ func run() error {
 		}
 	}()
 
-	cacheStore, err := cache.NewStore(ctx, runtimeCfg)
+	cacheStore, err := initAPIStore(ctx, runtimeCfg)
 	if err != nil {
-		slog.Warn("init cache backend failed, falling back to memory cache", "error", err)
-		cacheStore = cache.NewMemoryStore()
+		return err
 	}
 	defer func() {
 		if closeErr := cacheStore.Close(); closeErr != nil {
@@ -219,6 +251,16 @@ func run() error {
 			return
 		}
 		serverErr <- nil
+	}()
+
+	go func() {
+		warmCtx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+		defer cancel()
+		if err := service.WarmUSTurnoverIntersectionCache(warmCtx, apiServices.screener, true); err != nil {
+			slog.Warn("warm us turnover intersection cache failed", "non_etf_only", true, "error", err)
+			return
+		}
+		slog.Info("warmed us turnover intersection cache", "non_etf_only", true, "lookback_days", []int{20, 60, 120}, "limit", 60)
 	}()
 
 	quit := make(chan os.Signal, 1)
