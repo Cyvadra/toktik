@@ -206,16 +206,13 @@ func integrityCommand(args []string) error {
 		}
 		return err
 	}
-	runtimeCfg := appCli.MustLoadRuntime()
-	if strings.TrimSpace(*dsn) == "" {
-		*dsn = runtimeCfg.ClickHouse.DSN
+	cmdCtx, err := preparePipelineCommand(*configPath, *dsn)
+	if err != nil {
+		return err
 	}
-	fmpAPIKey, err := runtimeCfg.FMPAPIKey()
+	fmpAPIKey, err := cmdCtx.Runtime.FMPAPIKey()
 	if err != nil {
 		return fmt.Errorf("read FMP api key: %w", err)
-	}
-	if _, err := loadPipelineConfig(*configPath); err != nil {
-		return err
 	}
 	from, err := parseOptionalDate(*fromValue, "--from")
 	if err != nil {
@@ -226,9 +223,9 @@ func integrityCommand(args []string) error {
 		return err
 	}
 	ctx := context.Background()
-	conn, err := usmarket.ConnectClickHouse(ctx, *dsn)
+	conn, err := connectPipelineClickHouse(ctx, cmdCtx.ClickHouseDSN)
 	if err != nil {
-		return fmt.Errorf("connect ClickHouse: %w", err)
+		return err
 	}
 	defer conn.Close()
 	report, err := dataintegrity.NewChecker(conn).Run(ctx, dataintegrity.Request{
@@ -237,7 +234,7 @@ func integrityCommand(args []string) error {
 		Targets:       splitCSV(*targetsCSV),
 		Underlyings:   splitCSV(*underlyingsCSV),
 		Symbols:       splitCSV(*symbolsCSV),
-		ClickHouseDSN: *dsn,
+		ClickHouseDSN: cmdCtx.ClickHouseDSN,
 		FMPAPIKey:     fmpAPIKey,
 		Progress: func(format string, args ...any) {
 			fmt.Fprintf(os.Stderr, format+"\n", args...)
@@ -255,7 +252,7 @@ func integrityCommand(args []string) error {
 		MaxDaysToExpiry:               *maxDTE,
 		FundamentalStale:              *fundamentalStale,
 		FeatureStale:                  *featureStale,
-		FundamentalDistributedLimiter: usmarket.DistributedRateLimitConfig{Enabled: runtimeCfg.Redis.Enabled, Addr: runtimeCfg.Redis.Addr, Password: runtimeCfg.Redis.Password, DB: runtimeCfg.Redis.DB, KeyPrefix: runtimeCfg.Redis.KeyPrefix, DialTimeout: runtimeCfg.RedisDialTimeout(), ReadTimeout: runtimeCfg.RedisReadTimeout(), WriteTimeout: runtimeCfg.RedisWriteTimeout()},
+		FundamentalDistributedLimiter: distributedLimiterConfig(cmdCtx.Runtime),
 		MaxMemoryUsageBytes:           gibToBytes(*maxMemoryGB),
 		MaxBytesBeforeExternalGroupBy: gibToBytes(*externalGroupByGB),
 		MaxThreads:                    *maxThreads,
@@ -310,37 +307,26 @@ func runCommand(args []string) error {
 		}
 		return err
 	}
-	runtimeCfg := appCli.MustLoadRuntime()
-	if strings.TrimSpace(*dsn) == "" {
-		*dsn = runtimeCfg.ClickHouse.DSN
-	}
-	cfg, err := loadPipelineConfig(*configPath)
+	cmdCtx, err := preparePipelineCommand(*configPath, *dsn)
 	if err != nil {
 		return err
 	}
-	if *overlapDays >= 0 {
-		for name, job := range cfg.Jobs {
-			job.OverlapDays = *overlapDays
-			cfg.Jobs[name] = job
-		}
-	}
-	auditEnabled := cfg.Runner.AuditEnabled
-	if auditFlag.set {
-		auditEnabled = auditFlag.value
-	}
+	cfg := cmdCtx.Config
+	applyGlobalOverlapOverride(&cfg, *overlapDays)
+	auditEnabled := resolveAuditEnabled(cfg.Runner, auditFlag)
 	selected := selectedSet(*jobsCSV)
 	printMissingSelectedDependencyWarnings(cfg, selected)
 	ctx := context.Background()
-	conn, err := usmarket.ConnectClickHouse(ctx, *dsn)
+	conn, err := connectPipelineClickHouse(ctx, cmdCtx.ClickHouseDSN)
 	if err != nil {
-		return fmt.Errorf("connect ClickHouse: %w", err)
+		return err
 	}
 	defer conn.Close()
 	sessions, err := initSelectedSchemas(ctx, conn, cfg, selected, *initSchema)
 	if err != nil {
 		return err
 	}
-	specs, err := buildJobSpecs(runtimeCfg, *dsn, cfg, selected, sessions)
+	specs, err := buildJobSpecs(cmdCtx.Runtime, cmdCtx.ClickHouseDSN, cfg, selected, sessions)
 	if err != nil {
 		return err
 	}
@@ -359,13 +345,7 @@ func runCommand(args []string) error {
 	if err != nil {
 		return fmt.Errorf("runner.lock_ttl: %w", err)
 	}
-	maxWorkers := cfg.Runner.MaxSourceConcurrency
-	if *workers > 0 {
-		maxWorkers = *workers
-	}
-	if maxWorkers <= 0 {
-		maxWorkers = 1
-	}
+	maxWorkers := resolveSourceConcurrency(cfg.Runner, *workers)
 	if *forceUnlock {
 		cleared, err := syncpipeline.NewLedgerHooks(conn, syncpipeline.LockOptions{TTL: lockTTL, ForceUnlock: true}).ClearStaleLocks(ctx)
 		if err != nil {
@@ -418,17 +398,14 @@ func statusCommand(args []string) error {
 		}
 		return err
 	}
-	runtimeCfg := appCli.MustLoadRuntime()
-	if strings.TrimSpace(*dsn) == "" {
-		*dsn = runtimeCfg.ClickHouse.DSN
-	}
-	if _, err := loadPipelineConfig(*configPath); err != nil {
+	cmdCtx, err := preparePipelineCommand(*configPath, *dsn)
+	if err != nil {
 		return err
 	}
 	ctx := context.Background()
-	conn, err := usmarket.ConnectClickHouse(ctx, *dsn)
+	conn, err := connectPipelineClickHouse(ctx, cmdCtx.ClickHouseDSN)
 	if err != nil {
-		return fmt.Errorf("connect ClickHouse: %w", err)
+		return err
 	}
 	defer conn.Close()
 	return printStatus(ctx, conn, selectedSet(*jobsCSV))
@@ -449,14 +426,11 @@ func auditCommand(args []string) error {
 		}
 		return err
 	}
-	runtimeCfg := appCli.MustLoadRuntime()
-	if strings.TrimSpace(*dsn) == "" {
-		*dsn = runtimeCfg.ClickHouse.DSN
-	}
-	cfg, err := loadPipelineConfig(*configPath)
+	cmdCtx, err := preparePipelineCommand(*configPath, *dsn)
 	if err != nil {
 		return err
 	}
+	cfg := cmdCtx.Config
 	from, err := parseRequiredDate(*fromValue, "--from")
 	if err != nil {
 		return err
@@ -466,9 +440,9 @@ func auditCommand(args []string) error {
 		return err
 	}
 	ctx := context.Background()
-	conn, err := usmarket.ConnectClickHouse(ctx, *dsn)
+	conn, err := connectPipelineClickHouse(ctx, cmdCtx.ClickHouseDSN)
 	if err != nil {
-		return fmt.Errorf("connect ClickHouse: %w", err)
+		return err
 	}
 	defer conn.Close()
 	selected := selectedSet(*jobsCSV)
@@ -476,7 +450,7 @@ func auditCommand(args []string) error {
 	if err != nil {
 		return err
 	}
-	specs, err := buildJobSpecs(runtimeCfg, *dsn, cfg, selected, sessions)
+	specs, err := buildJobSpecs(cmdCtx.Runtime, cmdCtx.ClickHouseDSN, cfg, selected, sessions)
 	if err != nil {
 		return err
 	}
@@ -703,6 +677,34 @@ func normalizeMarketDataSource(value string) string {
 	}
 }
 
+func applyGlobalOverlapOverride(cfg *pipelineConfig, overlapDays int) {
+	if cfg == nil || overlapDays < 0 {
+		return
+	}
+	for name, job := range cfg.Jobs {
+		job.OverlapDays = overlapDays
+		cfg.Jobs[name] = job
+	}
+}
+
+func resolveAuditEnabled(cfg runnerConfig, auditFlag optionalBoolFlag) bool {
+	if auditFlag.set {
+		return auditFlag.value
+	}
+	return cfg.AuditEnabled
+}
+
+func resolveSourceConcurrency(cfg runnerConfig, override int) int {
+	concurrency := cfg.MaxSourceConcurrency
+	if override > 0 {
+		concurrency = override
+	}
+	if concurrency <= 0 {
+		return 1
+	}
+	return concurrency
+}
+
 func replaceDependency(deps []string, oldName, newName string) []string {
 	out := make([]string, 0, len(deps)+1)
 	seen := map[string]struct{}{}
@@ -735,18 +737,50 @@ func ensureDependency(deps []string, dep string) []string {
 	return append(deps, dep)
 }
 
+type pipelineCommandContext struct {
+	Runtime       config.Runtime
+	ClickHouseDSN string
+	Config        pipelineConfig
+}
+
+func preparePipelineCommand(configPath, rawDSN string) (pipelineCommandContext, error) {
+	runtimeCfg, clickHouseDSN := resolveRuntimeClickHouseDSN(rawDSN)
+	cfg, err := loadPipelineConfig(configPath)
+	if err != nil {
+		return pipelineCommandContext{}, err
+	}
+	return pipelineCommandContext{Runtime: runtimeCfg, ClickHouseDSN: clickHouseDSN, Config: cfg}, nil
+}
+
+func resolveRuntimeClickHouseDSN(rawDSN string) (config.Runtime, string) {
+	runtimeCfg := appCli.MustLoadRuntime()
+	if strings.TrimSpace(rawDSN) != "" {
+		return runtimeCfg, strings.TrimSpace(rawDSN)
+	}
+	return runtimeCfg, runtimeCfg.ClickHouse.DSN
+}
+
+func connectPipelineClickHouse(ctx context.Context, dsn string) (driver.Conn, error) {
+	conn, err := usmarket.ConnectClickHouse(ctx, dsn)
+	if err != nil {
+		return nil, fmt.Errorf("connect ClickHouse: %w", err)
+	}
+	return conn, nil
+}
+
 func buildJobSpecs(runtimeCfg config.Runtime, dsn string, cfg pipelineConfig, selected map[string]bool, sessions usmarket.SessionMap) ([]syncpipeline.JobSpec, error) {
 	apiKey, err := runtimeCfg.FMPAPIKey()
 	if err != nil {
 		return nil, err
 	}
+	buildCtx := syncerBuildContext{Runtime: runtimeCfg, APIKey: apiKey, ClickHouseDSN: dsn, Sessions: sessions, Limiter: distributedLimiterConfig(runtimeCfg)}
 	var specs []syncpipeline.JobSpec
 	for _, name := range sortedJobNames(cfg) {
 		job := cfg.Jobs[name]
 		if !shouldIncludeJob(name, job, selected) {
 			continue
 		}
-		syncer, err := buildSyncer(runtimeCfg, name, job, apiKey, dsn, sessions)
+		syncer, err := buildSyncer(buildCtx, name, job)
 		if err != nil {
 			return nil, err
 		}
@@ -759,8 +793,135 @@ func buildJobSpecs(runtimeCfg config.Runtime, dsn string, cfg pipelineConfig, se
 	return specs, nil
 }
 
-func buildSyncer(runtimeCfg config.Runtime, name string, job jobConfig, apiKey, dsn string, sessions usmarket.SessionMap) (syncpipeline.Syncer, error) {
-	limiterCfg := usmarket.DistributedRateLimitConfig{
+type syncerBuildContext struct {
+	Runtime       config.Runtime
+	APIKey        string
+	ClickHouseDSN string
+	Sessions      usmarket.SessionMap
+	Limiter       usmarket.DistributedRateLimitConfig
+}
+
+func buildSyncer(buildCtx syncerBuildContext, name string, job jobConfig) (syncpipeline.Syncer, error) {
+	if syncer, ok, err := buildFMPSyncer(buildCtx, name, job); ok {
+		return syncer, err
+	}
+	if syncer, ok, err := buildCalendarSyncer(buildCtx, name, job); ok {
+		return syncer, err
+	}
+	if syncer, ok, err := buildMacroSyncer(buildCtx, name, job); ok {
+		return syncer, err
+	}
+	if syncer, ok, err := buildPolygonSyncer(buildCtx, name, job); ok {
+		return syncer, err
+	}
+	if syncer, ok, err := buildFeatureSyncer(buildCtx, name, job); ok {
+		return syncer, err
+	}
+	return nil, fmt.Errorf("unknown job %q", name)
+}
+
+func buildFMPSyncer(buildCtx syncerBuildContext, name string, job jobConfig) (syncpipeline.Syncer, bool, error) {
+	switch name {
+	case "fmp_crypto_spot":
+		syncer, err := pipelinejobs.NewFMPCryptoSpot(pipelinejobs.FMPCryptoSpotConfig{APIKey: buildCtx.APIKey, Symbols: job.Symbols, ResolveAtStartup: job.ResolveAtStartup, LimitSymbols: job.LimitSymbols, Interval: fmp.IntradayInterval(job.Interval), BatchSize: job.BatchSize, PriceSource: job.PriceSource, ColdStartFloorUTC: parseColdStart(job.ColdStartFloor)})
+		return syncer, true, err
+	case "fmp_forex":
+		syncer, err := pipelinejobs.NewFMPForex(pipelinejobs.FMPForexConfig{APIKey: buildCtx.APIKey, Symbols: job.Symbols, SymbolsFile: job.SymbolsFile, ResolveAtStartup: job.ResolveAtStartup, LimitSymbols: job.LimitSymbols, Interval: fmp.IntradayInterval(job.Interval), BatchSize: job.BatchSize, ColdStartFloorUTC: parseColdStart(job.ColdStartFloor)})
+		return syncer, true, err
+	case "fmp_us_stocks":
+		syncer, err := pipelinejobs.NewFMPUSStocks(pipelinejobs.FMPUSStocksConfig{APIKey: buildCtx.APIKey, Symbols: job.Symbols, ResolveAtStartup: job.ResolveAtStartup, IncludeOptionGapMappings: job.IncludeOptionGapMappings, LimitSymbols: job.LimitSymbols, Interval: fmp.IntradayInterval(job.Interval), BatchSize: job.BatchSize, ColdStartFloorUTC: parseColdStart(job.ColdStartFloor)})
+		return syncer, true, err
+	case "fmp_us_stock_splits":
+		syncer, err := pipelinejobs.NewFMPUSStockSplits(pipelinejobs.FMPUSStockSplitsConfig{APIKey: buildCtx.APIKey, Symbols: job.Symbols, ResolveAtStartup: job.ResolveAtStartup, IncludeOptionGapMappings: job.IncludeOptionGapMappings, LimitSymbols: job.LimitSymbols, BatchSize: job.BatchSize, ColdStartFloorUTC: parseColdStart(job.ColdStartFloor)})
+		return syncer, true, err
+	case "fmp_us_fundamentals":
+		syncer, err := pipelinejobs.NewFMPUSFundamentals(pipelinejobs.FMPUSFundamentalsConfig{Provider: usmarket.NewFMPPEBackfillProvider(buildCtx.APIKey, job.FMPQuarterLimit), DSN: buildCtx.ClickHouseDSN, Symbols: job.Symbols, IncrementalMode: job.IncrementalMode, DiscoveryPageSize: job.DiscoveryPageSize, DiscoveryPageLimit: job.DiscoveryPageLimit, Workers: job.Workers, BatchSize: job.BatchSize, PageSize: job.PageSize, QPS: job.QPS, LimitSymbols: job.LimitSymbols, DistributedLimiter: buildCtx.Limiter, ColdStartFloorUTC: parseColdStart(job.ColdStartFloor)})
+		return syncer, true, err
+	case "fmp_etf_fundamentals":
+		syncer, err := pipelinejobs.NewFMPETFFundamentals(pipelinejobs.FMPETFFundamentalsConfig{APIKey: buildCtx.APIKey, DSN: buildCtx.ClickHouseDSN, Symbols: job.Symbols, SymbolMappings: job.SymbolMappings, BatchSize: job.BatchSize, QPS: job.QPS, MinCoverage: job.MinCoverage, DistributedLimiter: buildCtx.Limiter, ColdStartFloorUTC: parseColdStart(job.ColdStartFloor)})
+		return syncer, true, err
+	default:
+		return nil, false, nil
+	}
+}
+
+func buildCalendarSyncer(buildCtx syncerBuildContext, name string, job jobConfig) (syncpipeline.Syncer, bool, error) {
+	calendarCfg, ok, err := newCalendarSyncerConfig(buildCtx, name, job)
+	if !ok || err != nil {
+		return nil, ok, err
+	}
+	switch name {
+	case "fmp_economic_calendar":
+		syncer, err := pipelinejobs.NewFMPEconomicCalendar(calendarCfg)
+		return syncer, true, err
+	case "fmp_observed_stock_calendar":
+		syncer, err := pipelinejobs.NewFMPObservedStockCalendar(pipelinejobs.FMPObservedStockCalendarConfig{APIKey: calendarCfg.APIKey, FMPCacheDir: calendarCfg.FMPCacheDir, MySQLDSN: calendarCfg.MySQLDSN, Cache: calendarCfg.Cache, ColdStartFloorUTC: calendarCfg.ColdStartFloorUTC})
+		return syncer, true, err
+	default:
+		return nil, false, nil
+	}
+}
+
+func newCalendarSyncerConfig(buildCtx syncerBuildContext, name string, job jobConfig) (pipelinejobs.FMPEconomicCalendarConfig, bool, error) {
+	switch name {
+	case "fmp_economic_calendar", "fmp_observed_stock_calendar":
+		calendarCfg, err := newCalendarPipelineConfig(buildCtx.Runtime, buildCtx.APIKey, parseColdStart(job.ColdStartFloor))
+		return calendarCfg, true, err
+	default:
+		return pipelinejobs.FMPEconomicCalendarConfig{}, false, nil
+	}
+}
+
+func buildMacroSyncer(buildCtx syncerBuildContext, name string, job jobConfig) (syncpipeline.Syncer, bool, error) {
+	switch name {
+	case "fmp_sp500_macro", "fmp_nasdaq100_macro":
+		syncer, err := pipelinejobs.NewGuruMacro(pipelinejobs.GuruMacroConfig{Dataset: job.Dataset, Source: "fmp", ColdStartFloorUTC: parseColdStart(job.ColdStartFloor), SyncFunc: func(ctx context.Context, conn driver.Conn, from, to time.Time, dryRun bool) (int64, error) {
+			res, err := macro.SyncFMPIndexShiller(ctx, conn, macro.FMPIndexShillerConfig{APIKey: buildCtx.APIKey, Dataset: job.Dataset, ConstituentUniverse: job.ConstituentUniverse, PriceSymbol: job.PriceSymbol, ReferenceSymbol: job.ReferenceSymbol, BatchSize: job.BatchSize, Workers: job.Workers, RollingQuarters: job.RollingQuarters, MinQuarters: job.MinQuarters}, from, to, dryRun)
+			return int64(res.ObservationRows), err
+		}})
+		return syncer, true, err
+	case "guru_macro":
+		syncer, err := pipelinejobs.NewGuruMacro(pipelinejobs.GuruMacroConfig{Dataset: job.Dataset, Source: "gurufocus", ColdStartFloorUTC: parseColdStart(job.ColdStartFloor), SyncFunc: func(ctx context.Context, conn driver.Conn, from, to time.Time, dryRun bool) (int64, error) {
+			res, err := macro.SyncGurufocusShiller(ctx, conn, macro.GurufocusShillerConfig{URL: job.URL, ReferenceSymbol: job.ReferenceSymbol, BatchSize: job.BatchSize}, from, to, dryRun)
+			return int64(res.ObservationRows), err
+		}})
+		return syncer, true, err
+	default:
+		return nil, false, nil
+	}
+}
+
+func buildPolygonSyncer(buildCtx syncerBuildContext, name string, job jobConfig) (syncpipeline.Syncer, bool, error) {
+	switch name {
+	case "polygon_us_flatfiles":
+		polygonSvc, err := service.NewPolygonServiceFromConfig(buildCtx.Runtime, nil)
+		if err != nil {
+			return nil, true, err
+		}
+		syncer, err := pipelinejobs.NewPolygonUSFlatFiles(pipelinejobs.PolygonUSFlatFilesConfig{Downloader: polygonSvc, Sessions: buildCtx.Sessions, DSN: buildCtx.ClickHouseDSN, BatchSize: job.BatchSize, Workers: job.Workers, RiskFreeRate: job.RiskFreeRate, ForceDownload: job.ForceDownload, SyncStocks: job.SyncStocks, ColdStartFloorUTC: parseColdStart(job.ColdStartFloor)})
+		return syncer, true, err
+	case "polygon_us_greeks":
+		syncer, err := pipelinejobs.NewPolygonUSGreeks(pipelinejobs.PolygonUSGreeksConfig{DSN: buildCtx.ClickHouseDSN, BatchSize: job.BatchSize, Workers: job.Workers, RiskFreeRate: job.RiskFreeRate, Underlyings: job.Underlyings, LimitTasks: job.LimitSymbols, RebuildAggregates: job.RebuildAggregates, ColdStartFloorUTC: parseColdStart(job.ColdStartFloor)})
+		return syncer, true, err
+	default:
+		return nil, false, nil
+	}
+}
+
+func buildFeatureSyncer(buildCtx syncerBuildContext, name string, job jobConfig) (syncpipeline.Syncer, bool, error) {
+	if name != "feature_store_backfill" {
+		return nil, false, nil
+	}
+	syncer, err := pipelinejobs.NewFeatureStoreBackfill(pipelinejobs.FeatureStoreBackfillConfig{DSN: buildCtx.ClickHouseDSN, Markets: job.Markets, Underlyings: job.Underlyings, PriorityOrder: job.PriorityOrder, LookbackDays: job.LookbackDays, MinDaysToExpiry: job.MinDaysToExpiry, MaxDaysToExpiry: job.MaxDaysToExpiry, Workers: job.Workers, Replace: job.Replace, ColdStartFloorUTC: parseColdStart(job.ColdStartFloor)})
+	return syncer, true, err
+}
+
+func newPipelineCache(runtimeCfg config.Runtime) (cache.Store, error) {
+	return cache.NewStore(context.Background(), runtimeCfg)
+}
+
+func distributedLimiterConfig(runtimeCfg config.Runtime) usmarket.DistributedRateLimitConfig {
+	return usmarket.DistributedRateLimitConfig{
 		Enabled:      runtimeCfg.Redis.Enabled,
 		Addr:         runtimeCfg.Redis.Addr,
 		Password:     runtimeCfg.Redis.Password,
@@ -770,66 +931,18 @@ func buildSyncer(runtimeCfg config.Runtime, name string, job jobConfig, apiKey, 
 		ReadTimeout:  runtimeCfg.RedisReadTimeout(),
 		WriteTimeout: runtimeCfg.RedisWriteTimeout(),
 	}
-	switch name {
-	case "fmp_crypto_spot":
-		return pipelinejobs.NewFMPCryptoSpot(pipelinejobs.FMPCryptoSpotConfig{APIKey: apiKey, Symbols: job.Symbols, ResolveAtStartup: job.ResolveAtStartup, LimitSymbols: job.LimitSymbols, Interval: fmp.IntradayInterval(job.Interval), BatchSize: job.BatchSize, PriceSource: job.PriceSource, ColdStartFloorUTC: parseColdStart(job.ColdStartFloor)})
-	case "fmp_forex":
-		return pipelinejobs.NewFMPForex(pipelinejobs.FMPForexConfig{APIKey: apiKey, Symbols: job.Symbols, SymbolsFile: job.SymbolsFile, ResolveAtStartup: job.ResolveAtStartup, LimitSymbols: job.LimitSymbols, Interval: fmp.IntradayInterval(job.Interval), BatchSize: job.BatchSize, ColdStartFloorUTC: parseColdStart(job.ColdStartFloor)})
-	case "fmp_us_stocks":
-		return pipelinejobs.NewFMPUSStocks(pipelinejobs.FMPUSStocksConfig{APIKey: apiKey, Symbols: job.Symbols, ResolveAtStartup: job.ResolveAtStartup, IncludeOptionGapMappings: job.IncludeOptionGapMappings, LimitSymbols: job.LimitSymbols, Interval: fmp.IntradayInterval(job.Interval), BatchSize: job.BatchSize, ColdStartFloorUTC: parseColdStart(job.ColdStartFloor)})
-	case "fmp_us_stock_splits":
-		return pipelinejobs.NewFMPUSStockSplits(pipelinejobs.FMPUSStockSplitsConfig{APIKey: apiKey, Symbols: job.Symbols, ResolveAtStartup: job.ResolveAtStartup, IncludeOptionGapMappings: job.IncludeOptionGapMappings, LimitSymbols: job.LimitSymbols, BatchSize: job.BatchSize, ColdStartFloorUTC: parseColdStart(job.ColdStartFloor)})
-	case "fmp_us_fundamentals":
-		return pipelinejobs.NewFMPUSFundamentals(pipelinejobs.FMPUSFundamentalsConfig{Provider: usmarket.NewFMPPEBackfillProvider(apiKey, job.FMPQuarterLimit), DSN: dsn, Symbols: job.Symbols, IncrementalMode: job.IncrementalMode, DiscoveryPageSize: job.DiscoveryPageSize, DiscoveryPageLimit: job.DiscoveryPageLimit, Workers: job.Workers, BatchSize: job.BatchSize, PageSize: job.PageSize, QPS: job.QPS, LimitSymbols: job.LimitSymbols, DistributedLimiter: limiterCfg, ColdStartFloorUTC: parseColdStart(job.ColdStartFloor)})
-	case "fmp_etf_fundamentals":
-		return pipelinejobs.NewFMPETFFundamentals(pipelinejobs.FMPETFFundamentalsConfig{APIKey: apiKey, DSN: dsn, Symbols: job.Symbols, SymbolMappings: job.SymbolMappings, BatchSize: job.BatchSize, QPS: job.QPS, MinCoverage: job.MinCoverage, DistributedLimiter: limiterCfg, ColdStartFloorUTC: parseColdStart(job.ColdStartFloor)})
-	case "fmp_economic_calendar":
-		mysqlDSN, err := runtimeCfg.MySQLDSN()
-		if err != nil {
-			return nil, err
-		}
-		cacheStore, err := newPipelineCache(runtimeCfg)
-		if err != nil {
-			return nil, fmt.Errorf("fmp_economic_calendar cache: %w", err)
-		}
-		return pipelinejobs.NewFMPEconomicCalendar(pipelinejobs.FMPEconomicCalendarConfig{APIKey: apiKey, FMPCacheDir: runtimeCfg.FMP.CacheDir, MySQLDSN: mysqlDSN, Cache: cacheStore, ColdStartFloorUTC: parseColdStart(job.ColdStartFloor)})
-	case "fmp_observed_stock_calendar":
-		mysqlDSN, err := runtimeCfg.MySQLDSN()
-		if err != nil {
-			return nil, err
-		}
-		cacheStore, err := newPipelineCache(runtimeCfg)
-		if err != nil {
-			return nil, fmt.Errorf("fmp_observed_stock_calendar cache: %w", err)
-		}
-		return pipelinejobs.NewFMPObservedStockCalendar(pipelinejobs.FMPObservedStockCalendarConfig{APIKey: apiKey, FMPCacheDir: runtimeCfg.FMP.CacheDir, MySQLDSN: mysqlDSN, Cache: cacheStore, ColdStartFloorUTC: parseColdStart(job.ColdStartFloor)})
-	case "fmp_sp500_macro", "fmp_nasdaq100_macro":
-		return pipelinejobs.NewGuruMacro(pipelinejobs.GuruMacroConfig{Dataset: job.Dataset, Source: "fmp", ColdStartFloorUTC: parseColdStart(job.ColdStartFloor), SyncFunc: func(ctx context.Context, conn driver.Conn, from, to time.Time, dryRun bool) (int64, error) {
-			res, err := macro.SyncFMPIndexShiller(ctx, conn, macro.FMPIndexShillerConfig{APIKey: apiKey, Dataset: job.Dataset, ConstituentUniverse: job.ConstituentUniverse, PriceSymbol: job.PriceSymbol, ReferenceSymbol: job.ReferenceSymbol, BatchSize: job.BatchSize, Workers: job.Workers, RollingQuarters: job.RollingQuarters, MinQuarters: job.MinQuarters}, from, to, dryRun)
-			return int64(res.ObservationRows), err
-		}})
-	case "polygon_us_flatfiles":
-		polygonSvc, err := service.NewPolygonServiceFromConfig(runtimeCfg, nil)
-		if err != nil {
-			return nil, err
-		}
-		return pipelinejobs.NewPolygonUSFlatFiles(pipelinejobs.PolygonUSFlatFilesConfig{Downloader: polygonSvc, Sessions: sessions, DSN: dsn, BatchSize: job.BatchSize, Workers: job.Workers, RiskFreeRate: job.RiskFreeRate, ForceDownload: job.ForceDownload, SyncStocks: job.SyncStocks, ColdStartFloorUTC: parseColdStart(job.ColdStartFloor)})
-	case "polygon_us_greeks":
-		return pipelinejobs.NewPolygonUSGreeks(pipelinejobs.PolygonUSGreeksConfig{DSN: dsn, BatchSize: job.BatchSize, Workers: job.Workers, RiskFreeRate: job.RiskFreeRate, Underlyings: job.Underlyings, LimitTasks: job.LimitSymbols, RebuildAggregates: job.RebuildAggregates, ColdStartFloorUTC: parseColdStart(job.ColdStartFloor)})
-	case "feature_store_backfill":
-		return pipelinejobs.NewFeatureStoreBackfill(pipelinejobs.FeatureStoreBackfillConfig{DSN: dsn, Markets: job.Markets, Underlyings: job.Underlyings, PriorityOrder: job.PriorityOrder, LookbackDays: job.LookbackDays, MinDaysToExpiry: job.MinDaysToExpiry, MaxDaysToExpiry: job.MaxDaysToExpiry, Workers: job.Workers, Replace: job.Replace, ColdStartFloorUTC: parseColdStart(job.ColdStartFloor)})
-	case "guru_macro":
-		return pipelinejobs.NewGuruMacro(pipelinejobs.GuruMacroConfig{Dataset: job.Dataset, Source: "gurufocus", ColdStartFloorUTC: parseColdStart(job.ColdStartFloor), SyncFunc: func(ctx context.Context, conn driver.Conn, from, to time.Time, dryRun bool) (int64, error) {
-			res, err := macro.SyncGurufocusShiller(ctx, conn, macro.GurufocusShillerConfig{URL: job.URL, ReferenceSymbol: job.ReferenceSymbol, BatchSize: job.BatchSize}, from, to, dryRun)
-			return int64(res.ObservationRows), err
-		}})
-	default:
-		return nil, fmt.Errorf("unknown job %q", name)
-	}
 }
 
-func newPipelineCache(runtimeCfg config.Runtime) (cache.Store, error) {
-	return cache.NewStore(context.Background(), runtimeCfg)
+func newCalendarPipelineConfig(runtimeCfg config.Runtime, apiKey string, coldStart time.Time) (pipelinejobs.FMPEconomicCalendarConfig, error) {
+	mysqlDSN, err := runtimeCfg.MySQLDSN()
+	if err != nil {
+		return pipelinejobs.FMPEconomicCalendarConfig{}, err
+	}
+	cacheStore, err := newPipelineCache(runtimeCfg)
+	if err != nil {
+		return pipelinejobs.FMPEconomicCalendarConfig{}, fmt.Errorf("calendar cache: %w", err)
+	}
+	return pipelinejobs.FMPEconomicCalendarConfig{APIKey: apiKey, FMPCacheDir: runtimeCfg.FMP.CacheDir, MySQLDSN: mysqlDSN, Cache: cacheStore, ColdStartFloorUTC: coldStart}, nil
 }
 
 func makeJobSpec(name string, job jobConfig, runner runnerConfig, syncer syncpipeline.Syncer) (syncpipeline.JobSpec, error) {
@@ -852,34 +965,51 @@ func initSelectedSchemas(ctx context.Context, conn driver.Conn, cfg pipelineConf
 	if !enabled {
 		return nil, nil
 	}
-	needsUSMarket, needsFundamentals, needsForex, needsCrypto, needsFeatureStore := false, false, false, false, false
+	requirements := resolveSchemaRequirements(cfg, selected)
+	return initializeSelectedSchemas(ctx, conn, requirements)
+}
+
+type schemaRequirements struct {
+	NeedsUSMarket     bool
+	NeedsFundamentals bool
+	NeedsForex        bool
+	NeedsCrypto       bool
+	NeedsFeatureStore bool
+}
+
+func resolveSchemaRequirements(cfg pipelineConfig, selected map[string]bool) schemaRequirements {
+	requirements := schemaRequirements{}
 	for name, job := range cfg.Jobs {
 		if !shouldIncludeJob(name, job, selected) {
 			continue
 		}
 		switch name {
 		case "fmp_us_stocks", "fmp_us_stock_splits", "polygon_us_flatfiles", "polygon_us_greeks", "guru_macro", "fmp_sp500_macro", "fmp_nasdaq100_macro":
-			needsUSMarket = true
+			requirements.NeedsUSMarket = true
 		case "feature_store_backfill":
-			needsFeatureStore = true
+			requirements.NeedsFeatureStore = true
 			if containsString(job.Markets, "us-options") {
-				needsUSMarket = true
+				requirements.NeedsUSMarket = true
 			}
 			if containsString(job.Markets, "crypto-options") {
-				needsCrypto = true
+				requirements.NeedsCrypto = true
 			}
 		}
 		switch name {
 		case "fmp_us_fundamentals", "fmp_etf_fundamentals", "guru_macro", "fmp_sp500_macro", "fmp_nasdaq100_macro":
-			needsFundamentals = true
+			requirements.NeedsFundamentals = true
 		case "fmp_forex":
-			needsForex = true
+			requirements.NeedsForex = true
 		case "fmp_crypto_spot":
-			needsCrypto = true
+			requirements.NeedsCrypto = true
 		}
 	}
+	return requirements
+}
+
+func initializeSelectedSchemas(ctx context.Context, conn driver.Conn, requirements schemaRequirements) (usmarket.SessionMap, error) {
 	var sessions usmarket.SessionMap
-	if needsUSMarket {
+	if requirements.NeedsUSMarket {
 		ddl, err := appCli.ResolveSchemaFile("", appCli.UsMarketSchemaFile)
 		if err != nil {
 			return nil, err
@@ -890,7 +1020,7 @@ func initSelectedSchemas(ctx context.Context, conn driver.Conn, cfg pipelineConf
 		}
 		sessions = loaded
 	}
-	if needsFundamentals {
+	if requirements.NeedsFundamentals {
 		ddl, err := appCli.ResolveSchemaFile("", appCli.FundamentalsSchemaFile)
 		if err != nil {
 			return nil, err
@@ -899,7 +1029,7 @@ func initSelectedSchemas(ctx context.Context, conn driver.Conn, cfg pipelineConf
 			return nil, fmt.Errorf("initialize fundamentals schema: %w", err)
 		}
 	}
-	if needsForex {
+	if requirements.NeedsForex {
 		ddl, err := appCli.ResolveSchemaFile("", appCli.ForexMarketSchemaFile)
 		if err != nil {
 			return nil, err
@@ -911,7 +1041,7 @@ func initSelectedSchemas(ctx context.Context, conn driver.Conn, cfg pipelineConf
 			return nil, fmt.Errorf("initialize forex kline schema: %w", err)
 		}
 	}
-	if needsCrypto {
+	if requirements.NeedsCrypto {
 		ddl, err := appCli.ResolveSchemaFile("", appCli.CryptoOptionsSchemaFile)
 		if err != nil {
 			return nil, err
@@ -923,7 +1053,7 @@ func initSelectedSchemas(ctx context.Context, conn driver.Conn, cfg pipelineConf
 			return nil, fmt.Errorf("initialize crypto spot kline schema: %w", err)
 		}
 	}
-	if needsFeatureStore {
+	if requirements.NeedsFeatureStore {
 		ddl, err := appCli.ResolveSchemaFile("", appCli.FeatureStoreSchemaFile)
 		if err != nil {
 			return nil, err

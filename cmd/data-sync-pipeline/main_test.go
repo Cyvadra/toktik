@@ -207,6 +207,30 @@ func TestMissingSelectedDependencyWarningsKeepsLegacySelectionBehavior(t *testin
 	}
 }
 
+func TestResolveSchemaRequirementsIncludesFeatureStoreDependencies(t *testing.T) {
+	requirements := resolveSchemaRequirements(pipelineConfig{Jobs: map[string]jobConfig{
+		"feature_store_backfill": {Enabled: true, Markets: []string{"us-options", "crypto-options"}},
+	}}, nil)
+	if !requirements.NeedsFeatureStore {
+		t.Fatal("expected feature store schema to be required")
+	}
+	if !requirements.NeedsUSMarket {
+		t.Fatal("expected us-market schema to be required for us-options feature store backfill")
+	}
+	if !requirements.NeedsCrypto {
+		t.Fatal("expected crypto schema to be required for crypto-options feature store backfill")
+	}
+}
+
+func TestResolveSourceConcurrencyUsesOverrideAndMinimum(t *testing.T) {
+	if got := resolveSourceConcurrency(runnerConfig{MaxSourceConcurrency: 4}, 2); got != 2 {
+		t.Fatalf("expected override to win, got %d", got)
+	}
+	if got := resolveSourceConcurrency(runnerConfig{}, 0); got != 1 {
+		t.Fatalf("expected minimum concurrency of 1, got %d", got)
+	}
+}
+
 func TestOptionalBoolFlagTracksExplicitOverride(t *testing.T) {
 	var flag optionalBoolFlag
 	if flag.set {
