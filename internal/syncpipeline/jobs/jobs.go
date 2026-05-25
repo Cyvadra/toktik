@@ -762,7 +762,7 @@ func (s *fmpEconomicCalendar) Sync(ctx context.Context, _ driver.Conn, req syncp
 	}
 	defer closeFn()
 	rows, err := calendarSvc.SyncEconomicCalendar(ctx)
-	return syncpipeline.SyncResult{SourceKey: req.SourceKey, From: req.From, To: req.To, RowsInserted: int64(rows)}, err
+	return syncpipeline.SyncResult{SourceKey: req.SourceKey, From: req.From, To: req.To, RowsInserted: int64(rows), Notes: []string{"calendar sync window is determined by finance calendar service markers/cache; runner from/to is informational"}}, err
 }
 func (s *fmpEconomicCalendar) AuditTargets(string) []syncpipeline.AuditTarget { return nil }
 func (s *fmpEconomicCalendar) MaxConcurrency() int                            { return 1 }
@@ -818,7 +818,7 @@ func (s *fmpObservedStockCalendar) Sync(ctx context.Context, conn driver.Conn, r
 		return syncpipeline.SyncResult{SourceKey: req.SourceKey, From: req.From, To: req.To}, err
 	}
 	rows, err := calendarSvc.SyncStockCalendar(ctx, symbols)
-	return syncpipeline.SyncResult{SourceKey: req.SourceKey, From: req.From, To: req.To, RowsInserted: int64(rows), Notes: []string{fmt.Sprintf("observed_symbols=%d", len(symbols))}}, err
+	return syncpipeline.SyncResult{SourceKey: req.SourceKey, From: req.From, To: req.To, RowsInserted: int64(rows), Notes: []string{fmt.Sprintf("observed_symbols=%d", len(symbols)), "calendar sync window is determined by finance calendar service markers/cache; runner from/to is informational"}}, err
 }
 func (s *fmpObservedStockCalendar) AuditTargets(string) []syncpipeline.AuditTarget { return nil }
 func (s *fmpObservedStockCalendar) MaxConcurrency() int                            { return 1 }

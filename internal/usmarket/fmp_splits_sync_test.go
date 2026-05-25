@@ -30,6 +30,23 @@ func TestConvertFMPStockSplitsRejectsInvalidRatio(t *testing.T) {
 	}
 }
 
+func TestConvertFMPStockSplitsSkipsImplausibleFutureDates(t *testing.T) {
+	updatedAt := time.Date(2026, 5, 24, 1, 2, 3, 0, time.UTC)
+	splits, err := convertFMPStockSplits("AAPL", []fmp.StockSplit{
+		{Symbol: "AAPL", Date: "2020-08-31", Numerator: 4, Denominator: 1},
+		{Symbol: "AAPL", Date: "2148-11-22", Numerator: 3, Denominator: 1},
+	}, updatedAt)
+	if err != nil {
+		t.Fatalf("convertFMPStockSplits returned error: %v", err)
+	}
+	if len(splits) != 1 {
+		t.Fatalf("expected one retained split, got %#v", splits)
+	}
+	if !splits[0].SplitDate.Equal(time.Date(2020, 8, 31, 0, 0, 0, 0, time.UTC)) {
+		t.Fatalf("unexpected retained split date: %#v", splits[0])
+	}
+}
+
 func TestNormalizeStockSplitSymbolsDeduplicates(t *testing.T) {
 	got := normalizeStockSplitSymbols([]string{"aapl", " AAPL ", "msft", ""})
 	if len(got) != 2 || got[0] != "AAPL" || got[1] != "MSFT" {

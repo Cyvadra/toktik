@@ -1,5 +1,5 @@
 runner:
-  max_job_concurrency: 1
+  max_source_concurrency: 1
   overlap_days: 1
   audit_enabled: true
   audit_lookback_days: 7

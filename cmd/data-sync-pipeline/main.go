@@ -43,6 +43,7 @@ type marketDataSourcesConfig struct {
 }
 
 type runnerConfig struct {
+	MaxSourceConcurrency    int    `yaml:"max_source_concurrency"`
 	MaxJobConcurrency       int    `yaml:"max_job_concurrency"`
 	OverlapDays             int    `yaml:"overlap_days"`
 	AuditEnabled            bool   `yaml:"audit_enabled"`
@@ -51,6 +52,26 @@ type runnerConfig struct {
 	LockTTL                 string `yaml:"lock_ttl"`
 	DefaultPerJobTimeout    string `yaml:"default_per_job_timeout"`
 	DefaultPerSourceTimeout string `yaml:"default_per_source_timeout"`
+}
+
+func (c *runnerConfig) UnmarshalYAML(value *yaml.Node) error {
+	type rawRunnerConfig runnerConfig
+	next := rawRunnerConfig(*c)
+	if err := value.Decode(&next); err != nil {
+		return err
+	}
+	seenMaxSource := false
+	for i := 0; i+1 < len(value.Content); i += 2 {
+		if value.Content[i].Value == "max_source_concurrency" {
+			seenMaxSource = true
+			break
+		}
+	}
+	*c = runnerConfig(next)
+	if !seenMaxSource && c.MaxJobConcurrency > 0 {
+		c.MaxSourceConcurrency = c.MaxJobConcurrency
+	}
+	return nil
 }
 
 type jobConfig struct {
@@ -97,6 +118,36 @@ type jobConfig struct {
 	MinQuarters              int               `yaml:"min_quarters"`
 	ColdStartFloor           string            `yaml:"cold_start_floor"`
 }
+
+type optionalBoolFlag struct {
+	value bool
+	set   bool
+}
+
+func (f *optionalBoolFlag) String() string {
+	if !f.set {
+		return ""
+	}
+	if f.value {
+		return "true"
+	}
+	return "false"
+}
+
+func (f *optionalBoolFlag) Set(value string) error {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "1", "t", "true", "y", "yes", "on":
+		f.value = true
+	case "0", "f", "false", "n", "no", "off":
+		f.value = false
+	default:
+		return fmt.Errorf("invalid boolean value %q", value)
+	}
+	f.set = true
+	return nil
+}
+
+func (f *optionalBoolFlag) IsBoolFlag() bool { return true }
 
 func main() {
 	if len(os.Args) < 2 {
@@ -243,12 +294,13 @@ func runCommand(args []string) error {
 	fromValue := fs.String("from", "", "Explicit inclusive start date (YYYY-MM-DD); default uses cursor")
 	toValue := fs.String("to", "", "Explicit inclusive end date (YYYY-MM-DD); default is today UTC")
 	overlapDays := fs.Int("overlap-days", -1, "Override overlap days for all selected jobs")
-	workers := fs.Int("workers", 0, "Override max concurrent jobs")
+	workers := fs.Int("workers", 0, "Override max concurrent sources per job")
 	dryRun := fs.Bool("dry-run", false, "Run without writing data rows")
 	force := fs.Bool("force", false, "Ignore successful ledger short-circuit")
 	forceUnlock := fs.Bool("force-unlock", false, "Clear stale pending ledger rows older than lock TTL and ignore the lock")
 	initSchema := fs.Bool("init-schema", true, "Initialize selected job schemas before running")
-	auditEnabled := fs.Bool("audit", true, "Run post-sync duplicate audit")
+	var auditFlag optionalBoolFlag
+	fs.Var(&auditFlag, "audit", "Run post-sync duplicate audit; defaults to runner.audit_enabled")
 	auditReportDir := fs.String("audit-report-dir", "reports", "Directory to write the audit CSV report into when findings are non-empty")
 	auditReportPath := fs.String("audit-report", "", "Explicit audit report path (overrides --audit-report-dir)")
 	dsn := fs.String("clickhouse-dsn", "", "ClickHouse DSN; default comes from runtime config")
@@ -272,7 +324,12 @@ func runCommand(args []string) error {
 			cfg.Jobs[name] = job
 		}
 	}
+	auditEnabled := cfg.Runner.AuditEnabled
+	if auditFlag.set {
+		auditEnabled = auditFlag.value
+	}
 	selected := selectedSet(*jobsCSV)
+	printMissingSelectedDependencyWarnings(cfg, selected)
 	ctx := context.Background()
 	conn, err := usmarket.ConnectClickHouse(ctx, *dsn)
 	if err != nil {
@@ -302,7 +359,7 @@ func runCommand(args []string) error {
 	if err != nil {
 		return fmt.Errorf("runner.lock_ttl: %w", err)
 	}
-	maxWorkers := cfg.Runner.MaxJobConcurrency
+	maxWorkers := cfg.Runner.MaxSourceConcurrency
 	if *workers > 0 {
 		maxWorkers = *workers
 	}
@@ -324,14 +381,14 @@ func runCommand(args []string) error {
 		}
 	}
 	report, err := syncpipeline.NewRunner(conn, syncpipeline.RunnerOptions{
-		Logger:            slog.Default(),
-		MaxJobConcurrency: maxWorkers,
-		DryRun:            *dryRun,
-		Force:             *force,
-		FromOverride:      from,
-		ToOverride:        to,
-		LockOptions:       syncpipeline.LockOptions{TTL: lockTTL, ForceUnlock: *forceUnlock},
-		AuditEnabled:      *auditEnabled,
+		Logger:               slog.Default(),
+		MaxSourceConcurrency: maxWorkers,
+		DryRun:               *dryRun,
+		Force:                *force,
+		FromOverride:         from,
+		ToOverride:           to,
+		LockOptions:          syncpipeline.LockOptions{TTL: lockTTL, ForceUnlock: *forceUnlock},
+		AuditEnabled:         auditEnabled,
 		AuditOptions: syncpipeline.AuditOptions{
 			LookbackDays:         cfg.Runner.AuditLookbackDays,
 			MaxFindingsPerTarget: cfg.Runner.AuditMaxFindings,
@@ -528,7 +585,7 @@ func loadPipelineConfig(path string) (pipelineConfig, error) {
 
 func defaultPipelineConfig() pipelineConfig {
 	cfg := pipelineConfig{
-		Runner: runnerConfig{MaxJobConcurrency: 1, OverlapDays: 1, AuditEnabled: true, AuditLookbackDays: 7, AuditMaxFindings: 50, LockTTL: "2h"},
+		Runner: runnerConfig{MaxSourceConcurrency: 1, OverlapDays: 1, AuditEnabled: true, AuditLookbackDays: 7, AuditMaxFindings: 50, LockTTL: "2h"},
 		MarketDataSources: marketDataSourcesConfig{
 			USStocks:  "fmp",
 			USOptions: "polygon",
@@ -575,6 +632,9 @@ func normalizePipelineConfig(cfg *pipelineConfig) error {
 	}
 	cfg.MarketDataSources.USStocks = stockSource
 	cfg.MarketDataSources.USOptions = optionSource
+	if cfg.Runner.MaxSourceConcurrency <= 0 && cfg.Runner.MaxJobConcurrency > 0 {
+		cfg.Runner.MaxSourceConcurrency = cfg.Runner.MaxJobConcurrency
+	}
 
 	polygonJob := cfg.Jobs["polygon_us_flatfiles"]
 	polygonJob.Enabled = polygonJob.Enabled || optionSource == "polygon" || stockSource == "polygon"
@@ -728,9 +788,9 @@ func buildSyncer(runtimeCfg config.Runtime, name string, job jobConfig, apiKey, 
 		if err != nil {
 			return nil, err
 		}
-		cacheStore, err := cache.NewStore(context.Background(), runtimeCfg)
+		cacheStore, err := newPipelineCache(runtimeCfg)
 		if err != nil {
-			cacheStore = cache.NewMemoryStore()
+			return nil, fmt.Errorf("fmp_economic_calendar cache: %w", err)
 		}
 		return pipelinejobs.NewFMPEconomicCalendar(pipelinejobs.FMPEconomicCalendarConfig{APIKey: apiKey, FMPCacheDir: runtimeCfg.FMP.CacheDir, MySQLDSN: mysqlDSN, Cache: cacheStore, ColdStartFloorUTC: parseColdStart(job.ColdStartFloor)})
 	case "fmp_observed_stock_calendar":
@@ -738,9 +798,9 @@ func buildSyncer(runtimeCfg config.Runtime, name string, job jobConfig, apiKey, 
 		if err != nil {
 			return nil, err
 		}
-		cacheStore, err := cache.NewStore(context.Background(), runtimeCfg)
+		cacheStore, err := newPipelineCache(runtimeCfg)
 		if err != nil {
-			cacheStore = cache.NewMemoryStore()
+			return nil, fmt.Errorf("fmp_observed_stock_calendar cache: %w", err)
 		}
 		return pipelinejobs.NewFMPObservedStockCalendar(pipelinejobs.FMPObservedStockCalendarConfig{APIKey: apiKey, FMPCacheDir: runtimeCfg.FMP.CacheDir, MySQLDSN: mysqlDSN, Cache: cacheStore, ColdStartFloorUTC: parseColdStart(job.ColdStartFloor)})
 	case "fmp_sp500_macro", "fmp_nasdaq100_macro":
@@ -766,6 +826,10 @@ func buildSyncer(runtimeCfg config.Runtime, name string, job jobConfig, apiKey, 
 	default:
 		return nil, fmt.Errorf("unknown job %q", name)
 	}
+}
+
+func newPipelineCache(runtimeCfg config.Runtime) (cache.Store, error) {
+	return cache.NewStore(context.Background(), runtimeCfg)
 }
 
 func makeJobSpec(name string, job jobConfig, runner runnerConfig, syncer syncpipeline.Syncer) (syncpipeline.JobSpec, error) {
@@ -864,11 +928,37 @@ func initSelectedSchemas(ctx context.Context, conn driver.Conn, cfg pipelineConf
 		if err != nil {
 			return nil, err
 		}
-		if err := cryptooptions.InitSchema(ctx, conn, ddl); err != nil {
+		if err := usmarket.InitFundamentalsSchema(ctx, conn, ddl); err != nil {
 			return nil, fmt.Errorf("initialize feature store schema: %w", err)
 		}
 	}
 	return sessions, nil
+}
+
+func printMissingSelectedDependencyWarnings(cfg pipelineConfig, selected map[string]bool) {
+	for _, warning := range missingSelectedDependencyWarnings(cfg, selected) {
+		fmt.Fprintln(os.Stderr, warning)
+	}
+}
+
+func missingSelectedDependencyWarnings(cfg pipelineConfig, selected map[string]bool) []string {
+	if len(selected) == 0 {
+		return nil
+	}
+	var warnings []string
+	for _, name := range sortedJobNames(cfg) {
+		if !selected[name] {
+			continue
+		}
+		for _, dep := range cfg.Jobs[name].DependsOn {
+			dep = strings.TrimSpace(dep)
+			if dep == "" || selected[dep] {
+				continue
+			}
+			warnings = append(warnings, fmt.Sprintf("warning: selected job %s depends on %s, but %s was not selected; keeping legacy --jobs behavior", name, dep, dep))
+		}
+	}
+	return warnings
 }
 
 func printStatus(ctx context.Context, conn driver.Conn, selected map[string]bool) error {
@@ -1073,7 +1163,7 @@ func snapshotTargetsForJob(spec syncpipeline.JobSpec) []snapshotTarget {
 	case "fmp_us_stocks":
 		return []snapshotTarget{{Dataset: "US stocks", Table: "us_stocks_bar_1m", DateExpr: "market_date"}}
 	case "fmp_us_stock_splits":
-		return []snapshotTarget{{Dataset: "US stock splits", Table: "us_stock_splits", DateExpr: "split_date"}}
+		return []snapshotTarget{{Dataset: "US stock splits", Table: "us_stock_splits", DateExpr: "updated_at"}}
 	case "fmp_us_fundamentals":
 		return []snapshotTarget{{Dataset: "US fundamentals", Table: "fundamental_observation", DateExpr: "event_ts", WhereSQL: "market = {market:String} AND factor_code IN ('pe','pb')", Args: []any{clickhouse.Named("market", "us-stocks")}, Qualifier: "pe/pb"}}
 	case "guru_macro":

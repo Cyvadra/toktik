@@ -16,6 +16,8 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
+var ErrImportAlreadyRunning = errors.New("import already running")
+
 const TableName = "import_ledger"
 
 const SchemaDDL = `CREATE TABLE IF NOT EXISTS import_ledger
@@ -57,11 +59,13 @@ func New(conn driver.Conn) *Repository {
 }
 
 type StartRequest struct {
-	ImporterName string
-	SourceKey    string
-	ScopeKey     string
-	SourceHash   string
-	StartedAt    time.Time
+	ImporterName  string
+	SourceKey     string
+	ScopeKey      string
+	SourceHash    string
+	StartedAt     time.Time
+	PendingTTL    time.Duration
+	IgnorePending bool
 }
 
 type CompletionRequest struct {
@@ -84,41 +88,29 @@ func (r *Repository) AlreadySucceeded(ctx context.Context, importerName, sourceK
 	if err != nil {
 		return false, err
 	}
-
-	rows, err := r.conn.Query(ctx, `
-SELECT status
-FROM import_ledger FINAL
-WHERE importer_name = {importer_name:String}
-  AND source_key = {source_key:String}
-  AND scope_key = {scope_key:String}
-ORDER BY version DESC
-LIMIT 1`,
-		clickhouse.Named("importer_name", importerName),
-		clickhouse.Named("source_key", sourceKey),
-		clickhouse.Named("scope_key", scopeKey),
-	)
+	status, _, ok, err := r.latestStatus(ctx, importerName, sourceKey, scopeKey)
 	if err != nil {
-		return false, fmt.Errorf("query import ledger: %w", err)
+		return false, err
 	}
-	defer rows.Close()
-
-	if !rows.Next() {
-		return false, rows.Err()
+	if !ok {
+		return false, nil
 	}
-	var status string
-	if err := rows.Scan(&status); err != nil {
-		return false, fmt.Errorf("scan import ledger status: %w", err)
-	}
-	if err := rows.Err(); err != nil {
-		return false, fmt.Errorf("read import ledger status: %w", err)
-	}
-	return Status(status) == StatusSuccess, nil
+	return status == StatusSuccess, nil
 }
 
 func (r *Repository) Start(ctx context.Context, req StartRequest) (string, error) {
 	importerName, sourceKey, scopeKey, err := normalizeKey(req.ImporterName, req.SourceKey, req.ScopeKey)
 	if err != nil {
 		return "", err
+	}
+	if !req.IgnorePending {
+		status, startedAt, ok, err := r.latestStatus(ctx, importerName, sourceKey, scopeKey)
+		if err != nil {
+			return "", err
+		}
+		if ok && pendingIsActive(Status(status), startedAt, normalizeTime(req.StartedAt), req.PendingTTL) {
+			return "", fmt.Errorf("%w: %s/%s/%s started_at=%s", ErrImportAlreadyRunning, importerName, sourceKey, scopeKey, startedAt.UTC().Format(time.RFC3339))
+		}
 	}
 	importID, err := newImportID()
 	if err != nil {
@@ -139,6 +131,47 @@ func (r *Repository) Start(ctx context.Context, req StartRequest) (string, error
 		return "", err
 	}
 	return importID, nil
+}
+
+func (r *Repository) latestStatus(ctx context.Context, importerName, sourceKey, scopeKey string) (Status, time.Time, bool, error) {
+	rows, err := r.conn.Query(ctx, `
+SELECT status, started_at
+FROM import_ledger FINAL
+WHERE importer_name = {importer_name:String}
+  AND source_key = {source_key:String}
+  AND scope_key = {scope_key:String}
+ORDER BY version DESC
+LIMIT 1`,
+		clickhouse.Named("importer_name", importerName),
+		clickhouse.Named("source_key", sourceKey),
+		clickhouse.Named("scope_key", scopeKey),
+	)
+	if err != nil {
+		return "", time.Time{}, false, fmt.Errorf("query import ledger: %w", err)
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		return "", time.Time{}, false, rows.Err()
+	}
+	var status string
+	var startedAt time.Time
+	if err := rows.Scan(&status, &startedAt); err != nil {
+		return "", time.Time{}, false, fmt.Errorf("scan import ledger status: %w", err)
+	}
+	if err := rows.Err(); err != nil {
+		return "", time.Time{}, false, fmt.Errorf("read import ledger status: %w", err)
+	}
+	return Status(status), startedAt, true, nil
+}
+
+func pendingIsActive(status Status, startedAt, now time.Time, ttl time.Duration) bool {
+	if status != StatusPending {
+		return false
+	}
+	if ttl <= 0 {
+		return true
+	}
+	return normalizeTime(startedAt).Add(ttl).After(normalizeTime(now))
 }
 
 func (r *Repository) MarkSuccess(ctx context.Context, req CompletionRequest) error {

@@ -164,6 +164,71 @@ market_data_sources:
 	}
 }
 
+func TestLoadPipelineConfigAcceptsLegacyMaxJobConcurrency(t *testing.T) {
+	path := writeTempPipelineConfig(t, `
+runner:
+  max_job_concurrency: 3
+`)
+	cfg, err := loadPipelineConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Runner.MaxSourceConcurrency != 3 {
+		t.Fatalf("expected legacy max_job_concurrency to populate max_source_concurrency, got %d", cfg.Runner.MaxSourceConcurrency)
+	}
+}
+
+func TestLoadPipelineConfigPrefersMaxSourceConcurrency(t *testing.T) {
+	path := writeTempPipelineConfig(t, `
+runner:
+  max_source_concurrency: 4
+  max_job_concurrency: 2
+`)
+	cfg, err := loadPipelineConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Runner.MaxSourceConcurrency != 4 {
+		t.Fatalf("expected max_source_concurrency to win, got %d", cfg.Runner.MaxSourceConcurrency)
+	}
+}
+
+func TestMissingSelectedDependencyWarningsKeepsLegacySelectionBehavior(t *testing.T) {
+	cfg := pipelineConfig{Jobs: map[string]jobConfig{
+		"parent": {Enabled: true},
+		"child":  {Enabled: true, DependsOn: []string{"parent"}},
+	}}
+	warnings := missingSelectedDependencyWarnings(cfg, map[string]bool{"child": true})
+	if len(warnings) != 1 {
+		t.Fatalf("expected one warning, got %#v", warnings)
+	}
+	if !strings.Contains(warnings[0], "selected job child depends on parent") {
+		t.Fatalf("unexpected warning: %q", warnings[0])
+	}
+}
+
+func TestOptionalBoolFlagTracksExplicitOverride(t *testing.T) {
+	var flag optionalBoolFlag
+	if flag.set {
+		t.Fatal("expected unset flag initially")
+	}
+	if err := flag.Set("false"); err != nil {
+		t.Fatal(err)
+	}
+	if !flag.set || flag.value {
+		t.Fatalf("expected explicit false, got %#v", flag)
+	}
+	if err := flag.Set("true"); err != nil {
+		t.Fatal(err)
+	}
+	if !flag.value {
+		t.Fatalf("expected explicit true, got %#v", flag)
+	}
+	if err := flag.Set("maybe"); err == nil {
+		t.Fatal("expected invalid bool error")
+	}
+}
+
 func TestSnapshotTargetsForPolygonFlatfilesIncludesStocksWhenSyncerAuditsStocks(t *testing.T) {
 	targets := snapshotTargetsForJob(syncpipeline.JobSpec{
 		Name:   "polygon_us_flatfiles",
@@ -174,6 +239,16 @@ func TestSnapshotTargetsForPolygonFlatfilesIncludesStocksWhenSyncerAuditsStocks(
 	}
 	if targets[0].Dataset != "US stocks" || targets[1].Dataset != "US options" {
 		t.Fatalf("unexpected targets: %#v", targets)
+	}
+}
+
+func TestSnapshotTargetsForFMPUSStockSplitsUsesUpdatedAt(t *testing.T) {
+	targets := snapshotTargetsForJob(syncpipeline.JobSpec{Name: "fmp_us_stock_splits"})
+	if len(targets) != 1 {
+		t.Fatalf("expected 1 target, got %#v", targets)
+	}
+	if targets[0].DateExpr != "updated_at" {
+		t.Fatalf("expected updated_at snapshot target, got %#v", targets)
 	}
 }
 

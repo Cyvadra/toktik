@@ -114,3 +114,19 @@ func TestRecordFailureJoinsRecorderError(t *testing.T) {
 		t.Fatalf("RecordFailure() error = %v, want to include recorder error %v", err, markErr)
 	}
 }
+
+func TestPendingIsActiveUsesTTL(t *testing.T) {
+	now := time.Date(2026, 5, 25, 1, 2, 3, 0, time.UTC)
+	if !pendingIsActive(StatusPending, now.Add(-time.Hour), now, 2*time.Hour) {
+		t.Fatal("expected pending row inside TTL to be active")
+	}
+	if pendingIsActive(StatusPending, now.Add(-3*time.Hour), now, 2*time.Hour) {
+		t.Fatal("expected pending row past TTL to be stale")
+	}
+	if pendingIsActive(StatusSuccess, now, now, 2*time.Hour) {
+		t.Fatal("expected non-pending status to be inactive")
+	}
+	if !pendingIsActive(StatusPending, now.Add(-24*time.Hour), now, 0) {
+		t.Fatal("expected zero TTL to treat pending row as active")
+	}
+}

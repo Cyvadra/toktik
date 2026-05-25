@@ -24,6 +24,8 @@ const SingletonSourceKey = "_default"
 
 const recentCursorSkipThreshold = 20 * time.Hour
 
+const defaultLockTTL = 2 * time.Hour
+
 type JobStatus string
 
 const (
@@ -74,15 +76,15 @@ type JobSpec struct {
 }
 
 type RunnerOptions struct {
-	Logger            *slog.Logger
-	MaxJobConcurrency int
-	DryRun            bool
-	Force             bool
-	FromOverride      time.Time
-	ToOverride        time.Time
-	LockOptions       LockOptions
-	AuditEnabled      bool
-	AuditOptions      AuditOptions
+	Logger               *slog.Logger
+	MaxSourceConcurrency int
+	DryRun               bool
+	Force                bool
+	FromOverride         time.Time
+	ToOverride           time.Time
+	LockOptions          LockOptions
+	AuditEnabled         bool
+	AuditOptions         AuditOptions
 }
 
 type Runner struct {
@@ -94,6 +96,9 @@ type Runner struct {
 func NewRunner(conn driver.Conn, opts RunnerOptions) *Runner {
 	if opts.Logger == nil {
 		opts.Logger = slog.Default()
+	}
+	if opts.LockOptions.TTL <= 0 {
+		opts.LockOptions.TTL = defaultLockTTL
 	}
 	return &Runner{conn: conn, opts: opts, startedAt: time.Now().UTC()}
 }
@@ -148,7 +153,7 @@ type LedgerHooks struct {
 
 func NewLedgerHooks(conn driver.Conn, opts LockOptions) *LedgerHooks {
 	if opts.TTL <= 0 {
-		opts.TTL = 2 * time.Hour
+		opts.TTL = defaultLockTTL
 	}
 	return &LedgerHooks{conn: conn, opts: opts}
 }
@@ -201,16 +206,34 @@ func (r *Runner) Run(ctx context.Context, specs []JobSpec) (RunReport, error) {
 		return RunReport{}, err
 	}
 	report := RunReport{StartedAt: started}
+	completed := make(map[string]JobReport, len(ordered))
 	for _, spec := range ordered {
+		if blocked, ok := dependencyBlockedReport(spec, completed); ok {
+			report.Jobs = append(report.Jobs, blocked)
+			completed[spec.Name] = blocked
+			continue
+		}
 		jobReport := r.runJob(ctx, spec)
 		report.Jobs = append(report.Jobs, jobReport)
-		if jobReport.Status == JobStatusFailed {
-			report.FinishedAt = time.Now().UTC()
-			return report, fmt.Errorf("job %s failed: %s", spec.Name, jobReport.Err)
-		}
+		completed[spec.Name] = jobReport
 	}
 	report.FinishedAt = time.Now().UTC()
 	return report, nil
+}
+
+func dependencyBlockedReport(spec JobSpec, completed map[string]JobReport) (JobReport, bool) {
+	for _, dep := range spec.DependsOn {
+		depReport, ok := completed[dep]
+		if !ok || depReport.Status != JobStatusFailed {
+			continue
+		}
+		reason := fmt.Sprintf("dependency %s failed", dep)
+		if strings.TrimSpace(depReport.Err) != "" {
+			reason += ": " + depReport.Err
+		}
+		return JobReport{Job: spec.Name, Status: JobStatusSkipped, Err: reason}, true
+	}
+	return JobReport{}, false
 }
 
 func (r *Runner) runJob(ctx context.Context, spec JobSpec) JobReport {
@@ -239,12 +262,9 @@ func (r *Runner) runJob(ctx context.Context, spec JobSpec) JobReport {
 			if sourceReport.Status == JobStatusFailed {
 				report.Status = JobStatusFailed
 				report.Err = sourceReport.Err
-				return report
 			}
 		}
 	} else {
-		jobCtx, cancel := context.WithCancel(jobCtx)
-		defer cancel()
 		type sourceTask struct {
 			index int
 			key   string
@@ -266,9 +286,6 @@ func (r *Runner) runJob(ctx context.Context, spec JobSpec) JobReport {
 					case results <- sourceResult{index: task.index, report: sourceReport}:
 					case <-jobCtx.Done():
 						return
-					}
-					if sourceReport.Status == JobStatusFailed {
-						cancel()
 					}
 				}
 			}()
@@ -323,8 +340,8 @@ func (r *Runner) sourceConcurrency(spec JobSpec, keyCount int) int {
 	if concurrency <= 0 {
 		concurrency = 1
 	}
-	if r.opts.MaxJobConcurrency > 0 && r.opts.MaxJobConcurrency < concurrency {
-		concurrency = r.opts.MaxJobConcurrency
+	if r.opts.MaxSourceConcurrency > 0 && r.opts.MaxSourceConcurrency < concurrency {
+		concurrency = r.opts.MaxSourceConcurrency
 	}
 	if keyCount > 0 && concurrency > keyCount {
 		concurrency = keyCount
@@ -364,7 +381,7 @@ func (r *Runner) runSource(ctx context.Context, spec JobSpec, ledger *importledg
 	sourceHash := SourceHashFor(spec.Name, sourceKey, scope)
 	if !r.opts.DryRun {
 		var err error
-		importID, err = ledger.Start(sourceCtx, importledger.StartRequest{ImporterName: spec.Name, SourceKey: sourceKey, ScopeKey: scope, SourceHash: sourceHash, StartedAt: time.Now().UTC()})
+		importID, err = ledger.Start(sourceCtx, importledger.StartRequest{ImporterName: spec.Name, SourceKey: sourceKey, ScopeKey: scope, SourceHash: sourceHash, StartedAt: time.Now().UTC(), PendingTTL: r.opts.LockOptions.TTL, IgnorePending: r.opts.LockOptions.ForceUnlock})
 		if err != nil {
 			return SourceReport{SourceKey: sourceKey, From: from, To: to, Status: JobStatusFailed, Err: err.Error()}
 		}
@@ -543,7 +560,7 @@ func (a *Auditor) AuditJob(ctx context.Context, spec JobSpec, sources []SourceRe
 	}
 	var findings []DuplicateFinding
 	for _, source := range sources {
-		if source.Status != JobStatusSuccess {
+		if !shouldAuditSource(source) {
 			continue
 		}
 		from := source.From.AddDate(0, 0, -lookback)
@@ -559,6 +576,10 @@ func (a *Auditor) AuditJob(ctx context.Context, spec JobSpec, sources []SourceRe
 		}
 	}
 	return findings, nil
+}
+
+func shouldAuditSource(source SourceReport) bool {
+	return source.Status == JobStatusSuccess || (source.Status == JobStatusFailed && source.RowsInserted > 0)
 }
 
 func (a *Auditor) auditTarget(ctx context.Context, job, sourceKey string, target AuditTarget, from, to time.Time, limit int) ([]DuplicateFinding, error) {

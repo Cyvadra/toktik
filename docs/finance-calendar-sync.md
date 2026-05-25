@@ -138,6 +138,7 @@ Default behavior:
 - single logical source key
 - no ClickHouse cursor tracking
 - uses the finance calendar service window and `12h` sync marker cache
+- cache initialization is required; pipeline construction now fails fast instead of silently falling back to an in-memory cache
 
 ### `fmp_observed_stock_calendar`
 
@@ -164,9 +165,12 @@ go run ./cmd/data-sync-pipeline run --config configs/data-sync-pipeline.yaml --j
 go run ./cmd/data-sync-pipeline run --config configs/data-sync-pipeline.yaml --jobs fmp_economic_calendar,fmp_observed_stock_calendar
 ```
 
+If `--jobs` selects a downstream job without its configured dependency set, the pipeline now prints a warning and keeps the legacy behavior of running only the selected jobs.
+
 ## Operational Notes
 
 - MySQL availability is required for all finance calendar entry points.
 - ClickHouse is still required for the watchlist-based stock calendar sync because the observed pool comes from the turnover screener.
 - When a pipeline run or manual sync reports `rows=0`, that can mean either no upstream deltas or a warm `12h` sync marker cache.
+- runner `--from/--to` is currently informational for the finance calendar jobs; the effective sync scope is still controlled by the finance calendar service marker/cache logic.
 - Finance calendar writes are upserts keyed by event identity, so repeated syncs are intended to be idempotent rather than append-only.

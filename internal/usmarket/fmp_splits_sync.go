@@ -27,6 +27,8 @@ type FMPStockSplitsSyncResult struct {
 	RowsInserted     int64
 }
 
+const stockSplitMaxFutureHorizonYears = 1
+
 func SyncFMPStockSplits(ctx context.Context, conn driver.Conn, cfg FMPStockSplitsSyncConfig) (FMPStockSplitsSyncResult, error) {
 	if strings.TrimSpace(cfg.APIKey) == "" {
 		return FMPStockSplitsSyncResult{}, fmt.Errorf("FMP API key is required")
@@ -87,6 +89,9 @@ func convertFMPStockSplits(requestSymbol string, events []fmp.StockSplit, update
 		splitDate, err := time.Parse("2006-01-02", strings.TrimSpace(event.Date))
 		if err != nil {
 			return nil, fmt.Errorf("parse FMP split date for %s %q: %w", symbol, event.Date, err)
+		}
+		if splitDate.UTC().After(updatedAt.UTC().AddDate(stockSplitMaxFutureHorizonYears, 0, 0)) {
+			continue
 		}
 		out = append(out, StockSplit{
 			Symbol:      symbol,
