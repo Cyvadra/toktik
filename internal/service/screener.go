@@ -17,7 +17,7 @@ import (
 )
 
 const (
-	usTurnoverIntersectionCacheTTL       = 24 * time.Hour
+	usTurnoverIntersectionCacheTTL       = 20 * time.Hour
 	usTurnoverIntersectionSharedTopLimit = 60
 )
 

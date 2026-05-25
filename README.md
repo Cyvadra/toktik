@@ -296,7 +296,7 @@ The observed stock watchlist used by the stock-calendar sync is derived from the
 
 Cache behavior:
 
-- turnover intersection screener cache: `24h TTL`
+- turnover intersection screener cache: `20h TTL`
 - requests up to `Top 60` share the same turnover cache entry, so `Top 30` can reuse `Top 60`
 - finance calendar sync marker cache: `12h TTL`
 - the `12h` cache skips repeated FMP syncs, but API responses still read from MySQL on every request
