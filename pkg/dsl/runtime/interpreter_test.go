@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"math"
 	"testing"
 
 	"github.com/Cyvadra/toktik/pkg/dsl/parser"
@@ -346,6 +347,33 @@ func TestTAWMAComputesWeightedAverage(t *testing.T) {
 	want := (30.0*3 + 20.0*2 + 10.0*1) / 6.0
 	if v.Float() != want {
 		t.Errorf("wma3: expected %g, got %g", want, v.Float())
+	}
+}
+
+func TestTARSIUsesWilderSmoothing(t *testing.T) {
+	src := `rsi = ta.rsi(close, 3)
+rsi_again = ta.rsi(close, 3)`
+	prog, errs := parser.Parse(src)
+	if len(errs) > 0 {
+		t.Fatal(errs)
+	}
+	ip := NewInterpreter(prog)
+	RegisterTABuiltins(ip)
+	ip.Init()
+
+	for _, price := range []float64{10, 12, 11, 13, 14, 13} {
+		ip.Bridge = &mockBridge{closeVal: price}
+		ip.OnBar()
+	}
+
+	value, _ := ip.Global.Get("rsi")
+	const want = 62.85714285714286
+	if math.Abs(value.Float()-want) > 1e-9 {
+		t.Fatalf("rsi = %.12f, want %.12f", value.Float(), want)
+	}
+	again, _ := ip.Global.Get("rsi_again")
+	if math.Abs(again.Float()-want) > 1e-9 {
+		t.Fatalf("second rsi call = %.12f, want %.12f", again.Float(), want)
 	}
 }
 

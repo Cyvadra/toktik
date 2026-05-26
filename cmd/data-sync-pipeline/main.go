@@ -874,6 +874,12 @@ func newCalendarSyncerConfig(buildCtx syncerBuildContext, name string, job jobCo
 
 func buildMacroSyncer(buildCtx syncerBuildContext, name string, job jobConfig) (syncpipeline.Syncer, bool, error) {
 	switch name {
+	case "cboe_vix_macro":
+		syncer, err := pipelinejobs.NewGuruMacro(pipelinejobs.GuruMacroConfig{Dataset: job.Dataset, Source: macro.DefaultCBOEVIXSource, ColdStartFloorUTC: parseColdStart(job.ColdStartFloor), SyncFunc: func(ctx context.Context, conn driver.Conn, from, to time.Time, dryRun bool) (int64, error) {
+			res, err := macro.SyncCBOEVIX(ctx, conn, macro.CBOEVIXConfig{HistoryURL: job.URL, ReferenceSymbol: job.ReferenceSymbol, BatchSize: job.BatchSize, PreferredDataset: job.Dataset}, from, to, dryRun)
+			return int64(res.ObservationRows), err
+		}})
+		return syncer, true, err
 	case "fmp_sp500_macro", "fmp_nasdaq100_macro":
 		syncer, err := pipelinejobs.NewGuruMacro(pipelinejobs.GuruMacroConfig{Dataset: job.Dataset, Source: "fmp", ColdStartFloorUTC: parseColdStart(job.ColdStartFloor), SyncFunc: func(ctx context.Context, conn driver.Conn, from, to time.Time, dryRun bool) (int64, error) {
 			res, err := macro.SyncFMPIndexShiller(ctx, conn, macro.FMPIndexShillerConfig{APIKey: buildCtx.APIKey, Dataset: job.Dataset, ConstituentUniverse: job.ConstituentUniverse, PriceSymbol: job.PriceSymbol, ReferenceSymbol: job.ReferenceSymbol, BatchSize: job.BatchSize, Workers: job.Workers, RollingQuarters: job.RollingQuarters, MinQuarters: job.MinQuarters}, from, to, dryRun)
@@ -1298,6 +1304,8 @@ func snapshotTargetsForJob(spec syncpipeline.JobSpec) []snapshotTarget {
 		return []snapshotTarget{{Dataset: "US fundamentals", Table: "fundamental_observation", DateExpr: "event_ts", WhereSQL: "market = {market:String} AND factor_code IN ('pe','pb')", Args: []any{clickhouse.Named("market", "us-stocks")}, Qualifier: "pe/pb"}}
 	case "guru_macro":
 		return []snapshotTarget{{Dataset: "macro", Table: "macro_observation", DateExpr: "event_ts", WhereSQL: "dataset = {dataset:String} AND source = {source:String}", Args: []any{clickhouse.Named("dataset", macro.DefaultGurufocusShillerDataset), clickhouse.Named("source", "gurufocus")}, Qualifier: "gurufocus-shiller"}}
+	case "cboe_vix_macro":
+		return []snapshotTarget{{Dataset: "macro", Table: "macro_observation", DateExpr: "event_ts", WhereSQL: "dataset = {dataset:String} AND source = {source:String}", Args: []any{clickhouse.Named("dataset", macro.DefaultCBOEVIXDataset), clickhouse.Named("source", macro.DefaultCBOEVIXSource)}, Qualifier: macro.DefaultCBOEVIXDataset}}
 	case "fmp_sp500_macro":
 		return []snapshotTarget{{Dataset: "macro", Table: "macro_observation", DateExpr: "event_ts", WhereSQL: "dataset = {dataset:String} AND source = {source:String}", Args: []any{clickhouse.Named("dataset", macro.DefaultFMPSP500Dataset), clickhouse.Named("source", "fmp")}, Qualifier: "fmp-sp500-shiller"}}
 	case "fmp_nasdaq100_macro":

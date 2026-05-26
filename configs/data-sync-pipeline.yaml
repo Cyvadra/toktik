@@ -17,6 +17,14 @@ market_data_sources:
   us_options: polygon
 
 jobs:
+  cboe_vix_macro:
+    enabled: true
+    dataset: cboe-vix
+    url: "https://cdn.cboe.com/api/global/us_indices/daily_prices/VIX_History.csv"
+    reference_symbol: SPY
+    batch_size: 1000
+    cold_start_floor: 1990-01-01
+
   guru_macro:
     enabled: true
     dataset: gurufocus-shiller

@@ -18,6 +18,7 @@ const (
 	macroDatasetGurufocusShiller = "gurufocus-shiller"
 	macroDatasetFMPSP500Shiller  = "fmp-sp500-shiller"
 	macroDatasetFMPNDXShiller    = "fmp-nasdaq100-shiller"
+	macroDatasetCBOEVIX          = "cboe-vix"
 	macroIntervalEvent           = "event"
 	macroRealtimeForwardFill     = "forward_fill"
 	macroRealtimePriceScaled     = "price_scaled"
@@ -31,6 +32,7 @@ var supportedMacroDatasets = map[string]struct{}{
 	macroDatasetGurufocusShiller: {},
 	macroDatasetFMPSP500Shiller:  {},
 	macroDatasetFMPNDXShiller:    {},
+	macroDatasetCBOEVIX:          {},
 }
 
 type MacroService struct {
@@ -211,6 +213,15 @@ func (s *MacroService) QuerySeries(ctx context.Context, req dto.MacroSeriesReque
 	referenceMarket, referenceSymbol, err := resolveMacroReference(req.ReferenceMarket, req.ReferenceSymbol, sourceFactors, metaByFactor)
 	if err != nil {
 		return nil, err
+	}
+	if interval == "1d" && dataset == macroDatasetCBOEVIX {
+		resp.ReferenceMarket = referenceMarket
+		resp.ReferenceSymbol = referenceSymbol
+		resp.Data = buildExpandedMacroDailySeriesWithoutReferenceBars(requestedFactors, observations, virtualByFactor, referenceMarket, referenceSymbol, from, to)
+		if len(resp.Data) > limit {
+			resp.Data = resp.Data[:limit]
+		}
+		return resp, nil
 	}
 	tableName, err := resolveUSBarTable(interval, chquery.USStockIntervals, "macro reference")
 	if err != nil {
@@ -521,6 +532,26 @@ func buildExpandedMacroDailySeries(requestedFactors []string, observations map[s
 	return out
 }
 
+func buildExpandedMacroDailySeriesWithoutReferenceBars(requestedFactors []string, observations map[string][]macroObservation, virtualByFactor map[string]macroVirtualFactor, referenceMarket, referenceSymbol string, from, to time.Time) []dto.MacroSeriesPoint {
+	baseExpanded := expandMacroObservationsDailyWithoutReferenceBars(observations, referenceMarket, referenceSymbol, from, to)
+	byFactor := groupMacroSeriesByFactor(baseExpanded)
+	out := make([]dto.MacroSeriesPoint, 0, len(baseExpanded))
+	for _, factor := range requestedFactors {
+		if virtual, ok := virtualByFactor[factor]; ok {
+			out = append(out, deriveVirtualMacroSeries(factor, byFactor[virtual.BaseFactor], virtual)...)
+			continue
+		}
+		out = append(out, byFactor[factor]...)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Timestamp.Equal(out[j].Timestamp) {
+			return out[i].Factor < out[j].Factor
+		}
+		return out[i].Timestamp.Before(out[j].Timestamp)
+	})
+	return out
+}
+
 func groupMacroSeriesByFactor(points []dto.MacroSeriesPoint) map[string][]dto.MacroSeriesPoint {
 	out := make(map[string][]dto.MacroSeriesPoint)
 	for _, point := range points {
@@ -639,6 +670,45 @@ func expandMacroObservationsDaily(observations map[string][]macroObservation, me
 				Source:          current.Source,
 				Filled:          true,
 				Realtime:        realtime,
+				ReferenceMarket: referenceMarket,
+				ReferenceSymbol: referenceSymbol,
+			})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Timestamp.Equal(out[j].Timestamp) {
+			return out[i].Factor < out[j].Factor
+		}
+		return out[i].Timestamp.Before(out[j].Timestamp)
+	})
+	return out
+}
+
+func expandMacroObservationsDailyWithoutReferenceBars(observations map[string][]macroObservation, referenceMarket, referenceSymbol string, from, to time.Time) []dto.MacroSeriesPoint {
+	startDay := time.Date(from.UTC().Year(), from.UTC().Month(), from.UTC().Day(), 0, 0, 0, 0, time.UTC)
+	out := make([]dto.MacroSeriesPoint, 0, len(observations)*max(1, int(to.Sub(startDay)/(24*time.Hour))))
+	for factor, series := range observations {
+		if len(series) == 0 {
+			continue
+		}
+		seriesIndex := 0
+		for day := startDay; day.Before(to); day = day.AddDate(0, 0, 1) {
+			dayEnd := day.AddDate(0, 0, 1)
+			for seriesIndex+1 < len(series) && series[seriesIndex+1].KnownAt.Before(dayEnd) {
+				seriesIndex++
+			}
+			current := series[seriesIndex]
+			if !current.KnownAt.Before(dayEnd) {
+				continue
+			}
+			out = append(out, dto.MacroSeriesPoint{
+				Factor:          factor,
+				Timestamp:       day,
+				EventTS:         current.EventTS,
+				KnownAt:         current.KnownAt,
+				Value:           current.Value,
+				Source:          current.Source,
+				Filled:          true,
 				ReferenceMarket: referenceMarket,
 				ReferenceSymbol: referenceSymbol,
 			})

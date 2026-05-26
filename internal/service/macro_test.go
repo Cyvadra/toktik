@@ -67,3 +67,39 @@ func TestVirtualMacroFactorsForFMPShillerDatasets(t *testing.T) {
 		}
 	}
 }
+
+func TestBuildExpandedMacroDailySeriesWithoutReferenceBarsKeepsEarlyCBOEVIXHistory(t *testing.T) {
+	from := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2020, 1, 4, 0, 0, 0, 0, time.UTC)
+	observations := map[string][]macroObservation{
+		"close": {
+			{FactorCode: "close", EventTS: time.Date(2019, 12, 31, 21, 0, 0, 0, time.UTC), KnownAt: time.Date(2019, 12, 31, 21, 0, 0, 0, time.UTC), Value: 13.78, Source: "cboe", ReferenceMarket: defaultMacroReferenceMarket, ReferenceSymbol: "SPY"},
+			{FactorCode: "close", EventTS: time.Date(2020, 1, 2, 21, 0, 0, 0, time.UTC), KnownAt: time.Date(2020, 1, 2, 21, 0, 0, 0, time.UTC), Value: 12.47, Source: "cboe", ReferenceMarket: defaultMacroReferenceMarket, ReferenceSymbol: "SPY"},
+		},
+	}
+
+	points := buildExpandedMacroDailySeriesWithoutReferenceBars([]string{"close"}, observations, nil, defaultMacroReferenceMarket, "SPY", from, to)
+	if len(points) != 3 {
+		t.Fatalf("expected 3 points, got %d", len(points))
+	}
+	if got := points[0].Timestamp; !got.Equal(from) {
+		t.Fatalf("first timestamp=%s want %s", got, from)
+	}
+	if got := points[0].Value; math.Abs(got-13.78) > 1e-9 {
+		t.Fatalf("first value=%v want 13.78", got)
+	}
+	if got := points[2].Timestamp; !got.Equal(time.Date(2020, 1, 3, 0, 0, 0, 0, time.UTC)) {
+		t.Fatalf("third timestamp=%s want 2020-01-03", got)
+	}
+	if got := points[2].Value; math.Abs(got-12.47) > 1e-9 {
+		t.Fatalf("third value=%v want 12.47", got)
+	}
+	for _, point := range points {
+		if !point.Filled {
+			t.Fatalf("expected filled point, got %+v", point)
+		}
+		if point.Realtime {
+			t.Fatalf("expected non-realtime point, got %+v", point)
+		}
+	}
+}

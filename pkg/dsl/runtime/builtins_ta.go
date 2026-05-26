@@ -7,6 +7,10 @@ import (
 )
 
 func taSeriesValue(ip *Interpreter, name string, value float64, args ...Value) Value {
+	return ip.CaptureSeries(taSeriesKey(name, args...), value)
+}
+
+func taSeriesKey(name string, args ...Value) string {
 	var key strings.Builder
 	key.WriteString("__ta__:")
 	key.WriteString(name)
@@ -29,7 +33,35 @@ func taSeriesValue(ip *Interpreter, name string, value float64, args ...Value) V
 			key.WriteString(fmt.Sprintf("%d", arg.Tag()))
 		}
 	}
-	return ip.CaptureSeries(key.String(), value)
+	return key.String()
+}
+
+func previousCapturedValue(ip *Interpreter, key string) float64 {
+	if ip == nil {
+		return math.NaN()
+	}
+	series, ok := ip.seriesMap[key]
+	if !ok || series.Len() == 0 {
+		return math.NaN()
+	}
+	return series.Current()
+}
+
+func currentCapturedSeriesValue(ip *Interpreter, key string) (Value, bool) {
+	if ip == nil || ip.BarIndex <= 0 {
+		return Value{}, false
+	}
+	series, ok := ip.seriesMap[key]
+	if !ok || series.Len() < ip.BarIndex {
+		return Value{}, false
+	}
+	return SeriesVal(series), true
+}
+
+func captureRSIState(ip *Interpreter, value, avgGain, avgLoss float64, args ...Value) Value {
+	_ = ip.CaptureSeries(taSeriesKey("ta.rsi.avgGain", args...), avgGain)
+	_ = ip.CaptureSeries(taSeriesKey("ta.rsi.avgLoss", args...), avgLoss)
+	return ip.CaptureSeries(taSeriesKey("ta.rsi", args...), value)
 }
 
 // RegisterTABuiltins adds Pine Script-style ta.* functions.
@@ -87,34 +119,60 @@ func RegisterTABuiltins(ip *Interpreter) {
 		s := args[0].SeriesPtr()
 		length := int(args[1].Float())
 		if s == nil || length <= 0 || s.Len() < length+1 {
-			return NaVal()
+			return captureRSIState(ip, math.NaN(), math.NaN(), math.NaN(), args...)
 		}
 		data := s.Data()
 		n := len(data)
-		avgGain, avgLoss := 0.0, 0.0
-		start := n - length - 1
-		if start < 0 {
-			start = 0
+		rsiKey := taSeriesKey("ta.rsi", args...)
+		if value, ok := currentCapturedSeriesValue(ip, rsiKey); ok {
+			return value
 		}
-		for i := start + 1; i < n; i++ {
-			diff := data[i] - data[i-1]
-			if diff > 0 {
-				avgGain += diff
-			} else {
-				avgLoss -= diff
+
+		avgGainKey := taSeriesKey("ta.rsi.avgGain", args...)
+		avgLossKey := taSeriesKey("ta.rsi.avgLoss", args...)
+		prevAvgGain := previousCapturedValue(ip, avgGainKey)
+		prevAvgLoss := previousCapturedValue(ip, avgLossKey)
+
+		avgGain, avgLoss := prevAvgGain, prevAvgLoss
+		if n == length+1 || math.IsNaN(prevAvgGain) || math.IsNaN(prevAvgLoss) {
+			avgGain, avgLoss = 0, 0
+			validChanges := 0
+			for i := 1; i <= length; i++ {
+				if math.IsNaN(data[i]) || math.IsNaN(data[i-1]) {
+					continue
+				}
+				diff := data[i] - data[i-1]
+				if diff > 0 {
+					avgGain += diff
+				} else {
+					avgLoss -= diff
+				}
+				validChanges++
 			}
+			if validChanges < length {
+				return captureRSIState(ip, math.NaN(), math.NaN(), math.NaN(), args...)
+			}
+			avgGain /= float64(length)
+			avgLoss /= float64(length)
+		} else if math.IsNaN(data[n-1]) || math.IsNaN(data[n-2]) {
+			return captureRSIState(ip, previousCapturedValue(ip, rsiKey), avgGain, avgLoss, args...)
+		} else {
+			diff := data[n-1] - data[n-2]
+			gain, loss := 0.0, 0.0
+			if diff > 0 {
+				gain = diff
+			} else {
+				loss = -diff
+			}
+			avgGain = (avgGain*float64(length-1) + gain) / float64(length)
+			avgLoss = (avgLoss*float64(length-1) + loss) / float64(length)
 		}
-		cnt := float64(n - start - 1)
-		if cnt == 0 {
-			return NaVal()
-		}
-		avgGain /= cnt
-		avgLoss /= cnt
+
 		if avgLoss == 0 {
-			return taSeriesValue(ip, "ta.rsi", 100, args...)
+			return captureRSIState(ip, 100, avgGain, avgLoss, args...)
 		}
 		rs := avgGain / avgLoss
-		return taSeriesValue(ip, "ta.rsi", 100-100/(1+rs), args...)
+		return captureRSIState(ip, 100-100/(1+rs), avgGain, avgLoss, args...)
 	})
 
 	// ta.atr(length) or ta.atr(high, low, close, length)
