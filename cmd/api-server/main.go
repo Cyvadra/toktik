@@ -157,12 +157,15 @@ func run() error {
 	schemaFile := flag.String("schema", "", "Path to DDL SQL file (auto-detected if empty)")
 	flag.Parse()
 
+	signalCtx, stopSignals := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stopSignals()
+	ctx, cancel := context.WithCancel(signalCtx)
+	defer cancel()
+
 	ddlFile, err := appCli.ResolveSchemaFile(*schemaFile, appCli.CryptoOptionsSchemaFile)
 	if err != nil {
 		return fmt.Errorf("resolve schema: %w", err)
 	}
-
-	ctx := context.Background()
 
 	mysqlDSN, err := runtimeCfg.MySQLDSN()
 	if err != nil {
@@ -253,31 +256,33 @@ func run() error {
 		serverErr <- nil
 	}()
 
-	go func() {
-		warmCtx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
-		defer cancel()
-		if err := service.WarmUSTurnoverIntersectionCache(warmCtx, apiServices.screener, true); err != nil {
-			slog.Warn("warm us turnover intersection cache failed", "non_etf_only", true, "error", err)
-			return
-		}
-		slog.Info("warmed us turnover intersection cache", "non_etf_only", true, "lookback_days", []int{20, 60, 120}, "limit", 60)
-	}()
-
-	quit := make(chan os.Signal, 1)
-	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	cacheRefresher := service.StartUSTurnoverIntersectionCacheRefresher(
+		ctx,
+		slog.Default(),
+		apiServices.screener,
+		cacheStore,
+		true,
+		runtimeCfg.APIServerWarmupRefreshInterval(),
+		runtimeCfg.APIServerWarmupCooldown(),
+		15*time.Minute,
+	)
 
 	select {
-	case sig := <-quit:
-		slog.Info("shutting down server", "signal", sig.String())
+	case <-signalCtx.Done():
+		slog.Info("shutting down server", "reason", "signal")
 	case err := <-serverErr:
+		cancel()
+		cacheRefresher.Wait()
 		if err != nil {
 			return fmt.Errorf("server error: %w", err)
 		}
 		return nil
 	}
 
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
+	cancel()
+	cacheRefresher.Wait()
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer shutdownCancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		return fmt.Errorf("server forced to shutdown: %w", err)
 	}

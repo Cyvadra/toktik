@@ -18,6 +18,8 @@ api_server:
   read_timeout_seconds: 30
   write_timeout_seconds: 180
   idle_timeout_seconds: 120
+  warmup_refresh_interval_hours: 22
+  warmup_cooldown_hours: 20
 
 api:
   cors_origins: []

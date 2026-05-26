@@ -15,55 +15,57 @@ import (
 )
 
 const (
-	EnvConfigPath            = "TOKTIK_CONFIG"
-	EnvClickHouseDSN         = "CLICKHOUSE_DSN"
-	EnvMySQLDSN              = "MYSQL_DSN"
-	EnvMySQLHost             = "MYSQL_HOST"
-	EnvMySQLUser             = "MYSQL_USER"
-	EnvMySQLPassword         = "MYSQL_PASSWORD"
-	EnvMySQLDatabase         = "MYSQL_DATABASE"
-	EnvListenAddr            = "LISTEN_ADDR"
-	EnvCORSOrigins           = "CORS_ORIGINS"
-	EnvAPIKeys               = "API_KEYS"
-	EnvRateLimitRPS          = "RATE_LIMIT_RPS"
-	EnvSchemaDir             = "TOKTIK_SCHEMA_DIR"
-	EnvDeribitBaseURL        = "DERIBIT_BASE_URL"
-	EnvFMPAPIKey             = "FMP_API_KEY"
-	EnvFMPCacheDir           = "TOKTIK_FMP_CACHE_DIR"
-	EnvTigerID               = "TIGEROPEN_TIGER_ID"
-	EnvTigerPrivateKey       = "TIGEROPEN_PRIVATE_KEY"
-	EnvTigerAccount          = "TIGEROPEN_ACCOUNT"
-	EnvTigerLicense          = "TIGEROPEN_LICENSE"
-	EnvTigerEnvironment      = "TIGEROPEN_ENV"
-	EnvTigerLanguage         = "TIGEROPEN_LANGUAGE"
-	EnvTigerTimezone         = "TIGEROPEN_TIMEZONE"
-	EnvTigerTimeoutSec       = "TIGEROPEN_TIMEOUT_SECONDS"
-	EnvTigerDynamicDomain    = "TIGEROPEN_ENABLE_DYNAMIC_DOMAIN"
-	EnvTigerToken            = "TIGEROPEN_TOKEN"
-	EnvTigerTokenFile        = "TIGEROPEN_TOKEN_FILE"
-	EnvTigerServerURL        = "TIGEROPEN_SERVER_URL"
-	EnvTigerDeviceID         = "TIGEROPEN_DEVICE_ID"
-	EnvRedisEnabled          = "TOKTIK_REDIS_ENABLED"
-	EnvRedisAddr             = "TOKTIK_REDIS_ADDR"
-	EnvRedisPassword         = "TOKTIK_REDIS_PASSWORD"
-	EnvRedisDB               = "TOKTIK_REDIS_DB"
-	EnvRedisKeyPrefix        = "TOKTIK_REDIS_KEY_PREFIX"
-	EnvRedisDialTimeoutSec   = "TOKTIK_REDIS_DIAL_TIMEOUT_SECONDS"
-	EnvRedisReadTimeoutSec   = "TOKTIK_REDIS_READ_TIMEOUT_SECONDS"
-	EnvRedisWriteTimeoutSec  = "TOKTIK_REDIS_WRITE_TIMEOUT_SECONDS"
-	EnvAESKey                = "TOKTIK_AES_KEY"
-	defaultConfigPath        = "toktik.yaml"
-	defaultClickHouseDSN     = "clickhouse://default:@localhost:9000/default"
-	defaultMySQLHost         = "127.0.0.1:3306"
-	defaultMySQLUser         = "toktik"
-	defaultMySQLDatabase     = "toktik"
-	defaultListenAddr        = ":9010"
-	defaultSchemaDir         = "schema/clickhouse"
-	defaultDeribitBaseURL    = "https://www.deribit.com"
-	defaultRedisKeyPrefix    = "toktik"
-	defaultRedisAddr         = "127.0.0.1:6379"
-	defaultPolygonTimeoutSec = 60
-	defaultReportsRoot       = "reports/backtests"
+	EnvConfigPath             = "TOKTIK_CONFIG"
+	EnvClickHouseDSN          = "CLICKHOUSE_DSN"
+	EnvMySQLDSN               = "MYSQL_DSN"
+	EnvMySQLHost              = "MYSQL_HOST"
+	EnvMySQLUser              = "MYSQL_USER"
+	EnvMySQLPassword          = "MYSQL_PASSWORD"
+	EnvMySQLDatabase          = "MYSQL_DATABASE"
+	EnvListenAddr             = "LISTEN_ADDR"
+	EnvCORSOrigins            = "CORS_ORIGINS"
+	EnvAPIKeys                = "API_KEYS"
+	EnvRateLimitRPS           = "RATE_LIMIT_RPS"
+	EnvSchemaDir              = "TOKTIK_SCHEMA_DIR"
+	EnvDeribitBaseURL         = "DERIBIT_BASE_URL"
+	EnvFMPAPIKey              = "FMP_API_KEY"
+	EnvFMPCacheDir            = "TOKTIK_FMP_CACHE_DIR"
+	EnvTigerID                = "TIGEROPEN_TIGER_ID"
+	EnvTigerPrivateKey        = "TIGEROPEN_PRIVATE_KEY"
+	EnvTigerAccount           = "TIGEROPEN_ACCOUNT"
+	EnvTigerLicense           = "TIGEROPEN_LICENSE"
+	EnvTigerEnvironment       = "TIGEROPEN_ENV"
+	EnvTigerLanguage          = "TIGEROPEN_LANGUAGE"
+	EnvTigerTimezone          = "TIGEROPEN_TIMEZONE"
+	EnvTigerTimeoutSec        = "TIGEROPEN_TIMEOUT_SECONDS"
+	EnvTigerDynamicDomain     = "TIGEROPEN_ENABLE_DYNAMIC_DOMAIN"
+	EnvTigerToken             = "TIGEROPEN_TOKEN"
+	EnvTigerTokenFile         = "TIGEROPEN_TOKEN_FILE"
+	EnvTigerServerURL         = "TIGEROPEN_SERVER_URL"
+	EnvTigerDeviceID          = "TIGEROPEN_DEVICE_ID"
+	EnvRedisEnabled           = "TOKTIK_REDIS_ENABLED"
+	EnvRedisAddr              = "TOKTIK_REDIS_ADDR"
+	EnvRedisPassword          = "TOKTIK_REDIS_PASSWORD"
+	EnvRedisDB                = "TOKTIK_REDIS_DB"
+	EnvRedisKeyPrefix         = "TOKTIK_REDIS_KEY_PREFIX"
+	EnvRedisDialTimeoutSec    = "TOKTIK_REDIS_DIAL_TIMEOUT_SECONDS"
+	EnvRedisReadTimeoutSec    = "TOKTIK_REDIS_READ_TIMEOUT_SECONDS"
+	EnvRedisWriteTimeoutSec   = "TOKTIK_REDIS_WRITE_TIMEOUT_SECONDS"
+	EnvAPIWarmupRefreshHours  = "TOKTIK_API_WARMUP_REFRESH_INTERVAL_HOURS"
+	EnvAPIWarmupCooldownHours = "TOKTIK_API_WARMUP_COOLDOWN_HOURS"
+	EnvAESKey                 = "TOKTIK_AES_KEY"
+	defaultConfigPath         = "toktik.yaml"
+	defaultClickHouseDSN      = "clickhouse://default:@localhost:9000/default"
+	defaultMySQLHost          = "127.0.0.1:3306"
+	defaultMySQLUser          = "toktik"
+	defaultMySQLDatabase      = "toktik"
+	defaultListenAddr         = ":9010"
+	defaultSchemaDir          = "schema/clickhouse"
+	defaultDeribitBaseURL     = "https://www.deribit.com"
+	defaultRedisKeyPrefix     = "toktik"
+	defaultRedisAddr          = "127.0.0.1:6379"
+	defaultPolygonTimeoutSec  = 60
+	defaultReportsRoot        = "reports/backtests"
 )
 
 type Runtime struct {
@@ -97,11 +99,13 @@ type MySQL struct {
 }
 
 type APIServer struct {
-	ListenAddr               string `yaml:"listen_addr"`
-	ReadHeaderTimeoutSeconds int    `yaml:"read_header_timeout_seconds"`
-	ReadTimeoutSeconds       int    `yaml:"read_timeout_seconds"`
-	WriteTimeoutSeconds      int    `yaml:"write_timeout_seconds"`
-	IdleTimeoutSeconds       int    `yaml:"idle_timeout_seconds"`
+	ListenAddr                 string `yaml:"listen_addr"`
+	ReadHeaderTimeoutSeconds   int    `yaml:"read_header_timeout_seconds"`
+	ReadTimeoutSeconds         int    `yaml:"read_timeout_seconds"`
+	WriteTimeoutSeconds        int    `yaml:"write_timeout_seconds"`
+	IdleTimeoutSeconds         int    `yaml:"idle_timeout_seconds"`
+	WarmupRefreshIntervalHours int    `yaml:"warmup_refresh_interval_hours"`
+	WarmupCooldownHours        int    `yaml:"warmup_cooldown_hours"`
 }
 
 type API struct {
@@ -279,11 +283,13 @@ func DefaultRuntime() Runtime {
 			Database: defaultMySQLDatabase,
 		},
 		APIServer: APIServer{
-			ListenAddr:               defaultListenAddr,
-			ReadHeaderTimeoutSeconds: 10,
-			ReadTimeoutSeconds:       30,
-			WriteTimeoutSeconds:      180,
-			IdleTimeoutSeconds:       120,
+			ListenAddr:                 defaultListenAddr,
+			ReadHeaderTimeoutSeconds:   10,
+			ReadTimeoutSeconds:         30,
+			WriteTimeoutSeconds:        180,
+			IdleTimeoutSeconds:         120,
+			WarmupRefreshIntervalHours: 22,
+			WarmupCooldownHours:        20,
 		},
 		API: API{
 			RateLimitRPS:          50,
@@ -474,6 +480,16 @@ func (c *Runtime) applyEnvOverrides() {
 			c.Redis.WriteTimeoutSeconds = parsed
 		}
 	}
+	if value := strings.TrimSpace(os.Getenv(EnvAPIWarmupRefreshHours)); value != "" {
+		if parsed, err := strconv.Atoi(value); err == nil {
+			c.APIServer.WarmupRefreshIntervalHours = parsed
+		}
+	}
+	if value := strings.TrimSpace(os.Getenv(EnvAPIWarmupCooldownHours)); value != "" {
+		if parsed, err := strconv.Atoi(value); err == nil {
+			c.APIServer.WarmupCooldownHours = parsed
+		}
+	}
 	if value := strings.TrimSpace(os.Getenv(EnvAESKey)); value != "" {
 		c.AESKey = value
 	}
@@ -550,6 +566,12 @@ func (c *Runtime) normalize() {
 	}
 	if c.APIServer.IdleTimeoutSeconds <= 0 {
 		c.APIServer.IdleTimeoutSeconds = 120
+	}
+	if c.APIServer.WarmupRefreshIntervalHours <= 0 {
+		c.APIServer.WarmupRefreshIntervalHours = 22
+	}
+	if c.APIServer.WarmupCooldownHours <= 0 {
+		c.APIServer.WarmupCooldownHours = 20
 	}
 	c.API.CORSOrigins = normalizeCSVList(c.API.CORSOrigins)
 	c.API.APIKeys = normalizeCSVList(c.API.APIKeys)
@@ -787,6 +809,14 @@ func (c Runtime) APIServerWriteTimeout() time.Duration {
 
 func (c Runtime) APIServerIdleTimeout() time.Duration {
 	return time.Duration(c.APIServer.IdleTimeoutSeconds) * time.Second
+}
+
+func (c Runtime) APIServerWarmupRefreshInterval() time.Duration {
+	return time.Duration(c.APIServer.WarmupRefreshIntervalHours) * time.Hour
+}
+
+func (c Runtime) APIServerWarmupCooldown() time.Duration {
+	return time.Duration(c.APIServer.WarmupCooldownHours) * time.Hour
 }
 
 // APIRequestTimeout returns the per-request handler timeout.

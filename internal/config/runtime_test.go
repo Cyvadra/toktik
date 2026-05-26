@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
+	"time"
 )
 
 func TestLoadRuntimeFromPathYAML(t *testing.T) {
@@ -14,6 +15,8 @@ func TestLoadRuntimeFromPathYAML(t *testing.T) {
 		"  dsn: \"clickhouse://user:pass@clickhouse.internal:9000/quant\"\n" +
 		"api_server:\n" +
 		"  listen_addr: \":7777\"\n" +
+		"  warmup_refresh_interval_hours: 26\n" +
+		"  warmup_cooldown_hours: 21\n" +
 		"api:\n" +
 		"  cors_origins:\n" +
 		"    - \"https://one.example\"\n" +
@@ -67,6 +70,12 @@ func TestLoadRuntimeFromPathYAML(t *testing.T) {
 	}
 	if cfg.APIServer.ListenAddr != ":7777" {
 		t.Fatalf("unexpected api listen addr: %q", cfg.APIServer.ListenAddr)
+	}
+	if cfg.APIServerWarmupRefreshInterval() != 26*time.Hour {
+		t.Fatalf("unexpected api warmup refresh interval: %s", cfg.APIServerWarmupRefreshInterval())
+	}
+	if cfg.APIServerWarmupCooldown() != 21*time.Hour {
+		t.Fatalf("unexpected api warmup cooldown: %s", cfg.APIServerWarmupCooldown())
 	}
 	if !reflect.DeepEqual(cfg.API.CORSOrigins, []string{"https://one.example", "https://two.example"}) {
 		t.Fatalf("unexpected cors origins: %#v", cfg.API.CORSOrigins)
@@ -163,6 +172,8 @@ func TestLoadRuntimeFromPathEnvOverrides(t *testing.T) {
 	t.Setenv(EnvTigerDeviceID, "env-device")
 	t.Setenv(EnvFMPAPIKey, "env-fmp-key")
 	t.Setenv(EnvFMPCacheDir, "/env/fmp-cache")
+	t.Setenv(EnvAPIWarmupRefreshHours, "28")
+	t.Setenv(EnvAPIWarmupCooldownHours, "24")
 
 	cfg, err := LoadRuntimeFromPath(filepath.Join(t.TempDir(), "missing.yaml"))
 	if err != nil {
@@ -174,6 +185,12 @@ func TestLoadRuntimeFromPathEnvOverrides(t *testing.T) {
 	}
 	if cfg.APIServer.ListenAddr != ":9090" {
 		t.Fatalf("unexpected listen addr override: %q", cfg.APIServer.ListenAddr)
+	}
+	if cfg.APIServerWarmupRefreshInterval() != 28*time.Hour {
+		t.Fatalf("unexpected warmup refresh override: %s", cfg.APIServerWarmupRefreshInterval())
+	}
+	if cfg.APIServerWarmupCooldown() != 24*time.Hour {
+		t.Fatalf("unexpected warmup cooldown override: %s", cfg.APIServerWarmupCooldown())
 	}
 	if !reflect.DeepEqual(cfg.API.CORSOrigins, []string{"https://alpha.example", "https://beta.example"}) {
 		t.Fatalf("unexpected cors overrides: %#v", cfg.API.CORSOrigins)
@@ -222,6 +239,16 @@ func TestLoadRuntimeFromPathEnvOverrides(t *testing.T) {
 	}
 	if cfg.FMP.CacheDir != "/env/fmp-cache" {
 		t.Fatalf("unexpected FMP cache dir override: %q", cfg.FMP.CacheDir)
+	}
+}
+
+func TestDefaultRuntimeWarmupTimingDefaults(t *testing.T) {
+	cfg := DefaultRuntime()
+	if cfg.APIServerWarmupRefreshInterval() != 22*time.Hour {
+		t.Fatalf("unexpected default warmup refresh interval: %s", cfg.APIServerWarmupRefreshInterval())
+	}
+	if cfg.APIServerWarmupCooldown() != 20*time.Hour {
+		t.Fatalf("unexpected default warmup cooldown: %s", cfg.APIServerWarmupCooldown())
 	}
 }
 
