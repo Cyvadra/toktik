@@ -183,6 +183,7 @@ func registerRoutes(v1 *gin.RouterGroup, h *Handler) {
 	marketUSOptions.GET("/symbols", h.GetUSOptionSymbols)
 	marketUSOptions.GET("/greeks", h.GetUSOptionGreeks)
 	marketUSOptions.GET("/chain", h.GetUSOptionChain)
+	marketUSOptions.GET("/wall", h.GetUSOptionWall)
 
 	screenerGroup := v1.Group("/screener")
 	screenerGroup.GET("/underlyings", h.ScreenUnderlyings)

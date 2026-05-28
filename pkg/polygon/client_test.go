@@ -736,6 +736,109 @@ func TestOptionChainReturnsHTTPStatusErrorOnAPIError(t *testing.T) {
 	}
 }
 
+func TestOptionChainRetriesInitial429(t *testing.T) {
+	var attempts int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		if r.URL.Path != "/v3/snapshot/options/SPY" {
+			t.Fatalf("unexpected request path: %s", r.URL.Path)
+		}
+		if attempts == 1 {
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = w.Write([]byte(`{"status":"ERROR","error":"rate limited"}`))
+			return
+		}
+		writeJSON(t, w, map[string]any{
+			"status": "OK",
+			"results": []map[string]any{{
+				"break_even_price": 660,
+				"day":              map[string]any{"change": 0.5, "change_percent": 4.2, "open": 10, "high": 12, "low": 9.5, "close": 11.2, "previous_close": 10.7, "volume": 1000, "vwap": 10.9},
+				"details":          map[string]any{"contract_type": "call", "exercise_style": "american", "expiration_date": "2025-12-19", "shares_per_contract": 100, "strike_price": 650, "ticker": "O:SPY251219C00650000"},
+				"last_quote":       map[string]any{"ask": 11.3, "ask_size": 2, "bid": 11.1, "bid_size": 3, "midpoint": 11.2},
+				"open_interest":    250,
+				"underlying_asset": map[string]any{"ticker": "SPY", "price": 612.4, "change_to_break_even": 47.6},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	client, err := New(Config{APIKey: "test_massive_key", BaseURL: server.URL, RESTQPS: 1000, RetryAttempts: 3, RetryBaseDelay: time.Millisecond, RetryMaxDelay: 2 * time.Millisecond})
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+
+	chain, err := client.OptionChain(context.Background(), OptionChainRequest{Underlying: "SPY", ExpirationDate: "2025-12-19"})
+	if err != nil {
+		t.Fatalf("OptionChain returned error: %v", err)
+	}
+	if len(chain) != 1 {
+		t.Fatalf("expected one contract, got %d", len(chain))
+	}
+	if attempts != 2 {
+		t.Fatalf("expected 2 attempts, got %d", attempts)
+	}
+}
+
+func TestOptionChainRetriesPaginated429(t *testing.T) {
+	var nextAttempts int
+	serverURL := ""
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v3/snapshot/options/SPY":
+			writeJSON(t, w, map[string]any{
+				"status": "OK",
+				"results": []map[string]any{{
+					"break_even_price": 660,
+					"day":              map[string]any{"change": 0.5, "change_percent": 4.2, "open": 10, "high": 12, "low": 9.5, "close": 11.2, "previous_close": 10.7, "volume": 1000, "vwap": 10.9},
+					"details":          map[string]any{"contract_type": "call", "exercise_style": "american", "expiration_date": "2025-12-19", "shares_per_contract": 100, "strike_price": 650, "ticker": "O:SPY251219C00650000"},
+					"last_quote":       map[string]any{"ask": 11.3, "ask_size": 2, "bid": 11.1, "bid_size": 3, "midpoint": 11.2},
+					"open_interest":    250,
+					"underlying_asset": map[string]any{"ticker": "SPY", "price": 612.4, "change_to_break_even": 47.6},
+				}},
+				"next_url": serverURL + "/next/option-chain",
+			})
+		case "/next/option-chain":
+			nextAttempts++
+			if nextAttempts == 1 {
+				w.WriteHeader(http.StatusTooManyRequests)
+				_, _ = w.Write([]byte(`{"status":"ERROR","error":"rate limited"}`))
+				return
+			}
+			writeJSON(t, w, map[string]any{
+				"status": "OK",
+				"results": []map[string]any{{
+					"break_even_price": 665,
+					"day":              map[string]any{"change": 0.2, "change_percent": 2.1, "open": 9.5, "high": 10.5, "low": 9.2, "close": 10.1, "previous_close": 9.9, "volume": 500, "vwap": 10.0},
+					"details":          map[string]any{"contract_type": "call", "exercise_style": "american", "expiration_date": "2025-12-19", "shares_per_contract": 100, "strike_price": 655, "ticker": "O:SPY251219C00655000"},
+					"last_quote":       map[string]any{"ask": 10.2, "ask_size": 1, "bid": 10.0, "bid_size": 1, "midpoint": 10.1},
+					"open_interest":    100,
+					"underlying_asset": map[string]any{"ticker": "SPY", "price": 612.4, "change_to_break_even": 52.6},
+				}},
+			})
+		default:
+			t.Fatalf("unexpected request path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	serverURL = server.URL
+
+	client, err := New(Config{APIKey: "test_massive_key", BaseURL: server.URL, Pagination: true, RESTQPS: 1000, RetryAttempts: 3, RetryBaseDelay: time.Millisecond, RetryMaxDelay: 2 * time.Millisecond})
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+
+	chain, err := client.OptionChain(context.Background(), OptionChainRequest{Underlying: "SPY", ExpirationDate: "2025-12-19"})
+	if err != nil {
+		t.Fatalf("OptionChain returned error: %v", err)
+	}
+	if len(chain) != 2 {
+		t.Fatalf("expected 2 contracts, got %d", len(chain))
+	}
+	if nextAttempts != 2 {
+		t.Fatalf("expected 2 paginated attempts, got %d", nextAttempts)
+	}
+}
+
 func writeJSON(t *testing.T, w http.ResponseWriter, payload any) {
 	t.Helper()
 	w.Header().Set("Content-Type", "application/json")

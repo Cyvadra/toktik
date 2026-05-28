@@ -5,13 +5,19 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
+	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	runtimeconfig "github.com/Cyvadra/toktik/internal/config"
 	"github.com/massive-com/client-go/v3/rest"
 	"github.com/massive-com/client-go/v3/rest/gen"
 )
+
+var sharedRequestGates sync.Map
 
 type Client struct {
 	config     Config
@@ -68,6 +74,7 @@ type OptionChainRequest struct {
 	Order             string
 	Sort              string
 	Limit             int
+	DisablePagination bool
 }
 
 type AggregateBar struct {
@@ -333,10 +340,11 @@ func New(cfg Config) (*Client, error) {
 		return nil, err
 	}
 
-	transport := http.DefaultTransport
+	transport := http.RoundTripper(http.DefaultTransport)
 	if cfg.Trace {
 		transport = &debugTransport{base: http.DefaultTransport}
 	}
+	transport = newRetryTransport(cfg, transport)
 
 	httpClient := &http.Client{
 		Timeout:   cfg.normalizedTimeout(),
@@ -673,7 +681,7 @@ func (c *Client) OptionChain(ctx context.Context, req OptionChainRequest) ([]Opt
 			contracts = append(contracts, mapOptionChainItem(mapped))
 		}
 	}
-	if c.config.Pagination && resp.JSON200 != nil && resp.JSON200.NextUrl != nil {
+	if c.config.Pagination && !req.DisablePagination && resp.JSON200 != nil && resp.JSON200.NextUrl != nil {
 		pages, err := fetchNextPages[optionContractPageItem](ctx, c, *resp.JSON200.NextUrl)
 		if err != nil {
 			return nil, err
@@ -813,6 +821,174 @@ func (c *Client) addHeaders(_ context.Context, req *http.Request) error {
 	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(c.config.APIKey))
 	req.Header.Set("User-Agent", "toktik-polygon")
 	return nil
+}
+
+type retryTransport struct {
+	base          http.RoundTripper
+	gate          *requestGate
+	maxAttempts   int
+	baseDelay     time.Duration
+	maxDelay      time.Duration
+	requestTarget string
+}
+
+type requestGate struct {
+	mu    sync.Mutex
+	qps   float64
+	burst float64
+	token float64
+	last  time.Time
+}
+
+func newRetryTransport(cfg Config, base http.RoundTripper) http.RoundTripper {
+	if base == nil {
+		base = http.DefaultTransport
+	}
+	key := fmt.Sprintf("%s|%.6f|%d", cfg.normalizedBaseURL(), cfg.normalizedRESTQPS(), cfg.normalizedRESTBurst())
+	gate := sharedGate(key, cfg.normalizedRESTQPS(), cfg.normalizedRESTBurst())
+	return &retryTransport{
+		base:          base,
+		gate:          gate,
+		maxAttempts:   cfg.normalizedRetryAttempts(),
+		baseDelay:     cfg.normalizedRetryBaseDelay(),
+		maxDelay:      cfg.normalizedRetryMaxDelay(),
+		requestTarget: cfg.normalizedBaseURL(),
+	}
+}
+
+func sharedGate(key string, qps float64, burst int) *requestGate {
+	if existing, ok := sharedRequestGates.Load(key); ok {
+		return existing.(*requestGate)
+	}
+	gate := &requestGate{qps: qps, burst: float64(burst), token: float64(burst)}
+	actual, _ := sharedRequestGates.LoadOrStore(key, gate)
+	return actual.(*requestGate)
+}
+
+func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	attempts := t.maxAttempts
+	if attempts <= 0 {
+		attempts = 1
+	}
+	for attempt := 1; attempt <= attempts; attempt++ {
+		if err := t.gate.wait(req.Context()); err != nil {
+			return nil, err
+		}
+		resp, err := t.base.RoundTrip(cloneRequest(req))
+		if err != nil {
+			return nil, err
+		}
+		if resp.StatusCode != http.StatusTooManyRequests || attempt == attempts {
+			return resp, nil
+		}
+		delay := t.retryDelay(resp, attempt)
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+		if err := waitForBackoff(req.Context(), delay); err != nil {
+			return nil, err
+		}
+	}
+	return nil, fmt.Errorf("polygon retry transport exhausted for %s", t.requestTarget)
+}
+
+func (g *requestGate) wait(ctx context.Context) error {
+	for {
+		wait := g.reserve()
+		if wait <= 0 {
+			return nil
+		}
+		if err := waitForBackoff(ctx, wait); err != nil {
+			return err
+		}
+	}
+}
+
+func (g *requestGate) reserve() time.Duration {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	now := time.Now()
+	if g.last.IsZero() {
+		g.last = now
+		g.token = math.Max(g.burst-1, 0)
+		return 0
+	}
+	elapsed := now.Sub(g.last).Seconds()
+	g.last = now
+	g.token = math.Min(g.burst, g.token+elapsed*g.qps)
+	if g.token >= 1 {
+		g.token -= 1
+		return 0
+	}
+	deficit := (1 - g.token) / g.qps
+	if deficit < 0 {
+		return 0
+	}
+	return time.Duration(deficit * float64(time.Second))
+}
+
+func (t *retryTransport) retryDelay(resp *http.Response, attempt int) time.Duration {
+	if resp != nil {
+		if delay, ok := parseRetryAfter(resp.Header.Get("Retry-After")); ok {
+			return delay
+		}
+	}
+	multiplier := math.Pow(2, float64(attempt-1))
+	delay := time.Duration(float64(t.baseDelay) * multiplier)
+	if delay > t.maxDelay {
+		return t.maxDelay
+	}
+	return delay
+}
+
+func parseRetryAfter(value string) (time.Duration, bool) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return 0, false
+	}
+	if seconds, err := strconv.Atoi(trimmed); err == nil {
+		if seconds <= 0 {
+			return 0, true
+		}
+		return time.Duration(seconds) * time.Second, true
+	}
+	if at, err := http.ParseTime(trimmed); err == nil {
+		delay := time.Until(at)
+		if delay < 0 {
+			return 0, true
+		}
+		return delay, true
+	}
+	return 0, false
+}
+
+func waitForBackoff(ctx context.Context, delay time.Duration) error {
+	if delay <= 0 {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+			return nil
+		}
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+func cloneRequest(req *http.Request) *http.Request {
+	clone := req.Clone(req.Context())
+	if req.GetBody != nil {
+		body, err := req.GetBody()
+		if err == nil {
+			clone.Body = body
+		}
+	}
+	return clone
 }
 
 func fetchNextPages[T any](ctx context.Context, c *Client, nextURL string) ([]T, error) {

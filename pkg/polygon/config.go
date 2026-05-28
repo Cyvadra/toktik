@@ -12,6 +12,11 @@ const (
 	defaultBaseURL          = "https://api.massive.com"
 	defaultFlatFilesBaseURL = "https://files.massive.com/flatfiles"
 	defaultTimeout          = 60 * time.Second
+	defaultRESTQPS          = 4.0
+	defaultRESTBurst        = 1
+	defaultRetryAttempts    = 4
+	defaultRetryBaseDelay   = 500 * time.Millisecond
+	defaultRetryMaxDelay    = 8 * time.Second
 )
 
 type Config struct {
@@ -25,6 +30,11 @@ type Config struct {
 	Timeout            time.Duration
 	Trace              bool
 	Pagination         bool
+	RESTQPS            float64
+	RESTBurst          int
+	RetryAttempts      int
+	RetryBaseDelay     time.Duration
+	RetryMaxDelay      time.Duration
 }
 
 func LoadConfigFromEnv() (Config, error) {
@@ -60,6 +70,11 @@ func LoadConfigFromRuntime(runtimeCfg runtimeconfig.Runtime) (Config, error) {
 		Timeout:            time.Duration(runtimeCfg.Polygon.TimeoutSeconds) * time.Second,
 		Trace:              runtimeCfg.Polygon.Trace,
 		Pagination:         runtimeCfg.Polygon.Pagination,
+		RESTQPS:            runtimeCfg.Polygon.RESTQPS,
+		RESTBurst:          runtimeCfg.Polygon.RESTBurst,
+		RetryAttempts:      runtimeCfg.Polygon.RetryAttempts,
+		RetryBaseDelay:     time.Duration(runtimeCfg.Polygon.RetryBaseDelayMS) * time.Millisecond,
+		RetryMaxDelay:      time.Duration(runtimeCfg.Polygon.RetryMaxDelayMS) * time.Millisecond,
 	}
 
 	if err := cfg.Validate(); err != nil {
@@ -124,4 +139,39 @@ func (c Config) normalizedTimeout() time.Duration {
 		return defaultTimeout
 	}
 	return c.Timeout
+}
+
+func (c Config) normalizedRESTQPS() float64 {
+	if c.RESTQPS <= 0 {
+		return defaultRESTQPS
+	}
+	return c.RESTQPS
+}
+
+func (c Config) normalizedRESTBurst() int {
+	if c.RESTBurst <= 0 {
+		return defaultRESTBurst
+	}
+	return c.RESTBurst
+}
+
+func (c Config) normalizedRetryAttempts() int {
+	if c.RetryAttempts <= 0 {
+		return defaultRetryAttempts
+	}
+	return c.RetryAttempts
+}
+
+func (c Config) normalizedRetryBaseDelay() time.Duration {
+	if c.RetryBaseDelay <= 0 {
+		return defaultRetryBaseDelay
+	}
+	return c.RetryBaseDelay
+}
+
+func (c Config) normalizedRetryMaxDelay() time.Duration {
+	if c.RetryMaxDelay <= 0 {
+		return defaultRetryMaxDelay
+	}
+	return c.RetryMaxDelay
 }

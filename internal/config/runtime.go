@@ -143,13 +143,18 @@ type Tiger struct {
 }
 
 type Polygon struct {
-	BaseURL           string `yaml:"base_url"`
-	FlatFilesBaseURL  string `yaml:"flat_files_base_url"`
-	FlatFilesTool     string `yaml:"flat_files_tool"`
-	FlatFilesCacheDir string `yaml:"flat_files_cache_dir"`
-	TimeoutSeconds    int    `yaml:"timeout_seconds"`
-	Trace             bool   `yaml:"trace"`
-	Pagination        bool   `yaml:"pagination"`
+	BaseURL           string  `yaml:"base_url"`
+	FlatFilesBaseURL  string  `yaml:"flat_files_base_url"`
+	FlatFilesTool     string  `yaml:"flat_files_tool"`
+	FlatFilesCacheDir string  `yaml:"flat_files_cache_dir"`
+	TimeoutSeconds    int     `yaml:"timeout_seconds"`
+	Trace             bool    `yaml:"trace"`
+	Pagination        bool    `yaml:"pagination"`
+	RESTQPS           float64 `yaml:"rest_qps"`
+	RESTBurst         int     `yaml:"rest_burst"`
+	RetryAttempts     int     `yaml:"retry_attempts"`
+	RetryBaseDelayMS  int     `yaml:"retry_base_delay_ms"`
+	RetryMaxDelayMS   int     `yaml:"retry_max_delay_ms"`
 
 	apiKey             string
 	flatFilesAccessKey string
@@ -219,16 +224,21 @@ func (t *Tiger) UnmarshalYAML(value *yaml.Node) error {
 
 func (p *Polygon) UnmarshalYAML(value *yaml.Node) error {
 	type rawPolygon struct {
-		APIKey             string `yaml:"api_key"`
-		BaseURL            string `yaml:"base_url"`
-		FlatFilesBaseURL   string `yaml:"flat_files_base_url"`
-		FlatFilesTool      string `yaml:"flat_files_tool"`
-		FlatFilesCacheDir  string `yaml:"flat_files_cache_dir"`
-		FlatFilesAccessKey string `yaml:"flat_files_access_key"`
-		FlatFilesSecretKey string `yaml:"flat_files_secret_key"`
-		TimeoutSeconds     int    `yaml:"timeout_seconds"`
-		Trace              bool   `yaml:"trace"`
-		Pagination         bool   `yaml:"pagination"`
+		APIKey             string  `yaml:"api_key"`
+		BaseURL            string  `yaml:"base_url"`
+		FlatFilesBaseURL   string  `yaml:"flat_files_base_url"`
+		FlatFilesTool      string  `yaml:"flat_files_tool"`
+		FlatFilesCacheDir  string  `yaml:"flat_files_cache_dir"`
+		FlatFilesAccessKey string  `yaml:"flat_files_access_key"`
+		FlatFilesSecretKey string  `yaml:"flat_files_secret_key"`
+		TimeoutSeconds     int     `yaml:"timeout_seconds"`
+		Trace              bool    `yaml:"trace"`
+		Pagination         bool    `yaml:"pagination"`
+		RESTQPS            float64 `yaml:"rest_qps"`
+		RESTBurst          int     `yaml:"rest_burst"`
+		RetryAttempts      int     `yaml:"retry_attempts"`
+		RetryBaseDelayMS   int     `yaml:"retry_base_delay_ms"`
+		RetryMaxDelayMS    int     `yaml:"retry_max_delay_ms"`
 	}
 	var raw rawPolygon
 	if err := value.Decode(&raw); err != nil {
@@ -244,6 +254,11 @@ func (p *Polygon) UnmarshalYAML(value *yaml.Node) error {
 	p.TimeoutSeconds = raw.TimeoutSeconds
 	p.Trace = raw.Trace
 	p.Pagination = raw.Pagination
+	p.RESTQPS = raw.RESTQPS
+	p.RESTBurst = raw.RESTBurst
+	p.RetryAttempts = raw.RetryAttempts
+	p.RetryBaseDelayMS = raw.RetryBaseDelayMS
+	p.RetryMaxDelayMS = raw.RetryMaxDelayMS
 	return nil
 }
 
@@ -311,6 +326,11 @@ func DefaultRuntime() Runtime {
 			FlatFilesTool:    "mc",
 			TimeoutSeconds:   defaultPolygonTimeoutSec,
 			Pagination:       true,
+			RESTQPS:          4,
+			RESTBurst:        1,
+			RetryAttempts:    4,
+			RetryBaseDelayMS: 500,
+			RetryMaxDelayMS:  8000,
 		},
 		FMP: FMP{},
 		Redis: Redis{
@@ -618,6 +638,24 @@ func (c *Runtime) normalize() {
 	c.Polygon.flatFilesSecretKey = strings.TrimSpace(c.Polygon.flatFilesSecretKey)
 	if c.Polygon.TimeoutSeconds <= 0 {
 		c.Polygon.TimeoutSeconds = defaultPolygonTimeoutSec
+	}
+	if c.Polygon.RESTQPS <= 0 {
+		c.Polygon.RESTQPS = 4
+	}
+	if c.Polygon.RESTBurst <= 0 {
+		c.Polygon.RESTBurst = 1
+	}
+	if c.Polygon.RetryAttempts <= 0 {
+		c.Polygon.RetryAttempts = 4
+	}
+	if c.Polygon.RetryBaseDelayMS <= 0 {
+		c.Polygon.RetryBaseDelayMS = 500
+	}
+	if c.Polygon.RetryMaxDelayMS <= 0 {
+		c.Polygon.RetryMaxDelayMS = 8000
+	}
+	if c.Polygon.RetryMaxDelayMS < c.Polygon.RetryBaseDelayMS {
+		c.Polygon.RetryMaxDelayMS = c.Polygon.RetryBaseDelayMS
 	}
 	c.FMP.apiKey = strings.TrimSpace(c.FMP.apiKey)
 	if strings.TrimSpace(c.FMP.CacheDir) != "" {

@@ -38,10 +38,12 @@ type mockUSOptionsQuerier struct {
 	symbolsResp *dto.USOptionSymbolResponse
 	greeksResp  *dto.USOptionGreeksResponse
 	chainResp   *dto.USOptionChainResponse
+	wallResp    *dto.USOptionWallResponse
 	barsReq     dto.USOptionBarRequest
 	symbolsReq  dto.USOptionSymbolRequest
 	greeksReq   dto.USOptionGreeksRequest
 	chainReq    dto.USOptionChainRequest
+	wallReq     dto.USOptionWallRequest
 	err         error
 }
 
@@ -171,6 +173,11 @@ func (m *mockUSOptionsQuerier) QueryGreeks(_ context.Context, req dto.USOptionGr
 func (m *mockUSOptionsQuerier) QueryChain(_ context.Context, req dto.USOptionChainRequest) (*dto.USOptionChainResponse, error) {
 	m.chainReq = req
 	return m.chainResp, m.err
+}
+
+func (m *mockUSOptionsQuerier) QueryOptionWall(_ context.Context, req dto.USOptionWallRequest) (*dto.USOptionWallResponse, error) {
+	m.wallReq = req
+	return m.wallResp, m.err
 }
 
 func (m *mockForexQuerier) QueryBars(_ context.Context, req dto.ForexBarRequest) (*dto.ForexBarResponse, error) {
@@ -440,6 +447,52 @@ func TestGetPolygonStockAggregates_BadRequest(t *testing.T) {
 
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestGetUSOptionWall_Success(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	provider := &mockUSOptionsQuerier{wallResp: &dto.USOptionWallResponse{
+		Symbol:      "AAPL",
+		SnapshotDay: time.Date(2026, 5, 28, 0, 0, 0, 0, time.UTC),
+		Data: []dto.USOptionWall{{
+			Symbol:       "AAPL",
+			Expiration:   time.Date(2026, 6, 19, 0, 0, 0, 0, time.UTC),
+			SnapshotDay:  time.Date(2026, 5, 28, 0, 0, 0, 0, time.UTC),
+			DaysToExpiry: 22,
+			Strikes: []dto.USOptionWallStrikeRow{{
+				Strike:            200,
+				TotalOpenInterest: 215,
+			}},
+		}},
+	}}
+	r := NewRouter(&mockQuerier{}, &mockUSStocksQuerier{}, provider, &mockInfra{}, &mockFeature{}, nil, nil, nil, nil, nil, nil)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/api/v1/markets/us-options/wall?symbol=AAPL&min_dte=20&max_dte=30", nil)
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if provider.wallReq.Symbol != "AAPL" || provider.wallReq.MinDTE != 20 || provider.wallReq.MaxDTE != 30 {
+		t.Fatalf("unexpected wall request bound: %+v", provider.wallReq)
+	}
+	if !strings.Contains(w.Body.String(), "215") {
+		t.Fatalf("expected wall payload in response, got %s", w.Body.String())
+	}
+}
+
+func TestGetUSOptionWall_NotConfigured(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := NewRouter(&mockQuerier{}, &mockUSStocksQuerier{}, nil, &mockInfra{}, &mockFeature{}, nil, nil, nil, nil, nil, nil)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/api/v1/markets/us-options/wall?symbol=AAPL", nil)
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotImplemented {
+		t.Fatalf("expected 501, got %d: %s", w.Code, w.Body.String())
 	}
 }
 

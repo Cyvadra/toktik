@@ -1,21 +1,21 @@
-// @title           Toktik Options Platform API
-// @version         1.0
-// @description     Backend data services for multi-market analytics, including market data retrieval, feature/factor/fundamental queries, screening, strategy catalog, and backtesting.
-// @termsOfService  https://toktik.dev/terms
+//	@title			Toktik Options Platform API
+//	@version		1.0
+//	@description	Backend data services for multi-market analytics, including market data retrieval, feature/factor/fundamental queries, screening, strategy catalog, and backtesting.
+//	@termsOfService	https://toktik.dev/terms
 
-// @contact.name   Toktik Dev Team
-// @contact.url    https://toktik.dev
-// @contact.email  dev@toktik.dev
+//	@contact.name	Toktik Dev Team
+//	@contact.url	https://toktik.dev
+//	@contact.email	dev@toktik.dev
 
-// @license.name  Proprietary
-// @license.url   https://toktik.dev/license
+//	@license.name	Proprietary
+//	@license.url	https://toktik.dev/license
 
-// @host      localhost:9010
-// @BasePath  /api/v1
+//	@host		localhost:9010
+//	@BasePath	/api/v1
 
-// @securityDefinitions.apikey ApiKeyAuth
-// @in header
-// @name X-API-Key
+//	@securityDefinitions.apikey	ApiKeyAuth
+//	@in							header
+//	@name						X-API-Key
 
 package main
 
@@ -82,12 +82,12 @@ func buildAPICoreServices(runtimeCfg config.Runtime, repo *chrepo.Repo, calendar
 	}, nil
 }
 
-func buildAPIDeps(runtimeCfg config.Runtime, repo *chrepo.Repo, factorStore *feeds.Store, services *apiCoreServices, polygon api.PolygonProvider, stop chan struct{}) api.Deps {
+func buildAPIDeps(runtimeCfg config.Runtime, repo *chrepo.Repo, factorStore *feeds.Store, services *apiCoreServices, polygonSvc *service.PolygonService, cacheStore cache.Store, stop chan struct{}) api.Deps {
 	return api.Deps{
 		Config:            runtimeCfg,
 		CryptoOptions:     service.NewCryptoOptionsService(repo),
 		USStocks:          services.usStocks,
-		USOptions:         service.NewUSOptionsService(repo),
+		USOptions:         service.NewUSOptionsService(repo).WithPolygonClient(polygonSvc).WithCache(cacheStore),
 		Infra:             service.NewInfraService(repo),
 		DataBrowser:       service.NewDataBrowserService(repo),
 		Features:          service.NewFeatureService(repo),
@@ -101,7 +101,7 @@ func buildAPIDeps(runtimeCfg config.Runtime, repo *chrepo.Repo, factorStore *fee
 		Fundamentals:      services.fundamentals,
 		Macro:             services.macro,
 		FinanceCalendar:   services.financeCalendar,
-		Polygon:           polygon,
+		Polygon:           polygonSvc,
 		Stop:              stop,
 	}
 }
@@ -195,6 +195,7 @@ func run() error {
 		Kline:      true,
 		SpotKline:  true,
 		ChainCache: true,
+		OptionWall: true,
 	})
 	if err != nil {
 		return fmt.Errorf("connect clickhouse: %w", err)
@@ -233,7 +234,7 @@ func run() error {
 
 	stop := make(chan struct{})
 	defer close(stop)
-	deps := buildAPIDeps(runtimeCfg, repo, factorStore, apiServices, polygonSvc, stop)
+	deps := buildAPIDeps(runtimeCfg, repo, factorStore, apiServices, polygonSvc, cacheStore, stop)
 
 	router := api.NewRouterFromDeps(deps)
 

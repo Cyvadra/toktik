@@ -11,6 +11,7 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/Cyvadra/toktik/internal/config"
 	"github.com/Cyvadra/toktik/internal/cryptooptions"
+	"github.com/Cyvadra/toktik/internal/usmarket"
 	"github.com/Cyvadra/toktik/pkg/fmp"
 )
 
@@ -38,6 +39,8 @@ type SchemaInit struct {
 	SpotKline bool
 	// ChainCache enables crypto option-chain cache materialized views.
 	ChainCache bool
+	// OptionWall enables the US options option-wall storage table.
+	OptionWall bool
 }
 
 // ConnectClickHouse establishes a ClickHouse connection, initialises the
@@ -72,6 +75,11 @@ func ConnectClickHouse(ctx context.Context, dsn string, schema *SchemaInit) (dri
 	if schema.ChainCache {
 		if err := cryptooptions.InitChainCacheSchema(ctx, conn); err != nil {
 			return nil, fmt.Errorf("init chain cache schema: %w", err)
+		}
+	}
+	if schema.OptionWall {
+		if err := usmarket.InitOptionWallSchema(ctx, conn); err != nil {
+			return nil, fmt.Errorf("init option wall schema: %w", err)
 		}
 	}
 	slog.Info("Schema initialized")

@@ -30,6 +30,7 @@ type USOptionsQuerier interface {
 	QuerySymbols(ctx context.Context, req dto.USOptionSymbolRequest) (*dto.USOptionSymbolResponse, error)
 	QueryGreeks(ctx context.Context, req dto.USOptionGreeksRequest) (*dto.USOptionGreeksResponse, error)
 	QueryChain(ctx context.Context, req dto.USOptionChainRequest) (*dto.USOptionChainResponse, error)
+	QueryOptionWall(ctx context.Context, req dto.USOptionWallRequest) (*dto.USOptionWallResponse, error)
 }
 
 // ForexQuerier defines the operations needed for low-level forex endpoints.

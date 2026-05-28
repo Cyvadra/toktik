@@ -3,7 +3,7 @@ BUILD_DIR := bin
 GOFLAGS := -trimpath
 LDFLAGS := -s -w
 
-`.PHONY: build-convert build-import build-missing-days build-kline-backfill build-kline-migrate-utc build-symbol-id-migrate build-volume-migrate build-api build-api-smoke build-backtest-example build-backtest-portfolio build-backtest-btc-portfolio build-us-market-import build-feature-store-backfill web-install web-dev web-build swagger-docs export-market-api-md refresh-api-docs build-all build-win-arm clean
+.PHONY: build-convert build-import build-missing-days build-kline-backfill build-kline-migrate-utc build-symbol-id-migrate build-volume-migrate build-api build-api-smoke build-backtest-example build-backtest-portfolio build-backtest-btc-portfolio build-us-market-import build-feature-store-backfill web-install web-dev web-build swagger-fmt swagger-docs export-market-api-md refresh-api-docs build-all build-win-arm clean
 
 build-all: build-convert build-import build-missing-days build-kline-backfill build-kline-migrate-utc build-symbol-id-migrate build-volume-migrate build-api build-api-smoke build-backtest-example build-backtest-portfolio build-us-market-import build-feature-store-backfill
 
@@ -70,13 +70,16 @@ web-dev:
 web-build:
 	npm --prefix web/data-browser run build
 
+swagger-fmt:
+	go run github.com/swaggo/swag/cmd/swag@v1.8.12 fmt -g cmd/api-server/main.go
+
 swagger-docs:
 	go run github.com/swaggo/swag/cmd/swag@v1.8.12 init --parseDependency --parseInternal --exclude tmp -g cmd/api-server/main.go -o docs
 
 export-market-api-md:
 	go run ./cmd/api-docs-markdown -input docs/swagger.json -output docs/db-market-indicator-api.md
 
-refresh-api-docs: swagger-docs export-market-api-md
+refresh-api-docs: swagger-fmt swagger-docs export-market-api-md
 
 build-win-arm:
 	@mkdir -p $(BUILD_DIR)

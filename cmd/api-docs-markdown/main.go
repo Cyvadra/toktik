@@ -122,6 +122,7 @@ var sections = []sectionSpec{
 			{Method: "GET", Path: "/markets/us-options/symbols", Label: "US option symbols"},
 			{Method: "GET", Path: "/markets/us-options/greeks", Label: "US option greeks"},
 			{Method: "GET", Path: "/markets/us-options/chain", Label: "US option chain"},
+			{Method: "GET", Path: "/markets/us-options/wall", Label: "US option wall"},
 		},
 	},
 	{

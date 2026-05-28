@@ -7,7 +7,7 @@
 - Source Swagger: `docs/swagger.json`
 - API title: `Toktik Options Platform API`
 - API version: `1.0`
-- Generated at: `2026-05-22T10:51:32Z`
+- Generated at: `2026-05-28T08:21:34Z`
 
 ## Scope
 
@@ -817,6 +817,31 @@ Returns latest known values per (symbol, factor) at as_of. For us-stocks, price-
 | 200 | github_com_Cyvadra_toktik_internal_dto.USOptionChainResponse | OK |
 | 400 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Bad Request |
 | 500 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Internal Server Error |
+
+### US option wall
+
+- Endpoint: `GET /api/v1/markets/us-options/wall`
+- Tags: `USOptions`
+- Produces: `application/json`
+- Summary: Get US option wall
+- Description: Returns realtime option-wall slices grouped by expiration date for a US underlying across the requested DTE range. Results are cached and persisted per UTC snapshot day.
+
+#### Parameters
+
+| Name | In | Type | Required | Description |
+| --- | --- | --- | --- | --- |
+| symbol | query | string | yes | Underlying ticker symbol |
+| min_dte | query | integer | no | Minimum days to expiration, inclusive (default 0) |
+| max_dte | query | integer | no | Maximum days to expiration, inclusive (defaults to min_dte when omitted) |
+
+#### Responses
+
+| Status | Schema | Description |
+| --- | --- | --- |
+| 200 | github_com_Cyvadra_toktik_internal_dto.USOptionWallResponse | OK |
+| 400 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Bad Request |
+| 500 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Internal Server Error |
+| 501 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Not Implemented |
 
 ## Screeners
 

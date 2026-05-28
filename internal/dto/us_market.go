@@ -217,3 +217,41 @@ type USOptionChainResponse struct {
 	Data       []USOptionChainSnapshot `json:"data"`
 	NextCursor string                  `json:"next_cursor,omitempty"`
 }
+
+// USOptionWallRequest requests realtime option-wall slices for expirations in a DTE range.
+// The relevant date dimension here is expiration, not the snapshot day bucket used for caching.
+type USOptionWallRequest struct {
+	Symbol string `form:"symbol" binding:"required"`
+	MinDTE int    `form:"min_dte" binding:"omitempty"`
+	MaxDTE int    `form:"max_dte" binding:"omitempty"`
+}
+
+// USOptionWallStrikeRow is one strike bucket inside an expiration wall.
+type USOptionWallStrikeRow struct {
+	Strike            float64  `json:"strike"`
+	TotalOpenInterest float64  `json:"total_open_interest"`
+	CallOpenInterest  float64  `json:"call_open_interest"`
+	PutOpenInterest   float64  `json:"put_open_interest"`
+	CallContractCount int      `json:"call_contract_count"`
+	PutContractCount  int      `json:"put_contract_count"`
+	AverageBid        *float64 `json:"average_bid,omitempty"`
+	AverageAsk        *float64 `json:"average_ask,omitempty"`
+	AverageMidpoint   *float64 `json:"average_midpoint,omitempty"`
+	AverageSpread     *float64 `json:"average_spread,omitempty"`
+}
+
+// USOptionWall is the derived wall for one expiration and one snapshot-day cache bucket.
+type USOptionWall struct {
+	Symbol       string                  `json:"symbol"`
+	Expiration   time.Time               `json:"expiration"`
+	SnapshotDay  time.Time               `json:"snapshot_day"`
+	DaysToExpiry int                     `json:"days_to_expiry"`
+	Strikes      []USOptionWallStrikeRow `json:"strikes"`
+}
+
+// USOptionWallResponse wraps all expiration walls in the requested DTE range.
+type USOptionWallResponse struct {
+	Symbol      string         `json:"symbol"`
+	SnapshotDay time.Time      `json:"snapshot_day"`
+	Data        []USOptionWall `json:"data"`
+}

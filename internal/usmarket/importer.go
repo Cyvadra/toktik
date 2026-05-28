@@ -73,6 +73,9 @@ func InitializeImportStorageWithOptions(ctx context.Context, conn driver.Conn, d
 	if err := InitOptionChainCacheSchema(ctx, conn); err != nil {
 		return nil, fmt.Errorf("init option chain cache schema: %w", err)
 	}
+	if err := InitOptionWallSchema(ctx, conn); err != nil {
+		return nil, fmt.Errorf("init option wall schema: %w", err)
+	}
 	if err := InitStockKlineSchema(ctx, conn); err != nil {
 		return nil, fmt.Errorf("init stock kline schema: %w", err)
 	}
