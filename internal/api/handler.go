@@ -329,168 +329,168 @@ func writeBacktestReportResponse(c *gin.Context, h *Handler, status *dto.Strateg
 
 // GetUSStockBars handles GET /api/v1/markets/us-stocks/bars.
 //
-// @Summary      Get US stock bars
-// @Description  Returns OHLCV bars for a US stock symbol, optionally enriched with point-in-time fundamentals aligned to each bar and cached company profile metadata when available.
-// @Tags         USStocks
-// @Produce      json
-// @Param        symbol    query     string  true   "Stock ticker symbol"
-// @Param        interval  query     string  true   "Bar interval"
-// @Param        from      query     string  true   "Start time (RFC3339 or YYYY-MM-DD)"
-// @Param        to        query     string  true   "End time (RFC3339 or YYYY-MM-DD)"
-// @Param        factor    query     []string  false  "Optional fundamentals to align onto each bar (repeat or comma-separated, e.g. pe,pb). PE/PB are recomputed from each bar close using the latest known filing-derived denominator."
-// @Param        limit     query     int     false  "Max rows (default 1000)"
-// @Param        cursor    query     string  false  "Pagination cursor"
-// @Success      200       {object}  dto.USStockBarResponse
-// @Failure      400       {object}  dto.ErrorResponse
-// @Failure      500       {object}  dto.ErrorResponse
-// @Router       /markets/us-stocks/bars [get]
+//	@Summary		Get US stock bars
+//	@Description	Returns OHLCV bars for a US stock symbol, optionally enriched with point-in-time fundamentals aligned to each bar and cached company profile metadata when available.
+//	@Tags			USStocks
+//	@Produce		json
+//	@Param			symbol		query		string		true	"Stock ticker symbol"
+//	@Param			interval	query		string		true	"Bar interval"
+//	@Param			from		query		string		true	"Start time (RFC3339 or YYYY-MM-DD)"
+//	@Param			to			query		string		true	"End time (RFC3339 or YYYY-MM-DD)"
+//	@Param			factor		query		[]string	false	"Optional fundamentals to align onto each bar (repeat or comma-separated, e.g. pe,pb). PE/PB are recomputed from each bar close using the latest known filing-derived denominator."
+//	@Param			limit		query		int			false	"Max rows (default 1000)"
+//	@Param			cursor		query		string		false	"Pagination cursor"
+//	@Success		200			{object}	dto.USStockBarResponse
+//	@Failure		400			{object}	dto.ErrorResponse
+//	@Failure		500			{object}	dto.ErrorResponse
+//	@Router			/markets/us-stocks/bars [get]
 
 // GetUSStockSymbols handles GET /api/v1/markets/us-stocks/symbols.
 //
-// @Summary      List US stock symbols
-// @Description  Returns available US stock ticker symbols, optionally including cached company profile metadata on each symbol row when available.
-// @Tags         USStocks
-// @Produce      json
-// @Param        search  query     string  false  "Substring match filter"
-// @Param        limit   query     int     false  "Max rows (default 100)"
-// @Param        cursor  query     string  false  "Pagination cursor"
-// @Success      200     {object}  dto.USStockSymbolResponse
-// @Failure      400     {object}  dto.ErrorResponse
-// @Failure      500     {object}  dto.ErrorResponse
-// @Router       /markets/us-stocks/symbols [get]
+//	@Summary		List US stock symbols
+//	@Description	Returns available US stock ticker symbols, optionally including cached company profile metadata on each symbol row when available.
+//	@Tags			USStocks
+//	@Produce		json
+//	@Param			search	query		string	false	"Substring match filter"
+//	@Param			limit	query		int		false	"Max rows (default 100)"
+//	@Param			cursor	query		string	false	"Pagination cursor"
+//	@Success		200		{object}	dto.USStockSymbolResponse
+//	@Failure		400		{object}	dto.ErrorResponse
+//	@Failure		500		{object}	dto.ErrorResponse
+//	@Router			/markets/us-stocks/symbols [get]
 
 // GetUSOptionBars handles GET /api/v1/markets/us-options/bars.
 //
-// @Summary      Get US option bars
-// @Description  Returns OHLCV bars for a US listed option contract.
-// @Tags         USOptions
-// @Produce      json
-// @Param        symbol    query     string  true   "Option contract symbol (Polygon OPRA ticker or raw OCC payload without O: prefix)"
-// @Param        interval  query     string  true   "Bar interval"
-// @Param        from      query     string  true   "Start time (RFC3339 or YYYY-MM-DD)"
-// @Param        to        query     string  true   "End time (RFC3339 or YYYY-MM-DD)"
-// @Param        session   query     string  false  "Session filter (1m only: regular, all, extended)"
-// @Param        limit     query     int     false  "Max rows (default 1000)"
-// @Param        cursor    query     string  false  "Pagination cursor"
-// @Success      200       {object}  dto.USOptionBarResponse
-// @Failure      400       {object}  dto.ErrorResponse
-// @Failure      500       {object}  dto.ErrorResponse
-// @Router       /markets/us-options/bars [get]
+//	@Summary		Get US option bars
+//	@Description	Returns OHLCV bars for a US listed option contract.
+//	@Tags			USOptions
+//	@Produce		json
+//	@Param			symbol		query		string	true	"Option contract symbol (Polygon OPRA ticker or raw OCC payload without O: prefix)"
+//	@Param			interval	query		string	true	"Bar interval"
+//	@Param			from		query		string	true	"Start time (RFC3339 or YYYY-MM-DD)"
+//	@Param			to			query		string	true	"End time (RFC3339 or YYYY-MM-DD)"
+//	@Param			session		query		string	false	"Session filter (1m only: regular, all, extended)"
+//	@Param			limit		query		int		false	"Max rows (default 1000)"
+//	@Param			cursor		query		string	false	"Pagination cursor"
+//	@Success		200			{object}	dto.USOptionBarResponse
+//	@Failure		400			{object}	dto.ErrorResponse
+//	@Failure		500			{object}	dto.ErrorResponse
+//	@Router			/markets/us-options/bars [get]
 
 // GetUSOptionSymbols handles GET /api/v1/markets/us-options/symbols.
 //
-// @Summary      List US option symbols
-// @Description  Returns available US listed option contract symbols.
-// @Tags         USOptions
-// @Produce      json
-// @Param        underlying  query     string  false  "Filter by underlying ticker symbol"
-// @Param        root        query     string  false  "Legacy alias for underlying"
-// @Param        search      query     string  false  "Substring match filter"
-// @Param        limit       query     int     false  "Max rows (default 100)"
-// @Param        cursor      query     string  false  "Pagination cursor"
-// @Success      200     {object}  dto.USOptionSymbolResponse
-// @Failure      400     {object}  dto.ErrorResponse
-// @Failure      500     {object}  dto.ErrorResponse
-// @Router       /markets/us-options/symbols [get]
+//	@Summary		List US option symbols
+//	@Description	Returns available US listed option contract symbols.
+//	@Tags			USOptions
+//	@Produce		json
+//	@Param			underlying	query		string	false	"Filter by underlying ticker symbol"
+//	@Param			root		query		string	false	"Legacy alias for underlying"
+//	@Param			search		query		string	false	"Substring match filter"
+//	@Param			limit		query		int		false	"Max rows (default 100)"
+//	@Param			cursor		query		string	false	"Pagination cursor"
+//	@Success		200			{object}	dto.USOptionSymbolResponse
+//	@Failure		400			{object}	dto.ErrorResponse
+//	@Failure		500			{object}	dto.ErrorResponse
+//	@Router			/markets/us-options/symbols [get]
 
 // GetUSOptionGreeks handles GET /api/v1/markets/us-options/greeks.
 //
-// @Summary      Get US option Greeks time-series
-// @Description  Returns Greeks snapshots over time for a US listed option contract.
-// @Tags         USOptions
-// @Produce      json
-// @Param        symbol    query     string  true   "Option contract symbol (Polygon OPRA ticker or raw OCC payload without O: prefix)"
-// @Param        interval  query     string  false  "Bar interval (default 1h)"
-// @Param        from      query     string  true   "Start time (RFC3339 or YYYY-MM-DD)"
-// @Param        to        query     string  true   "End time (RFC3339 or YYYY-MM-DD)"
-// @Param        session   query     string  false  "Session filter (1m only: regular, all, extended)"
-// @Param        limit     query     int     false  "Max rows (default 1000)"
-// @Param        cursor    query     string  false  "Pagination cursor"
-// @Success      200       {object}  dto.USOptionGreeksResponse
-// @Failure      400       {object}  dto.ErrorResponse
-// @Failure      500       {object}  dto.ErrorResponse
-// @Router       /markets/us-options/greeks [get]
+//	@Summary		Get US option Greeks time-series
+//	@Description	Returns Greeks snapshots over time for a US listed option contract.
+//	@Tags			USOptions
+//	@Produce		json
+//	@Param			symbol		query		string	true	"Option contract symbol (Polygon OPRA ticker or raw OCC payload without O: prefix)"
+//	@Param			interval	query		string	false	"Bar interval (default 1h)"
+//	@Param			from		query		string	true	"Start time (RFC3339 or YYYY-MM-DD)"
+//	@Param			to			query		string	true	"End time (RFC3339 or YYYY-MM-DD)"
+//	@Param			session		query		string	false	"Session filter (1m only: regular, all, extended)"
+//	@Param			limit		query		int		false	"Max rows (default 1000)"
+//	@Param			cursor		query		string	false	"Pagination cursor"
+//	@Success		200			{object}	dto.USOptionGreeksResponse
+//	@Failure		400			{object}	dto.ErrorResponse
+//	@Failure		500			{object}	dto.ErrorResponse
+//	@Router			/markets/us-options/greeks [get]
 
 // GetUSOptionChain handles GET /api/v1/markets/us-options/chain.
 //
-// @Summary      Get US option chain
-// @Description  Returns option chain snapshots for a US underlying. If from/to are omitted, the latest available snapshot is returned.
-// @Tags         USOptions
-// @Produce      json
-// @Param        underlying  query     string  true   "Underlying ticker symbol"
-// @Param        expiration  query     string  false  "Filter contracts by expiration date (YYYY-MM-DD)"
-// @Param        from        query     string  false  "Snapshot window start (RFC3339 or YYYY-MM-DD); defaults to latest available snapshot"
-// @Param        to          query     string  false  "Snapshot window end (RFC3339 or YYYY-MM-DD); defaults to latest available snapshot"
-// @Param        interval    query     string  false  "Chain interval (default 1d)"  Enums(5m,15m,30m,1h,2h,4h,1d)
-// @Param        limit       query     int     false  "Max contracts (default 100)"
-// @Param        cursor      query     string  false  "Pagination cursor"
-// @Success      200         {object}  dto.USOptionChainResponse
-// @Failure      400         {object}  dto.ErrorResponse
-// @Failure      500         {object}  dto.ErrorResponse
-// @Router       /markets/us-options/chain [get]
+//	@Summary		Get US option chain
+//	@Description	Returns option chain snapshots for a US underlying. If from/to are omitted, the latest available snapshot is returned.
+//	@Tags			USOptions
+//	@Produce		json
+//	@Param			underlying	query		string	true	"Underlying ticker symbol"
+//	@Param			expiration	query		string	false	"Filter contracts by expiration date (YYYY-MM-DD)"
+//	@Param			from		query		string	false	"Snapshot window start (RFC3339 or YYYY-MM-DD); defaults to latest available snapshot"
+//	@Param			to			query		string	false	"Snapshot window end (RFC3339 or YYYY-MM-DD); defaults to latest available snapshot"
+//	@Param			interval	query		string	false	"Chain interval (default 1d)"	Enums(5m,15m,30m,1h,2h,4h,1d)
+//	@Param			limit		query		int		false	"Max contracts (default 100)"
+//	@Param			cursor		query		string	false	"Pagination cursor"
+//	@Success		200			{object}	dto.USOptionChainResponse
+//	@Failure		400			{object}	dto.ErrorResponse
+//	@Failure		500			{object}	dto.ErrorResponse
+//	@Router			/markets/us-options/chain [get]
 
 // --- Crypto Spot handlers ---
 
 // GetCryptoSpotBars handles GET /api/v1/markets/crypto-spot/bars.
 //
-// @Summary      Get crypto spot bars
-// @Description  Returns OHLCV bars for a crypto spot pair.
-// @Tags         CryptoSpot
-// @Produce      json
-// @Param        symbol    query     string  true   "Spot pair symbol (e.g. BTCUSDT)"
-// @Param        interval  query     string  true   "Bar interval (15m, 1h, 4h, 1d)"
-// @Param        from      query     string  true   "Start time (RFC3339 or YYYY-MM-DD)"
-// @Param        to        query     string  true   "End time (RFC3339 or YYYY-MM-DD)"
-// @Param        limit     query     int     false  "Max rows (default 1000)"
-// @Param        cursor    query     string  false  "Pagination cursor"
-// @Success      200       {object}  dto.CryptoSpotBarResponse
-// @Failure      400       {object}  dto.ErrorResponse
-// @Failure      500       {object}  dto.ErrorResponse
-// @Router       /markets/crypto-spot/bars [get]
+//	@Summary		Get crypto spot bars
+//	@Description	Returns OHLCV bars for a crypto spot pair.
+//	@Tags			CryptoSpot
+//	@Produce		json
+//	@Param			symbol		query		string	true	"Spot pair symbol (e.g. BTCUSDT)"
+//	@Param			interval	query		string	true	"Bar interval (15m, 1h, 4h, 1d)"
+//	@Param			from		query		string	true	"Start time (RFC3339 or YYYY-MM-DD)"
+//	@Param			to			query		string	true	"End time (RFC3339 or YYYY-MM-DD)"
+//	@Param			limit		query		int		false	"Max rows (default 1000)"
+//	@Param			cursor		query		string	false	"Pagination cursor"
+//	@Success		200			{object}	dto.CryptoSpotBarResponse
+//	@Failure		400			{object}	dto.ErrorResponse
+//	@Failure		500			{object}	dto.ErrorResponse
+//	@Router			/markets/crypto-spot/bars [get]
 
 // GetCryptoSpotSymbols handles GET /api/v1/markets/crypto-spot/symbols.
 //
-// @Summary      List crypto spot symbols
-// @Description  Returns available crypto spot pair symbols.
-// @Tags         CryptoSpot
-// @Produce      json
-// @Param        search  query     string  false  "Substring match filter"
-// @Param        limit   query     int     false  "Max rows (default 100)"
-// @Param        cursor  query     string  false  "Pagination cursor"
-// @Success      200     {object}  dto.CryptoSpotSymbolResponse
-// @Failure      400     {object}  dto.ErrorResponse
-// @Failure      500     {object}  dto.ErrorResponse
-// @Router       /markets/crypto-spot/symbols [get]
+//	@Summary		List crypto spot symbols
+//	@Description	Returns available crypto spot pair symbols.
+//	@Tags			CryptoSpot
+//	@Produce		json
+//	@Param			search	query		string	false	"Substring match filter"
+//	@Param			limit	query		int		false	"Max rows (default 100)"
+//	@Param			cursor	query		string	false	"Pagination cursor"
+//	@Success		200		{object}	dto.CryptoSpotSymbolResponse
+//	@Failure		400		{object}	dto.ErrorResponse
+//	@Failure		500		{object}	dto.ErrorResponse
+//	@Router			/markets/crypto-spot/symbols [get]
 
 // GetForexBars handles GET /api/v1/markets/forex/bars.
 //
-// @Summary      Get forex bars
-// @Description  Returns OHLCV bars for a forex or metal-linked FX symbol.
-// @Tags         Forex
-// @Produce      json
-// @Param        symbol    query     string  true   "Forex symbol (e.g. EURUSD, USDJPY, XAUUSD)"
-// @Param        interval  query     string  true   "Bar interval"
-// @Param        from      query     string  true   "Start time (RFC3339 or YYYY-MM-DD)"
-// @Param        to        query     string  true   "End time (RFC3339 or YYYY-MM-DD)"
-// @Param        limit     query     int     false  "Max rows (default 1000)"
-// @Param        cursor    query     string  false  "Pagination cursor"
-// @Success      200       {object}  dto.ForexBarResponse
-// @Failure      400       {object}  dto.ErrorResponse
-// @Failure      500       {object}  dto.ErrorResponse
-// @Router       /markets/forex/bars [get]
+//	@Summary		Get forex bars
+//	@Description	Returns OHLCV bars for a forex or metal-linked FX symbol.
+//	@Tags			Forex
+//	@Produce		json
+//	@Param			symbol		query		string	true	"Forex symbol (e.g. EURUSD, USDJPY, XAUUSD)"
+//	@Param			interval	query		string	true	"Bar interval"
+//	@Param			from		query		string	true	"Start time (RFC3339 or YYYY-MM-DD)"
+//	@Param			to			query		string	true	"End time (RFC3339 or YYYY-MM-DD)"
+//	@Param			limit		query		int		false	"Max rows (default 1000)"
+//	@Param			cursor		query		string	false	"Pagination cursor"
+//	@Success		200			{object}	dto.ForexBarResponse
+//	@Failure		400			{object}	dto.ErrorResponse
+//	@Failure		500			{object}	dto.ErrorResponse
+//	@Router			/markets/forex/bars [get]
 
 // GetForexSymbols handles GET /api/v1/markets/forex/symbols.
 //
-// @Summary      List forex symbols
-// @Description  Returns available forex and metal-linked FX symbols.
-// @Tags         Forex
-// @Produce      json
-// @Param        search  query     string  false  "Substring match filter"
-// @Param        limit   query     int     false  "Max rows (default 100)"
-// @Param        cursor  query     string  false  "Pagination cursor"
-// @Success      200     {object}  dto.ForexSymbolResponse
-// @Failure      400     {object}  dto.ErrorResponse
-// @Failure      500     {object}  dto.ErrorResponse
-// @Router       /markets/forex/symbols [get]
+//	@Summary		List forex symbols
+//	@Description	Returns available forex and metal-linked FX symbols.
+//	@Tags			Forex
+//	@Produce		json
+//	@Param			search	query		string	false	"Substring match filter"
+//	@Param			limit	query		int		false	"Max rows (default 100)"
+//	@Param			cursor	query		string	false	"Pagination cursor"
+//	@Success		200		{object}	dto.ForexSymbolResponse
+//	@Failure		400		{object}	dto.ErrorResponse
+//	@Failure		500		{object}	dto.ErrorResponse
+//	@Router			/markets/forex/symbols [get]
 
 // --- Feature history handlers ---
