@@ -13,10 +13,11 @@ require (
 	github.com/redis/go-redis/v9 v9.7.1
 	github.com/swaggo/files v1.0.1
 	github.com/swaggo/gin-swagger v1.6.1
-	github.com/swaggo/swag v1.8.12
 	github.com/tigerfintech/openapi-go-sdk v0.3.5
 	gopkg.in/yaml.v3 v3.0.1
 )
+
+require github.com/swaggo/swag v1.8.12 // indirect
 
 require (
 	filippo.io/edwards25519 v1.1.0 // indirect
