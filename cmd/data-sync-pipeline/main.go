@@ -101,6 +101,7 @@ type jobConfig struct {
 	RiskFreeRate             float64           `yaml:"risk_free_rate"`
 	ForceDownload            bool              `yaml:"force_download"`
 	SyncStocks               bool              `yaml:"sync_stocks"`
+	SourceInterval           string            `yaml:"source_interval"`
 	RebuildAggregates        bool              `yaml:"rebuild_aggregates"`
 	Replace                  bool              `yaml:"replace"`
 	Underlyings              []string          `yaml:"underlyings"`
@@ -904,7 +905,7 @@ func buildPolygonSyncer(buildCtx syncerBuildContext, name string, job jobConfig)
 		if err != nil {
 			return nil, true, err
 		}
-		syncer, err := pipelinejobs.NewPolygonUSFlatFiles(pipelinejobs.PolygonUSFlatFilesConfig{Downloader: polygonSvc, Sessions: buildCtx.Sessions, DSN: buildCtx.ClickHouseDSN, BatchSize: job.BatchSize, Workers: job.Workers, RiskFreeRate: job.RiskFreeRate, ForceDownload: job.ForceDownload, SyncStocks: job.SyncStocks, ColdStartFloorUTC: parseColdStart(job.ColdStartFloor)})
+		syncer, err := pipelinejobs.NewPolygonUSFlatFiles(pipelinejobs.PolygonUSFlatFilesConfig{Downloader: polygonSvc, Sessions: buildCtx.Sessions, DSN: buildCtx.ClickHouseDSN, BatchSize: job.BatchSize, Workers: job.Workers, RiskFreeRate: job.RiskFreeRate, ForceDownload: job.ForceDownload, SyncStocks: job.SyncStocks, SourceInterval: job.SourceInterval, ColdStartFloorUTC: parseColdStart(job.ColdStartFloor)})
 		return syncer, true, err
 	case "polygon_us_greeks":
 		syncer, err := pipelinejobs.NewPolygonUSGreeks(pipelinejobs.PolygonUSGreeksConfig{DSN: buildCtx.ClickHouseDSN, BatchSize: job.BatchSize, Workers: job.Workers, RiskFreeRate: job.RiskFreeRate, Underlyings: job.Underlyings, LimitTasks: job.LimitSymbols, RebuildAggregates: job.RebuildAggregates, ColdStartFloorUTC: parseColdStart(job.ColdStartFloor)})

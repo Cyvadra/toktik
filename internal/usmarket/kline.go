@@ -90,6 +90,8 @@ func InitStockKlineSchema(ctx context.Context, conn driver.Conn) error {
 // RebuildOptionKlineAggregates repopulates all option kline aggregate tables
 // from the current 1m base table. This is required after backfills mutate the
 // base rows because materialized views only react to new inserts.
+// After rebuilding from 1m, daily staging data is re-materialized into the
+// 1d aggregate to ensure direct daily imports are not lost.
 func RebuildOptionKlineAggregates(ctx context.Context, conn driver.Conn) error {
 	for _, iv := range KlineIntervals {
 		agg := "us_options_bar_" + iv.Suffix + "_agg"
@@ -101,6 +103,100 @@ func RebuildOptionKlineAggregates(ctx context.Context, conn driver.Conn) error {
 		}
 		log.Printf("[us-options-kline] rebuilt %s interval", iv.Suffix)
 	}
+	// Re-materialize daily direct data that may have been truncated.
+	if err := RefreshDailyAggregates(ctx, conn); err != nil {
+		log.Printf("[us-options-kline] warning: refresh daily aggregates after rebuild: %v", err)
+	}
+	return nil
+}
+
+// RefreshDailyAggregates materializes daily staging rows from us_*_bar_1d_direct
+// into the existing us_*_bar_1d_agg aggregate tables. This makes daily direct
+// data visible through the existing us_*_bar_1d query views.
+func RefreshDailyAggregates(ctx context.Context, conn driver.Conn) error {
+	if err := RefreshStockDailyAggregate(ctx, conn); err != nil {
+		return fmt.Errorf("refresh stock daily aggregate: %w", err)
+	}
+	if err := RefreshOptionDailyAggregate(ctx, conn); err != nil {
+		return fmt.Errorf("refresh option daily aggregate: %w", err)
+	}
+	log.Printf("[us-kline] refreshed daily aggregates from direct staging tables")
+	return nil
+}
+
+// RefreshStockDailyAggregate materializes us_stocks_bar_1d_direct rows into
+// us_stocks_bar_1d_agg. Existing rows for matching ts values are deleted first
+// to ensure idempotency.
+func RefreshStockDailyAggregate(ctx context.Context, conn driver.Conn) error {
+	// Delete existing rows that overlap with daily staging data, then insert fresh.
+	if err := conn.Exec(ctx, `
+		ALTER TABLE us_stocks_bar_1d_agg DELETE
+		WHERE ts IN (SELECT DISTINCT timestamp FROM us_stocks_bar_1d_direct)
+		SETTINGS mutations_sync = 1
+	`); err != nil {
+		return fmt.Errorf("delete stock daily aggregate overlap: %w", err)
+	}
+
+	if err := conn.Exec(ctx, `
+		INSERT INTO us_stocks_bar_1d_agg
+		SELECT
+			timestamp AS ts,
+			symbol,
+			argMinState(open, timestamp)  AS open_state,
+			maxState(high)                AS high_state,
+			minState(low)                 AS low_state,
+			argMaxState(close, timestamp) AS close_state,
+			sumState(volume)              AS volume_state,
+			sumState(transactions)        AS transactions_state
+		FROM us_stocks_bar_1d_direct
+		GROUP BY ts, symbol
+	`); err != nil {
+		return fmt.Errorf("insert stock daily aggregate: %w", err)
+	}
+
+	return nil
+}
+
+// RefreshOptionDailyAggregate materializes us_options_bar_1d_direct rows into
+// us_options_bar_1d_agg. Existing rows for matching ts values are deleted first
+// to ensure idempotency.
+func RefreshOptionDailyAggregate(ctx context.Context, conn driver.Conn) error {
+	if err := conn.Exec(ctx, `
+		ALTER TABLE us_options_bar_1d_agg DELETE
+		WHERE ts IN (SELECT DISTINCT timestamp FROM us_options_bar_1d_direct)
+		SETTINGS mutations_sync = 1
+	`); err != nil {
+		return fmt.Errorf("delete option daily aggregate overlap: %w", err)
+	}
+
+	if err := conn.Exec(ctx, `
+		INSERT INTO us_options_bar_1d_agg
+		SELECT
+			timestamp AS ts,
+			symbol,
+			underlying,
+			option_type,
+			expiration,
+			strike,
+			argMinState(open, timestamp)       AS open_state,
+			maxState(high)                     AS high_state,
+			minState(low)                      AS low_state,
+			argMaxState(close, timestamp)      AS close_state,
+			argMaxState(underlying_close, timestamp)   AS underlying_close_state,
+			argMaxState(implied_volatility, timestamp) AS implied_volatility_state,
+			argMaxState(delta, timestamp)      AS delta_state,
+			argMaxState(gamma, timestamp)      AS gamma_state,
+			argMaxState(vega, timestamp)       AS vega_state,
+			argMaxState(theta, timestamp)      AS theta_state,
+			argMaxState(rho, timestamp)        AS rho_state,
+			sumState(volume)                   AS volume_state,
+			sumState(transactions)             AS transactions_state
+		FROM us_options_bar_1d_direct
+		GROUP BY ts, symbol, underlying, option_type, expiration, strike
+	`); err != nil {
+		return fmt.Errorf("insert option daily aggregate: %w", err)
+	}
+
 	return nil
 }
 

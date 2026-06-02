@@ -122,3 +122,58 @@ ENGINE = MergeTree()
 PARTITION BY toYYYYMM(timestamp)
 ORDER BY (symbol, timestamp)
 SETTINGS index_granularity = 8192;
+
+-- -------------------------------------------------------
+-- US Options: daily bars from Polygon OPRA day aggregates
+-- Direct staging table for daily-only deployments.
+-- -------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS us_options_bar_1d_direct
+(
+    timestamp          DateTime('UTC'),
+    symbol             LowCardinality(String),
+    underlying         LowCardinality(String),
+    option_type        Enum8('C' = 1, 'P' = 2),
+    expiration         Date,
+    strike             Float64,
+    open               Float32,
+    high               Float32,
+    low                Float32,
+    close              Float32,
+    underlying_close   Float32,
+    implied_volatility Float32,
+    delta              Float32,
+    gamma              Float32,
+    vega               Float32,
+    theta              Float32,
+    rho                Float32,
+    volume             Float64,
+    transactions       UInt32,
+    market_date        Date
+)
+ENGINE = MergeTree()
+PARTITION BY toYYYYMM(timestamp)
+ORDER BY (underlying, symbol, timestamp)
+SETTINGS index_granularity = 8192;
+
+-- -------------------------------------------------------
+-- US Stocks: daily bars from Polygon SIP day aggregates
+-- Direct staging table for daily-only deployments.
+-- -------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS us_stocks_bar_1d_direct
+(
+    timestamp    DateTime('UTC'),
+    symbol       LowCardinality(String),
+    open         Float32,
+    high         Float32,
+    low          Float32,
+    close        Float32,
+    volume       Float64,
+    transactions UInt32,
+    market_date  Date
+)
+ENGINE = MergeTree()
+PARTITION BY toYYYYMM(timestamp)
+ORDER BY (symbol, timestamp)
+SETTINGS index_granularity = 8192;

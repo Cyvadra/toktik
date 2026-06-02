@@ -17,8 +17,10 @@ import (
 )
 
 const (
-	stockImporterName  = "us-market-import/stocks"
-	optionImporterName = "us-market-import/options"
+	stockImporterName       = "us-market-import/stocks"
+	optionImporterName      = "us-market-import/options"
+	stockDailyImporterName  = "us-market-import/stocks-1d"
+	optionDailyImporterName = "us-market-import/options-1d"
 )
 
 type ImportConfig struct {
@@ -370,6 +372,257 @@ func ImportStockFile(ctx context.Context, dsn, path string, batchSize int, skipE
 
 	log.Printf("[IMPORT] %s: %d stock rows in %s", baseName, rows, time.Since(fileStart).Round(time.Second))
 	if err := ledger.MarkSuccess(ctx, importledger.CompletionRequest{ImporterName: stockImporterName, SourceKey: sourceHash, ScopeKey: scopeKey, ImportID: importID, SourceHash: sourceHash, RowsInserted: uint64(rows)}); err != nil {
+		return rows, false, fmt.Errorf("mark import success: %w", err)
+	}
+	return rows, false, nil
+}
+
+// ImportDailyFiles orchestrates daily stock and option imports from Polygon day-aggregate
+// CSV files. Stocks are imported first (options may reference stock closes). The
+// caller is responsible for calling RefreshDailyAggregates after a successful import
+// to materialize the staging rows into the 1d aggregate tables.
+func ImportDailyFiles(ctx context.Context, cfg ImportConfig, stockFiles, optionFiles []string) (ImportResult, error) {
+	if strings.TrimSpace(cfg.DSN) == "" {
+		return ImportResult{}, fmt.Errorf("import DSN is required")
+	}
+	if cfg.BatchSize <= 0 {
+		cfg.BatchSize = 100000
+	}
+	if cfg.Workers < 1 {
+		cfg.Workers = 1
+	}
+
+	totalFiles := len(stockFiles) + len(optionFiles)
+	if totalFiles == 0 {
+		return ImportResult{}, nil
+	}
+
+	var (
+		wg         sync.WaitGroup
+		sem        = make(chan struct{}, cfg.Workers)
+		completed  int64
+		skipped    int64
+		failed     int64
+		stockRows  int64
+		optionRows int64
+	)
+
+	startTime := time.Now()
+
+	for _, csvPath := range stockFiles {
+		wg.Add(1)
+		sem <- struct{}{}
+
+		go func(path string) {
+			defer wg.Done()
+			defer func() { <-sem }()
+
+			rows, wasSkipped, err := ImportStockDailyFile(ctx, cfg.DSN, path, cfg.BatchSize, cfg.SkipExisting, cfg.ReplaceDates)
+			if err != nil {
+				log.Printf("[ERROR] %s: %v", filepath.Base(path), err)
+				atomic.AddInt64(&failed, 1)
+				return
+			}
+			if wasSkipped {
+				n := atomic.AddInt64(&skipped, 1)
+				done := atomic.LoadInt64(&completed)
+				log.Printf("[SKIP] %s (total: %d done, %d skipped / %d)", filepath.Base(path), done, n, totalFiles)
+				return
+			}
+			atomic.AddInt64(&stockRows, rows)
+			n := atomic.AddInt64(&completed, 1)
+			log.Printf("[DONE] %s: %d rows (%d/%d completed)", filepath.Base(path), rows, n, totalFiles)
+		}(csvPath)
+	}
+
+	wg.Wait()
+	log.Printf("Daily stock import phase complete: %d files succeeded, %d skipped, %d failed", completed, skipped, failed)
+	if failed > 0 {
+		return ImportResult{
+			CompletedFiles: completed,
+			SkippedFiles:   skipped,
+			FailedFiles:    failed,
+			OptionRows:     optionRows,
+			StockRows:      stockRows,
+			Elapsed:        time.Since(startTime),
+		}, fmt.Errorf("daily stock import phase failed; refusing to import options against incomplete underlying data")
+	}
+
+	for _, csvPath := range optionFiles {
+		wg.Add(1)
+		sem <- struct{}{}
+
+		go func(path string) {
+			defer wg.Done()
+			defer func() { <-sem }()
+
+			rows, wasSkipped, err := ImportOptionDailyFile(ctx, cfg.DSN, path, cfg.BatchSize, cfg.SkipExisting, cfg.ReplaceDates)
+			if err != nil {
+				log.Printf("[ERROR] %s: %v", filepath.Base(path), err)
+				atomic.AddInt64(&failed, 1)
+				return
+			}
+			if wasSkipped {
+				n := atomic.AddInt64(&skipped, 1)
+				done := atomic.LoadInt64(&completed)
+				log.Printf("[SKIP] %s (total: %d done, %d skipped / %d)", filepath.Base(path), done, n, totalFiles)
+				return
+			}
+			atomic.AddInt64(&optionRows, rows)
+			n := atomic.AddInt64(&completed, 1)
+			log.Printf("[DONE] %s: %d rows (%d/%d completed)", filepath.Base(path), rows, n, totalFiles)
+		}(csvPath)
+	}
+
+	wg.Wait()
+
+	result := ImportResult{
+		CompletedFiles: completed,
+		SkippedFiles:   skipped,
+		FailedFiles:    failed,
+		OptionRows:     optionRows,
+		StockRows:      stockRows,
+		Elapsed:        time.Since(startTime),
+	}
+	if failed > 0 {
+		return result, fmt.Errorf("daily import finished with %d failed files", failed)
+	}
+	return result, nil
+}
+
+// ImportStockDailyFile imports a single Polygon SIP day-aggregate CSV into us_stocks_bar_1d_direct.
+func ImportStockDailyFile(ctx context.Context, dsn, path string, batchSize int, skipExisting, replaceDates bool) (int64, bool, error) {
+	baseName := filepath.Base(path)
+	log.Printf("[START] stock-daily %s", baseName)
+	fileStart := time.Now()
+
+	conn, err := ConnectClickHouse(ctx, dsn)
+	if err != nil {
+		return 0, false, fmt.Errorf("connect: %w", err)
+	}
+	ledger := importledger.New(conn)
+	sourceHash, err := importledger.SourceHash(path)
+	if err != nil {
+		return 0, false, fmt.Errorf("hash source file: %w", err)
+	}
+
+	marketDate, err := ExtractDateFromFilename(path)
+	if err != nil {
+		return 0, false, fmt.Errorf("extract market date: %w", err)
+	}
+	scopeKey := marketDate.Format("2006-01-02")
+	if !replaceDates {
+		if succeeded, err := ledger.AlreadySucceeded(ctx, stockDailyImporterName, sourceHash, scopeKey); err != nil {
+			return 0, false, fmt.Errorf("check import ledger: %w", err)
+		} else if succeeded {
+			return 0, true, nil
+		}
+	}
+
+	if replaceDates {
+		if err := ReplaceStockDailyMarketDate(ctx, conn, marketDate); err != nil {
+			return 0, false, fmt.Errorf("replace existing daily stock date: %w", err)
+		}
+	} else if skipExisting {
+		count, err := CountExistingStockDailyBars(ctx, conn, marketDate)
+		if err != nil {
+			return 0, false, fmt.Errorf("check existing: %w", err)
+		}
+		if count > 0 {
+			return 0, false, fmt.Errorf("%d daily stock rows already exist for %s but no successful import ledger entry matches this source; rerun with replace-dates to rebuild safely", count, scopeKey)
+		}
+	}
+	importID, err := ledger.Start(ctx, importledger.StartRequest{ImporterName: stockDailyImporterName, SourceKey: sourceHash, ScopeKey: scopeKey, SourceHash: sourceHash})
+	if err != nil {
+		return 0, false, fmt.Errorf("start import ledger: %w", err)
+	}
+
+	barCh, readErr, err := ParseStockDailyCSV(path)
+	if err != nil {
+		return 0, false, fmt.Errorf("parse daily CSV: %w", err)
+	}
+
+	rows, err := InsertStockDailyBars(ctx, conn, barCh, batchSize)
+	if err != nil {
+		failure := importledger.RecordFailure(ctx, ledger, importledger.CompletionRequest{ImporterName: stockDailyImporterName, SourceKey: sourceHash, ScopeKey: scopeKey, ImportID: importID, SourceHash: sourceHash, RowsInserted: importledger.NonNegativeRows(rows), ErrorMessage: err.Error()}, err)
+		return rows, false, fmt.Errorf("insert: %w", failure)
+	}
+	if *readErr != nil {
+		failure := importledger.RecordFailure(ctx, ledger, importledger.CompletionRequest{ImporterName: stockDailyImporterName, SourceKey: sourceHash, ScopeKey: scopeKey, ImportID: importID, SourceHash: sourceHash, RowsInserted: importledger.NonNegativeRows(rows), ErrorMessage: (*readErr).Error()}, *readErr)
+		return rows, false, fmt.Errorf("read: %w", failure)
+	}
+
+	log.Printf("[IMPORT] %s: %d daily stock rows in %s", baseName, rows, time.Since(fileStart).Round(time.Second))
+	if err := ledger.MarkSuccess(ctx, importledger.CompletionRequest{ImporterName: stockDailyImporterName, SourceKey: sourceHash, ScopeKey: scopeKey, ImportID: importID, SourceHash: sourceHash, RowsInserted: uint64(rows)}); err != nil {
+		return rows, false, fmt.Errorf("mark import success: %w", err)
+	}
+	return rows, false, nil
+}
+
+// ImportOptionDailyFile imports a single Polygon OPRA day-aggregate CSV into us_options_bar_1d_direct.
+func ImportOptionDailyFile(ctx context.Context, dsn, path string, batchSize int, skipExisting, replaceDates bool) (int64, bool, error) {
+	baseName := filepath.Base(path)
+	log.Printf("[START] option-daily %s", baseName)
+	fileStart := time.Now()
+
+	conn, err := ConnectClickHouse(ctx, dsn)
+	if err != nil {
+		return 0, false, fmt.Errorf("connect: %w", err)
+	}
+	ledger := importledger.New(conn)
+	sourceHash, err := importledger.SourceHash(path)
+	if err != nil {
+		return 0, false, fmt.Errorf("hash source file: %w", err)
+	}
+
+	marketDate, err := ExtractDateFromFilename(path)
+	if err != nil {
+		return 0, false, fmt.Errorf("extract market date: %w", err)
+	}
+	scopeKey := marketDate.Format("2006-01-02")
+	if !replaceDates {
+		if succeeded, err := ledger.AlreadySucceeded(ctx, optionDailyImporterName, sourceHash, scopeKey); err != nil {
+			return 0, false, fmt.Errorf("check import ledger: %w", err)
+		} else if succeeded {
+			return 0, true, nil
+		}
+	}
+
+	if replaceDates {
+		if err := ReplaceOptionDailyMarketDate(ctx, conn, marketDate); err != nil {
+			return 0, false, fmt.Errorf("replace existing daily option date: %w", err)
+		}
+	} else if skipExisting {
+		count, err := CountExistingOptionDailyBars(ctx, conn, marketDate)
+		if err != nil {
+			return 0, false, fmt.Errorf("check existing: %w", err)
+		}
+		if count > 0 {
+			return 0, false, fmt.Errorf("%d daily option rows already exist for %s but no successful import ledger entry matches this source; rerun with replace-dates to rebuild safely", count, scopeKey)
+		}
+	}
+	importID, err := ledger.Start(ctx, importledger.StartRequest{ImporterName: optionDailyImporterName, SourceKey: sourceHash, ScopeKey: scopeKey, SourceHash: sourceHash})
+	if err != nil {
+		return 0, false, fmt.Errorf("start import ledger: %w", err)
+	}
+
+	barCh, readErr, err := ParseOptionDailyCSV(path)
+	if err != nil {
+		return 0, false, fmt.Errorf("parse daily CSV: %w", err)
+	}
+
+	rows, err := InsertOptionDailyBars(ctx, conn, barCh, batchSize)
+	if err != nil {
+		failure := importledger.RecordFailure(ctx, ledger, importledger.CompletionRequest{ImporterName: optionDailyImporterName, SourceKey: sourceHash, ScopeKey: scopeKey, ImportID: importID, SourceHash: sourceHash, RowsInserted: importledger.NonNegativeRows(rows), ErrorMessage: err.Error()}, err)
+		return rows, false, fmt.Errorf("insert: %w", failure)
+	}
+	if *readErr != nil {
+		failure := importledger.RecordFailure(ctx, ledger, importledger.CompletionRequest{ImporterName: optionDailyImporterName, SourceKey: sourceHash, ScopeKey: scopeKey, ImportID: importID, SourceHash: sourceHash, RowsInserted: importledger.NonNegativeRows(rows), ErrorMessage: (*readErr).Error()}, *readErr)
+		return rows, false, fmt.Errorf("read: %w", failure)
+	}
+
+	log.Printf("[IMPORT] %s: %d daily option rows in %s", baseName, rows, time.Since(fileStart).Round(time.Second))
+	if err := ledger.MarkSuccess(ctx, importledger.CompletionRequest{ImporterName: optionDailyImporterName, SourceKey: sourceHash, ScopeKey: scopeKey, ImportID: importID, SourceHash: sourceHash, RowsInserted: uint64(rows)}); err != nil {
 		return rows, false, fmt.Errorf("mark import success: %w", err)
 	}
 	return rows, false, nil

@@ -127,6 +127,13 @@ jobs:
     force_download: false
     # Usually managed by market_data_sources.us_stocks.
     sync_stocks: false
+    # Source interval for Polygon flatfiles: "1m" (default, minute aggregates)
+    # or "1d" (day aggregates). When set to "1d", the pipeline downloads and
+    # imports Polygon day aggregate files into daily staging tables and
+    # materializes them into the existing us_*_bar_1d query views.
+    # In daily-only mode, disable fmp_us_stocks, polygon_us_greeks, and
+    # feature_store_backfill since they depend on 1m data.
+    # source_interval: 1d
 
   polygon_us_greeks:
     enabled: true

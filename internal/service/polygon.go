@@ -26,6 +26,8 @@ const (
 type polygonClient interface {
 	DownloadStockMinuteAggregates(ctx context.Context, date time.Time, force bool) (string, error)
 	DownloadOptionMinuteAggregates(ctx context.Context, date time.Time, force bool) (string, error)
+	DownloadStockDailyAggregates(ctx context.Context, date time.Time, force bool) (string, error)
+	DownloadOptionDailyAggregates(ctx context.Context, date time.Time, force bool) (string, error)
 	StockSnapshot(ctx context.Context, symbol string) (*polygonpkg.StockSnapshot, error)
 	StockAggregates(ctx context.Context, req polygonpkg.AggregateRequest) ([]polygonpkg.AggregateBar, error)
 	StockQuotes(ctx context.Context, symbol string, req polygonpkg.QuoteRequest) ([]polygonpkg.Quote, error)
@@ -61,6 +63,14 @@ func (s *PolygonService) DownloadStockMinuteAggregates(ctx context.Context, date
 
 func (s *PolygonService) DownloadOptionMinuteAggregates(ctx context.Context, date time.Time, force bool) (string, error) {
 	return s.client.DownloadOptionMinuteAggregates(ctx, date, force)
+}
+
+func (s *PolygonService) DownloadStockDailyAggregates(ctx context.Context, date time.Time, force bool) (string, error) {
+	return s.client.DownloadStockDailyAggregates(ctx, date, force)
+}
+
+func (s *PolygonService) DownloadOptionDailyAggregates(ctx context.Context, date time.Time, force bool) (string, error) {
+	return s.client.DownloadOptionDailyAggregates(ctx, date, force)
 }
 
 func (s *PolygonService) StockSnapshot(ctx context.Context, symbol string) (*polygonpkg.StockSnapshot, error) {

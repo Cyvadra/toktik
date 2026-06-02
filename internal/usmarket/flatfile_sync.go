@@ -16,22 +16,25 @@ import (
 type FlatFileDownloader interface {
 	DownloadStockMinuteAggregates(ctx context.Context, date time.Time, force bool) (string, error)
 	DownloadOptionMinuteAggregates(ctx context.Context, date time.Time, force bool) (string, error)
+	DownloadStockDailyAggregates(ctx context.Context, date time.Time, force bool) (string, error)
+	DownloadOptionDailyAggregates(ctx context.Context, date time.Time, force bool) (string, error)
 }
 
 type FlatFileSyncConfig struct {
-	Downloader    FlatFileDownloader
-	Conn          driver.Conn
-	Import        ImportConfig
-	Sessions      SessionMap
-	ForceDownload bool
-	SkipStocks    bool
-	SkipOptions   bool
-	DryRun        bool
-	Now           func() time.Time
-	ColdStartDate time.Time
-	StartDate     time.Time
-	EndDate       time.Time
-	SpecificDates []time.Time
+	Downloader     FlatFileDownloader
+	Conn           driver.Conn
+	Import         ImportConfig
+	Sessions       SessionMap
+	ForceDownload  bool
+	SkipStocks     bool
+	SkipOptions    bool
+	DryRun         bool
+	Now            func() time.Time
+	ColdStartDate  time.Time
+	StartDate      time.Time
+	EndDate        time.Time
+	SpecificDates  []time.Time
+	SourceInterval string // "1m" (default, minute aggregates) or "1d" (day aggregates)
 }
 
 type FlatFileAssetResult struct {
@@ -76,6 +79,20 @@ func SyncPolygonFlatFiles(ctx context.Context, cfg FlatFileSyncConfig) (FlatFile
 		return FlatFileSyncResult{}, fmt.Errorf("at least one Polygon flatfile asset class must be enabled")
 	}
 
+	// Normalize source interval.
+	interval := cfg.SourceInterval
+	if interval == "" {
+		interval = "1m"
+	}
+
+	if interval == "1d" {
+		return syncPolygonDailyFlatFiles(ctx, cfg)
+	}
+	return syncPolygonMinuteFlatFiles(ctx, cfg)
+}
+
+// syncPolygonMinuteFlatFiles is the existing 1m sync path (unchanged).
+func syncPolygonMinuteFlatFiles(ctx context.Context, cfg FlatFileSyncConfig) (FlatFileSyncResult, error) {
 	stocks := FlatFileAssetResult{AssetClass: "stocks"}
 	if !cfg.SkipStocks {
 		var err error
@@ -119,11 +136,71 @@ func SyncPolygonFlatFiles(ctx context.Context, cfg FlatFileSyncConfig) (FlatFile
 		return FlatFileSyncResult{Stocks: stocks, Options: options, Import: ImportResult{SkippedFiles: int64(len(stocks.Files) + len(options.Files))}}, nil
 	}
 
-	// Keep replace semantics at the per-file import layer so reruns overwrite by
-	// market date instead of being short-circuited by a previous ledger success.
 	importResult, err := ImportFiles(ctx, cfg.Import, stocks.Files, options.Files, cfg.Sessions)
 	if err != nil {
 		return FlatFileSyncResult{Stocks: stocks, Options: options, Import: importResult}, err
+	}
+
+	return FlatFileSyncResult{Stocks: stocks, Options: options, Import: importResult}, nil
+}
+
+// syncPolygonDailyFlatFiles handles the 1d sync path: downloads day aggregate
+// flatfiles, imports them into daily staging tables, and materializes into 1d
+// aggregate tables for visibility through existing query views.
+func syncPolygonDailyFlatFiles(ctx context.Context, cfg FlatFileSyncConfig) (FlatFileSyncResult, error) {
+	stocks := FlatFileAssetResult{AssetClass: "stocks"}
+	if !cfg.SkipStocks {
+		var err error
+		stocks, err = syncFlatFileAsset(ctx, flatFileAssetConfig{
+			assetClass:     "stocks",
+			forceDownload:  cfg.ForceDownload,
+			now:            cfg.Now,
+			coldStartDate:  cfg.ColdStartDate,
+			overrideStart:  cfg.StartDate,
+			overrideEnd:    cfg.EndDate,
+			specificDates:  cfg.SpecificDates,
+			loadLatestDate: LatestStockDailyMarketDate,
+			download:       cfg.Downloader.DownloadStockDailyAggregates,
+		}, cfg.Conn)
+		if err != nil {
+			return FlatFileSyncResult{}, err
+		}
+	}
+
+	options := FlatFileAssetResult{AssetClass: "options"}
+	if !cfg.SkipOptions {
+		var err error
+		options, err = syncFlatFileAsset(ctx, flatFileAssetConfig{
+			assetClass:     "options",
+			forceDownload:  cfg.ForceDownload,
+			now:            cfg.Now,
+			coldStartDate:  cfg.ColdStartDate,
+			overrideStart:  cfg.StartDate,
+			overrideEnd:    cfg.EndDate,
+			specificDates:  cfg.SpecificDates,
+			loadLatestDate: LatestOptionDailyMarketDate,
+			download:       cfg.Downloader.DownloadOptionDailyAggregates,
+		}, cfg.Conn)
+		if err != nil {
+			return FlatFileSyncResult{}, err
+		}
+	}
+
+	if cfg.DryRun {
+		log.Printf("[DRYRUN] Polygon daily flatfile import skipped: would import %d stock files and %d option files", len(stocks.Files), len(options.Files))
+		return FlatFileSyncResult{Stocks: stocks, Options: options, Import: ImportResult{SkippedFiles: int64(len(stocks.Files) + len(options.Files))}}, nil
+	}
+
+	// Daily import does not require session enrichment.
+	importResult, err := ImportDailyFiles(ctx, cfg.Import, stocks.Files, options.Files)
+	if err != nil {
+		return FlatFileSyncResult{Stocks: stocks, Options: options, Import: importResult}, err
+	}
+
+	// Materialize daily staging rows into 1d aggregate tables so they are
+	// visible through the existing us_*_bar_1d query views.
+	if err := RefreshDailyAggregates(ctx, cfg.Conn); err != nil {
+		return FlatFileSyncResult{Stocks: stocks, Options: options, Import: importResult}, fmt.Errorf("refresh daily aggregates: %w", err)
 	}
 
 	return FlatFileSyncResult{Stocks: stocks, Options: options, Import: importResult}, nil

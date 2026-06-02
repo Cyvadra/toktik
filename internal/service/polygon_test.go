@@ -24,6 +24,14 @@ func (s *stubPolygonClient) DownloadOptionMinuteAggregates(context.Context, time
 	return "", nil
 }
 
+func (s *stubPolygonClient) DownloadStockDailyAggregates(context.Context, time.Time, bool) (string, error) {
+	return "", nil
+}
+
+func (s *stubPolygonClient) DownloadOptionDailyAggregates(context.Context, time.Time, bool) (string, error) {
+	return "", nil
+}
+
 func (s *stubPolygonClient) StockSnapshot(ctx context.Context, symbol string) (*polygonpkg.StockSnapshot, error) {
 	s.stockSnapshotCalls++
 	return &polygonpkg.StockSnapshot{Ticker: symbol}, nil

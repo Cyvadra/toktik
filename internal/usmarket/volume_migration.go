@@ -63,6 +63,10 @@ func RebuildStockKlineAggregates(ctx context.Context, conn driver.Conn) error {
 		}
 		log.Printf("[us-stocks-kline] rebuilt %s interval", iv.Suffix)
 	}
+	// Re-materialize daily direct data that may have been truncated.
+	if err := RefreshDailyAggregates(ctx, conn); err != nil {
+		log.Printf("[us-stocks-kline] warning: refresh daily aggregates after rebuild: %v", err)
+	}
 	return nil
 }
 

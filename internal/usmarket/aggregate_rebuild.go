@@ -216,6 +216,10 @@ func RebuildOptionKlineAggregatesScoped(ctx context.Context, conn driver.Conn, o
 			return err
 		}
 	}
+	// Re-materialize daily direct data for any 1d partitions that were rebuilt.
+	if err := RefreshDailyAggregates(ctx, conn); err != nil {
+		log.Printf("[us-options-kline-scoped] warning: refresh daily aggregates: %v", err)
+	}
 	return nil
 }
 
@@ -230,6 +234,10 @@ func RebuildStockKlineAggregatesScoped(ctx context.Context, conn driver.Conn, op
 		if err != nil {
 			return err
 		}
+	}
+	// Re-materialize daily direct data for any 1d partitions that were rebuilt.
+	if err := RefreshDailyAggregates(ctx, conn); err != nil {
+		log.Printf("[us-stocks-kline-scoped] warning: refresh daily aggregates: %v", err)
 	}
 	return nil
 }

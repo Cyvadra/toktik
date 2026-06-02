@@ -323,6 +323,190 @@ func CountExistingStockBars(ctx context.Context, conn driver.Conn, marketDate ti
 	return count, nil
 }
 
+// Daily staging insert SQL constants.
+
+const optionDailyBarInsertSQL = `INSERT INTO us_options_bar_1d_direct (
+	timestamp, symbol, underlying, option_type, expiration, strike,
+	open, high, low, close,
+	underlying_close, implied_volatility, delta, gamma, vega, theta, rho,
+	volume, transactions,
+	market_date
+)`
+
+const stockDailyBarInsertSQL = `INSERT INTO us_stocks_bar_1d_direct (
+	timestamp, symbol, open, high, low, close, volume, transactions,
+	market_date
+)`
+
+// InsertOptionDailyBars batch-inserts daily option bars into us_options_bar_1d_direct.
+func InsertOptionDailyBars(ctx context.Context, conn driver.Conn, bars <-chan OptionBar1d, batchSize int) (int64, error) {
+	var totalRows int64
+
+	batch, err := conn.PrepareBatch(ctx, optionDailyBarInsertSQL)
+	if err != nil {
+		return 0, fmt.Errorf("prepare option daily batch: %w", err)
+	}
+
+	batchCount := 0
+	for bar := range bars {
+		if err := batch.Append(
+			bar.Timestamp,
+			bar.Symbol,
+			bar.Underlying,
+			bar.OptionType,
+			bar.Expiration,
+			bar.Strike,
+			bar.Open, bar.High, bar.Low, bar.Close,
+			bar.UnderlyingClose,
+			bar.ImpliedVolatility,
+			bar.Delta,
+			bar.Gamma,
+			bar.Vega,
+			bar.Theta,
+			bar.Rho,
+			bar.Volume,
+			bar.Transactions,
+			bar.MarketDate,
+		); err != nil {
+			return totalRows, fmt.Errorf("append option daily row: %w", err)
+		}
+
+		batchCount++
+		totalRows++
+
+		if batchCount >= batchSize {
+			if err := batch.Send(); err != nil {
+				return totalRows, fmt.Errorf("send option daily batch: %w", err)
+			}
+			log.Printf("[clickhouse] inserted %d option daily rows (total: %d)", batchCount, totalRows)
+			batchCount = 0
+
+			batch, err = conn.PrepareBatch(ctx, optionDailyBarInsertSQL)
+			if err != nil {
+				return totalRows, fmt.Errorf("prepare next option daily batch: %w", err)
+			}
+		}
+	}
+
+	if batchCount > 0 {
+		if err := batch.Send(); err != nil {
+			return totalRows, fmt.Errorf("send final option daily batch: %w", err)
+		}
+		log.Printf("[clickhouse] inserted final %d option daily rows (total: %d)", batchCount, totalRows)
+	}
+
+	return totalRows, nil
+}
+
+// InsertStockDailyBars batch-inserts daily stock bars into us_stocks_bar_1d_direct.
+func InsertStockDailyBars(ctx context.Context, conn driver.Conn, bars <-chan StockBar1d, batchSize int) (int64, error) {
+	var totalRows int64
+
+	batch, err := conn.PrepareBatch(ctx, stockDailyBarInsertSQL)
+	if err != nil {
+		return 0, fmt.Errorf("prepare stock daily batch: %w", err)
+	}
+
+	batchCount := 0
+	for bar := range bars {
+		if err := batch.Append(
+			bar.Timestamp,
+			bar.Symbol,
+			bar.Open, bar.High, bar.Low, bar.Close,
+			bar.Volume,
+			bar.Transactions,
+			bar.MarketDate,
+		); err != nil {
+			return totalRows, fmt.Errorf("append stock daily row: %w", err)
+		}
+
+		batchCount++
+		totalRows++
+
+		if batchCount >= batchSize {
+			if err := batch.Send(); err != nil {
+				return totalRows, fmt.Errorf("send stock daily batch: %w", err)
+			}
+			log.Printf("[clickhouse] inserted %d stock daily rows (total: %d)", batchCount, totalRows)
+			batchCount = 0
+
+			batch, err = conn.PrepareBatch(ctx, stockDailyBarInsertSQL)
+			if err != nil {
+				return totalRows, fmt.Errorf("prepare next stock daily batch: %w", err)
+			}
+		}
+	}
+
+	if batchCount > 0 {
+		if err := batch.Send(); err != nil {
+			return totalRows, fmt.Errorf("send final stock daily batch: %w", err)
+		}
+		log.Printf("[clickhouse] inserted final %d stock daily rows (total: %d)", batchCount, totalRows)
+	}
+
+	return totalRows, nil
+}
+
+// CountExistingOptionDailyBars counts rows in us_options_bar_1d_direct for a market date.
+func CountExistingOptionDailyBars(ctx context.Context, conn driver.Conn, marketDate time.Time) (uint64, error) {
+	var count uint64
+	err := conn.QueryRow(ctx,
+		`SELECT count() FROM us_options_bar_1d_direct WHERE market_date = ?`,
+		marketDate,
+	).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("count existing option daily bars: %w", err)
+	}
+	return count, nil
+}
+
+// CountExistingStockDailyBars counts rows in us_stocks_bar_1d_direct for a market date.
+func CountExistingStockDailyBars(ctx context.Context, conn driver.Conn, marketDate time.Time) (uint64, error) {
+	var count uint64
+	err := conn.QueryRow(ctx,
+		`SELECT count() FROM us_stocks_bar_1d_direct WHERE market_date = ?`,
+		marketDate,
+	).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("count existing stock daily bars: %w", err)
+	}
+	return count, nil
+}
+
+// ReplaceOptionDailyMarketDate deletes existing daily option rows for a market date.
+func ReplaceOptionDailyMarketDate(ctx context.Context, conn driver.Conn, marketDate time.Time) error {
+	dateStr := normalizeUTCDay(marketDate).Format("2006-01-02")
+	if err := conn.Exec(ctx,
+		`ALTER TABLE us_options_bar_1d_direct DELETE WHERE market_date = {date:Date} SETTINGS mutations_sync = 1`,
+		clickhouse.Named("date", dateStr),
+	); err != nil {
+		return fmt.Errorf("delete option daily rows: %w", err)
+	}
+	return nil
+}
+
+// ReplaceStockDailyMarketDate deletes existing daily stock rows for a market date.
+func ReplaceStockDailyMarketDate(ctx context.Context, conn driver.Conn, marketDate time.Time) error {
+	dateStr := normalizeUTCDay(marketDate).Format("2006-01-02")
+	if err := conn.Exec(ctx,
+		`ALTER TABLE us_stocks_bar_1d_direct DELETE WHERE market_date = {date:Date} SETTINGS mutations_sync = 1`,
+		clickhouse.Named("date", dateStr),
+	); err != nil {
+		return fmt.Errorf("delete stock daily rows: %w", err)
+	}
+	return nil
+}
+
+// LatestOptionDailyMarketDate returns the latest market_date from us_options_bar_1d_direct.
+func LatestOptionDailyMarketDate(ctx context.Context, conn driver.Conn) (time.Time, bool, error) {
+	return latestMarketDate(ctx, conn, "us_options_bar_1d_direct")
+}
+
+// LatestStockDailyMarketDate returns the latest market_date from us_stocks_bar_1d_direct.
+func LatestStockDailyMarketDate(ctx context.Context, conn driver.Conn) (time.Time, bool, error) {
+	return latestMarketDate(ctx, conn, "us_stocks_bar_1d_direct")
+}
+
 func ReplaceOptionMarketDate(ctx context.Context, conn driver.Conn, marketDate time.Time) error {
 	return ReplaceOptionMarketDates(ctx, conn, []time.Time{marketDate})
 }

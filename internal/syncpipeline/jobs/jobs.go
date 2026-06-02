@@ -411,6 +411,7 @@ type PolygonUSFlatFilesConfig struct {
 	RiskFreeRate      float64
 	ForceDownload     bool
 	SyncStocks        bool
+	SourceInterval    string // "1m" (default, minute aggregates) or "1d" (day aggregates)
 	ColdStartFloorUTC time.Time
 }
 
@@ -443,6 +444,22 @@ func (s *polygonUSFlatFiles) SourceKeys(context.Context, driver.Conn) ([]string,
 	return []string{syncpipeline.SingletonSourceKey}, nil
 }
 func (s *polygonUSFlatFiles) ResolveCursor(ctx context.Context, conn driver.Conn, _ string) (time.Time, bool, error) {
+	if s.cfg.SourceInterval == "1d" {
+		options, ok, err := usmarket.LatestOptionDailyMarketDate(ctx, conn)
+		if err != nil || !ok {
+			return options, ok, err
+		}
+		if s.cfg.SyncStocks {
+			stocks, sOk, err := usmarket.LatestStockDailyMarketDate(ctx, conn)
+			if err != nil || !sOk {
+				return stocks, sOk, err
+			}
+			if stocks.Before(options) {
+				return stocks.UTC(), true, nil
+			}
+		}
+		return options.UTC(), true, nil
+	}
 	options, ok, err := usmarket.LatestOptionMarketDate(ctx, conn)
 	if err != nil || !ok {
 		return options, ok, err
@@ -460,12 +477,38 @@ func (s *polygonUSFlatFiles) ResolveCursor(ctx context.Context, conn driver.Conn
 }
 func (s *polygonUSFlatFiles) ColdStartFloor(string) time.Time { return s.cfg.ColdStartFloorUTC }
 func (s *polygonUSFlatFiles) Sync(ctx context.Context, conn driver.Conn, req syncpipeline.SyncRequest) (syncpipeline.SyncResult, error) {
-	res, err := usmarket.SyncPolygonFlatFiles(ctx, usmarket.FlatFileSyncConfig{Downloader: s.cfg.Downloader, Conn: conn, Sessions: s.cfg.Sessions, ForceDownload: s.cfg.ForceDownload, SkipStocks: !s.cfg.SyncStocks, DryRun: req.DryRun, ColdStartDate: s.cfg.ColdStartFloorUTC, StartDate: req.From, EndDate: req.To, Import: usmarket.ImportConfig{DSN: s.cfg.DSN, BatchSize: s.cfg.BatchSize, Workers: s.cfg.Workers, ReplaceDates: !req.DryRun, SkipExisting: req.DryRun, RiskFreeRate: s.cfg.RiskFreeRate}})
+	res, err := usmarket.SyncPolygonFlatFiles(ctx, usmarket.FlatFileSyncConfig{
+		Downloader:     s.cfg.Downloader,
+		Conn:           conn,
+		Sessions:       s.cfg.Sessions,
+		ForceDownload:  s.cfg.ForceDownload,
+		SkipStocks:     !s.cfg.SyncStocks,
+		DryRun:         req.DryRun,
+		ColdStartDate:  s.cfg.ColdStartFloorUTC,
+		StartDate:      req.From,
+		EndDate:        req.To,
+		SourceInterval: s.cfg.SourceInterval,
+		Import: usmarket.ImportConfig{
+			DSN:          s.cfg.DSN,
+			BatchSize:    s.cfg.BatchSize,
+			Workers:      s.cfg.Workers,
+			ReplaceDates: !req.DryRun,
+			SkipExisting: req.DryRun,
+			RiskFreeRate: s.cfg.RiskFreeRate,
+		},
+	})
 	out := syncResult(req, res.Import.OptionRows+res.Import.StockRows)
 	out.Notes = usmarket.FormatFlatFileSyncSummary(res)
 	return out, err
 }
 func (s *polygonUSFlatFiles) AuditTargets(string) []syncpipeline.AuditTarget {
+	if s.cfg.SourceInterval == "1d" {
+		targets := []syncpipeline.AuditTarget{{Table: "us_options_bar_1d_direct", DateColumn: "market_date", KeyColumns: []string{"market_date", "underlying", "expiration", "strike", "option_type", "timestamp"}}}
+		if s.cfg.SyncStocks {
+			targets = append(targets, syncpipeline.AuditTarget{Table: "us_stocks_bar_1d_direct", DateColumn: "market_date", KeyColumns: []string{"timestamp", "symbol"}})
+		}
+		return targets
+	}
 	targets := []syncpipeline.AuditTarget{{Table: "us_options_bar_1m", DateColumn: "market_date", KeyColumns: []string{"market_date", "underlying", "expiration", "strike", "option_type", "timestamp"}}}
 	if s.cfg.SyncStocks {
 		targets = append(targets, syncpipeline.AuditTarget{Table: "us_stocks_bar_1m", DateColumn: "market_date", KeyColumns: []string{"timestamp", "symbol"}})

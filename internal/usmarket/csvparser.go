@@ -232,3 +232,147 @@ func parseUint32(s string) uint32 {
 	}
 	return uint32(v)
 }
+
+func parseUint32Optional(colIdx map[string]int, record []string, key string) uint32 {
+	idx, ok := colIdx[key]
+	if !ok {
+		return 0
+	}
+	return parseUint32(record[idx])
+}
+
+// ParseOptionDailyCSV reads a Polygon OPRA day-agg CSV (optionally gzipped) and
+// streams parsed OptionBar1d records into the returned channel.
+// Day aggregate CSVs have the same columns as minute aggregates, but window_start
+// represents the day bucket. transactions may be absent in some day aggregate datasets.
+func ParseOptionDailyCSV(path string) (<-chan OptionBar1d, *error, error) {
+	reader, csvReader, err := openCSVReader(path)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	header, err := csvReader.Read()
+	if err != nil {
+		reader.Close()
+		return nil, nil, fmt.Errorf("read header %s: %w", path, err)
+	}
+	colIdx := mapColumns(header)
+	if err := requireColumns(colIdx, "ticker", "volume", "open", "close", "high", "low", "window_start"); err != nil {
+		reader.Close()
+		return nil, nil, fmt.Errorf("%s: %w", path, err)
+	}
+
+	ch := make(chan OptionBar1d, 8192)
+	var readErr error
+
+	go func() {
+		defer close(ch)
+		defer reader.Close()
+
+		for {
+			record, err := csvReader.Read()
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				readErr = fmt.Errorf("read csv row: %w", err)
+				return
+			}
+
+			ticker := record[colIdx["ticker"]]
+			underlying, expiration, optType, strike, err := ParseOptionTicker(ticker)
+			if err != nil {
+				continue
+			}
+
+			ts := parseNanosTimestamp(record[colIdx["window_start"]])
+			if ts.IsZero() {
+				continue
+			}
+
+			marketDate := time.Date(ts.Year(), ts.Month(), ts.Day(), 0, 0, 0, 0, time.UTC)
+			ts = marketDate
+
+			bar := OptionBar1d{
+				Timestamp:    ts,
+				Symbol:       ticker,
+				Underlying:   underlying,
+				OptionType:   optType,
+				Expiration:   expiration,
+				Strike:       strike,
+				Open:         parseFloat32(record[colIdx["open"]]),
+				High:         parseFloat32(record[colIdx["high"]]),
+				Low:          parseFloat32(record[colIdx["low"]]),
+				Close:        parseFloat32(record[colIdx["close"]]),
+				Volume:       parseFloat64(record[colIdx["volume"]]),
+				Transactions: parseUint32Optional(colIdx, record, "transactions"),
+				MarketDate:   marketDate,
+			}
+			ch <- bar
+		}
+	}()
+
+	return ch, &readErr, nil
+}
+
+// ParseStockDailyCSV reads a Polygon SIP day-agg CSV (optionally gzipped) and
+// streams parsed StockBar1d records into the returned channel.
+func ParseStockDailyCSV(path string) (<-chan StockBar1d, *error, error) {
+	reader, csvReader, err := openCSVReader(path)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	header, err := csvReader.Read()
+	if err != nil {
+		reader.Close()
+		return nil, nil, fmt.Errorf("read header %s: %w", path, err)
+	}
+	colIdx := mapColumns(header)
+	if err := requireColumns(colIdx, "ticker", "volume", "open", "close", "high", "low", "window_start"); err != nil {
+		reader.Close()
+		return nil, nil, fmt.Errorf("%s: %w", path, err)
+	}
+
+	ch := make(chan StockBar1d, 8192)
+	var readErr error
+
+	go func() {
+		defer close(ch)
+		defer reader.Close()
+
+		for {
+			record, err := csvReader.Read()
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				readErr = fmt.Errorf("read csv row: %w", err)
+				return
+			}
+
+			ts := parseNanosTimestamp(record[colIdx["window_start"]])
+			if ts.IsZero() {
+				continue
+			}
+
+			marketDate := time.Date(ts.Year(), ts.Month(), ts.Day(), 0, 0, 0, 0, time.UTC)
+			ts = marketDate
+
+			bar := StockBar1d{
+				Timestamp:    ts,
+				Symbol:       record[colIdx["ticker"]],
+				Open:         parseFloat32(record[colIdx["open"]]),
+				High:         parseFloat32(record[colIdx["high"]]),
+				Low:          parseFloat32(record[colIdx["low"]]),
+				Close:        parseFloat32(record[colIdx["close"]]),
+				Volume:       parseFloat64(record[colIdx["volume"]]),
+				Transactions: parseUint32Optional(colIdx, record, "transactions"),
+				MarketDate:   marketDate,
+			}
+			ch <- bar
+		}
+	}()
+
+	return ch, &readErr, nil
+}

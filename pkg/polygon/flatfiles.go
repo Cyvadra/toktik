@@ -18,6 +18,8 @@ import (
 const (
 	stockMinuteAggregatesDatasetPath  = "us_stocks_sip/minute_aggs_v1"
 	optionMinuteAggregatesDatasetPath = "us_options_opra/minute_aggs_v1"
+	stockDailyAggregatesDatasetPath   = "us_stocks_sip/day_aggs_v1"
+	optionDailyAggregatesDatasetPath  = "us_options_opra/day_aggs_v1"
 	flatFileDownloadMaxAttempts       = 5
 	flatFileRetryBaseDelay            = 1500 * time.Millisecond
 	flatFileRetryMaxDelay             = 5 * time.Second
@@ -45,12 +47,36 @@ func OptionMinuteAggregatesDataset() FlatFileDataset {
 	}
 }
 
+func StockDailyAggregatesDataset() FlatFileDataset {
+	return FlatFileDataset{
+		AssetClass: "stocks",
+		DataType:   "daily_aggregates",
+		Path:       stockDailyAggregatesDatasetPath,
+	}
+}
+
+func OptionDailyAggregatesDataset() FlatFileDataset {
+	return FlatFileDataset{
+		AssetClass: "options",
+		DataType:   "daily_aggregates",
+		Path:       optionDailyAggregatesDatasetPath,
+	}
+}
+
 func (c *Client) DownloadStockMinuteAggregates(ctx context.Context, date time.Time, force bool) (string, error) {
 	return c.downloadFlatFile(ctx, StockMinuteAggregatesDataset(), date, force)
 }
 
 func (c *Client) DownloadOptionMinuteAggregates(ctx context.Context, date time.Time, force bool) (string, error) {
 	return c.downloadFlatFile(ctx, OptionMinuteAggregatesDataset(), date, force)
+}
+
+func (c *Client) DownloadStockDailyAggregates(ctx context.Context, date time.Time, force bool) (string, error) {
+	return c.downloadFlatFile(ctx, StockDailyAggregatesDataset(), date, force)
+}
+
+func (c *Client) DownloadOptionDailyAggregates(ctx context.Context, date time.Time, force bool) (string, error) {
+	return c.downloadFlatFile(ctx, OptionDailyAggregatesDataset(), date, force)
 }
 
 func (c *Client) downloadFlatFile(ctx context.Context, dataset FlatFileDataset, date time.Time, force bool) (string, error) {
