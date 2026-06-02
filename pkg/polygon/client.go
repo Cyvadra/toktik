@@ -461,7 +461,7 @@ func (c *Client) StockAggregates(ctx context.Context, req AggregateRequest) ([]A
 		ctx,
 		normalizeTicker(req.Ticker),
 		normalizedMultiplier(req.Multiplier),
-		gen.GetStocksAggregatesParamsTimespan(strings.ToLower(strings.TrimSpace(req.Timespan))),
+		gen.GetStocksAggregatesParamsTimespan(normalizeAggregateTimespan(req.Timespan)),
 		strings.TrimSpace(req.From),
 		strings.TrimSpace(req.To),
 		params,
@@ -713,7 +713,7 @@ func (c *Client) OptionAggregates(ctx context.Context, req AggregateRequest) ([]
 		ctx,
 		normalizeTicker(req.Ticker),
 		normalizedMultiplier(req.Multiplier),
-		gen.GetOptionsAggregatesParamsTimespan(strings.ToLower(strings.TrimSpace(req.Timespan))),
+		gen.GetOptionsAggregatesParamsTimespan(normalizeAggregateTimespan(req.Timespan)),
 		strings.TrimSpace(req.From),
 		strings.TrimSpace(req.To),
 		params,
@@ -1134,6 +1134,16 @@ func normalizedMultiplier(v int) int {
 		return 1
 	}
 	return v
+}
+
+func normalizeAggregateTimespan(value string) string {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	switch normalized {
+	case "1d", "1day", "daily", "d":
+		return "day"
+	default:
+		return normalized
+	}
 }
 
 func normalizeTicker(value string) string {

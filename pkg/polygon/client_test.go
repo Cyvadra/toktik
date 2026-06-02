@@ -700,6 +700,62 @@ func TestNewFromEnvAndQueries(t *testing.T) {
 	}
 }
 
+func TestAggregatesNormalizeDayAliasTimespan(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); !strings.HasPrefix(got, "Bearer ") {
+			t.Fatalf("unexpected Authorization header: %q", got)
+		}
+		switch {
+		case strings.HasPrefix(r.URL.Path, "/v2/aggs/ticker/AAPL/range/1/day/2026-04-01/2026-04-30"):
+			writeJSON(t, w, map[string]any{
+				"ticker":       "AAPL",
+				"adjusted":     true,
+				"resultsCount": 1,
+				"status":       "OK",
+				"results":      []map[string]any{{"o": 100, "h": 110, "l": 99, "c": 108, "v": 2000, "t": 1711929600000}},
+			})
+		case strings.HasPrefix(r.URL.Path, "/v2/aggs/ticker/O:SPY260417C00500000/range/1/day/2026-04-01/2026-04-30"):
+			writeJSON(t, w, map[string]any{
+				"ticker":       "O:SPY260417C00500000",
+				"adjusted":     true,
+				"resultsCount": 1,
+				"status":       "OK",
+				"results":      []map[string]any{{"o": 10, "h": 12, "l": 9, "c": 11, "v": 300, "t": 1711929600000}},
+			})
+		default:
+			t.Fatalf("unexpected request path: %s?%s", r.URL.Path, r.URL.RawQuery)
+		}
+	}))
+	defer server.Close()
+
+	client, err := New(Config{APIKey: "test_massive_key", BaseURL: server.URL})
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+
+	stockBars, err := client.StockAggregates(context.Background(), AggregateRequest{
+		Ticker:     "AAPL",
+		Multiplier: 1,
+		Timespan:   "1d",
+		From:       "2026-04-01",
+		To:         "2026-04-30",
+	})
+	if err != nil || len(stockBars) != 1 {
+		t.Fatalf("StockAggregates failed: bars=%#v err=%v", stockBars, err)
+	}
+
+	optionBars, err := client.OptionAggregates(context.Background(), AggregateRequest{
+		Ticker:     "O:SPY260417C00500000",
+		Multiplier: 1,
+		Timespan:   "1D",
+		From:       "2026-04-01",
+		To:         "2026-04-30",
+	})
+	if err != nil || len(optionBars) != 1 {
+		t.Fatalf("OptionAggregates failed: bars=%#v err=%v", optionBars, err)
+	}
+}
+
 func TestOptionChainReturnsHTTPStatusErrorOnAPIError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if got := r.Header.Get("Authorization"); got != "Bearer test_massive_key" {
