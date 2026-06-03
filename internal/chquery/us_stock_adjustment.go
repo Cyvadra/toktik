@@ -26,6 +26,7 @@ func USStockSplitJoinSQL(barAlias, splitAlias string) string {
         argMax(denominator, updated_at) AS %s
     FROM us_stock_splits
     WHERE numerator > 0 AND denominator > 0
+      AND split_date <= (today() + 3)
     GROUP BY symbol, split_date
 ) AS %s ON %s.symbol = %s.symbol AND %s.split_date > toDate(%s.timestamp)`, usStockSplitNumeratorAlias, usStockSplitDenominatorAlias, splitAlias, splitAlias, barAlias, splitAlias, barAlias)
 }

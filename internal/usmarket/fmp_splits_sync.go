@@ -27,7 +27,7 @@ type FMPStockSplitsSyncResult struct {
 	RowsInserted     int64
 }
 
-const stockSplitMaxFutureHorizonYears = 1
+const stockSplitMaxFutureDays = 3
 
 func SyncFMPStockSplits(ctx context.Context, conn driver.Conn, cfg FMPStockSplitsSyncConfig) (FMPStockSplitsSyncResult, error) {
 	if strings.TrimSpace(cfg.APIKey) == "" {
@@ -90,7 +90,7 @@ func convertFMPStockSplits(requestSymbol string, events []fmp.StockSplit, update
 		if err != nil {
 			return nil, fmt.Errorf("parse FMP split date for %s %q: %w", symbol, event.Date, err)
 		}
-		if splitDate.UTC().After(updatedAt.UTC().AddDate(stockSplitMaxFutureHorizonYears, 0, 0)) {
+		if splitDate.UTC().After(updatedAt.UTC().AddDate(0, 0, stockSplitMaxFutureDays)) {
 			continue
 		}
 		out = append(out, StockSplit{
