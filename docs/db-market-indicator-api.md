@@ -7,7 +7,7 @@
 - Source Swagger: `docs/swagger.json`
 - API title: `Toktik Options Platform API`
 - API version: `1.0`
-- Generated at: `2026-05-28T08:21:34Z`
+- Generated at: `2026-06-05T08:25:18Z`
 
 ## Scope
 
@@ -703,6 +703,29 @@ Returns latest known values per (symbol, factor) at as_of. For us-stocks, price-
 | Status | Schema | Description |
 | --- | --- | --- |
 | 200 | github_com_Cyvadra_toktik_internal_dto.USStockSymbolResponse | OK |
+| 400 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Bad Request |
+| 500 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Internal Server Error |
+
+### US stock split events
+
+- Endpoint: `GET /api/v1/markets/us-stocks/splits`
+- Tags: `USStocks`
+- Produces: `application/json`
+- Summary: Get US stock split adjustment events
+- Description: Returns all split-adjustment rows from us_stock_splits for one or more US stock ticker symbols.
+
+#### Parameters
+
+| Name | In | Type | Required | Description |
+| --- | --- | --- | --- | --- |
+| symbol | query | array<string> | yes | Stock ticker symbol(s), repeat or comma-separated |
+| symbols | query | array<string> | no | Alias for symbol; repeat or comma-separated |
+
+#### Responses
+
+| Status | Schema | Description |
+| --- | --- | --- |
+| 200 | github_com_Cyvadra_toktik_internal_dto.USStockSplitResponse | OK |
 | 400 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Bad Request |
 | 500 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Internal Server Error |
 

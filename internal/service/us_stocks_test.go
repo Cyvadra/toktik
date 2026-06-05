@@ -2,10 +2,12 @@ package service
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/Cyvadra/toktik/internal/cache"
+	"github.com/Cyvadra/toktik/internal/chrepo"
 	"github.com/Cyvadra/toktik/internal/dto"
 	"github.com/Cyvadra/toktik/pkg/fmp"
 )
@@ -96,6 +98,57 @@ func (s *stubUSStockFundamentals) QuerySeries(_ context.Context, req dto.Fundame
 		return resp, nil
 	}
 	return &dto.FundamentalSeriesResponse{}, nil
+}
+
+func TestUSStocksQuerySplitsReturnsLatestRowsForSymbols(t *testing.T) {
+	splitDate := time.Date(2020, 8, 31, 8, 0, 0, 0, time.FixedZone("driver-local", 8*60*60))
+	updatedAt := time.Date(2024, 1, 2, 3, 4, 5, 0, time.UTC)
+	rows := &fakeForexRows{data: [][]any{
+		{"AAPL", splitDate, 4.0, 1.0, "Stock Split", "fmp", "hash-a", updatedAt},
+		{"MSFT", time.Date(2003, 2, 18, 0, 0, 0, 0, time.UTC), 2.0, 1.0, "Stock Split", "fmp", "hash-m", updatedAt},
+	}}
+	conn := &fakeForexConn{rows: rows}
+	svc := NewUSStocksService(chrepo.NewRepo(conn))
+
+	resp, err := svc.QuerySplits(context.Background(), dto.USStockSplitRequest{Symbols: []string{"aapl,MSFT", " AAPL "}})
+	if err != nil {
+		t.Fatalf("QuerySplits returned error: %v", err)
+	}
+	if len(resp.Data) != 2 {
+		t.Fatalf("expected two split rows, got %d", len(resp.Data))
+	}
+	if resp.Data[0].Symbol != "AAPL" || resp.Data[0].Numerator != 4 || resp.Data[0].Denominator != 1 {
+		t.Fatalf("unexpected first split row: %#v", resp.Data[0])
+	}
+	if !resp.Data[0].SplitDate.Equal(time.Date(2020, 8, 31, 0, 0, 0, 0, time.UTC)) {
+		t.Fatalf("expected split date to preserve calendar day in UTC, got %s", resp.Data[0].SplitDate)
+	}
+	for _, check := range []string{
+		"FROM us_stock_splits",
+		"argMax(numerator, updated_at)",
+		"max(updated_at) AS latest_updated_at",
+		"WHERE symbol IN ('AAPL', 'MSFT')",
+		"GROUP BY symbol, split_date",
+		"ORDER BY symbol, split_date",
+	} {
+		if !strings.Contains(conn.queryText, check) {
+			t.Fatalf("expected split query to contain %q, got %s", check, conn.queryText)
+		}
+	}
+	if strings.Contains(conn.queryText, "AS updated_at") {
+		t.Fatalf("expected split query to avoid ClickHouse aggregate alias collision, got %s", conn.queryText)
+	}
+	if !rows.closed {
+		t.Fatalf("expected rows to be closed")
+	}
+}
+
+func TestUSStocksQuerySplitsRequiresSymbol(t *testing.T) {
+	svc := NewUSStocksService(chrepo.NewRepo(&fakeForexConn{}))
+	_, err := svc.QuerySplits(context.Background(), dto.USStockSplitRequest{})
+	if err == nil || !strings.Contains(err.Error(), "symbol is required") {
+		t.Fatalf("expected symbol validation error, got %v", err)
+	}
 }
 
 func TestUSStocksAttachFundamentalsAlignsPointInTimeValuesToBars(t *testing.T) {

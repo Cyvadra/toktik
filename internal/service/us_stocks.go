@@ -87,6 +87,60 @@ LIMIT %s`, clickhouseUInt32Literal(limit+1))
 	return resp, nil
 }
 
+func (s *USStocksService) QuerySplits(ctx context.Context, req dto.USStockSplitRequest) (*dto.USStockSplitResponse, error) {
+	symbols := normalizeUSStockSymbolList(append(req.Symbols, req.SymbolsAlias...))
+	if len(symbols) == 0 {
+		return nil, dto.NewValidationError("symbol is required")
+	}
+
+	symbolLiterals := make([]string, 0, len(symbols))
+	for _, symbol := range symbols {
+		symbolLiterals = append(symbolLiterals, clickhouseStringLiteral(symbol))
+	}
+	query := fmt.Sprintf(`SELECT
+	symbol,
+	split_date,
+	argMax(numerator, updated_at) AS numerator,
+	argMax(denominator, updated_at) AS denominator,
+	argMax(split_type, updated_at) AS split_type,
+	argMax(source, updated_at) AS source,
+	argMax(source_hash, updated_at) AS source_hash,
+	max(updated_at) AS latest_updated_at
+FROM us_stock_splits
+WHERE symbol IN (%s)
+GROUP BY symbol, split_date
+ORDER BY symbol, split_date`, strings.Join(symbolLiterals, ", "))
+
+	rows, err := s.repo.Query(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("query US stock splits: %w", err)
+	}
+	defer rows.Close()
+
+	resp := &dto.USStockSplitResponse{Data: make([]dto.USStockSplitRow, 0)}
+	for rows.Next() {
+		var row dto.USStockSplitRow
+		if err := rows.Scan(
+			&row.Symbol,
+			&row.SplitDate,
+			&row.Numerator,
+			&row.Denominator,
+			&row.SplitType,
+			&row.Source,
+			&row.SourceHash,
+			&row.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan US stock split row: %w", err)
+		}
+		row.SplitDate = dateAsUTC(row.SplitDate)
+		resp.Data = append(resp.Data, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate US stock split rows: %w", err)
+	}
+	return resp, nil
+}
+
 func (s *USStocksService) QueryBars(ctx context.Context, req dto.USStockBarRequest) (*dto.USStockBarResponse, error) {
 	fromT, toT, err := dto.ParseTimeRange(req.From, req.To)
 	if err != nil {
@@ -185,6 +239,25 @@ LIMIT %s`, chquery.USStockAdjustedPriceSQL("b", "open", "sp"), chquery.USStockAd
 		return nil, fmt.Errorf("iterate US stock bar rows: %w", err)
 	}
 	return bars, nil
+}
+
+func normalizeUSStockSymbolList(symbols []string) []string {
+	normalized := normalizeStringList(symbols)
+	if len(normalized) == 0 {
+		return nil
+	}
+	seen := make(map[string]bool, len(normalized))
+	out := make([]string, 0, len(normalized))
+	for _, raw := range normalized {
+		symbol := strings.ToUpper(strings.TrimSpace(raw))
+		if symbol == "" || seen[symbol] {
+			continue
+		}
+		seen[symbol] = true
+		out = append(out, symbol)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func (s *USStocksService) attachCompanyProfile(ctx context.Context, symbol string, resp *dto.USStockBarResponse) {

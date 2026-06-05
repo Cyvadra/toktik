@@ -76,6 +76,29 @@ type USStockSymbolResponse struct {
 	NextCursor string             `json:"next_cursor,omitempty"`
 }
 
+// USStockSplitRequest is the query parameters for the US stock splits endpoint.
+type USStockSplitRequest struct {
+	Symbols      []string `form:"symbol" binding:"omitempty"`
+	SymbolsAlias []string `form:"symbols" binding:"omitempty" json:"-"`
+}
+
+// USStockSplitRow is one split-adjustment event from us_stock_splits.
+type USStockSplitRow struct {
+	Symbol      string    `json:"symbol"`
+	SplitDate   time.Time `json:"split_date"`
+	Numerator   float64   `json:"numerator"`
+	Denominator float64   `json:"denominator"`
+	SplitType   string    `json:"split_type,omitempty"`
+	Source      string    `json:"source,omitempty"`
+	SourceHash  string    `json:"source_hash,omitempty"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+// USStockSplitResponse wraps split-adjustment rows.
+type USStockSplitResponse struct {
+	Data []USStockSplitRow `json:"data"`
+}
+
 // USOptionBarRequest is the query parameters for the US option bars endpoint.
 type USOptionBarRequest struct {
 	Symbol   string `form:"symbol" binding:"required"`

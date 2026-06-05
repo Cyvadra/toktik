@@ -296,6 +296,63 @@ func TestUSStocksSymbolsRoute(t *testing.T) {
 	}
 }
 
+func TestUSStocksSplitsRoute(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	mock := &mockUSStocksQuerier{splitsResp: &dto.USStockSplitResponse{Data: []dto.USStockSplitRow{{
+		Symbol:      "AAPL",
+		SplitDate:   time.Date(2020, 8, 31, 0, 0, 0, 0, time.UTC),
+		Numerator:   4,
+		Denominator: 1,
+		SplitType:   "Stock Split",
+		Source:      "fmp",
+		UpdatedAt:   time.Date(2024, 1, 2, 3, 4, 5, 0, time.UTC),
+	}}}}
+	r := NewRouter(
+		&mockQuerier{},
+		mock,
+		&mockUSOptionsQuerier{},
+		&mockInfra{},
+		&mockFeature{},
+		nil,
+		nil, nil, nil, nil, nil,
+	)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/api/v1/markets/us-stocks/splits?symbol=AAPL&symbol=MSFT", nil)
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if len(mock.splitsReq.Symbols) != 2 || mock.splitsReq.Symbols[0] != "AAPL" || mock.splitsReq.Symbols[1] != "MSFT" {
+		t.Fatalf("expected split symbols to be forwarded, got %#v", mock.splitsReq.Symbols)
+	}
+	if !strings.Contains(w.Body.String(), `"symbol":"AAPL"`) || !strings.Contains(w.Body.String(), `"numerator":4`) {
+		t.Fatalf("expected split response body, got %s", w.Body.String())
+	}
+}
+
+func TestUSStocksSplitsRouteRejectsMissingSymbol(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := NewRouter(
+		&mockQuerier{},
+		&mockUSStocksQuerier{err: dto.NewValidationError("symbol is required")},
+		&mockUSOptionsQuerier{},
+		&mockInfra{},
+		&mockFeature{},
+		nil,
+		nil, nil, nil, nil, nil,
+	)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/api/v1/markets/us-stocks/splits", nil)
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
 func TestUSOptionsBarsRoute(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	mock := &mockUSOptionsQuerier{barsResp: &dto.USOptionBarResponse{Data: []dto.USOptionBarRow{{Timestamp: time.Date(2024, 1, 2, 14, 30, 0, 0, time.UTC), Symbol: "O:AAPL240119C00190000", Underlying: "AAPL", Close: 4.25}}}}

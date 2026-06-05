@@ -113,6 +113,7 @@ var sections = []sectionSpec{
 		Endpoints: []endpointSpec{
 			{Method: "GET", Path: "/markets/us-stocks/bars", Label: "US stock bars"},
 			{Method: "GET", Path: "/markets/us-stocks/symbols", Label: "US stock symbols"},
+			{Method: "GET", Path: "/markets/us-stocks/splits", Label: "US stock split events"},
 		},
 	},
 	{

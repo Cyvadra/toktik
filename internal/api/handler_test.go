@@ -29,7 +29,9 @@ type mockQuerier struct {
 type mockUSStocksQuerier struct {
 	barsResp    *dto.USStockBarResponse
 	symbolsResp *dto.USStockSymbolResponse
+	splitsResp  *dto.USStockSplitResponse
 	barsReq     dto.USStockBarRequest
+	splitsReq   dto.USStockSplitRequest
 	err         error
 }
 
@@ -153,6 +155,11 @@ func (m *mockUSStocksQuerier) QueryBars(_ context.Context, req dto.USStockBarReq
 
 func (m *mockUSStocksQuerier) QuerySymbols(_ context.Context, _ dto.USStockSymbolRequest) (*dto.USStockSymbolResponse, error) {
 	return m.symbolsResp, m.err
+}
+
+func (m *mockUSStocksQuerier) QuerySplits(_ context.Context, req dto.USStockSplitRequest) (*dto.USStockSplitResponse, error) {
+	m.splitsReq = req
+	return m.splitsResp, m.err
 }
 
 func (m *mockUSOptionsQuerier) QueryBars(_ context.Context, req dto.USOptionBarRequest) (*dto.USOptionBarResponse, error) {

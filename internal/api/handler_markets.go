@@ -172,6 +172,38 @@ func (h *Handler) GetUSStockSymbols(c *gin.Context) {
 	c.JSON(http.StatusOK, resp)
 }
 
+// GetUSStockSplits handles GET /api/v1/markets/us-stocks/splits.
+//
+//	@Summary		Get US stock split adjustment events
+//	@Description	Returns all split-adjustment rows from us_stock_splits for one or more US stock ticker symbols.
+//	@Tags			USStocks
+//	@Produce		json
+//	@Param			symbol	query		[]string	true	"Stock ticker symbol(s), repeat or comma-separated"
+//	@Param			symbols	query		[]string	false	"Alias for symbol; repeat or comma-separated"
+//	@Success		200		{object}	dto.USStockSplitResponse
+//	@Failure		400		{object}	dto.ErrorResponse
+//	@Failure		500		{object}	dto.ErrorResponse
+//	@Router			/markets/us-stocks/splits [get]
+func (h *Handler) GetUSStockSplits(c *gin.Context) {
+	var req dto.USStockSplitRequest
+	if err := c.ShouldBindQuery(&req); err != nil {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: err.Error()})
+		return
+	}
+	if h.usStocks == nil {
+		c.JSON(http.StatusNotImplemented, dto.ErrorResponse{Error: "us-stocks provider not configured"})
+		return
+	}
+
+	resp, err := h.usStocks.QuerySplits(c.Request.Context(), req)
+	if err != nil {
+		handleServiceError(c, err)
+		return
+	}
+
+	c.JSON(http.StatusOK, resp)
+}
+
 // GetUSOptionBars handles GET /api/v1/markets/us-options/bars.
 //
 //	@Summary		Get US option bars

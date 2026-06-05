@@ -22,6 +22,7 @@ type CryptoOptionsQuerier interface {
 type USStocksQuerier interface {
 	QueryBars(ctx context.Context, req dto.USStockBarRequest) (*dto.USStockBarResponse, error)
 	QuerySymbols(ctx context.Context, req dto.USStockSymbolRequest) (*dto.USStockSymbolResponse, error)
+	QuerySplits(ctx context.Context, req dto.USStockSplitRequest) (*dto.USStockSplitResponse, error)
 }
 
 // USOptionsQuerier defines the operations needed for low-level US option endpoints.
