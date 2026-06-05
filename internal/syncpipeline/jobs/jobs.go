@@ -276,17 +276,7 @@ func (s *fmpUSStockSplits) SourceKeys(ctx context.Context, conn driver.Conn) ([]
 }
 func (s *fmpUSStockSplits) ResolveCursor(ctx context.Context, conn driver.Conn, sourceKey string) (time.Time, bool, error) {
 	normalizedSource := strings.ToUpper(strings.TrimSpace(sourceKey))
-	latest, ok, err := queryLatestSuccessfulLedgerDate(ctx, conn, s.Name(), normalizedSource)
-	if err != nil || !ok {
-		latest, ok, err = queryLatestDate(ctx, conn, "us_stock_splits", "updated_at", "symbol = {symbol:String}", clickhouse.Named("symbol", normalizedSource))
-		if err != nil || !ok {
-			return latest, ok, err
-		}
-	}
-	if !latest.Before(time.Now().UTC().AddDate(0, 0, -3)) {
-		return time.Now().UTC(), true, nil
-	}
-	return latest, true, nil
+	return queryLatestDate(ctx, conn, "us_stock_splits", "split_date", "symbol = {symbol:String}", clickhouse.Named("symbol", normalizedSource))
 }
 func (s *fmpUSStockSplits) ColdStartFloor(string) time.Time { return s.cfg.ColdStartFloorUTC }
 func (s *fmpUSStockSplits) Sync(ctx context.Context, conn driver.Conn, req syncpipeline.SyncRequest) (syncpipeline.SyncResult, error) {
@@ -898,26 +888,6 @@ func queryLatestDate(ctx context.Context, conn driver.Conn, table, dateExpr, whe
 	}
 	var latest string
 	if err := conn.QueryRow(ctx, query, args...).Scan(&latest); err != nil {
-		return time.Time{}, false, err
-	}
-	if latest == "" || latest == "1970-01-01" {
-		return time.Time{}, false, nil
-	}
-	parsed, err := time.Parse("2006-01-02", latest)
-	if err != nil {
-		return time.Time{}, false, err
-	}
-	return parsed.UTC(), true, nil
-}
-
-func queryLatestSuccessfulLedgerDate(ctx context.Context, conn driver.Conn, importerName, sourceKey string) (time.Time, bool, error) {
-	query := `SELECT toString(ifNull(maxOrNull(toDate(completed_at)), toDate('1970-01-01')))
-FROM import_ledger FINAL
-WHERE importer_name = {importer_name:String}
-  AND source_key = {source_key:String}
-  AND status = 'success'`
-	var latest string
-	if err := conn.QueryRow(ctx, query, clickhouse.Named("importer_name", strings.TrimSpace(importerName)), clickhouse.Named("source_key", strings.TrimSpace(sourceKey))).Scan(&latest); err != nil {
 		return time.Time{}, false, err
 	}
 	if latest == "" || latest == "1970-01-01" {
