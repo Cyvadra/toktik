@@ -266,3 +266,62 @@ func TestFMPFundamentalCandidateFreshnessCanUseKnownAtOnly(t *testing.T) {
 		t.Fatal("expected newer known_at to require refresh")
 	}
 }
+
+func TestTrailingTwelveMonthBasicEPSAllowsZeroQuarterWhenTTMNonZero(t *testing.T) {
+	inputs := []fmpDerivedQuarterInput{
+		{Date: time.Date(2025, 3, 31, 0, 0, 0, 0, time.UTC), EPS: 1.25},
+		{Date: time.Date(2025, 6, 30, 0, 0, 0, 0, time.UTC), EPS: 0, NetIncome: 0, WeightedShares: 100},
+		{Date: time.Date(2025, 9, 30, 0, 0, 0, 0, time.UTC), EPS: 1.75},
+		{Date: time.Date(2025, 12, 31, 0, 0, 0, 0, time.UTC), EPS: 2.00},
+	}
+	got, ok := trailingTwelveMonthBasicEPS(inputs, 3)
+	if !ok {
+		t.Fatal("expected TTM EPS to be available")
+	}
+	if got != 5.0 {
+		t.Fatalf("TTM EPS = %v, want 5.0", got)
+	}
+}
+
+func TestTrailingTwelveMonthBasicEPSFallsBackToNetIncomePerShare(t *testing.T) {
+	inputs := []fmpDerivedQuarterInput{
+		{EPS: 1},
+		{EPS: 1},
+		{EPS: 1},
+		{EPS: 0, NetIncome: 250, WeightedShares: 100},
+	}
+	got, ok := trailingTwelveMonthBasicEPS(inputs, 3)
+	if !ok {
+		t.Fatal("expected fallback EPS to be available")
+	}
+	if got != 5.5 {
+		t.Fatalf("TTM EPS = %v, want 5.5", got)
+	}
+}
+
+func TestBookValuePerBasicShareUsesBasicShares(t *testing.T) {
+	input := fmpDerivedQuarterInput{
+		StockholdersEquity: 1000,
+		WeightedShares:     100,
+	}
+	got, ok := input.BookValuePerBasicShare()
+	if !ok {
+		t.Fatal("expected book value per share")
+	}
+	if got != 10 {
+		t.Fatalf("BVPS = %v, want 10", got)
+	}
+}
+
+func TestFMPStatementHashIsStableAndSensitive(t *testing.T) {
+	stmt := fmp.IncomeStatement{Symbol: "AAPL", Date: "2026-03-28", EPS: 2.02, WeightedAverageShsOut: 14710718000}
+	first := fmpStatementHash(stmt)
+	second := fmpStatementHash(stmt)
+	if first == "" || first != second {
+		t.Fatalf("expected stable non-empty hash, first=%q second=%q", first, second)
+	}
+	stmt.EPS = 2.03
+	if changed := fmpStatementHash(stmt); changed == first {
+		t.Fatal("expected hash to change when statement content changes")
+	}
+}

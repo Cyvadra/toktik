@@ -49,7 +49,7 @@ type Ratios struct {
 	OperatingCashFlowSalesRatio             float64 `json:"operatingCashFlowSalesRatio"`
 	FreeCashFlowOperatingCashFlowRatio      float64 `json:"freeCashFlowOperatingCashFlowRatio"`
 	DebtServiceCoverageRatio                float64 `json:"debtServiceCoverageRatio"`
-	InterestCoverageRatio                   int64   `json:"interestCoverageRatio"`
+	InterestCoverageRatio                   float64 `json:"interestCoverageRatio"`
 	ShortTermOperatingCashFlowCoverageRatio float64 `json:"shortTermOperatingCashFlowCoverageRatio"`
 	OperatingCashFlowCoverageRatio          float64 `json:"operatingCashFlowCoverageRatio"`
 	CapitalExpenditureCoverageRatio         float64 `json:"capitalExpenditureCoverageRatio"`
@@ -113,7 +113,7 @@ type RatiosTTM struct {
 	OperatingCashFlowSalesRatioTtm             float64 `json:"operatingCashFlowSalesRatioTTM"`
 	FreeCashFlowOperatingCashFlowRatioTtm      float64 `json:"freeCashFlowOperatingCashFlowRatioTTM"`
 	DebtServiceCoverageRatioTtm                float64 `json:"debtServiceCoverageRatioTTM"`
-	InterestCoverageRatioTtm                   int64   `json:"interestCoverageRatioTTM"`
+	InterestCoverageRatioTtm                   float64 `json:"interestCoverageRatioTTM"`
 	ShortTermOperatingCashFlowCoverageRatioTtm float64 `json:"shortTermOperatingCashFlowCoverageRatioTTM"`
 	OperatingCashFlowCoverageRatioTtm          float64 `json:"operatingCashFlowCoverageRatioTTM"`
 	CapitalExpenditureCoverageRatioTtm         float64 `json:"capitalExpenditureCoverageRatioTTM"`

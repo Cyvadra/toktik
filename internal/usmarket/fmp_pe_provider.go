@@ -8,10 +8,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/Cyvadra/toktik/pkg/fmp"
 )
 
-// fmpQuarterStatementsSource tags observations computed from FMP's quarterly
+// fmpQuarterStatementsSource tags legacy observations computed from FMP's quarterly
 // income-statement, balance-sheet-statement, and historical-price-eod endpoints.
 // Stored in the `source` column of fundamental_observation so different upstream
 // providers can coexist for the same (symbol, factor_code) pair without
@@ -59,7 +60,7 @@ func (p *FMPPEBackfillProvider) NewWorker(_ context.Context) (PEBackfillWorker, 
 	return &fmpPEBackfillWorker{client: fmp.New(p.apiKey), limit: p.limit}, nil
 }
 
-func (w *fmpPEBackfillWorker) FetchSymbolPE(ctx context.Context, symbol string, startDate, endDate time.Time, _ int, limiter backfillRateLimiter) (PEFetchResult, error) {
+func (w *fmpPEBackfillWorker) FetchSymbolPE(ctx context.Context, conn driver.Conn, symbol string, startDate, endDate time.Time, _ int, batchSize int, dryRun bool, limiter backfillRateLimiter) (PEFetchResult, error) {
 	if err := limiter.Wait(ctx); err != nil {
 		return PEFetchResult{}, err
 	}
@@ -75,68 +76,49 @@ func (w *fmpPEBackfillWorker) FetchSymbolPE(ctx context.Context, symbol string, 
 	if err != nil {
 		return PEFetchResult{}, fmt.Errorf("fmp balance sheets: %w", err)
 	}
+	if err := limiter.Wait(ctx); err != nil {
+		return PEFetchResult{}, err
+	}
+	cashFlowStatements, err := w.client.CashFlowStatements(ctx, symbol, "quarter", w.limit)
+	if err != nil {
+		return PEFetchResult{}, fmt.Errorf("fmp cash flow statements: %w", err)
+	}
 
-	quarterInputs := buildFMPQuarterFundamentalInputs(incomeStatements, balanceSheets)
+	var persisted fmpStatementPersistResult
+	if !dryRun {
+		var err error
+		persisted, err = persistFMPQuarterlyStatements(ctx, conn, symbol, incomeStatements, balanceSheets, cashFlowStatements, batchSize)
+		if err != nil {
+			return PEFetchResult{}, fmt.Errorf("persist FMP quarterly statements: %w", err)
+		}
+	}
+
+	quarterInputs := buildFMPDerivedQuarterInputs(incomeStatements, balanceSheets)
 	if len(quarterInputs) == 0 {
 		return PEFetchResult{
-			ProviderName:   "fmp",
-			ProviderSource: fmpQuarterStatementsSource,
+			ProviderName:     "fmp",
+			ProviderSource:   fmpStatementDerivedSource,
+			StatementRows:    persisted.InsertedRows,
+			StatementSkipped: persisted.SkippedRows,
 			Diagnostics: PEFetchDiagnostics{
 				NoQuarterInputs: 1,
 			},
 		}, nil
 	}
 
-	priceFrom := quarterInputs[0].Date.AddDate(0, 0, -10).Format("2006-01-02")
-	priceTo := quarterInputs[len(quarterInputs)-1].Date.Format("2006-01-02")
-	if err := limiter.Wait(ctx); err != nil {
-		return PEFetchResult{}, err
-	}
-	prices, err := w.client.HistoricalPrices(ctx, symbol, priceFrom, priceTo)
+	observations, diagnostics, err := deriveFMPStatementRatioObservations(ctx, conn, symbol, quarterInputs, startDate, endDate)
 	if err != nil {
-		return PEFetchResult{}, fmt.Errorf("fmp historical prices: %w", err)
-	}
-	priceSeries := buildFMPPriceSeries(prices)
-
-	startBound := normalizeDateOnly(startDate)
-	endBound := normalizeDateOnly(endDate)
-
-	observations := make([]fundamentalObservationInsert, 0, len(quarterInputs)*2)
-	diagnostics := PEFetchDiagnostics{}
-	scanned := 0
-	for quarterIndex, quarterInput := range quarterInputs {
-		scanned++
-		if quarterInput.Date.Before(startBound) || quarterInput.Date.After(endBound) {
-			continue
-		}
-		closePrice, ok := priceSeries.CloseOnOrBefore(quarterInput.Date)
-		if !ok || closePrice <= 0 {
-			diagnostics.MissingPrice++
-			continue
-		}
-		knownAt := quarterInput.KnownAt
-		if knownAt.IsZero() {
-			knownAt = quarterInput.Date
-		}
-
-		if ttmEPS, ok := trailingTwelveMonthEPS(quarterInputs, quarterIndex); ok {
-			observations = appendRatioObservation(observations, symbol, usStocksPEFactorCode, quarterInput.Date, knownAt, closePrice/ttmEPS)
-		} else {
-			diagnostics.MissingTTMEPS++
-		}
-		if bookValuePerShare, ok := quarterInput.BookValuePerShare(); ok {
-			observations = appendRatioObservation(observations, symbol, usStocksPBFactorCode, quarterInput.Date, knownAt, closePrice/bookValuePerShare)
-		} else {
-			diagnostics.MissingBookValue++
-		}
+		return PEFetchResult{}, fmt.Errorf("derive FMP PE/PB observations: %w", err)
 	}
 
 	return PEFetchResult{
-		ScannedBars:    scanned,
-		Observations:   observations,
-		ProviderName:   "fmp",
-		ProviderSource: fmpQuarterStatementsSource,
-		Diagnostics:    diagnostics,
+		ScannedBars:      len(quarterInputs),
+		Observations:     observations,
+		ProviderName:     "fmp",
+		ProviderSource:   fmpStatementDerivedSource,
+		StatementRows:    persisted.InsertedRows,
+		StatementSkipped: persisted.SkippedRows,
+		Diagnostics:      diagnostics,
 	}, nil
 }
 
@@ -259,6 +241,10 @@ func (series fmpHistoricalPriceSeries) CloseOnOrBefore(date time.Time) (float64,
 }
 
 func appendRatioObservation(observations []fundamentalObservationInsert, symbol, factorCode string, eventTS, knownAt time.Time, value float64) []fundamentalObservationInsert {
+	return appendRatioObservationWithSource(observations, symbol, factorCode, eventTS, knownAt, fmpQuarterStatementsSource, value)
+}
+
+func appendRatioObservationWithSource(observations []fundamentalObservationInsert, symbol, factorCode string, eventTS, knownAt time.Time, source string, value float64) []fundamentalObservationInsert {
 	if value == 0 || math.IsNaN(value) || math.IsInf(value, 0) {
 		return observations
 	}
@@ -268,7 +254,7 @@ func appendRatioObservation(observations []fundamentalObservationInsert, symbol,
 		FactorCode: factorCode,
 		EventTS:    eventTS,
 		KnownAt:    knownAt,
-		Source:     fmpQuarterStatementsSource,
+		Source:     source,
 		Value:      value,
 	})
 }

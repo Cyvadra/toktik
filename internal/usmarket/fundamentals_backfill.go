@@ -42,7 +42,7 @@ type PEBackfillProvider interface {
 // PEBackfillWorker is a per-worker fetcher instance created by a provider.
 // Keeping it separate avoids sharing provider client state across goroutines.
 type PEBackfillWorker interface {
-	FetchSymbolPE(ctx context.Context, symbol string, startDate, endDate time.Time, pageSize int, limiter backfillRateLimiter) (PEFetchResult, error)
+	FetchSymbolPE(ctx context.Context, conn driver.Conn, symbol string, startDate, endDate time.Time, pageSize int, batchSize int, dryRun bool, limiter backfillRateLimiter) (PEFetchResult, error)
 }
 
 // backfillRateLimiter is the small contract a provider needs for global QPS
@@ -54,11 +54,13 @@ type backfillRateLimiter interface {
 
 // PEFetchResult is the provider-normalized output for one symbol fetch.
 type PEFetchResult struct {
-	ScannedBars    int
-	Observations   []fundamentalObservationInsert
-	ProviderName   string
-	ProviderSource string
-	Diagnostics    PEFetchDiagnostics
+	ScannedBars      int
+	Observations     []fundamentalObservationInsert
+	ProviderName     string
+	ProviderSource   string
+	StatementRows    int
+	StatementSkipped int
+	Diagnostics      PEFetchDiagnostics
 }
 
 type PEFetchDiagnostics struct {
@@ -100,7 +102,7 @@ func (p *TigerPEBackfillProvider) NewWorker(_ context.Context) (PEBackfillWorker
 	return &tigerPEBackfillWorker{client: client}, nil
 }
 
-func (w *tigerPEBackfillWorker) FetchSymbolPE(ctx context.Context, symbol string, startDate, endDate time.Time, pageSize int, limiter backfillRateLimiter) (PEFetchResult, error) {
+func (w *tigerPEBackfillWorker) FetchSymbolPE(ctx context.Context, _ driver.Conn, symbol string, startDate, endDate time.Time, pageSize int, _ int, _ bool, limiter backfillRateLimiter) (PEFetchResult, error) {
 	bars, err := fetchTigerStockPEBars(ctx, w.client, symbol, startDate, endDate, pageSize, limiter)
 	if err != nil {
 		return PEFetchResult{}, err
@@ -166,11 +168,13 @@ type USFundamentalsBackfillResult struct {
 }
 
 type usFundamentalsBackfillStats struct {
-	ScannedBars   int
-	CandidateRows int
-	InsertedRows  int
-	SkippedRows   int
-	Diagnostics   PEFetchDiagnostics
+	ScannedBars      int
+	CandidateRows    int
+	InsertedRows     int
+	SkippedRows      int
+	StatementRows    int
+	StatementSkipped int
+	Diagnostics      PEFetchDiagnostics
 }
 
 type fundamentalsSymbolTarget struct {
@@ -262,8 +266,10 @@ func discoverFMPFundamentalsUpdateSymbols(ctx context.Context, conn driver.Conn,
 	}
 	chain := fmpFundamentalsDiscoveryModeChain(mode)
 	var lastErr error
+	merged := fmpFundamentalsDiscoveryResult{Mode: strings.Join(chain, "+")}
+	symbolSet := map[string]struct{}{}
 	for index, discoveryMode := range chain {
-		result, err := discoverFMPFundamentalsUpdateSymbolsMode(ctx, conn, client, localSymbols, discoveryMode, startDate, endDate, pageSize, pageLimit, limitSymbols)
+		result, err := discoverFMPFundamentalsUpdateSymbolsMode(ctx, conn, client, localSymbols, discoveryMode, startDate, endDate, pageSize, pageLimit, 0)
 		if err != nil {
 			lastErr = err
 			if index < len(chain)-1 {
@@ -276,12 +282,35 @@ func discoverFMPFundamentalsUpdateSymbols(ctx context.Context, conn driver.Conn,
 			log.Printf("FMP fundamentals discovery mode=%s returned no rows; falling back to %s", discoveryMode, chain[index+1])
 			continue
 		}
-		return result, nil
+		merged.PagesFetched += result.PagesFetched
+		merged.RowsScanned += result.RowsScanned
+		merged.CandidateSymbols += result.CandidateSymbols
+		merged.SkippedFresh += result.SkippedFresh
+		if !result.MinPeriodDate.IsZero() && (merged.MinPeriodDate.IsZero() || result.MinPeriodDate.Before(merged.MinPeriodDate)) {
+			merged.MinPeriodDate = result.MinPeriodDate
+		}
+		for _, symbol := range result.Symbols {
+			symbolSet[symbol] = struct{}{}
+		}
+		if normalizeFMPFundamentalsIncrementalMode(mode) == "earnings-calendar" || normalizeFMPFundamentalsIncrementalMode(mode) == "latest-financial-statements" {
+			break
+		}
+	}
+	if len(symbolSet) > 0 {
+		merged.Symbols = make([]string, 0, len(symbolSet))
+		for symbol := range symbolSet {
+			merged.Symbols = append(merged.Symbols, symbol)
+		}
+		sort.Strings(merged.Symbols)
+		if limitSymbols > 0 && len(merged.Symbols) > limitSymbols {
+			merged.Symbols = merged.Symbols[:limitSymbols]
+		}
+		return merged, nil
 	}
 	if lastErr != nil {
 		return fmpFundamentalsDiscoveryResult{}, lastErr
 	}
-	return fmpFundamentalsDiscoveryResult{}, nil
+	return merged, nil
 }
 
 func fmpFundamentalsDiscoveryModeChain(mode string) []string {
@@ -557,7 +586,7 @@ WHERE market = {market:String}
   AND symbol IN ({symbols:Array(String)})
 GROUP BY symbol, factor_code`,
 		clickhouse.Named("market", usStocksFundamentalsMarket),
-		clickhouse.Named("source", fmpQuarterStatementsSource),
+		clickhouse.Named("source", fmpStatementDerivedSource),
 		clickhouse.Named("factors", []string{usStocksPEFactorCode, usStocksPBFactorCode}),
 		clickhouse.Named("symbols", symbols),
 	)
@@ -591,7 +620,7 @@ WHERE market = {market:String}
   AND factor_code IN ({factors:Array(String)})
 LIMIT 1`,
 		clickhouse.Named("market", usStocksFundamentalsMarket),
-		clickhouse.Named("source", fmpQuarterStatementsSource),
+		clickhouse.Named("source", fmpStatementDerivedSource),
 		clickhouse.Named("factors", []string{usStocksPEFactorCode, usStocksPBFactorCode}),
 	)
 	if err != nil {
@@ -1114,13 +1143,15 @@ func ensureFundamentalFactorCatalogRow(ctx context.Context, conn driver.Conn, fa
 }
 
 func backfillUSStockSymbolPE(ctx context.Context, conn driver.Conn, worker PEBackfillWorker, storeSymbol, fetchSymbol string, startDate, endDate time.Time, pageSize, batchSize int, limiter backfillRateLimiter, dryRun bool) (usFundamentalsBackfillStats, error) {
-	fetched, err := worker.FetchSymbolPE(ctx, fetchSymbol, startDate, endDate, pageSize, limiter)
+	fetched, err := worker.FetchSymbolPE(ctx, conn, fetchSymbol, startDate, endDate, pageSize, batchSize, dryRun, limiter)
 	if err != nil {
 		return usFundamentalsBackfillStats{}, err
 	}
 
 	observations := fetched.Observations
 	stats := usFundamentalsBackfillStats{ScannedBars: fetched.ScannedBars}
+	stats.StatementRows = fetched.StatementRows
+	stats.StatementSkipped = fetched.StatementSkipped
 	stats.Diagnostics = fetched.Diagnostics
 	if len(observations) < fetched.ScannedBars {
 		stats.SkippedRows = fetched.ScannedBars - len(observations)

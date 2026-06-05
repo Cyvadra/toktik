@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 	"time"
@@ -573,11 +574,156 @@ func (s *FundamentalsService) loadPriceDerivedDenominators(ctx context.Context, 
 		if point.Value == 0 {
 			continue
 		}
+		if point.Source == "fmp_statement_derived_v2" {
+			denominator, ok, err := s.loadFMPStatementDenominator(ctx, symbol, factor, point.EventTS)
+			if err != nil {
+				return nil, err
+			}
+			if ok {
+				denominators[fundamentalObservationKey(factor, point.EventTS)] = denominator
+				continue
+			}
+		}
 		if closePrice, ok := series.closeOnOrBefore(point.EventTS); ok && closePrice != 0 {
 			denominators[fundamentalObservationKey(factor, point.EventTS)] = closePrice / point.Value
 		}
 	}
 	return denominators, nil
+}
+
+func (s *FundamentalsService) loadFMPStatementDenominator(ctx context.Context, symbol, factor string, eventTS time.Time) (float64, bool, error) {
+	switch factor {
+	case "pe":
+		return s.loadFMPStatementTTMEPS(ctx, symbol, eventTS)
+	case "pb":
+		return s.loadFMPStatementBookValuePerShare(ctx, symbol, eventTS)
+	default:
+		return 0, false, nil
+	}
+}
+
+func (s *FundamentalsService) loadFMPStatementTTMEPS(ctx context.Context, symbol string, eventTS time.Time) (float64, bool, error) {
+	rows, err := s.repo.Query(ctx, `SELECT
+	date,
+	argMax(eps, (accepted_date, revision, ingested_at)) AS eps,
+	argMax(net_income, (accepted_date, revision, ingested_at)) AS net_income,
+	argMax(weighted_average_shs_out, (accepted_date, revision, ingested_at)) AS shares
+FROM fmp_income_statement_quarterly
+WHERE symbol = {symbol:String}
+  AND source = 'fmp'
+  AND date <= {event_date:Date}
+GROUP BY date
+ORDER BY date DESC
+LIMIT 4`,
+		clickhouse.Named("symbol", strings.ToUpper(strings.TrimSpace(symbol))),
+		clickhouse.Named("event_date", eventTS.UTC().Format("2006-01-02")),
+	)
+	if err != nil {
+		return 0, false, fmt.Errorf("query FMP statement TTM EPS denominator: %w", err)
+	}
+	defer rows.Close()
+	total := 0.0
+	count := 0
+	for rows.Next() {
+		var date time.Time
+		var eps, netIncome, shares float64
+		if err := rows.Scan(&date, &eps, &netIncome, &shares); err != nil {
+			return 0, false, fmt.Errorf("scan FMP statement TTM EPS denominator: %w", err)
+		}
+		value := eps
+		if !validStatementDenominatorComponent(value) {
+			if shares <= 0 || !validStatementDenominatorComponent(netIncome) {
+				if eps == 0 && !math.IsNaN(eps) && !math.IsInf(eps, 0) {
+					value = 0
+				} else {
+					return 0, false, nil
+				}
+			} else {
+				value = netIncome / shares
+			}
+		}
+		if value != 0 && !validStatementDenominatorComponent(value) {
+			return 0, false, nil
+		}
+		total += value
+		count++
+	}
+	if err := rows.Err(); err != nil {
+		return 0, false, err
+	}
+	if count != 4 || !validStatementDenominatorComponent(total) {
+		return 0, false, nil
+	}
+	return total, true, nil
+}
+
+func (s *FundamentalsService) loadFMPStatementBookValuePerShare(ctx context.Context, symbol string, eventTS time.Time) (float64, bool, error) {
+	rows, err := s.repo.Query(ctx, `WITH
+income AS (
+	SELECT
+		date,
+		argMax(weighted_average_shs_out, (accepted_date, revision, ingested_at)) AS shares
+	FROM fmp_income_statement_quarterly
+	WHERE symbol = {symbol:String}
+	  AND source = 'fmp'
+	  AND date = {event_date:Date}
+	GROUP BY date
+),
+balance AS (
+	SELECT
+		date,
+		argMax(total_stockholders_equity, (accepted_date, revision, ingested_at)) AS stockholders_equity,
+		argMax(total_equity, (accepted_date, revision, ingested_at)) AS total_equity,
+		argMax(total_assets, (accepted_date, revision, ingested_at)) AS total_assets,
+		argMax(total_liabilities, (accepted_date, revision, ingested_at)) AS total_liabilities
+	FROM fmp_balance_sheet_quarterly
+	WHERE symbol = {symbol:String}
+	  AND source = 'fmp'
+	  AND date = {event_date:Date}
+	GROUP BY date
+)
+SELECT income.shares, balance.stockholders_equity, balance.total_equity, balance.total_assets, balance.total_liabilities
+FROM income INNER JOIN balance USING (date)
+LIMIT 1`,
+		clickhouse.Named("symbol", strings.ToUpper(strings.TrimSpace(symbol))),
+		clickhouse.Named("event_date", eventTS.UTC().Format("2006-01-02")),
+	)
+	if err != nil {
+		return 0, false, fmt.Errorf("query FMP statement PB denominator: %w", err)
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return 0, false, err
+		}
+		return 0, false, nil
+	}
+	var shares, stockholdersEquity, totalEquity, totalAssets, totalLiabilities float64
+	if err := rows.Scan(&shares, &stockholdersEquity, &totalEquity, &totalAssets, &totalLiabilities); err != nil {
+		return 0, false, fmt.Errorf("scan FMP statement PB denominator: %w", err)
+	}
+	if err := rows.Err(); err != nil {
+		return 0, false, err
+	}
+	equity := stockholdersEquity
+	if equity == 0 {
+		equity = totalEquity
+	}
+	if equity == 0 {
+		equity = totalAssets - totalLiabilities
+	}
+	if shares <= 0 || equity == 0 {
+		return 0, false, nil
+	}
+	value := equity / shares
+	if !validStatementDenominatorComponent(value) {
+		return 0, false, nil
+	}
+	return value, true, nil
+}
+
+func validStatementDenominatorComponent(value float64) bool {
+	return value != 0 && !math.IsNaN(value) && !math.IsInf(value, 0)
 }
 
 func (s *FundamentalsService) querySnapshotEntry(ctx context.Context, market, symbol, factor string, asOf time.Time) (*dto.FundamentalSnapshotEntry, error) {
@@ -633,6 +779,16 @@ func (s *FundamentalsService) revalueSnapshotEntries(ctx context.Context, symbol
 	for index, entry := range entries {
 		if !defaultUSStockPriceDerivedFundamentalFactor(entry.Factor) || entry.Value == 0 {
 			continue
+		}
+		if entry.Source == "fmp_statement_derived_v2" {
+			denominator, ok, err := s.loadFMPStatementDenominator(ctx, symbol, entry.Factor, entry.EventTS)
+			if err != nil {
+				return nil, err
+			}
+			if ok {
+				entries[index].Value = currentPrice / denominator
+				continue
+			}
 		}
 		if closePrice, ok := prices.closeOnOrBefore(entry.EventTS); ok && closePrice != 0 {
 			entries[index].Value = currentPrice / (closePrice / entry.Value)

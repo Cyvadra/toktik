@@ -324,15 +324,27 @@ func NewFMPUSFundamentals(cfg FMPUSFundamentalsConfig) (syncpipeline.Syncer, err
 }
 
 func (s *fmpUSFundamentals) Name() string { return "fmp_us_fundamentals" }
-func (s *fmpUSFundamentals) SourceKeys(context.Context, driver.Conn) ([]string, error) {
+func (s *fmpUSFundamentals) SourceKeys(ctx context.Context, conn driver.Conn) ([]string, error) {
+	if len(s.cfg.Symbols) > 0 {
+		return usmarket.ResolveUSStockSymbols(ctx, conn, s.cfg.Symbols, s.cfg.LimitSymbols)
+	}
 	return []string{syncpipeline.SingletonSourceKey}, nil
 }
-func (s *fmpUSFundamentals) ResolveCursor(ctx context.Context, conn driver.Conn, _ string) (time.Time, bool, error) {
+func (s *fmpUSFundamentals) ResolveCursor(ctx context.Context, conn driver.Conn, sourceKey string) (time.Time, bool, error) {
+	if sourceKey != syncpipeline.SingletonSourceKey {
+		return queryLatestDate(ctx, conn, "fundamental_observation", "event_ts", "market = {market:String} AND symbol = {symbol:String} AND factor_code IN ('pe','pb')", clickhouse.Named("market", "us-stocks"), clickhouse.Named("symbol", sourceKey))
+	}
 	return queryLatestDate(ctx, conn, "fundamental_observation", "event_ts", "market = {market:String} AND factor_code IN ('pe','pb')", clickhouse.Named("market", "us-stocks"))
 }
 func (s *fmpUSFundamentals) ColdStartFloor(string) time.Time { return s.cfg.ColdStartFloorUTC }
 func (s *fmpUSFundamentals) Sync(ctx context.Context, conn driver.Conn, req syncpipeline.SyncRequest) (syncpipeline.SyncResult, error) {
-	res, err := usmarket.BackfillUSStockPE(ctx, usmarket.USFundamentalsBackfillConfig{Conn: conn, DSN: s.cfg.DSN, Provider: s.cfg.Provider, StartDate: req.From, EndDate: req.To, Symbols: s.cfg.Symbols, IncrementalMode: s.cfg.IncrementalMode, DiscoveryPageSize: s.cfg.DiscoveryPageSize, DiscoveryPageLimit: s.cfg.DiscoveryPageLimit, Workers: s.cfg.Workers, BatchSize: s.cfg.BatchSize, PageSize: s.cfg.PageSize, QPS: s.cfg.QPS, LimitSymbols: s.cfg.LimitSymbols, DryRun: req.DryRun, DistributedLimiter: s.cfg.DistributedLimiter})
+	symbols := s.cfg.Symbols
+	incrementalMode := s.cfg.IncrementalMode
+	if req.SourceKey != syncpipeline.SingletonSourceKey {
+		symbols = []string{req.SourceKey}
+		incrementalMode = ""
+	}
+	res, err := usmarket.BackfillUSStockPE(ctx, usmarket.USFundamentalsBackfillConfig{Conn: conn, DSN: s.cfg.DSN, Provider: s.cfg.Provider, StartDate: req.From, EndDate: req.To, Symbols: symbols, IncrementalMode: incrementalMode, DiscoveryPageSize: s.cfg.DiscoveryPageSize, DiscoveryPageLimit: s.cfg.DiscoveryPageLimit, Workers: s.cfg.Workers, BatchSize: s.cfg.BatchSize, PageSize: s.cfg.PageSize, QPS: s.cfg.QPS, LimitSymbols: s.cfg.LimitSymbols, DryRun: req.DryRun, DistributedLimiter: s.cfg.DistributedLimiter})
 	return syncResult(req, res.InsertedRows), err
 }
 func (s *fmpUSFundamentals) AuditTargets(string) []syncpipeline.AuditTarget {

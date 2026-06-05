@@ -49,6 +49,98 @@ PARTITION BY (market, toYYYYMM(known_at))
 ORDER BY (market, symbol, factor_code, known_at, event_ts, source, revision)
 SETTINGS index_granularity = 8192;
 
+-- FMP quarterly financial statements
+-- Persist the source statement facts used to derive symbol-level PE/PB. These
+-- tables are intentionally separate from `fundamental_observation`: statements
+-- are source-domain facts, while PE/PB rows are derived point-in-time factors.
+
+CREATE TABLE IF NOT EXISTS fmp_income_statement_quarterly
+(
+    symbol                         LowCardinality(String),
+    date                           Date,
+    fiscal_year                    LowCardinality(String),
+    period                         LowCardinality(String),
+    reported_currency              LowCardinality(String),
+    cik                            String DEFAULT '',
+    filing_date                    DateTime('UTC') DEFAULT toDateTime(0),
+    accepted_date                  DateTime('UTC') DEFAULT toDateTime(0),
+    revenue                        Float64 DEFAULT 0,
+    cost_of_revenue                Float64 DEFAULT 0,
+    gross_profit                   Float64 DEFAULT 0,
+    operating_income               Float64 DEFAULT 0,
+    income_before_tax              Float64 DEFAULT 0,
+    income_tax_expense             Float64 DEFAULT 0,
+    net_income                     Float64 DEFAULT 0,
+    bottom_line_net_income         Float64 DEFAULT 0,
+    eps                            Float64 DEFAULT 0,
+    eps_diluted                    Float64 DEFAULT 0,
+    weighted_average_shs_out       Float64 DEFAULT 0,
+    weighted_average_shs_out_dil   Float64 DEFAULT 0,
+    source                         LowCardinality(String) DEFAULT 'fmp',
+    content_hash                   String,
+    revision                       UInt32 DEFAULT 0,
+    ingested_at                    DateTime('UTC') DEFAULT now()
+)
+ENGINE = ReplacingMergeTree(ingested_at)
+PARTITION BY toYYYYMM(date)
+ORDER BY (symbol, date, period, fiscal_year, accepted_date, source, revision)
+SETTINGS index_granularity = 8192;
+
+CREATE TABLE IF NOT EXISTS fmp_balance_sheet_quarterly
+(
+    symbol                         LowCardinality(String),
+    date                           Date,
+    fiscal_year                    LowCardinality(String),
+    period                         LowCardinality(String),
+    reported_currency              LowCardinality(String),
+    cik                            String DEFAULT '',
+    filing_date                    DateTime('UTC') DEFAULT toDateTime(0),
+    accepted_date                  DateTime('UTC') DEFAULT toDateTime(0),
+    cash_and_cash_equivalents      Float64 DEFAULT 0,
+    total_current_assets           Float64 DEFAULT 0,
+    total_assets                   Float64 DEFAULT 0,
+    total_current_liabilities      Float64 DEFAULT 0,
+    total_liabilities              Float64 DEFAULT 0,
+    total_stockholders_equity      Float64 DEFAULT 0,
+    total_equity                   Float64 DEFAULT 0,
+    total_debt                     Float64 DEFAULT 0,
+    net_debt                       Float64 DEFAULT 0,
+    source                         LowCardinality(String) DEFAULT 'fmp',
+    content_hash                   String,
+    revision                       UInt32 DEFAULT 0,
+    ingested_at                    DateTime('UTC') DEFAULT now()
+)
+ENGINE = ReplacingMergeTree(ingested_at)
+PARTITION BY toYYYYMM(date)
+ORDER BY (symbol, date, period, fiscal_year, accepted_date, source, revision)
+SETTINGS index_granularity = 8192;
+
+CREATE TABLE IF NOT EXISTS fmp_cash_flow_statement_quarterly
+(
+    symbol                                      LowCardinality(String),
+    date                                        Date,
+    fiscal_year                                 LowCardinality(String),
+    period                                      LowCardinality(String),
+    reported_currency                           LowCardinality(String),
+    cik                                         String DEFAULT '',
+    filing_date                                 DateTime('UTC') DEFAULT toDateTime(0),
+    accepted_date                               DateTime('UTC') DEFAULT toDateTime(0),
+    net_income                                  Float64 DEFAULT 0,
+    depreciation_and_amortization               Float64 DEFAULT 0,
+    stock_based_compensation                    Float64 DEFAULT 0,
+    net_cash_provided_by_operating_activities   Float64 DEFAULT 0,
+    capital_expenditure                         Float64 DEFAULT 0,
+    free_cash_flow                              Float64 DEFAULT 0,
+    source                                      LowCardinality(String) DEFAULT 'fmp',
+    content_hash                                String,
+    revision                                    UInt32 DEFAULT 0,
+    ingested_at                                 DateTime('UTC') DEFAULT now()
+)
+ENGINE = ReplacingMergeTree(ingested_at)
+PARTITION BY toYYYYMM(date)
+ORDER BY (symbol, date, period, fiscal_year, accepted_date, source, revision)
+SETTINGS index_granularity = 8192;
+
 -- Macro fundamentals domain
 -- Weakly symbol-bound or symbol-agnostic macro/fundamental series ingested from
 -- external datasets such as Gurufocus Shiller/CAPE. These remain sparse and
