@@ -41,6 +41,26 @@ func TestProfilesUsesCommaSeparatedSymbolList(t *testing.T) {
 	}
 }
 
+func TestProfilesAcceptsFractionalVolumeFields(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`[{"symbol":"MDRX","volume":0.6339,"averageVolume":266095.9}]`))
+	}))
+	defer server.Close()
+
+	client := New("test-key", WithHTTPClient(server.Client()), WithBaseURL(server.URL))
+	profiles, err := client.Profiles(context.Background(), []string{"MDRX"})
+	if err != nil {
+		t.Fatalf("profiles: %v", err)
+	}
+	if len(profiles) != 1 {
+		t.Fatalf("expected 1 profile, got %d", len(profiles))
+	}
+	if profiles[0].Volume != 1 || profiles[0].AverageVolume != 266096 {
+		t.Fatalf("unexpected rounded volume fields: volume=%d averageVolume=%d", profiles[0].Volume, profiles[0].AverageVolume)
+	}
+}
+
 func TestClientUsesDiskCache(t *testing.T) {
 	var attempts int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
