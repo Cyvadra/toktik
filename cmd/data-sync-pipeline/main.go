@@ -576,6 +576,7 @@ func defaultPipelineConfig() pipelineConfig {
 			"fmp_forex":              {Enabled: true, ResolveAtStartup: true, BatchSize: 50000, Interval: string(fmp.Interval1Min)},
 			"fmp_us_stocks":          {Enabled: true, DependsOn: []string{"polygon_us_flatfiles"}, ResolveAtStartup: true, IncludeOptionGapMappings: true, BatchSize: 50000, Interval: string(fmp.Interval1Min)},
 			"fmp_us_stock_splits":    {Enabled: true, DependsOn: []string{"fmp_us_stocks"}, ResolveAtStartup: true, BatchSize: 1000, OverlapDays: 3, ColdStartFloor: "1990-01-01"},
+			"fmp_us_stock_profiles":  {Enabled: true, DependsOn: []string{"fmp_us_stocks"}, ResolveAtStartup: true, IncludeOptionGapMappings: true, BatchSize: 25, Workers: 4},
 			"fmp_us_fundamentals":    {Enabled: true, DependsOn: []string{"fmp_us_stocks"}, Provider: "fmp", Workers: 2, BatchSize: 1000, PageSize: 251, QPS: 10, FMPQuarterLimit: 40, IncrementalMode: "sec-filings-financials", DiscoveryPageSize: 250, DiscoveryPageLimit: 0},
 			"fmp_etf_fundamentals":   {Enabled: true, DependsOn: []string{"fmp_us_fundamentals"}, Symbols: []string{"SPY", "IWM", "NDX", "FIX", "KWEB"}, SymbolMappings: map[string]string{"NDX": "QQQ"}, BatchSize: 1000, QPS: 10, MinCoverage: 0.8},
 			"polygon_us_flatfiles":   {Enabled: true, BatchSize: 100000, Workers: 2, RiskFreeRate: 0.05, SyncStocks: false},
@@ -632,6 +633,10 @@ func normalizePipelineConfig(cfg *pipelineConfig) error {
 	if job, ok := cfg.Jobs["fmp_us_stock_splits"]; ok && job.Enabled {
 		job.DependsOn = replaceDependency(job.DependsOn, "fmp_us_stocks", stockDependency)
 		cfg.Jobs["fmp_us_stock_splits"] = job
+	}
+	if job, ok := cfg.Jobs["fmp_us_stock_profiles"]; ok && job.Enabled {
+		job.DependsOn = replaceDependency(job.DependsOn, "fmp_us_stocks", stockDependency)
+		cfg.Jobs["fmp_us_stock_profiles"] = job
 	}
 	for _, name := range []string{"fmp_sp500_macro", "fmp_nasdaq100_macro"} {
 		if job, ok := cfg.Jobs[name]; ok && job.Enabled {
@@ -834,6 +839,9 @@ func buildFMPSyncer(buildCtx syncerBuildContext, name string, job jobConfig) (sy
 		return syncer, true, err
 	case "fmp_us_stock_splits":
 		syncer, err := pipelinejobs.NewFMPUSStockSplits(pipelinejobs.FMPUSStockSplitsConfig{APIKey: buildCtx.APIKey, Symbols: job.Symbols, ResolveAtStartup: job.ResolveAtStartup, IncludeOptionGapMappings: job.IncludeOptionGapMappings, LimitSymbols: job.LimitSymbols, BatchSize: job.BatchSize, ColdStartFloorUTC: parseColdStart(job.ColdStartFloor)})
+		return syncer, true, err
+	case "fmp_us_stock_profiles":
+		syncer, err := pipelinejobs.NewFMPUSStockProfiles(pipelinejobs.FMPUSStockProfilesConfig{APIKey: buildCtx.APIKey, Symbols: job.Symbols, ResolveAtStartup: job.ResolveAtStartup, IncludeOptionGapMappings: job.IncludeOptionGapMappings, LimitSymbols: job.LimitSymbols, BatchSize: job.BatchSize, Workers: job.Workers, ColdStartFloorUTC: parseColdStart(job.ColdStartFloor)})
 		return syncer, true, err
 	case "fmp_us_fundamentals":
 		syncer, err := pipelinejobs.NewFMPUSFundamentals(pipelinejobs.FMPUSFundamentalsConfig{Provider: usmarket.NewFMPPEBackfillProvider(buildCtx.APIKey, job.FMPQuarterLimit), DSN: buildCtx.ClickHouseDSN, Symbols: job.Symbols, IncrementalMode: job.IncrementalMode, DiscoveryPageSize: job.DiscoveryPageSize, DiscoveryPageLimit: job.DiscoveryPageLimit, Workers: job.Workers, BatchSize: job.BatchSize, PageSize: job.PageSize, QPS: job.QPS, LimitSymbols: job.LimitSymbols, DistributedLimiter: buildCtx.Limiter, ColdStartFloorUTC: parseColdStart(job.ColdStartFloor)})

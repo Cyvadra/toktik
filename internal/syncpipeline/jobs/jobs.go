@@ -3,6 +3,9 @@ package jobs
 import (
 	"bufio"
 	"context"
+	"crypto/sha1"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -16,6 +19,7 @@ import (
 	"github.com/Cyvadra/toktik/internal/calendarrepo"
 	"github.com/Cyvadra/toktik/internal/chrepo"
 	"github.com/Cyvadra/toktik/internal/cryptooptions"
+	"github.com/Cyvadra/toktik/internal/dto"
 	"github.com/Cyvadra/toktik/internal/forexmarket"
 	"github.com/Cyvadra/toktik/internal/service"
 	"github.com/Cyvadra/toktik/internal/syncpipeline"
@@ -291,6 +295,170 @@ func (s *fmpUSStockSplits) AuditTargets(sourceKey string) []syncpipeline.AuditTa
 	return []syncpipeline.AuditTarget{{Table: "us_stock_splits", DateColumn: "split_date", KeyColumns: []string{"symbol", "split_date"}, SourceFilter: fmt.Sprintf("symbol = '%s'", escapeStringLiteral(strings.ToUpper(strings.TrimSpace(sourceKey))))}}
 }
 func (s *fmpUSStockSplits) MaxConcurrency() int { return 4 }
+
+type FMPUSStockProfilesConfig struct {
+	APIKey                   string
+	Symbols                  []string
+	ResolveAtStartup         bool
+	IncludeOptionGapMappings bool
+	LimitSymbols             int
+	BatchSize                int
+	Workers                  int
+	ColdStartFloorUTC        time.Time
+}
+
+type fmpUSStockProfiles struct{ cfg FMPUSStockProfilesConfig }
+
+func NewFMPUSStockProfiles(cfg FMPUSStockProfilesConfig) (syncpipeline.Syncer, error) {
+	if strings.TrimSpace(cfg.APIKey) == "" {
+		return nil, fmt.Errorf("fmp_us_stock_profiles: APIKey is required")
+	}
+	cfg.Symbols = normalizeSymbols(cfg.Symbols)
+	if len(cfg.Symbols) == 0 && !cfg.ResolveAtStartup {
+		return nil, fmt.Errorf("fmp_us_stock_profiles: Symbols is empty and ResolveAtStartup is false")
+	}
+	if cfg.BatchSize <= 0 {
+		cfg.BatchSize = usStockProfileBatchSize
+	}
+	if cfg.BatchSize > usStockProfileBatchSize {
+		cfg.BatchSize = usStockProfileBatchSize
+	}
+	if cfg.Workers <= 0 {
+		cfg.Workers = 4
+	}
+	if cfg.ColdStartFloorUTC.IsZero() {
+		cfg.ColdStartFloorUTC = time.Now().UTC().AddDate(0, 0, -7)
+	}
+	return &fmpUSStockProfiles{cfg: cfg}, nil
+}
+
+func (s *fmpUSStockProfiles) Name() string { return "fmp_us_stock_profiles" }
+func (s *fmpUSStockProfiles) SourceKeys(ctx context.Context, conn driver.Conn) ([]string, error) {
+	return resolveUSStockSourceKeys(ctx, conn, s.cfg.Symbols, s.cfg.LimitSymbols, len(s.cfg.Symbols) == 0 && s.cfg.IncludeOptionGapMappings)
+}
+func (s *fmpUSStockProfiles) ResolveCursor(ctx context.Context, conn driver.Conn, sourceKey string) (time.Time, bool, error) {
+	return queryLatestDate(ctx, conn, "us_stock_company_profile", "ingested_at", "symbol = {symbol:String}", clickhouse.Named("symbol", strings.ToUpper(strings.TrimSpace(sourceKey))))
+}
+func (s *fmpUSStockProfiles) ColdStartFloor(string) time.Time { return s.cfg.ColdStartFloorUTC }
+func (s *fmpUSStockProfiles) Sync(ctx context.Context, conn driver.Conn, req syncpipeline.SyncRequest) (syncpipeline.SyncResult, error) {
+	symbol := strings.ToUpper(strings.TrimSpace(req.SourceKey))
+	if symbol == "" || symbol == syncpipeline.SingletonSourceKey {
+		return syncpipeline.SyncResult{SourceKey: req.SourceKey, From: req.From, To: req.To}, nil
+	}
+	client := fmp.New(s.cfg.APIKey)
+	profiles, err := client.Profiles(ctx, []string{symbol})
+	if err != nil {
+		return syncpipeline.SyncResult{SourceKey: req.SourceKey, From: req.From, To: req.To}, err
+	}
+	rows, err := insertUSStockCompanyProfiles(ctx, conn, symbol, profiles, req.DryRun)
+	return syncResult(req, rows), err
+}
+func (s *fmpUSStockProfiles) AuditTargets(sourceKey string) []syncpipeline.AuditTarget {
+	return []syncpipeline.AuditTarget{{Table: "us_stock_company_profile", DateColumn: "toDate(ingested_at)", KeyColumns: []string{"symbol", "source"}, SourceFilter: fmt.Sprintf("symbol = '%s'", escapeStringLiteral(strings.ToUpper(strings.TrimSpace(sourceKey))))}}
+}
+func (s *fmpUSStockProfiles) MaxConcurrency() int { return s.cfg.Workers }
+
+const usStockProfileBatchSize = 25
+
+func insertUSStockCompanyProfiles(ctx context.Context, conn driver.Conn, fallbackSymbol string, profiles []fmp.Profile, dryRun bool) (int64, error) {
+	if len(profiles) == 0 {
+		return 0, nil
+	}
+	now := time.Now().UTC()
+	rows := make([]dtoProfileInsertRow, 0, len(profiles))
+	for _, raw := range profiles {
+		symbol := strings.ToUpper(strings.TrimSpace(raw.Symbol))
+		if symbol == "" {
+			symbol = strings.ToUpper(strings.TrimSpace(fallbackSymbol))
+		}
+		profile := service.ClassifyFMPUSStockCompanyProfile(symbol, raw)
+		if profile == nil {
+			continue
+		}
+		rows = append(rows, dtoProfileInsertRow{Profile: profile, Raw: raw, SourceHash: hashFMPProfile(raw), Timestamp: now})
+	}
+	if dryRun || len(rows) == 0 {
+		return int64(len(rows)), nil
+	}
+	batch, err := conn.PrepareBatch(ctx, `INSERT INTO us_stock_company_profile (
+    symbol,
+    ticker,
+    name,
+    country,
+    currency,
+    exchange,
+    exchange_full_name,
+    sector,
+    industry,
+    ipo,
+    market_capitalization,
+    share_outstanding,
+    weburl,
+    logo,
+    source,
+    source_hash,
+    is_etf,
+    is_fund,
+    known_at,
+    updated_at,
+    ingested_at
+)`)
+	if err != nil {
+		return 0, err
+	}
+	for _, row := range rows {
+		profile := row.Profile
+		if err := batch.Append(
+			profile.Symbol,
+			profile.Ticker,
+			profile.Name,
+			profile.Country,
+			profile.Currency,
+			profile.Exchange,
+			profile.ExchangeFullName,
+			profile.Sector,
+			profile.Industry,
+			profile.IPO,
+			profile.MarketCapitalization,
+			profile.ShareOutstanding,
+			profile.WebURL,
+			profile.Logo,
+			profile.Source,
+			row.SourceHash,
+			boolToUInt8(profile.IsETF),
+			boolToUInt8(profile.IsFund),
+			row.Timestamp,
+			row.Timestamp,
+			row.Timestamp,
+		); err != nil {
+			return 0, err
+		}
+	}
+	if err := batch.Send(); err != nil {
+		return 0, err
+	}
+	return int64(len(rows)), nil
+}
+
+type dtoProfileInsertRow struct {
+	Profile    *dto.USStockCompanyProfile
+	Raw        fmp.Profile
+	SourceHash string
+	Timestamp  time.Time
+}
+
+func hashFMPProfile(profile fmp.Profile) string {
+	payload, _ := json.Marshal(profile)
+	sum := sha1.Sum(payload)
+	return hex.EncodeToString(sum[:])
+}
+
+func boolToUInt8(value bool) uint8 {
+	if value {
+		return 1
+	}
+	return 0
+}
 
 type FMPUSFundamentalsConfig struct {
 	Provider           usmarket.PEBackfillProvider
@@ -856,7 +1024,7 @@ func (s *fmpObservedStockCalendar) Sync(ctx context.Context, conn driver.Conn, r
 		return syncpipeline.SyncResult{SourceKey: req.SourceKey, From: req.From, To: req.To}, err
 	}
 	defer closeFn()
-	companyProfileProvider := service.NewCachedFMPUSStockCompanyProfileProvider(s.cfg.APIKey, s.cfg.Cache)
+	companyProfileProvider := service.NewClickHouseUSStockCompanyProfileProvider(chrepo.NewRepo(conn))
 	screener := service.NewScreenerService(chrepo.NewRepo(conn), s.cfg.Cache).WithCompanyProfileProvider(companyProfileProvider)
 	symbols, err := service.ResolveObservedUSStockPool(ctx, screener)
 	if err != nil {

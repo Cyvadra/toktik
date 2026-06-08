@@ -63,6 +63,38 @@ ORDER BY (symbol, split_date)
 SETTINGS index_granularity = 8192;
 
 -- -------------------------------------------------------
+-- US Stocks: durable company profile metadata from FMP
+-- -------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS us_stock_company_profile
+(
+    symbol                LowCardinality(String),
+    ticker                String DEFAULT '',
+    name                  String DEFAULT '',
+    country               LowCardinality(String) DEFAULT '',
+    currency              LowCardinality(String) DEFAULT '',
+    exchange              LowCardinality(String) DEFAULT '',
+    exchange_full_name    String DEFAULT '',
+    sector                String DEFAULT '',
+    industry              String DEFAULT '',
+    ipo                   String DEFAULT '',
+    market_capitalization Nullable(Float64),
+    share_outstanding     Nullable(Float64),
+    weburl                String DEFAULT '',
+    logo                  String DEFAULT '',
+    source                LowCardinality(String) DEFAULT 'fmp',
+    source_hash           String DEFAULT '',
+    is_etf                UInt8 DEFAULT 0,
+    is_fund               UInt8 DEFAULT 0,
+    known_at              DateTime64(3, 'UTC') DEFAULT now64(3),
+    updated_at            DateTime64(3, 'UTC') DEFAULT now64(3),
+    ingested_at           DateTime64(3, 'UTC') DEFAULT now64(3)
+)
+ENGINE = ReplacingMergeTree(ingested_at)
+ORDER BY (symbol, source)
+SETTINGS index_granularity = 8192;
+
+-- -------------------------------------------------------
 -- US Options: 1-minute bars from Polygon OPRA flatfiles
 -- -------------------------------------------------------
 

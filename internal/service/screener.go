@@ -277,16 +277,16 @@ func (s *ScreenerService) ScreenUnderlyings(ctx context.Context, req dto.ScreenU
 		query += fmt.Sprintf(` AND v.hv20 <= %.17g`, *req.HV20Max)
 	}
 	if req.VolumeMin != nil {
-		query += fmt.Sprintf(` AND l.total_volume >= %.17g`, *req.VolumeMin)
+		query += fmt.Sprintf(` AND ifNull(l.total_volume, 0) >= %.17g`, *req.VolumeMin)
 	}
 	if req.OpenInterestMin != nil {
-		query += fmt.Sprintf(` AND l.total_oi >= %.17g`, *req.OpenInterestMin)
+		query += fmt.Sprintf(` AND ifNull(l.total_oi, 0) >= %.17g`, *req.OpenInterestMin)
 	}
 	if req.ActivityRatioMin != nil {
-		query += fmt.Sprintf(` AND l.avg_activity_ratio >= %.17g`, *req.ActivityRatioMin)
+		query += fmt.Sprintf(` AND ifNull(l.avg_activity_ratio, 0) >= %.17g`, *req.ActivityRatioMin)
 	}
 	if req.TradabilityRatioMin != nil {
-		query += fmt.Sprintf(` AND l.avg_tradability_ratio >= %.17g`, *req.TradabilityRatioMin)
+		query += fmt.Sprintf(` AND ifNull(l.avg_tradability_ratio, 0) >= %.17g`, *req.TradabilityRatioMin)
 	}
 
 	if req.Cursor != "" {
@@ -306,9 +306,9 @@ func (s *ScreenerService) ScreenUnderlyings(ctx context.Context, req dto.ScreenU
 	case "hv20":
 		sortBy = "v.hv20 DESC"
 	case "volume":
-		sortBy = "l.total_volume DESC"
+		sortBy = "ifNull(l.total_volume, 0) DESC"
 	case "open_interest":
-		sortBy = "l.total_oi DESC"
+		sortBy = "ifNull(l.total_oi, 0) DESC"
 	}
 	query += fmt.Sprintf(` ORDER BY %s LIMIT %d`, sortBy, limit+1)
 

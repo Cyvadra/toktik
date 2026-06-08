@@ -27,12 +27,16 @@ type mockQuerier struct {
 }
 
 type mockUSStocksQuerier struct {
-	barsResp    *dto.USStockBarResponse
-	symbolsResp *dto.USStockSymbolResponse
-	splitsResp  *dto.USStockSplitResponse
-	barsReq     dto.USStockBarRequest
-	splitsReq   dto.USStockSplitRequest
-	err         error
+	barsResp               *dto.USStockBarResponse
+	symbolsResp            *dto.USStockSymbolResponse
+	splitsResp             *dto.USStockSplitResponse
+	profilesResp           *dto.USStockProfileResponse
+	fundamentalMetricsResp *dto.USStockFundamentalMetricsResponse
+	barsReq                dto.USStockBarRequest
+	splitsReq              dto.USStockSplitRequest
+	profilesReq            dto.USStockProfileRequest
+	fundamentalMetricsReq  dto.USStockFundamentalMetricsRequest
+	err                    error
 }
 
 type mockUSOptionsQuerier struct {
@@ -160,6 +164,16 @@ func (m *mockUSStocksQuerier) QuerySymbols(_ context.Context, _ dto.USStockSymbo
 func (m *mockUSStocksQuerier) QuerySplits(_ context.Context, req dto.USStockSplitRequest) (*dto.USStockSplitResponse, error) {
 	m.splitsReq = req
 	return m.splitsResp, m.err
+}
+
+func (m *mockUSStocksQuerier) QueryProfiles(_ context.Context, req dto.USStockProfileRequest) (*dto.USStockProfileResponse, error) {
+	m.profilesReq = req
+	return m.profilesResp, m.err
+}
+
+func (m *mockUSStocksQuerier) QueryFundamentalMetrics(_ context.Context, req dto.USStockFundamentalMetricsRequest) (*dto.USStockFundamentalMetricsResponse, error) {
+	m.fundamentalMetricsReq = req
+	return m.fundamentalMetricsResp, m.err
 }
 
 func (m *mockUSOptionsQuerier) QueryBars(_ context.Context, req dto.USOptionBarRequest) (*dto.USOptionBarResponse, error) {

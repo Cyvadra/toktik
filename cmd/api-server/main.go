@@ -69,7 +69,7 @@ func buildAPICoreServices(runtimeCfg config.Runtime, repo *chrepo.Repo, calendar
 	}
 	fmpClient := fmp.New(fmpAPIKey, fmp.WithCacheDir(runtimeCfg.FMP.CacheDir))
 	financeCalendarSvc := service.NewFinanceCalendarService(calendarRepo, fmpClient, cacheStore)
-	companyProfileProvider := service.NewCachedFMPUSStockCompanyProfileProvider(fmpAPIKey, cacheStore)
+	companyProfileProvider := service.NewClickHouseUSStockCompanyProfileProvider(repo)
 
 	return &apiCoreServices{
 		fundamentals:    fundamentalsSvc,

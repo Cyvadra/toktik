@@ -39,6 +39,13 @@ type CalendarEventDTO struct {
 	Period           string   `json:"period,omitempty"`
 	LinkJSON         string   `json:"link_json,omitempty"`
 	LinkXLSX         string   `json:"link_xlsx,omitempty"`
+	Source           string   `json:"source,omitempty"`
+	UpdatedAt        string   `json:"updated_at,omitempty"`
+}
+
+type EconomicCalendarRequest struct {
+	From string `form:"from" binding:"omitempty"`
+	To   string `form:"to" binding:"omitempty"`
 }
 
 type EconomicCalendarResponse struct {
@@ -46,7 +53,11 @@ type EconomicCalendarResponse struct {
 }
 
 type StockCalendarRequest struct {
-	Symbols []string `json:"symbols" binding:"required"`
+	Symbols      []string `json:"symbols" binding:"required"`
+	From         string   `json:"from,omitempty" binding:"omitempty"`
+	To           string   `json:"to,omitempty" binding:"omitempty"`
+	Types        []string `json:"types,omitempty" binding:"omitempty"`
+	EarningsOnly bool     `json:"earnings_only,omitempty" binding:"omitempty"`
 }
 
 type StockCalendarResponse struct {

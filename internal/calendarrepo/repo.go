@@ -105,11 +105,18 @@ func (r *Repo) ListEconomicEvents(ctx context.Context, from, to time.Time) ([]Ca
 }
 
 func (r *Repo) ListStockEvents(ctx context.Context, symbols []string, from, to time.Time) ([]CalendarEvent, error) {
+	return r.ListStockEventsByTypes(ctx, symbols, from, to, nil)
+}
+
+func (r *Repo) ListStockEventsByTypes(ctx context.Context, symbols []string, from, to time.Time, eventTypes []string) ([]CalendarEvent, error) {
 	var events []CalendarEvent
-	err := r.db.WithContext(ctx).
+	query := r.db.WithContext(ctx).
 		Where("symbol IN ?", symbols).
-		Where("event_at IS NULL OR (event_at >= ? AND event_at <= ?)", from, to).
-		Order("event_at IS NULL ASC").
+		Where("event_at IS NULL OR (event_at >= ? AND event_at <= ?)", from, to)
+	if len(eventTypes) > 0 {
+		query = query.Where("event_type IN ?", eventTypes)
+	}
+	err := query.Order("event_at IS NULL ASC").
 		Order("event_at ASC").
 		Order("event_type ASC").
 		Find(&events).Error

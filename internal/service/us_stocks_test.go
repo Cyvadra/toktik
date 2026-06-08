@@ -23,6 +23,18 @@ func (s *stubUSStockCompanyProfileProvider) CompanyProfile(_ context.Context, sy
 	return s.profile, s.err
 }
 
+func (s *stubUSStockCompanyProfileProvider) CompanyProfiles(ctx context.Context, symbols []string) (map[string]*dto.USStockCompanyProfile, error) {
+	profiles := make(map[string]*dto.USStockCompanyProfile, len(symbols))
+	for _, symbol := range symbols {
+		profile, err := s.CompanyProfile(ctx, symbol)
+		if err != nil {
+			return nil, err
+		}
+		profiles[symbol] = profile
+	}
+	return profiles, nil
+}
+
 func (s *stubUSStockCompanyProfileProvider) IsETFLike(ctx context.Context, symbol string) (bool, error) {
 	profile, err := s.CompanyProfile(ctx, symbol)
 	if err != nil {
@@ -80,8 +92,10 @@ func (s *stubFMPCompanyProfiler) profileForSymbol(symbol string) *dto.USStockCom
 type stubUSStockFundamentals struct {
 	snapshotReqs []dto.FundamentalSnapshotRequest
 	seriesReqs   []dto.FundamentalSeriesRequest
+	panelReqs    []dto.FundamentalPanelRequest
 	snapshotResp *dto.FundamentalSnapshotResponse
 	seriesResp   map[string]*dto.FundamentalSeriesResponse
+	panelResp    *dto.FundamentalPanelResponse
 }
 
 func (s *stubUSStockFundamentals) QuerySnapshot(_ context.Context, req dto.FundamentalSnapshotRequest) (*dto.FundamentalSnapshotResponse, error) {
@@ -98,6 +112,14 @@ func (s *stubUSStockFundamentals) QuerySeries(_ context.Context, req dto.Fundame
 		return resp, nil
 	}
 	return &dto.FundamentalSeriesResponse{}, nil
+}
+
+func (s *stubUSStockFundamentals) QueryPanel(_ context.Context, req dto.FundamentalPanelRequest) (*dto.FundamentalPanelResponse, error) {
+	s.panelReqs = append(s.panelReqs, req)
+	if s.panelResp == nil {
+		return &dto.FundamentalPanelResponse{}, nil
+	}
+	return s.panelResp, nil
 }
 
 func TestUSStocksQuerySplitsReturnsLatestRowsForSymbols(t *testing.T) {
@@ -148,6 +170,33 @@ func TestUSStocksQuerySplitsRequiresSymbol(t *testing.T) {
 	_, err := svc.QuerySplits(context.Background(), dto.USStockSplitRequest{})
 	if err == nil || !strings.Contains(err.Error(), "symbol is required") {
 		t.Fatalf("expected symbol validation error, got %v", err)
+	}
+}
+
+func TestClickHouseUSStockCompanyProfileProviderReadsPersistedProfiles(t *testing.T) {
+	marketCap := 123456789.0
+	rows := &fakeForexRows{data: [][]any{
+		{"AAPL", "AAPL", "Apple Inc.", "US", "USD", "NASDAQ", "Nasdaq Global Select", "Technology", "Consumer Electronics", "1980-12-12", &marketCap, (*float64)(nil), "https://www.apple.com", "https://example.com/aapl.png", "fmp", uint8(0), uint8(0)},
+	}}
+	conn := &fakeForexConn{rows: rows}
+	provider := NewClickHouseUSStockCompanyProfileProvider(chrepo.NewRepo(conn))
+
+	profiles, err := provider.CompanyProfiles(context.Background(), []string{" aapl ", "AAPL", ""})
+	if err != nil {
+		t.Fatalf("CompanyProfiles() error = %v", err)
+	}
+	profile := profiles["AAPL"]
+	if profile == nil {
+		t.Fatalf("expected AAPL profile, got %#v", profiles)
+	}
+	if profile.Name != "Apple Inc." || profile.Ticker != "AAPL" || profile.MarketCapitalization == nil || *profile.MarketCapitalization != marketCap {
+		t.Fatalf("unexpected profile: %#v", profile)
+	}
+	if !strings.Contains(conn.queryText, "FROM us_stock_company_profile FINAL") {
+		t.Fatalf("expected profile query to read persisted ClickHouse table, got %s", conn.queryText)
+	}
+	if !rows.closed {
+		t.Fatal("expected rows to be closed")
 	}
 }
 

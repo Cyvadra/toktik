@@ -38,11 +38,56 @@ type USStockBarRow struct {
 
 // USStockCompanyProfile describes cached company-classification metadata.
 type USStockCompanyProfile struct {
-	Symbol   string `json:"symbol"`
-	Sector   string `json:"sector,omitempty"`
-	Industry string `json:"industry,omitempty"`
-	IsETF    bool   `json:"is_etf,omitempty"`
-	IsFund   bool   `json:"is_fund,omitempty"`
+	Symbol               string   `json:"symbol"`
+	Ticker               string   `json:"ticker,omitempty"`
+	Name                 string   `json:"name,omitempty"`
+	Country              string   `json:"country,omitempty"`
+	Currency             string   `json:"currency,omitempty"`
+	Exchange             string   `json:"exchange,omitempty"`
+	ExchangeFullName     string   `json:"exchange_full_name,omitempty"`
+	Sector               string   `json:"sector,omitempty"`
+	Industry             string   `json:"industry,omitempty"`
+	IPO                  string   `json:"ipo,omitempty"`
+	MarketCapitalization *float64 `json:"market_capitalization,omitempty"`
+	ShareOutstanding     *float64 `json:"share_outstanding,omitempty"`
+	WebURL               string   `json:"weburl,omitempty"`
+	Logo                 string   `json:"logo,omitempty"`
+	Source               string   `json:"source,omitempty"`
+	IsETF                bool     `json:"is_etf,omitempty"`
+	IsFund               bool     `json:"is_fund,omitempty"`
+}
+
+type USStockProfileRequest struct {
+	Symbols []string `json:"symbols" binding:"required"`
+}
+
+type USStockProfileResponse struct {
+	Data []USStockCompanyProfile `json:"data"`
+}
+
+type USStockFundamentalMetricsRequest struct {
+	Symbols []string `json:"symbols" binding:"required"`
+	AsOf    string   `json:"as_of,omitempty" binding:"omitempty"`
+}
+
+type USStockFundamentalMetricsRow struct {
+	Symbol                    string   `json:"symbol"`
+	PeTtm                     *float64 `json:"peTtm,omitempty"`
+	ForwardPe                 *float64 `json:"forwardPe,omitempty"`
+	PB                        *float64 `json:"pb,omitempty"`
+	BookValuePerShare         *float64 `json:"bookValuePerShare,omitempty"`
+	EpsTtm                    *float64 `json:"epsTtm,omitempty"`
+	EpsGrowthTtmYoy           *float64 `json:"epsGrowthTtmYoy,omitempty"`
+	EpsGrowthQuarterlyYoy     *float64 `json:"epsGrowthQuarterlyYoy,omitempty"`
+	RevenueGrowthTtmYoy       *float64 `json:"revenueGrowthTtmYoy,omitempty"`
+	RevenueGrowthQuarterlyYoy *float64 `json:"revenueGrowthQuarterlyYoy,omitempty"`
+	AsOf                      string   `json:"asOf,omitempty"`
+	Period                    string   `json:"period,omitempty"`
+	Source                    string   `json:"source,omitempty"`
+}
+
+type USStockFundamentalMetricsResponse struct {
+	Data []USStockFundamentalMetricsRow `json:"data"`
 }
 
 // USStockBarMeta wraps optional metadata returned alongside bars.

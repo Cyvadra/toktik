@@ -221,6 +221,41 @@ func TestUSStocksFundamentalsUniverseFilterClauseRequiresPEAndPB(t *testing.T) {
 	}
 }
 
+func TestScreenUnderlyingsCoalescesNullableLiquidityAggregates(t *testing.T) {
+	min := 1.0
+	conn := &fakeScreenerConn{rows: []driver.Rows{&fakeScreenerRows{}}}
+	svc := NewScreenerService(chrepo.NewRepo(conn))
+
+	if _, err := svc.ScreenUnderlyings(context.Background(), dto.ScreenUnderlyingRequest{
+		Market:              "us-options",
+		OpenInterestMin:     &min,
+		ActivityRatioMin:    &min,
+		TradabilityRatioMin: &min,
+		SortBy:              "open_interest",
+		Limit:               1,
+	}); err != nil {
+		t.Fatalf("ScreenUnderlyings() error = %v", err)
+	}
+	if len(conn.queries) != 1 {
+		t.Fatalf("expected 1 query, got %d", len(conn.queries))
+	}
+	query := conn.queries[0]
+	for _, want := range []string{
+		"ifNull(l.total_oi, 0)",
+		"ifNull(l.total_volume, 0)",
+		"ifNull(l.avg_activity_ratio, 0)",
+		"ifNull(l.avg_tradability_ratio, 0)",
+		"AND ifNull(l.total_oi, 0) >=",
+		"AND ifNull(l.avg_activity_ratio, 0) >=",
+		"AND ifNull(l.avg_tradability_ratio, 0) >=",
+		"ORDER BY ifNull(l.total_oi, 0) DESC",
+	} {
+		if !strings.Contains(query, want) {
+			t.Fatalf("expected query to contain %q, got %q", want, query)
+		}
+	}
+}
+
 func TestFilterNonETFUSTurnoverResultsDropsETFProfiles(t *testing.T) {
 	provider := &stubUSStockCompanyProfileProvider{}
 	provider.requests = nil
@@ -294,6 +329,18 @@ type stubUSStockCompanyProfileProviderFunc struct {
 
 func (s *stubUSStockCompanyProfileProviderFunc) CompanyProfile(ctx context.Context, symbol string) (*dto.USStockCompanyProfile, error) {
 	return s.fn(ctx, symbol)
+}
+
+func (s *stubUSStockCompanyProfileProviderFunc) CompanyProfiles(ctx context.Context, symbols []string) (map[string]*dto.USStockCompanyProfile, error) {
+	profiles := make(map[string]*dto.USStockCompanyProfile, len(symbols))
+	for _, symbol := range symbols {
+		profile, err := s.CompanyProfile(ctx, symbol)
+		if err != nil {
+			return nil, err
+		}
+		profiles[symbol] = profile
+	}
+	return profiles, nil
 }
 
 func (s *stubUSStockCompanyProfileProviderFunc) IsETFLike(ctx context.Context, symbol string) (bool, error) {

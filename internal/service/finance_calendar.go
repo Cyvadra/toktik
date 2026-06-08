@@ -38,12 +38,12 @@ func NewFinanceCalendarService(repo *calendarrepo.Repo, fmpClient *fmp.Client, c
 	return svc
 }
 
-func (s *FinanceCalendarService) QueryEconomicCalendar(ctx context.Context) (*dto.EconomicCalendarResponse, error) {
-	if s == nil || s.repo == nil || s.fmp == nil {
+func (s *FinanceCalendarService) QueryEconomicCalendar(ctx context.Context, req dto.EconomicCalendarRequest) (*dto.EconomicCalendarResponse, error) {
+	if s == nil || s.repo == nil {
 		return nil, fmt.Errorf("finance calendar service not configured")
 	}
-	from, to := s.economicWindow()
-	if err := s.ensureEconomicCalendarSynced(ctx, from, to); err != nil {
+	from, to, err := s.resolveEconomicWindow(req)
+	if err != nil {
 		return nil, err
 	}
 	events, err := s.repo.ListEconomicEvents(ctx, from, to)
@@ -54,22 +54,32 @@ func (s *FinanceCalendarService) QueryEconomicCalendar(ctx context.Context) (*dt
 }
 
 func (s *FinanceCalendarService) QueryStockCalendar(ctx context.Context, req dto.StockCalendarRequest) (*dto.StockCalendarResponse, error) {
-	if s == nil || s.repo == nil || s.fmp == nil {
+	if s == nil || s.repo == nil {
 		return nil, fmt.Errorf("finance calendar service not configured")
 	}
 	symbols := normalizeFinanceCalendarSymbols(req.Symbols)
 	if len(symbols) == 0 {
 		return nil, dto.NewValidationError("symbols must be non-empty")
 	}
-	from, to := s.stockWindow()
-	if err := s.ensureStockCalendarSynced(ctx, from, to, symbols); err != nil {
+	from, to, err := s.resolveStockWindow(req)
+	if err != nil {
 		return nil, err
 	}
-	events, err := s.repo.ListStockEvents(ctx, symbols, from, to)
+	events, err := s.repo.ListStockEventsByTypes(ctx, symbols, from, to, normalizeStockCalendarTypes(req))
 	if err != nil {
 		return nil, fmt.Errorf("query stock calendar: %w", err)
 	}
 	return &dto.StockCalendarResponse{Symbols: symbols, Data: calendarEventsToDTO(events)}, nil
+}
+
+func (s *FinanceCalendarService) resolveEconomicWindow(req dto.EconomicCalendarRequest) (time.Time, time.Time, error) {
+	from, to := s.economicWindow()
+	return overrideCalendarWindow(from, to, req.From, req.To)
+}
+
+func (s *FinanceCalendarService) resolveStockWindow(req dto.StockCalendarRequest) (time.Time, time.Time, error) {
+	from, to := s.stockWindow()
+	return overrideCalendarWindow(from, to, req.From, req.To)
 }
 
 func (s *FinanceCalendarService) economicWindow() (time.Time, time.Time) {
@@ -434,11 +444,58 @@ func calendarEventsToDTO(events []calendarrepo.CalendarEvent) []dto.CalendarEven
 			Period:           event.Period,
 			LinkJSON:         event.LinkJSON,
 			LinkXLSX:         event.LinkXLSX,
+			Source:           event.Source,
+			UpdatedAt:        event.UpdatedAt.UTC().Format(time.RFC3339),
 		}
 		if event.EventAt != nil {
 			item.Time = event.EventAt.Format(time.RFC3339)
 		}
 		out = append(out, item)
+	}
+	return out
+}
+
+func overrideCalendarWindow(defaultFrom, defaultTo time.Time, fromValue, toValue string) (time.Time, time.Time, error) {
+	from := defaultFrom
+	to := defaultTo
+	if strings.TrimSpace(fromValue) != "" {
+		parsed, err := time.ParseInLocation(financeCalendarDateLayout, strings.TrimSpace(fromValue), time.UTC)
+		if err != nil {
+			return time.Time{}, time.Time{}, dto.NewValidationError("invalid from date %q, expected YYYY-MM-DD", fromValue)
+		}
+		from = parsed
+	}
+	if strings.TrimSpace(toValue) != "" {
+		parsed, err := time.ParseInLocation(financeCalendarDateLayout, strings.TrimSpace(toValue), time.UTC)
+		if err != nil {
+			return time.Time{}, time.Time{}, dto.NewValidationError("invalid to date %q, expected YYYY-MM-DD", toValue)
+		}
+		to = parsed
+	}
+	if to.Before(from) {
+		return time.Time{}, time.Time{}, dto.NewValidationError("to date must be on or after from date")
+	}
+	return from, to, nil
+}
+
+func normalizeStockCalendarTypes(req dto.StockCalendarRequest) []string {
+	if req.EarningsOnly {
+		return []string{string(calendarrepo.EventTypeEarnings)}
+	}
+	seen := map[string]struct{}{}
+	out := []string{}
+	for _, value := range req.Types {
+		for _, part := range strings.Split(value, ",") {
+			eventType := strings.ToLower(strings.TrimSpace(part))
+			if eventType == "" {
+				continue
+			}
+			if _, ok := seen[eventType]; ok {
+				continue
+			}
+			seen[eventType] = struct{}{}
+			out = append(out, eventType)
+		}
 	}
 	return out
 }

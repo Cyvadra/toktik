@@ -172,6 +172,66 @@ func (h *Handler) GetUSStockSymbols(c *gin.Context) {
 	c.JSON(http.StatusOK, resp)
 }
 
+// GetUSStockProfiles handles POST /api/v1/markets/us-stocks/profiles.
+//
+//	@Summary		Get US stock company profiles
+//	@Description	Returns persisted company profile metadata for one or more US stock ticker symbols. Refresh is handled by the fmp_us_stock_profiles data-sync-pipeline job.
+//	@Tags			USStocks
+//	@Accept			json
+//	@Produce		json
+//	@Param			request	body		dto.USStockProfileRequest	true	"US stock profile request"
+//	@Success		200		{object}	dto.USStockProfileResponse
+//	@Failure		400		{object}	dto.ErrorResponse
+//	@Failure		500		{object}	dto.ErrorResponse
+//	@Router			/markets/us-stocks/profiles [post]
+func (h *Handler) GetUSStockProfiles(c *gin.Context) {
+	if h.usStocks == nil {
+		c.JSON(http.StatusNotImplemented, dto.ErrorResponse{Error: "us-stocks provider not configured"})
+		return
+	}
+	var req dto.USStockProfileRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: err.Error()})
+		return
+	}
+	resp, err := h.usStocks.QueryProfiles(c.Request.Context(), req)
+	if err != nil {
+		handleServiceError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, resp)
+}
+
+// GetUSStockFundamentalMetrics handles POST /api/v1/markets/us-stocks/fundamentals.
+//
+//	@Summary		Get US stock fundamental metrics
+//	@Description	Returns Finnhub-compatible high-level fundamental metric fields backed by the local DB fundamentals store where available.
+//	@Tags			USStocks
+//	@Accept			json
+//	@Produce		json
+//	@Param			request	body		dto.USStockFundamentalMetricsRequest	true	"US stock fundamental metrics request"
+//	@Success		200		{object}	dto.USStockFundamentalMetricsResponse
+//	@Failure		400		{object}	dto.ErrorResponse
+//	@Failure		500		{object}	dto.ErrorResponse
+//	@Router			/markets/us-stocks/fundamentals [post]
+func (h *Handler) GetUSStockFundamentalMetrics(c *gin.Context) {
+	if h.usStocks == nil {
+		c.JSON(http.StatusNotImplemented, dto.ErrorResponse{Error: "us-stocks provider not configured"})
+		return
+	}
+	var req dto.USStockFundamentalMetricsRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: err.Error()})
+		return
+	}
+	resp, err := h.usStocks.QueryFundamentalMetrics(c.Request.Context(), req)
+	if err != nil {
+		handleServiceError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, resp)
+}
+
 // GetUSStockSplits handles GET /api/v1/markets/us-stocks/splits.
 //
 //	@Summary		Get US stock split adjustment events

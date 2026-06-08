@@ -23,6 +23,8 @@ type USStocksQuerier interface {
 	QueryBars(ctx context.Context, req dto.USStockBarRequest) (*dto.USStockBarResponse, error)
 	QuerySymbols(ctx context.Context, req dto.USStockSymbolRequest) (*dto.USStockSymbolResponse, error)
 	QuerySplits(ctx context.Context, req dto.USStockSplitRequest) (*dto.USStockSplitResponse, error)
+	QueryProfiles(ctx context.Context, req dto.USStockProfileRequest) (*dto.USStockProfileResponse, error)
+	QueryFundamentalMetrics(ctx context.Context, req dto.USStockFundamentalMetricsRequest) (*dto.USStockFundamentalMetricsResponse, error)
 }
 
 // USOptionsQuerier defines the operations needed for low-level US option endpoints.
@@ -126,7 +128,7 @@ type MacroProvider interface {
 }
 
 type FinanceCalendarProvider interface {
-	QueryEconomicCalendar(ctx context.Context) (*dto.EconomicCalendarResponse, error)
+	QueryEconomicCalendar(ctx context.Context, req dto.EconomicCalendarRequest) (*dto.EconomicCalendarResponse, error)
 	QueryStockCalendar(ctx context.Context, req dto.StockCalendarRequest) (*dto.StockCalendarResponse, error)
 }
 

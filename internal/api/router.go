@@ -177,6 +177,8 @@ func registerRoutes(v1 *gin.RouterGroup, h *Handler) {
 	marketUSStocks := markets.Group("/us-stocks")
 	marketUSStocks.GET("/bars", h.GetUSStockBars)
 	marketUSStocks.GET("/symbols", h.GetUSStockSymbols)
+	marketUSStocks.POST("/profiles", h.GetUSStockProfiles)
+	marketUSStocks.POST("/fundamentals", h.GetUSStockFundamentalMetrics)
 	marketUSStocks.GET("/splits", h.GetUSStockSplits)
 
 	marketUSOptions := markets.Group("/us-options")

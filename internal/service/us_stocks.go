@@ -22,6 +22,7 @@ type USStocksService struct {
 type usStockFundamentalsQuerier interface {
 	QuerySeries(ctx context.Context, req dto.FundamentalSeriesRequest) (*dto.FundamentalSeriesResponse, error)
 	QuerySnapshot(ctx context.Context, req dto.FundamentalSnapshotRequest) (*dto.FundamentalSnapshotResponse, error)
+	QueryPanel(ctx context.Context, req dto.FundamentalPanelRequest) (*dto.FundamentalPanelResponse, error)
 }
 
 func NewUSStocksService(repo *chrepo.Repo, fundamentals ...usStockFundamentalsQuerier) *USStocksService {
@@ -84,6 +85,80 @@ LIMIT %s`, clickhouseUInt32Literal(limit+1))
 		return encodeCursorString(r.Symbol)
 	})
 	s.attachCompanyProfilesToSymbols(ctx, resp.Data)
+	return resp, nil
+}
+
+func (s *USStocksService) QueryProfiles(ctx context.Context, req dto.USStockProfileRequest) (*dto.USStockProfileResponse, error) {
+	symbols := normalizeUSStockSymbolList(req.Symbols)
+	if len(symbols) == 0 {
+		return nil, dto.NewValidationError("symbols must be non-empty")
+	}
+	if len(symbols) > 500 {
+		return nil, dto.NewValidationError("symbols list capped at 500 per request")
+	}
+	resp := &dto.USStockProfileResponse{Data: []dto.USStockCompanyProfile{}}
+	if s == nil || s.companyInfo == nil {
+		return resp, nil
+	}
+	profiles, err := s.companyInfo.CompanyProfiles(ctx, symbols)
+	if err != nil {
+		return nil, fmt.Errorf("query US stock profiles: %w", err)
+	}
+	for _, symbol := range symbols {
+		profile := profiles[symbol]
+		if profile == nil {
+			resp.Data = append(resp.Data, dto.USStockCompanyProfile{Symbol: symbol, Ticker: symbol})
+			continue
+		}
+		resp.Data = append(resp.Data, *profile)
+	}
+	return resp, nil
+}
+
+func (s *USStocksService) QueryFundamentalMetrics(ctx context.Context, req dto.USStockFundamentalMetricsRequest) (*dto.USStockFundamentalMetricsResponse, error) {
+	symbols := normalizeUSStockSymbolList(req.Symbols)
+	if len(symbols) == 0 {
+		return nil, dto.NewValidationError("symbols must be non-empty")
+	}
+	if len(symbols) > 500 {
+		return nil, dto.NewValidationError("symbols list capped at 500 per request")
+	}
+	resp := &dto.USStockFundamentalMetricsResponse{Data: make([]dto.USStockFundamentalMetricsRow, 0, len(symbols))}
+	if s == nil || s.fundamentals == nil {
+		for _, symbol := range symbols {
+			resp.Data = append(resp.Data, dto.USStockFundamentalMetricsRow{Symbol: symbol})
+		}
+		return resp, nil
+	}
+	panel, err := s.fundamentals.QueryPanel(ctx, dto.FundamentalPanelRequest{Market: "us-stocks", Symbols: symbols, Factors: []string{"pe", "pb"}, AsOf: req.AsOf})
+	if err != nil {
+		return nil, err
+	}
+	rows := make(map[string]*dto.USStockFundamentalMetricsRow, len(symbols))
+	for _, symbol := range symbols {
+		rows[symbol] = &dto.USStockFundamentalMetricsRow{Symbol: symbol, Period: "ttm", Source: "db-api"}
+		resp.Data = append(resp.Data, *rows[symbol])
+	}
+	for _, item := range panel.Data {
+		row := rows[strings.ToUpper(strings.TrimSpace(item.Symbol))]
+		if row == nil {
+			continue
+		}
+		value := item.Value
+		switch item.Factor {
+		case "pe":
+			row.PeTtm = &value
+		case "pb":
+			row.PB = &value
+		}
+		if row.AsOf == "" || item.KnownAt.Format(time.RFC3339) > row.AsOf {
+			row.AsOf = item.KnownAt.Format(time.RFC3339)
+		}
+	}
+	resp.Data = resp.Data[:0]
+	for _, symbol := range symbols {
+		resp.Data = append(resp.Data, *rows[symbol])
+	}
 	return resp, nil
 }
 

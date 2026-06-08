@@ -7,7 +7,7 @@
 - Source Swagger: `docs/swagger.json`
 - API title: `Toktik Options Platform API`
 - API version: `1.0`
-- Generated at: `2026-06-05T08:25:18Z`
+- Generated at: `2026-06-08T07:26:32Z`
 
 ## Scope
 
@@ -706,6 +706,52 @@ Returns latest known values per (symbol, factor) at as_of. For us-stocks, price-
 | 400 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Bad Request |
 | 500 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Internal Server Error |
 
+### US stock company profiles
+
+- Endpoint: `POST /api/v1/markets/us-stocks/profiles`
+- Tags: `USStocks`
+- Consumes: `application/json`
+- Produces: `application/json`
+- Summary: Get US stock company profiles
+- Description: Returns persisted company profile metadata for one or more US stock ticker symbols. Refresh is handled by the fmp_us_stock_profiles data-sync-pipeline job.
+
+#### Parameters
+
+| Name | In | Type | Required | Description |
+| --- | --- | --- | --- | --- |
+| request | body | github_com_Cyvadra_toktik_internal_dto.USStockProfileRequest | yes | US stock profile request |
+
+#### Responses
+
+| Status | Schema | Description |
+| --- | --- | --- |
+| 200 | github_com_Cyvadra_toktik_internal_dto.USStockProfileResponse | OK |
+| 400 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Bad Request |
+| 500 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Internal Server Error |
+
+### US stock fundamental metrics
+
+- Endpoint: `POST /api/v1/markets/us-stocks/fundamentals`
+- Tags: `USStocks`
+- Consumes: `application/json`
+- Produces: `application/json`
+- Summary: Get US stock fundamental metrics
+- Description: Returns Finnhub-compatible high-level fundamental metric fields backed by the local DB fundamentals store where available.
+
+#### Parameters
+
+| Name | In | Type | Required | Description |
+| --- | --- | --- | --- | --- |
+| request | body | github_com_Cyvadra_toktik_internal_dto.USStockFundamentalMetricsRequest | yes | US stock fundamental metrics request |
+
+#### Responses
+
+| Status | Schema | Description |
+| --- | --- | --- |
+| 200 | github_com_Cyvadra_toktik_internal_dto.USStockFundamentalMetricsResponse | OK |
+| 400 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Bad Request |
+| 500 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Internal Server Error |
+
 ### US stock split events
 
 - Endpoint: `GET /api/v1/markets/us-stocks/splits`
@@ -956,11 +1002,14 @@ Returns latest known values per (symbol, factor) at as_of. For us-stocks, price-
 - Tags: `Calendar`
 - Produces: `application/json`
 - Summary: Get economic calendar
-- Description: Returns the macro economic calendar for the default window (today-7d to today+30d). The upstream FMP data is synced on demand with a 12h sync marker cache.
+- Description: Returns the persisted macro economic calendar from MySQL for the requested window, or the default window (today-7d to today+30d) when omitted. Refresh is handled by the fmp_economic_calendar data-sync-pipeline job.
 
 #### Parameters
 
-No parameters.
+| Name | In | Type | Required | Description |
+| --- | --- | --- | --- | --- |
+| from | query | string | no | Start date (YYYY-MM-DD) |
+| to | query | string | no | End date (YYYY-MM-DD) |
 
 #### Responses
 
@@ -977,7 +1026,7 @@ No parameters.
 - Consumes: `application/json`
 - Produces: `application/json`
 - Summary: Get stock calendar
-- Description: Returns calendar events for an observed US stock pool. The request body accepts a list of symbols and the service syncs the default stock window (today-30d to today+90d) before reading from MySQL.
+- Description: Returns persisted calendar events for an observed US stock pool from MySQL. The request body accepts symbols, optional from/to date window, optional event types, and earnings_only for Finnhub-replacement earnings calendar use cases. Refresh is handled by the fmp_observed_stock_calendar data-sync-pipeline job.
 
 #### Parameters
 

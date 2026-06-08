@@ -446,10 +446,10 @@ SELECT
     v.current_iv,
     v.iv_percentile,
     v.iv_rank,
-    l.total_oi,
-    l.total_volume,
-    l.avg_activity_ratio,
-    l.avg_tradability_ratio
+    ifNull(l.total_oi, 0),
+    ifNull(l.total_volume, 0),
+    ifNull(l.avg_activity_ratio, 0),
+    ifNull(l.avg_tradability_ratio, 0)
 FROM (
     SELECT market, underlying, as_of_date, hv10, hv20, hv30, current_iv, iv_percentile, iv_rank
     FROM feature_volatility_snapshot_daily
@@ -461,10 +461,10 @@ FROM (
 ) v
 LEFT JOIN (
     SELECT market, underlying,
-        sum(open_interest) AS total_oi,
-        sum(volume) AS total_volume,
-        avg(activity_ratio) AS avg_activity_ratio,
-		avg(if(%s = 'us-options' AND avg_bid_close IS NULL AND avg_ask_close IS NULL AND tradable_contract_count = 0, CAST(NULL, 'Nullable(Float64)'), tradability_ratio)) AS avg_tradability_ratio
+        ifNull(sum(open_interest), 0) AS total_oi,
+        ifNull(sum(volume), 0) AS total_volume,
+        ifNull(avg(activity_ratio), 0) AS avg_activity_ratio,
+		ifNull(avg(if(%s = 'us-options' AND avg_bid_close IS NULL AND avg_ask_close IS NULL AND tradable_contract_count = 0, CAST(NULL, 'Nullable(Float64)'), tradability_ratio)), 0) AS avg_tradability_ratio
     FROM feature_liquidity_snapshot_daily
 		WHERE market = %s
       AND as_of_date = (

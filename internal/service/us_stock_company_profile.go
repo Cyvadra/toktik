@@ -3,12 +3,15 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"math/rand/v2"
 	"strings"
 	"sync"
 	"time"
 
+	clickhouse "github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/Cyvadra/toktik/internal/cache"
+	"github.com/Cyvadra/toktik/internal/chrepo"
 	"github.com/Cyvadra/toktik/internal/dto"
 	"github.com/Cyvadra/toktik/pkg/fmp"
 )
@@ -22,6 +25,7 @@ const (
 
 type usStockCompanyProfileProvider interface {
 	CompanyProfile(ctx context.Context, symbol string) (*dto.USStockCompanyProfile, error)
+	CompanyProfiles(ctx context.Context, symbols []string) (map[string]*dto.USStockCompanyProfile, error)
 	IsETFLike(ctx context.Context, symbol string) (bool, error)
 	IsETFLikeBySymbol(ctx context.Context, symbols []string) (map[string]bool, error)
 }
@@ -39,6 +43,122 @@ type cachedFMPUSStockCompanyProfileProvider struct {
 
 type cachedUSStockCompanyProfileRecord struct {
 	Profile *dto.USStockCompanyProfile `json:"profile,omitempty"`
+}
+
+type clickHouseUSStockCompanyProfileProvider struct {
+	repo *chrepo.Repo
+}
+
+func NewClickHouseUSStockCompanyProfileProvider(repo *chrepo.Repo) usStockCompanyProfileProvider {
+	if repo == nil || repo.Conn == nil {
+		return nil
+	}
+	return &clickHouseUSStockCompanyProfileProvider{repo: repo}
+}
+
+func (p *clickHouseUSStockCompanyProfileProvider) CompanyProfile(ctx context.Context, symbol string) (*dto.USStockCompanyProfile, error) {
+	profiles, err := p.CompanyProfiles(ctx, []string{symbol})
+	if err != nil {
+		return nil, err
+	}
+	return profiles[normalizeUSStockCompanyProfileSymbol(symbol)], nil
+}
+
+func (p *clickHouseUSStockCompanyProfileProvider) CompanyProfiles(ctx context.Context, symbols []string) (map[string]*dto.USStockCompanyProfile, error) {
+	normalized := normalizeUSStockCompanyProfileSymbols(symbols)
+	profiles := make(map[string]*dto.USStockCompanyProfile, len(normalized))
+	if len(normalized) == 0 {
+		return profiles, nil
+	}
+	query := `
+SELECT
+    symbol,
+    ticker,
+    name,
+    country,
+    currency,
+    exchange,
+    exchange_full_name,
+    sector,
+    industry,
+    ipo,
+    market_capitalization,
+    share_outstanding,
+    weburl,
+    logo,
+    source,
+    is_etf,
+    is_fund
+FROM us_stock_company_profile FINAL
+WHERE symbol IN {symbols:Array(String)}
+ORDER BY symbol`
+	rows, err := p.repo.Conn.Query(ctx, query, clickhouse.Named("symbols", normalized))
+	if err != nil {
+		return nil, fmt.Errorf("query US stock company profiles: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var profile dto.USStockCompanyProfile
+		var marketCapitalization *float64
+		var shareOutstanding *float64
+		var isETF uint8
+		var isFund uint8
+		if err := rows.Scan(
+			&profile.Symbol,
+			&profile.Ticker,
+			&profile.Name,
+			&profile.Country,
+			&profile.Currency,
+			&profile.Exchange,
+			&profile.ExchangeFullName,
+			&profile.Sector,
+			&profile.Industry,
+			&profile.IPO,
+			&marketCapitalization,
+			&shareOutstanding,
+			&profile.WebURL,
+			&profile.Logo,
+			&profile.Source,
+			&isETF,
+			&isFund,
+		); err != nil {
+			return nil, err
+		}
+		profile.Symbol = normalizeUSStockCompanyProfileSymbol(profile.Symbol)
+		if profile.Ticker == "" {
+			profile.Ticker = profile.Symbol
+		}
+		profile.MarketCapitalization = marketCapitalization
+		profile.ShareOutstanding = shareOutstanding
+		profile.IsETF = isETF != 0
+		profile.IsFund = isFund != 0
+		profiles[profile.Symbol] = &profile
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return profiles, nil
+}
+
+func (p *clickHouseUSStockCompanyProfileProvider) IsETFLike(ctx context.Context, symbol string) (bool, error) {
+	profile, err := p.CompanyProfile(ctx, symbol)
+	if err != nil {
+		return false, err
+	}
+	return isETFLikeUSStockProfile(profile), nil
+}
+
+func (p *clickHouseUSStockCompanyProfileProvider) IsETFLikeBySymbol(ctx context.Context, symbols []string) (map[string]bool, error) {
+	profiles, err := p.CompanyProfiles(ctx, symbols)
+	if err != nil {
+		return nil, err
+	}
+	normalized := normalizeUSStockCompanyProfileSymbols(symbols)
+	result := make(map[string]bool, len(normalized))
+	for _, symbol := range normalized {
+		result[symbol] = isETFLikeUSStockProfile(profiles[symbol])
+	}
+	return result, nil
 }
 
 func NewCachedFMPUSStockCompanyProfileProvider(apiKey string, cacheStore cache.Store) usStockCompanyProfileProvider {
@@ -75,6 +195,10 @@ func (p *cachedFMPUSStockCompanyProfileProvider) IsETFLike(ctx context.Context, 
 		return false, err
 	}
 	return isETFLikeUSStockProfile(profile), nil
+}
+
+func (p *cachedFMPUSStockCompanyProfileProvider) CompanyProfiles(ctx context.Context, symbols []string) (map[string]*dto.USStockCompanyProfile, error) {
+	return p.companyProfilesBySymbol(ctx, symbols)
 }
 
 func (p *cachedFMPUSStockCompanyProfileProvider) IsETFLikeBySymbol(ctx context.Context, symbols []string) (map[string]bool, error) {
@@ -182,16 +306,34 @@ func classifyUSStockCompanyProfile(symbol string, profile fmp.Profile) *dto.USSt
 		return nil
 	}
 	classification := &dto.USStockCompanyProfile{
-		Symbol:   normalized,
-		Sector:   strings.TrimSpace(profile.Sector),
-		Industry: strings.TrimSpace(profile.Industry),
-		IsETF:    profile.IsETF,
-		IsFund:   profile.IsFund,
+		Symbol:           normalized,
+		Ticker:           normalized,
+		Name:             strings.TrimSpace(profile.CompanyName),
+		Country:          strings.TrimSpace(profile.Country),
+		Currency:         strings.TrimSpace(profile.Currency),
+		Exchange:         strings.TrimSpace(profile.Exchange),
+		ExchangeFullName: strings.TrimSpace(profile.ExchangeFullName),
+		Sector:           strings.TrimSpace(profile.Sector),
+		Industry:         strings.TrimSpace(profile.Industry),
+		IPO:              strings.TrimSpace(profile.IPODate),
+		WebURL:           strings.TrimSpace(profile.Website),
+		Logo:             strings.TrimSpace(profile.Image),
+		Source:           "fmp",
+		IsETF:            profile.IsETF,
+		IsFund:           profile.IsFund,
 	}
-	if classification.Sector == "" && classification.Industry == "" && !classification.IsETF && !classification.IsFund {
+	if profile.MarketCap > 0 {
+		value := float64(profile.MarketCap)
+		classification.MarketCapitalization = &value
+	}
+	if classification.Name == "" && classification.Country == "" && classification.Currency == "" && classification.Exchange == "" && classification.Sector == "" && classification.Industry == "" && !classification.IsETF && !classification.IsFund {
 		return nil
 	}
 	return classification
+}
+
+func ClassifyFMPUSStockCompanyProfile(symbol string, profile fmp.Profile) *dto.USStockCompanyProfile {
+	return classifyUSStockCompanyProfile(symbol, profile)
 }
 
 func normalizeUSStockCompanyProfileSymbols(symbols []string) []string {
@@ -258,7 +400,7 @@ func (p *cachedFMPUSStockCompanyProfileProvider) storeInCache(ctx context.Contex
 }
 
 func usStockCompanyProfileCacheKey(symbol string) string {
-	return "us-stocks:company-profile:v2:" + normalizeUSStockCompanyProfileSymbol(symbol)
+	return "us-stocks:company-profile:v3:" + normalizeUSStockCompanyProfileSymbol(symbol)
 }
 
 func normalizeUSStockCompanyProfileSymbol(symbol string) string {

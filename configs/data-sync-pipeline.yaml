@@ -87,9 +87,17 @@ jobs:
     batch_size: 1000
     cold_start_floor: 1990-01-01
 
-  fmp_us_fundamentals:
+  fmp_us_stock_profiles:
     enabled: true
     depends_on: [fmp_us_stocks]
+    resolve_at_startup: true
+    include_option_gap_mappings: true
+    batch_size: 25
+    workers: 4
+
+  fmp_us_fundamentals:
+    enabled: true
+    depends_on: [fmp_us_stocks, fmp_us_stock_profiles]
     provider: fmp
     incremental_mode: sec-filings-financials
     discovery_page_size: 250
@@ -116,7 +124,7 @@ jobs:
 
   fmp_observed_stock_calendar:
     enabled: true
-    depends_on: [fmp_us_fundamentals]
+    depends_on: [fmp_us_fundamentals, fmp_us_stock_profiles]
     cold_start_floor: 2026-01-01
 
   polygon_us_flatfiles:
