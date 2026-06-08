@@ -293,6 +293,7 @@ func runCommand(args []string) error {
 	toValue := fs.String("to", "", "Explicit inclusive end date (YYYY-MM-DD); default is today UTC")
 	overlapDays := fs.Int("overlap-days", -1, "Override overlap days for all selected jobs")
 	workers := fs.Int("workers", 0, "Override max concurrent sources per job")
+	dependencyModeValue := fs.String("dependency-mode", string(syncpipeline.DependencyModePermissive), "Dependency handling mode: permissive allows unselected dependencies, strict skips jobs whose dependencies were not selected")
 	dryRun := fs.Bool("dry-run", false, "Run without writing data rows")
 	force := fs.Bool("force", false, "Ignore successful ledger short-circuit")
 	forceUnlock := fs.Bool("force-unlock", false, "Clear stale pending ledger rows older than lock TTL and ignore the lock")
@@ -347,6 +348,10 @@ func runCommand(args []string) error {
 		return fmt.Errorf("runner.lock_ttl: %w", err)
 	}
 	maxWorkers := resolveSourceConcurrency(cfg.Runner, *workers)
+	dependencyMode, err := syncpipeline.ParseDependencyMode(*dependencyModeValue)
+	if err != nil {
+		return err
+	}
 	if *forceUnlock {
 		cleared, err := syncpipeline.NewLedgerHooks(conn, syncpipeline.LockOptions{TTL: lockTTL, ForceUnlock: true}).ClearStaleLocks(ctx)
 		if err != nil {
@@ -364,6 +369,7 @@ func runCommand(args []string) error {
 	report, err := syncpipeline.NewRunner(conn, syncpipeline.RunnerOptions{
 		Logger:               slog.Default(),
 		MaxSourceConcurrency: maxWorkers,
+		DependencyMode:       dependencyMode,
 		DryRun:               *dryRun,
 		Force:                *force,
 		FromOverride:         from,

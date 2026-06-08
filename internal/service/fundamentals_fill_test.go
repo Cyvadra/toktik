@@ -1,9 +1,13 @@
 package service
 
 import (
+	"context"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/Cyvadra/toktik/internal/chrepo"
 	"github.com/Cyvadra/toktik/internal/dto"
 )
 
@@ -114,5 +118,75 @@ func TestSplitFundamentalFactorSelectionKeepsBasePE(t *testing.T) {
 	}
 	if !selection.includePE10Live {
 		t.Fatal("expected pe10_live virtual selection to remain enabled")
+	}
+}
+
+func TestLookupFillPolicyReturnsCatalogPolicy(t *testing.T) {
+	rows := &fakeForexRows{data: [][]any{{
+		"us-stocks",
+		"pe",
+		"P/E",
+		"price earnings",
+		"float",
+		"ratio",
+		"quarterly",
+		fundamentalFillForwardLimited,
+		uint16(120),
+		uint8(1),
+		"fmp",
+		uint8(1),
+		uint32(72),
+		"{}",
+		time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC),
+	}}}
+	svc := NewFundamentalsService(chrepo.NewRepo(&fakeForexConn{rows: rows}))
+
+	policy, maxDays, err := svc.lookupFillPolicy(context.Background(), "us-stocks", "pe")
+	if err != nil {
+		t.Fatalf("lookupFillPolicy returned error: %v", err)
+	}
+	if policy != fundamentalFillForwardLimited || maxDays != 120 {
+		t.Fatalf("lookupFillPolicy = (%q, %d), want (%q, 120)", policy, maxDays, fundamentalFillForwardLimited)
+	}
+}
+
+func TestLookupFillPolicyFailsOnCatalogQueryError(t *testing.T) {
+	svc := NewFundamentalsService(chrepo.NewRepo(&fakeForexConn{queryErr: fmt.Errorf("catalog unavailable")}))
+
+	_, _, err := svc.lookupFillPolicy(context.Background(), "us-stocks", "pe")
+	if err == nil || !strings.Contains(err.Error(), "query fundamental fill policy catalog") {
+		t.Fatalf("expected catalog query error, got %v", err)
+	}
+}
+
+func TestLookupFillPolicyFailsOnCatalogScanError(t *testing.T) {
+	rows := &fakeForexRows{data: [][]any{{"us-stocks"}}}
+	svc := NewFundamentalsService(chrepo.NewRepo(&fakeForexConn{rows: rows}))
+
+	_, _, err := svc.lookupFillPolicy(context.Background(), "us-stocks", "pe")
+	if err == nil || !strings.Contains(err.Error(), "scan fundamental fill policy catalog") {
+		t.Fatalf("expected catalog scan error, got %v", err)
+	}
+}
+
+func TestLookupFillPolicyFailsOnCatalogRowsError(t *testing.T) {
+	rows := &fakeForexRows{err: fmt.Errorf("row iteration failed")}
+	svc := NewFundamentalsService(chrepo.NewRepo(&fakeForexConn{rows: rows}))
+
+	_, _, err := svc.lookupFillPolicy(context.Background(), "us-stocks", "pe")
+	if err == nil || !strings.Contains(err.Error(), "iterate fundamental fill policy catalog") {
+		t.Fatalf("expected catalog row iteration error, got %v", err)
+	}
+}
+
+func TestLookupFillPolicyUsesDefaultWhenFactorMissing(t *testing.T) {
+	svc := NewFundamentalsService(chrepo.NewRepo(&fakeForexConn{rows: &fakeForexRows{}}))
+
+	policy, maxDays, err := svc.lookupFillPolicy(context.Background(), "us-stocks", "missing_factor")
+	if err != nil {
+		t.Fatalf("lookupFillPolicy returned error: %v", err)
+	}
+	if policy != fundamentalFillForwardFill || maxDays != 0 {
+		t.Fatalf("lookupFillPolicy = (%q, %d), want default forward_fill", policy, maxDays)
 	}
 }

@@ -34,6 +34,26 @@ const (
 	JobStatusSkipped JobStatus = "skipped"
 )
 
+type DependencyMode string
+
+const (
+	// DependencyModePermissive preserves the experimental CLI behavior: jobs may
+	// run even when declared dependencies were not selected for the current run.
+	DependencyModePermissive DependencyMode = "permissive"
+	DependencyModeStrict     DependencyMode = "strict"
+)
+
+func ParseDependencyMode(value string) (DependencyMode, error) {
+	switch mode := DependencyMode(strings.ToLower(strings.TrimSpace(value))); mode {
+	case "", DependencyModePermissive:
+		return DependencyModePermissive, nil
+	case DependencyModeStrict:
+		return DependencyModeStrict, nil
+	default:
+		return "", fmt.Errorf("invalid dependency mode %q (permissive|strict)", value)
+	}
+}
+
 type Syncer interface {
 	Name() string
 	SourceKeys(context.Context, driver.Conn) ([]string, error)
@@ -78,6 +98,7 @@ type JobSpec struct {
 type RunnerOptions struct {
 	Logger               *slog.Logger
 	MaxSourceConcurrency int
+	DependencyMode       DependencyMode
 	DryRun               bool
 	Force                bool
 	FromOverride         time.Time
@@ -99,6 +120,9 @@ func NewRunner(conn driver.Conn, opts RunnerOptions) *Runner {
 	}
 	if opts.LockOptions.TTL <= 0 {
 		opts.LockOptions.TTL = defaultLockTTL
+	}
+	if opts.DependencyMode == "" {
+		opts.DependencyMode = DependencyModePermissive
 	}
 	return &Runner{conn: conn, opts: opts, startedAt: time.Now().UTC()}
 }
@@ -208,7 +232,7 @@ func (r *Runner) Run(ctx context.Context, specs []JobSpec) (RunReport, error) {
 	report := RunReport{StartedAt: started}
 	completed := make(map[string]JobReport, len(ordered))
 	for _, spec := range ordered {
-		if blocked, ok := dependencyBlockedReport(spec, completed); ok {
+		if blocked, ok := dependencyBlockedReport(spec, completed, r.opts.DependencyMode); ok {
 			report.Jobs = append(report.Jobs, blocked)
 			completed[spec.Name] = blocked
 			continue
@@ -221,10 +245,19 @@ func (r *Runner) Run(ctx context.Context, specs []JobSpec) (RunReport, error) {
 	return report, nil
 }
 
-func dependencyBlockedReport(spec JobSpec, completed map[string]JobReport) (JobReport, bool) {
+func dependencyBlockedReport(spec JobSpec, completed map[string]JobReport, mode DependencyMode) (JobReport, bool) {
+	if mode == "" {
+		mode = DependencyModePermissive
+	}
 	for _, dep := range spec.DependsOn {
 		depReport, ok := completed[dep]
-		if !ok || depReport.Status != JobStatusFailed {
+		if !ok {
+			if mode == DependencyModeStrict {
+				return JobReport{Job: spec.Name, Status: JobStatusSkipped, Err: fmt.Sprintf("dependency %s was not selected", dep)}, true
+			}
+			continue
+		}
+		if depReport.Status != JobStatusFailed {
 			continue
 		}
 		reason := fmt.Sprintf("dependency %s failed", dep)

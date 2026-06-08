@@ -127,6 +127,18 @@ func (r *fakeForexRows) Scan(dest ...any) error {
 				return fmt.Errorf("column %d: want uint8, got %T", index, row[index])
 			}
 			*ptr = value
+		case *uint16:
+			value, ok := row[index].(uint16)
+			if !ok {
+				return fmt.Errorf("column %d: want uint16, got %T", index, row[index])
+			}
+			*ptr = value
+		case *uint32:
+			value, ok := row[index].(uint32)
+			if !ok {
+				return fmt.Errorf("column %d: want uint32, got %T", index, row[index])
+			}
+			*ptr = value
 		case *uint64:
 			value, ok := row[index].(uint64)
 			if !ok {

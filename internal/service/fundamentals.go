@@ -441,7 +441,7 @@ func (s *FundamentalsService) lookupFillPolicy(ctx context.Context, market, fact
 		clickhouse.Named("market", market),
 	)
 	if err != nil {
-		return fundamentalFillForwardFill, 0, nil // fall back to default; do not block series
+		return "", 0, fmt.Errorf("query fundamental fill policy catalog: %w", err)
 	}
 	defer rows.Close()
 	for rows.Next() {
@@ -457,11 +457,14 @@ func (s *FundamentalsService) lookupFillPolicy(ctx context.Context, market, fact
 			&fillMaxDays, &pit, &e.Source, &active, &sla,
 			&e.Metadata, &e.UpdatedAt,
 		); err != nil {
-			return fundamentalFillForwardFill, 0, nil
+			return "", 0, fmt.Errorf("scan fundamental fill policy catalog: %w", err)
 		}
 		if e.FactorCode == factor {
 			return e.FillPolicy, int(fillMaxDays), nil
 		}
+	}
+	if err := rows.Err(); err != nil {
+		return "", 0, fmt.Errorf("iterate fundamental fill policy catalog: %w", err)
 	}
 	return fundamentalFillForwardFill, 0, nil
 }

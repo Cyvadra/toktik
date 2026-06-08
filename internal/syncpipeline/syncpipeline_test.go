@@ -112,7 +112,7 @@ func TestRunJobContinuesAfterSourceFailure(t *testing.T) {
 func TestDependencyBlockedReportSkipsFailedDependency(t *testing.T) {
 	report, blocked := dependencyBlockedReport(JobSpec{Name: "child", DependsOn: []string{"parent"}}, map[string]JobReport{
 		"parent": {Job: "parent", Status: JobStatusFailed, Err: "boom"},
-	})
+	}, DependencyModePermissive)
 	if !blocked {
 		t.Fatal("expected child job to be blocked")
 	}
@@ -125,9 +125,44 @@ func TestDependencyBlockedReportSkipsFailedDependency(t *testing.T) {
 }
 
 func TestDependencyBlockedReportIgnoresUnselectedDependency(t *testing.T) {
-	_, blocked := dependencyBlockedReport(JobSpec{Name: "child", DependsOn: []string{"parent"}}, map[string]JobReport{})
+	_, blocked := dependencyBlockedReport(JobSpec{Name: "child", DependsOn: []string{"parent"}}, map[string]JobReport{}, DependencyModePermissive)
 	if blocked {
 		t.Fatal("expected missing dependency to stay compatible and not block")
+	}
+}
+
+func TestDependencyBlockedReportStrictSkipsUnselectedDependency(t *testing.T) {
+	report, blocked := dependencyBlockedReport(JobSpec{Name: "child", DependsOn: []string{"parent"}}, map[string]JobReport{}, DependencyModeStrict)
+	if !blocked {
+		t.Fatal("expected strict dependency mode to block missing dependency")
+	}
+	if report.Status != JobStatusSkipped {
+		t.Fatalf("expected skipped status, got %s", report.Status)
+	}
+	if !strings.Contains(report.Err, "dependency parent was not selected") {
+		t.Fatalf("unexpected dependency error: %q", report.Err)
+	}
+}
+
+func TestParseDependencyMode(t *testing.T) {
+	for _, value := range []string{"", "permissive", "PERMISSIVE"} {
+		mode, err := ParseDependencyMode(value)
+		if err != nil {
+			t.Fatalf("ParseDependencyMode(%q) returned error: %v", value, err)
+		}
+		if mode != DependencyModePermissive {
+			t.Fatalf("ParseDependencyMode(%q) = %q, want permissive", value, mode)
+		}
+	}
+	mode, err := ParseDependencyMode("strict")
+	if err != nil {
+		t.Fatalf("ParseDependencyMode(strict) returned error: %v", err)
+	}
+	if mode != DependencyModeStrict {
+		t.Fatalf("ParseDependencyMode(strict) = %q, want strict", mode)
+	}
+	if _, err := ParseDependencyMode("required"); err == nil {
+		t.Fatal("expected invalid dependency mode to fail")
 	}
 }
 
