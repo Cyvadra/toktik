@@ -453,7 +453,7 @@ func auditCommand(args []string) error {
 	}
 	defer conn.Close()
 	selected := selectedSet(*jobsCSV)
-	sessions, err := initSelectedSchemas(ctx, conn, cfg, selected, false)
+	sessions, err := initSelectedSchemas(ctx, conn, cfg, selected, true)
 	if err != nil {
 		return err
 	}
