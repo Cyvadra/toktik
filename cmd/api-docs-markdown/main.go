@@ -12,9 +12,10 @@ import (
 )
 
 type swaggerDoc struct {
-	Info     swaggerInfo                     `json:"info"`
-	BasePath string                          `json:"basePath"`
-	Paths    map[string]map[string]operation `json:"paths"`
+	Info        swaggerInfo                     `json:"info"`
+	BasePath    string                          `json:"basePath"`
+	Paths       map[string]map[string]operation `json:"paths"`
+	Definitions map[string]schemaRef            `json:"definitions"`
 }
 
 type swaggerInfo struct {
@@ -49,9 +50,14 @@ type response struct {
 }
 
 type schemaRef struct {
-	Ref   string     `json:"$ref"`
-	Type  string     `json:"type"`
-	Items *schemaRef `json:"items"`
+	Ref                  string               `json:"$ref"`
+	Type                 string               `json:"type"`
+	Format               string               `json:"format"`
+	Description          string               `json:"description"`
+	Items                *schemaRef           `json:"items"`
+	AdditionalProperties json.RawMessage      `json:"additionalProperties"`
+	Properties           map[string]schemaRef `json:"properties"`
+	Required             []string             `json:"required"`
 }
 
 type endpointSpec struct {
@@ -213,6 +219,13 @@ func renderMarkdown(doc *swaggerDoc, inputPath string, title string) (string, er
 		builder.WriteString(slug(section.Title))
 		builder.WriteString(")\n")
 	}
+	referencedSchemas, err := collectReferencedSchemas(doc)
+	if err != nil {
+		return "", err
+	}
+	if len(referencedSchemas) > 0 {
+		builder.WriteString("- [Schemas](#schemas)\n")
+	}
 	builder.WriteString("\n")
 
 	for _, section := range sections {
@@ -224,14 +237,62 @@ func renderMarkdown(doc *swaggerDoc, inputPath string, title string) (string, er
 			if err != nil {
 				return "", err
 			}
-			writeEndpoint(&builder, doc.BasePath, endpoint, op)
+			writeEndpoint(&builder, doc, endpoint, op)
 			if endpoint.Path == "/indicators/series" {
 				writeIndicatorExamples(&builder)
 			}
 		}
 	}
 
+	writeSchemas(&builder, doc, referencedSchemas)
+
 	return builder.String(), nil
+}
+
+func collectReferencedSchemas(doc *swaggerDoc) ([]string, error) {
+	seen := map[string]bool{}
+	var ordered []string
+	for _, section := range sections {
+		for _, endpoint := range section.Endpoints {
+			op, err := findOperation(doc, endpoint.Method, endpoint.Path)
+			if err != nil {
+				return nil, err
+			}
+			for _, param := range op.Parameters {
+				addSchemaRefs(doc, param.Schema, seen, &ordered)
+				addSchemaRefs(doc, param.Items, seen, &ordered)
+			}
+			for _, resp := range op.Responses {
+				addSchemaRefs(doc, resp.Schema, seen, &ordered)
+			}
+		}
+	}
+	sort.Strings(ordered)
+	return ordered, nil
+}
+
+func addSchemaRefs(doc *swaggerDoc, schema *schemaRef, seen map[string]bool, ordered *[]string) {
+	if schema == nil {
+		return
+	}
+	if schema.Ref != "" {
+		name := refName(schema.Ref)
+		if !seen[name] {
+			seen[name] = true
+			*ordered = append(*ordered, name)
+			definition := doc.Definitions[name]
+			addSchemaRefs(doc, &definition, seen, ordered)
+		}
+		return
+	}
+	addSchemaRefs(doc, schema.Items, seen, ordered)
+	if additional := additionalPropertiesSchema(schema); additional != nil {
+		addSchemaRefs(doc, additional, seen, ordered)
+	}
+	for _, prop := range schema.Properties {
+		prop := prop
+		addSchemaRefs(doc, &prop, seen, ordered)
+	}
 }
 
 func findOperation(doc *swaggerDoc, method string, path string) (*operation, error) {
@@ -246,14 +307,14 @@ func findOperation(doc *swaggerDoc, method string, path string) (*operation, err
 	return &op, nil
 }
 
-func writeEndpoint(builder *strings.Builder, basePath string, spec endpointSpec, op *operation) {
+func writeEndpoint(builder *strings.Builder, doc *swaggerDoc, spec endpointSpec, op *operation) {
 	builder.WriteString("### ")
 	builder.WriteString(spec.Label)
 	builder.WriteString("\n\n")
 	builder.WriteString("- Endpoint: `")
 	builder.WriteString(strings.ToUpper(spec.Method))
 	builder.WriteString(" ")
-	builder.WriteString(joinBasePath(basePath, spec.Path))
+	builder.WriteString(joinBasePath(doc.BasePath, spec.Path))
 	builder.WriteString("`\n")
 	if len(op.Tags) > 0 {
 		builder.WriteString("- Tags: `")
@@ -295,7 +356,7 @@ func writeEndpoint(builder *strings.Builder, basePath string, spec endpointSpec,
 			builder.WriteString(" | ")
 			builder.WriteString(escapePipes(param.In))
 			builder.WriteString(" | ")
-			builder.WriteString(escapePipes(parameterType(param)))
+			builder.WriteString(escapePipes(parameterType(doc, param)))
 			builder.WriteString(" | ")
 			builder.WriteString(boolWord(param.Required))
 			builder.WriteString(" | ")
@@ -313,12 +374,59 @@ func writeEndpoint(builder *strings.Builder, basePath string, spec endpointSpec,
 		builder.WriteString("| ")
 		builder.WriteString(code)
 		builder.WriteString(" | ")
-		builder.WriteString(escapePipes(schemaType(resp.Schema)))
+		builder.WriteString(escapePipes(schemaTypeMarkdown(doc, resp.Schema)))
 		builder.WriteString(" | ")
 		builder.WriteString(escapePipes(strings.TrimSpace(resp.Description)))
 		builder.WriteString(" |\n")
 	}
 	builder.WriteString("\n")
+}
+
+func writeSchemas(builder *strings.Builder, doc *swaggerDoc, schemaNames []string) {
+	if len(schemaNames) == 0 {
+		return
+	}
+	builder.WriteString("## Schemas\n\n")
+	builder.WriteString("This section expands every request/response schema referenced by the endpoints above. Nested DTOs are included so clients can inspect the complete JSON shape without opening Swagger.\n\n")
+	for _, name := range schemaNames {
+		definition, ok := doc.Definitions[name]
+		if !ok {
+			continue
+		}
+		builder.WriteString("### ")
+		builder.WriteString(schemaDisplayName(name))
+		builder.WriteString("\n\n")
+		builder.WriteString("- Schema: `")
+		builder.WriteString(name)
+		builder.WriteString("`\n")
+		if strings.TrimSpace(definition.Description) != "" {
+			builder.WriteString("- Description: ")
+			builder.WriteString(strings.TrimSpace(definition.Description))
+			builder.WriteString("\n")
+		}
+		builder.WriteString("- Type: `")
+		builder.WriteString(schemaTypePlain(&definition))
+		builder.WriteString("`\n\n")
+		if len(definition.Properties) == 0 {
+			builder.WriteString("No documented properties.\n\n")
+			continue
+		}
+		builder.WriteString("| Field | Type | Required | Description |\n")
+		builder.WriteString("| --- | --- | --- | --- |\n")
+		for _, field := range sortedPropertyNames(definition.Properties) {
+			prop := definition.Properties[field]
+			builder.WriteString("| ")
+			builder.WriteString(escapePipes(field))
+			builder.WriteString(" | ")
+			builder.WriteString(escapePipes(schemaTypeMarkdown(doc, &prop)))
+			builder.WriteString(" | ")
+			builder.WriteString(boolWord(isRequired(field, definition.Required)))
+			builder.WriteString(" | ")
+			builder.WriteString(escapePipes(strings.TrimSpace(prop.Description)))
+			builder.WriteString(" |\n")
+		}
+		builder.WriteString("\n")
+	}
 }
 
 func writeIndicatorExamples(builder *strings.Builder) {
@@ -393,34 +501,107 @@ func joinBasePath(basePath string, path string) string {
 	return base + path
 }
 
-func parameterType(param parameter) string {
+func parameterType(doc *swaggerDoc, param parameter) string {
 	if param.Schema != nil {
-		return schemaType(param.Schema)
+		return schemaTypeMarkdown(doc, param.Schema)
 	}
 	if param.Type != "" {
 		if param.Type == "array" && param.Items != nil {
-			return "array<" + schemaType(param.Items) + ">"
+			return "array<" + schemaTypeMarkdown(doc, param.Items) + ">"
 		}
 		return param.Type
 	}
 	return "object"
 }
 
-func schemaType(schema *schemaRef) string {
+func schemaTypeMarkdown(doc *swaggerDoc, schema *schemaRef) string {
 	if schema == nil {
 		return "-"
 	}
 	if schema.Ref != "" {
-		parts := strings.Split(schema.Ref, "/")
-		return parts[len(parts)-1]
+		name := refName(schema.Ref)
+		if _, ok := doc.Definitions[name]; ok {
+			return "[" + schemaDisplayName(name) + "](#" + slug(schemaDisplayName(name)) + ")"
+		}
+		return name
 	}
 	if schema.Type == "array" && schema.Items != nil {
-		return "array<" + schemaType(schema.Items) + ">"
+		return "array<" + schemaTypeMarkdown(doc, schema.Items) + ">"
+	}
+	if additional := additionalPropertiesSchema(schema); additional != nil {
+		return "map<string," + schemaTypeMarkdown(doc, additional) + ">"
 	}
 	if schema.Type != "" {
-		return schema.Type
+		return schema.Type + schemaFormatSuffix(schema.Format)
 	}
 	return "object"
+}
+
+func schemaTypePlain(schema *schemaRef) string {
+	if schema == nil {
+		return "-"
+	}
+	if schema.Ref != "" {
+		return refName(schema.Ref)
+	}
+	if schema.Type == "array" && schema.Items != nil {
+		return "array<" + schemaTypePlain(schema.Items) + ">"
+	}
+	if additional := additionalPropertiesSchema(schema); additional != nil {
+		return "map<string," + schemaTypePlain(additional) + ">"
+	}
+	if schema.Type != "" {
+		return schema.Type + schemaFormatSuffix(schema.Format)
+	}
+	return "object"
+}
+
+func schemaFormatSuffix(format string) string {
+	if format == "" {
+		return ""
+	}
+	return "(" + format + ")"
+}
+
+func refName(ref string) string {
+	parts := strings.Split(ref, "/")
+	return parts[len(parts)-1]
+}
+
+func schemaDisplayName(name string) string {
+	if idx := strings.LastIndex(name, "."); idx >= 0 && idx < len(name)-1 {
+		return name[idx+1:]
+	}
+	return name
+}
+
+func additionalPropertiesSchema(schema *schemaRef) *schemaRef {
+	if schema == nil || len(schema.AdditionalProperties) == 0 || string(schema.AdditionalProperties) == "true" || string(schema.AdditionalProperties) == "false" {
+		return nil
+	}
+	var additional schemaRef
+	if err := json.Unmarshal(schema.AdditionalProperties, &additional); err != nil {
+		return nil
+	}
+	return &additional
+}
+
+func sortedPropertyNames(properties map[string]schemaRef) []string {
+	names := make([]string, 0, len(properties))
+	for name := range properties {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+func isRequired(field string, required []string) bool {
+	for _, name := range required {
+		if name == field {
+			return true
+		}
+	}
+	return false
 }
 
 func sortedResponseCodes(responses map[string]response) []string {

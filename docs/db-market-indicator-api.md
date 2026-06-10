@@ -7,7 +7,7 @@
 - Source Swagger: `docs/swagger.json`
 - API title: `Toktik Options Platform API`
 - API version: `1.0`
-- Generated at: `2026-06-08T07:26:32Z`
+- Generated at: `2026-06-10T10:49:15Z`
 
 ## Scope
 
@@ -23,6 +23,7 @@ This document exports the database-backed market data, technical indicator, feat
 - [US Options Market Data](#us-options-market-data)
 - [Screeners](#screeners)
 - [Calendar](#calendar)
+- [Schemas](#schemas)
 
 ## Technical Indicators
 
@@ -42,8 +43,8 @@ No parameters.
 
 | Status | Schema | Description |
 | --- | --- | --- |
-| 200 | github_com_Cyvadra_toktik_internal_dto.IndicatorPresetCatalogResponse | OK |
-| 500 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Internal Server Error |
+| 200 | [IndicatorPresetCatalogResponse](#indicatorpresetcatalogresponse) | OK |
+| 500 | [ErrorResponse](#errorresponse) | Internal Server Error |
 
 ### DSL indicator series query
 
@@ -58,15 +59,15 @@ No parameters.
 
 | Name | In | Type | Required | Description |
 | --- | --- | --- | --- | --- |
-| body | body | github_com_Cyvadra_toktik_internal_dto.IndicatorSeriesRequest | yes | Indicator query |
+| body | body | [IndicatorSeriesRequest](#indicatorseriesrequest) | yes | Indicator query |
 
 #### Responses
 
 | Status | Schema | Description |
 | --- | --- | --- |
-| 200 | github_com_Cyvadra_toktik_internal_dto.IndicatorSeriesResponse | OK |
-| 400 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Bad Request |
-| 500 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Internal Server Error |
+| 200 | [IndicatorSeriesResponse](#indicatorseriesresponse) | OK |
+| 400 | [ErrorResponse](#errorresponse) | Bad Request |
+| 500 | [ErrorResponse](#errorresponse) | Internal Server Error |
 
 #### curl Example: Preset catalog
 
@@ -155,8 +156,8 @@ No parameters.
 
 | Status | Schema | Description |
 | --- | --- | --- |
-| 200 | github_com_Cyvadra_toktik_internal_dto.FactorCatalogResponse | OK |
-| 500 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Internal Server Error |
+| 200 | [FactorCatalogResponse](#factorcatalogresponse) | OK |
+| 500 | [ErrorResponse](#errorresponse) | Internal Server Error |
 
 ### Factor time series
 
@@ -182,9 +183,9 @@ No parameters.
 
 | Status | Schema | Description |
 | --- | --- | --- |
-| 200 | github_com_Cyvadra_toktik_internal_dto.FactorBarResponse | OK |
-| 400 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Bad Request |
-| 500 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Internal Server Error |
+| 200 | [FactorBarResponse](#factorbarresponse) | OK |
+| 400 | [ErrorResponse](#errorresponse) | Bad Request |
+| 500 | [ErrorResponse](#errorresponse) | Internal Server Error |
 
 ## Fundamentals
 
@@ -206,9 +207,9 @@ No parameters.
 
 | Status | Schema | Description |
 | --- | --- | --- |
-| 200 | github_com_Cyvadra_toktik_internal_dto.FundamentalFactorCatalogResponse | OK |
-| 400 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Bad Request |
-| 500 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Internal Server Error |
+| 200 | [FundamentalFactorCatalogResponse](#fundamentalfactorcatalogresponse) | OK |
+| 400 | [ErrorResponse](#errorresponse) | Bad Request |
+| 500 | [ErrorResponse](#errorresponse) | Internal Server Error |
 
 ### Fundamental factor series
 
@@ -235,9 +236,9 @@ Returns event/as_of/filled series for one (market, symbol, factor). Point-in-tim
 
 | Status | Schema | Description |
 | --- | --- | --- |
-| 200 | github_com_Cyvadra_toktik_internal_dto.FundamentalSeriesResponse | OK |
-| 400 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Bad Request |
-| 500 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Internal Server Error |
+| 200 | [FundamentalSeriesResponse](#fundamentalseriesresponse) | OK |
+| 400 | [ErrorResponse](#errorresponse) | Bad Request |
+| 500 | [ErrorResponse](#errorresponse) | Internal Server Error |
 
 ### Fundamental snapshot
 
@@ -261,9 +262,9 @@ Returns latest known value per factor for one (market, symbol) at as_of. For us-
 
 | Status | Schema | Description |
 | --- | --- | --- |
-| 200 | github_com_Cyvadra_toktik_internal_dto.FundamentalSnapshotResponse | OK |
-| 400 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Bad Request |
-| 500 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Internal Server Error |
+| 200 | [FundamentalSnapshotResponse](#fundamentalsnapshotresponse) | OK |
+| 400 | [ErrorResponse](#errorresponse) | Bad Request |
+| 500 | [ErrorResponse](#errorresponse) | Internal Server Error |
 
 ### Fundamental panel
 
@@ -287,9 +288,9 @@ Returns latest known values per (symbol, factor) at as_of. For us-stocks, price-
 
 | Status | Schema | Description |
 | --- | --- | --- |
-| 200 | github_com_Cyvadra_toktik_internal_dto.FundamentalPanelResponse | OK |
-| 400 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Bad Request |
-| 500 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Internal Server Error |
+| 200 | [FundamentalPanelResponse](#fundamentalpanelresponse) | OK |
+| 400 | [ErrorResponse](#errorresponse) | Bad Request |
+| 500 | [ErrorResponse](#errorresponse) | Internal Server Error |
 
 ### Fundamental freshness
 
@@ -310,9 +311,9 @@ Returns latest known values per (symbol, factor) at as_of. For us-stocks, price-
 
 | Status | Schema | Description |
 | --- | --- | --- |
-| 200 | github_com_Cyvadra_toktik_internal_dto.FundamentalFreshnessResponse | OK |
-| 400 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Bad Request |
-| 500 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Internal Server Error |
+| 200 | [FundamentalFreshnessResponse](#fundamentalfreshnessresponse) | OK |
+| 400 | [ErrorResponse](#errorresponse) | Bad Request |
+| 500 | [ErrorResponse](#errorresponse) | Internal Server Error |
 
 ## Macro
 
@@ -334,9 +335,9 @@ Returns latest known values per (symbol, factor) at as_of. For us-stocks, price-
 
 | Status | Schema | Description |
 | --- | --- | --- |
-| 200 | github_com_Cyvadra_toktik_internal_dto.MacroFactorCatalogResponse | OK |
-| 400 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Bad Request |
-| 500 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Internal Server Error |
+| 200 | [MacroFactorCatalogResponse](#macrofactorcatalogresponse) | OK |
+| 400 | [ErrorResponse](#errorresponse) | Bad Request |
+| 500 | [ErrorResponse](#errorresponse) | Internal Server Error |
 
 ### Macro factor series
 
@@ -364,9 +365,9 @@ Returns latest known values per (symbol, factor) at as_of. For us-stocks, price-
 
 | Status | Schema | Description |
 | --- | --- | --- |
-| 200 | github_com_Cyvadra_toktik_internal_dto.MacroSeriesResponse | OK |
-| 400 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Bad Request |
-| 500 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Internal Server Error |
+| 200 | [MacroSeriesResponse](#macroseriesresponse) | OK |
+| 400 | [ErrorResponse](#errorresponse) | Bad Request |
+| 500 | [ErrorResponse](#errorresponse) | Internal Server Error |
 
 ## Feature Store Analytics
 
@@ -390,9 +391,9 @@ Returns latest known values per (symbol, factor) at as_of. For us-stocks, price-
 
 | Status | Schema | Description |
 | --- | --- | --- |
-| 200 | github_com_Cyvadra_toktik_internal_dto.FeatureVolatilitySnapshotResponse | OK |
-| 400 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Bad Request |
-| 500 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Internal Server Error |
+| 200 | [FeatureVolatilitySnapshotResponse](#featurevolatilitysnapshotresponse) | OK |
+| 400 | [ErrorResponse](#errorresponse) | Bad Request |
+| 500 | [ErrorResponse](#errorresponse) | Internal Server Error |
 
 ### Volatility history
 
@@ -416,9 +417,9 @@ Returns latest known values per (symbol, factor) at as_of. For us-stocks, price-
 
 | Status | Schema | Description |
 | --- | --- | --- |
-| 200 | github_com_Cyvadra_toktik_internal_dto.FeatureVolatilityHistoryResponse | OK |
-| 400 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Bad Request |
-| 500 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Internal Server Error |
+| 200 | [FeatureVolatilityHistoryResponse](#featurevolatilityhistoryresponse) | OK |
+| 400 | [ErrorResponse](#errorresponse) | Bad Request |
+| 500 | [ErrorResponse](#errorresponse) | Internal Server Error |
 
 ### Term-structure snapshot
 
@@ -441,9 +442,9 @@ Returns latest known values per (symbol, factor) at as_of. For us-stocks, price-
 
 | Status | Schema | Description |
 | --- | --- | --- |
-| 200 | github_com_Cyvadra_toktik_internal_dto.FeatureTermStructureSnapshotResponse | OK |
-| 400 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Bad Request |
-| 500 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Internal Server Error |
+| 200 | [FeatureTermStructureSnapshotResponse](#featuretermstructuresnapshotresponse) | OK |
+| 400 | [ErrorResponse](#errorresponse) | Bad Request |
+| 500 | [ErrorResponse](#errorresponse) | Internal Server Error |
 
 ### Term-structure history
 
@@ -468,9 +469,9 @@ Returns latest known values per (symbol, factor) at as_of. For us-stocks, price-
 
 | Status | Schema | Description |
 | --- | --- | --- |
-| 200 | github_com_Cyvadra_toktik_internal_dto.FeatureTermStructureHistoryResponse | OK |
-| 400 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Bad Request |
-| 500 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Internal Server Error |
+| 200 | [FeatureTermStructureHistoryResponse](#featuretermstructurehistoryresponse) | OK |
+| 400 | [ErrorResponse](#errorresponse) | Bad Request |
+| 500 | [ErrorResponse](#errorresponse) | Internal Server Error |
 
 ### Skew snapshot
 
@@ -493,9 +494,9 @@ Returns latest known values per (symbol, factor) at as_of. For us-stocks, price-
 
 | Status | Schema | Description |
 | --- | --- | --- |
-| 200 | github_com_Cyvadra_toktik_internal_dto.FeatureSkewSnapshotResponse | OK |
-| 400 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Bad Request |
-| 500 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Internal Server Error |
+| 200 | [FeatureSkewSnapshotResponse](#featureskewsnapshotresponse) | OK |
+| 400 | [ErrorResponse](#errorresponse) | Bad Request |
+| 500 | [ErrorResponse](#errorresponse) | Internal Server Error |
 
 ### Skew history
 
@@ -520,9 +521,9 @@ Returns latest known values per (symbol, factor) at as_of. For us-stocks, price-
 
 | Status | Schema | Description |
 | --- | --- | --- |
-| 200 | github_com_Cyvadra_toktik_internal_dto.FeatureSkewHistoryResponse | OK |
-| 400 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Bad Request |
-| 500 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Internal Server Error |
+| 200 | [FeatureSkewHistoryResponse](#featureskewhistoryresponse) | OK |
+| 400 | [ErrorResponse](#errorresponse) | Bad Request |
+| 500 | [ErrorResponse](#errorresponse) | Internal Server Error |
 
 ### Liquidity snapshot
 
@@ -545,9 +546,9 @@ Returns latest known values per (symbol, factor) at as_of. For us-stocks, price-
 
 | Status | Schema | Description |
 | --- | --- | --- |
-| 200 | github_com_Cyvadra_toktik_internal_dto.FeatureLiquiditySnapshotResponse | OK |
-| 400 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Bad Request |
-| 500 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Internal Server Error |
+| 200 | [FeatureLiquiditySnapshotResponse](#featureliquiditysnapshotresponse) | OK |
+| 400 | [ErrorResponse](#errorresponse) | Bad Request |
+| 500 | [ErrorResponse](#errorresponse) | Internal Server Error |
 
 ### Liquidity history
 
@@ -572,9 +573,9 @@ Returns latest known values per (symbol, factor) at as_of. For us-stocks, price-
 
 | Status | Schema | Description |
 | --- | --- | --- |
-| 200 | github_com_Cyvadra_toktik_internal_dto.FeatureLiquidityHistoryResponse | OK |
-| 400 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Bad Request |
-| 500 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Internal Server Error |
+| 200 | [FeatureLiquidityHistoryResponse](#featureliquidityhistoryresponse) | OK |
+| 400 | [ErrorResponse](#errorresponse) | Bad Request |
+| 500 | [ErrorResponse](#errorresponse) | Internal Server Error |
 
 ### Event-window snapshot
 
@@ -595,9 +596,9 @@ Returns latest known values per (symbol, factor) at as_of. For us-stocks, price-
 
 | Status | Schema | Description |
 | --- | --- | --- |
-| 200 | github_com_Cyvadra_toktik_internal_dto.FeatureEventWindowSnapshotResponse | OK |
-| 400 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Bad Request |
-| 500 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Internal Server Error |
+| 200 | [FeatureEventWindowSnapshotResponse](#featureeventwindowsnapshotresponse) | OK |
+| 400 | [ErrorResponse](#errorresponse) | Bad Request |
+| 500 | [ErrorResponse](#errorresponse) | Internal Server Error |
 
 ### Event-window history
 
@@ -620,9 +621,9 @@ Returns latest known values per (symbol, factor) at as_of. For us-stocks, price-
 
 | Status | Schema | Description |
 | --- | --- | --- |
-| 200 | github_com_Cyvadra_toktik_internal_dto.FeatureEventWindowHistoryResponse | OK |
-| 400 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Bad Request |
-| 500 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Internal Server Error |
+| 200 | [FeatureEventWindowHistoryResponse](#featureeventwindowhistoryresponse) | OK |
+| 400 | [ErrorResponse](#errorresponse) | Bad Request |
+| 500 | [ErrorResponse](#errorresponse) | Internal Server Error |
 
 ### Daily feature panel
 
@@ -648,9 +649,9 @@ Returns latest known values per (symbol, factor) at as_of. For us-stocks, price-
 
 | Status | Schema | Description |
 | --- | --- | --- |
-| 200 | github_com_Cyvadra_toktik_internal_dto.FeatureDailyPanelResponse | OK |
-| 400 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Bad Request |
-| 500 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Internal Server Error |
+| 200 | [FeatureDailyPanelResponse](#featuredailypanelresponse) | OK |
+| 400 | [ErrorResponse](#errorresponse) | Bad Request |
+| 500 | [ErrorResponse](#errorresponse) | Internal Server Error |
 
 ## US Stocks Market Data
 
@@ -678,9 +679,9 @@ Returns latest known values per (symbol, factor) at as_of. For us-stocks, price-
 
 | Status | Schema | Description |
 | --- | --- | --- |
-| 200 | github_com_Cyvadra_toktik_internal_dto.USStockBarResponse | OK |
-| 400 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Bad Request |
-| 500 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Internal Server Error |
+| 200 | [USStockBarResponse](#usstockbarresponse) | OK |
+| 400 | [ErrorResponse](#errorresponse) | Bad Request |
+| 500 | [ErrorResponse](#errorresponse) | Internal Server Error |
 
 ### US stock symbols
 
@@ -702,9 +703,9 @@ Returns latest known values per (symbol, factor) at as_of. For us-stocks, price-
 
 | Status | Schema | Description |
 | --- | --- | --- |
-| 200 | github_com_Cyvadra_toktik_internal_dto.USStockSymbolResponse | OK |
-| 400 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Bad Request |
-| 500 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Internal Server Error |
+| 200 | [USStockSymbolResponse](#usstocksymbolresponse) | OK |
+| 400 | [ErrorResponse](#errorresponse) | Bad Request |
+| 500 | [ErrorResponse](#errorresponse) | Internal Server Error |
 
 ### US stock company profiles
 
@@ -719,15 +720,15 @@ Returns latest known values per (symbol, factor) at as_of. For us-stocks, price-
 
 | Name | In | Type | Required | Description |
 | --- | --- | --- | --- | --- |
-| request | body | github_com_Cyvadra_toktik_internal_dto.USStockProfileRequest | yes | US stock profile request |
+| request | body | [USStockProfileRequest](#usstockprofilerequest) | yes | US stock profile request |
 
 #### Responses
 
 | Status | Schema | Description |
 | --- | --- | --- |
-| 200 | github_com_Cyvadra_toktik_internal_dto.USStockProfileResponse | OK |
-| 400 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Bad Request |
-| 500 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Internal Server Error |
+| 200 | [USStockProfileResponse](#usstockprofileresponse) | OK |
+| 400 | [ErrorResponse](#errorresponse) | Bad Request |
+| 500 | [ErrorResponse](#errorresponse) | Internal Server Error |
 
 ### US stock fundamental metrics
 
@@ -742,15 +743,15 @@ Returns latest known values per (symbol, factor) at as_of. For us-stocks, price-
 
 | Name | In | Type | Required | Description |
 | --- | --- | --- | --- | --- |
-| request | body | github_com_Cyvadra_toktik_internal_dto.USStockFundamentalMetricsRequest | yes | US stock fundamental metrics request |
+| request | body | [USStockFundamentalMetricsRequest](#usstockfundamentalmetricsrequest) | yes | US stock fundamental metrics request |
 
 #### Responses
 
 | Status | Schema | Description |
 | --- | --- | --- |
-| 200 | github_com_Cyvadra_toktik_internal_dto.USStockFundamentalMetricsResponse | OK |
-| 400 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Bad Request |
-| 500 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Internal Server Error |
+| 200 | [USStockFundamentalMetricsResponse](#usstockfundamentalmetricsresponse) | OK |
+| 400 | [ErrorResponse](#errorresponse) | Bad Request |
+| 500 | [ErrorResponse](#errorresponse) | Internal Server Error |
 
 ### US stock split events
 
@@ -771,9 +772,9 @@ Returns latest known values per (symbol, factor) at as_of. For us-stocks, price-
 
 | Status | Schema | Description |
 | --- | --- | --- |
-| 200 | github_com_Cyvadra_toktik_internal_dto.USStockSplitResponse | OK |
-| 400 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Bad Request |
-| 500 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Internal Server Error |
+| 200 | [USStockSplitResponse](#usstocksplitresponse) | OK |
+| 400 | [ErrorResponse](#errorresponse) | Bad Request |
+| 500 | [ErrorResponse](#errorresponse) | Internal Server Error |
 
 ## US Options Market Data
 
@@ -801,9 +802,9 @@ Returns latest known values per (symbol, factor) at as_of. For us-stocks, price-
 
 | Status | Schema | Description |
 | --- | --- | --- |
-| 200 | github_com_Cyvadra_toktik_internal_dto.USOptionBarResponse | OK |
-| 400 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Bad Request |
-| 500 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Internal Server Error |
+| 200 | [USOptionBarResponse](#usoptionbarresponse) | OK |
+| 400 | [ErrorResponse](#errorresponse) | Bad Request |
+| 500 | [ErrorResponse](#errorresponse) | Internal Server Error |
 
 ### US option symbols
 
@@ -827,9 +828,9 @@ Returns latest known values per (symbol, factor) at as_of. For us-stocks, price-
 
 | Status | Schema | Description |
 | --- | --- | --- |
-| 200 | github_com_Cyvadra_toktik_internal_dto.USOptionSymbolResponse | OK |
-| 400 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Bad Request |
-| 500 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Internal Server Error |
+| 200 | [USOptionSymbolResponse](#usoptionsymbolresponse) | OK |
+| 400 | [ErrorResponse](#errorresponse) | Bad Request |
+| 500 | [ErrorResponse](#errorresponse) | Internal Server Error |
 
 ### US option greeks
 
@@ -855,9 +856,9 @@ Returns latest known values per (symbol, factor) at as_of. For us-stocks, price-
 
 | Status | Schema | Description |
 | --- | --- | --- |
-| 200 | github_com_Cyvadra_toktik_internal_dto.USOptionGreeksResponse | OK |
-| 400 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Bad Request |
-| 500 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Internal Server Error |
+| 200 | [USOptionGreeksResponse](#usoptiongreeksresponse) | OK |
+| 400 | [ErrorResponse](#errorresponse) | Bad Request |
+| 500 | [ErrorResponse](#errorresponse) | Internal Server Error |
 
 ### US option chain
 
@@ -883,9 +884,9 @@ Returns latest known values per (symbol, factor) at as_of. For us-stocks, price-
 
 | Status | Schema | Description |
 | --- | --- | --- |
-| 200 | github_com_Cyvadra_toktik_internal_dto.USOptionChainResponse | OK |
-| 400 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Bad Request |
-| 500 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Internal Server Error |
+| 200 | [USOptionChainResponse](#usoptionchainresponse) | OK |
+| 400 | [ErrorResponse](#errorresponse) | Bad Request |
+| 500 | [ErrorResponse](#errorresponse) | Internal Server Error |
 
 ### US option wall
 
@@ -907,10 +908,10 @@ Returns latest known values per (symbol, factor) at as_of. For us-stocks, price-
 
 | Status | Schema | Description |
 | --- | --- | --- |
-| 200 | github_com_Cyvadra_toktik_internal_dto.USOptionWallResponse | OK |
-| 400 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Bad Request |
-| 500 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Internal Server Error |
-| 501 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Not Implemented |
+| 200 | [USOptionWallResponse](#usoptionwallresponse) | OK |
+| 400 | [ErrorResponse](#errorresponse) | Bad Request |
+| 500 | [ErrorResponse](#errorresponse) | Internal Server Error |
+| 501 | [ErrorResponse](#errorresponse) | Not Implemented |
 
 ## Screeners
 
@@ -936,9 +937,9 @@ Returns latest known values per (symbol, factor) at as_of. For us-stocks, price-
 
 | Status | Schema | Description |
 | --- | --- | --- |
-| 200 | github_com_Cyvadra_toktik_internal_dto.ScreenUnderlyingResponse | OK |
-| 400 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Bad Request |
-| 500 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Internal Server Error |
+| 200 | [ScreenUnderlyingResponse](#screenunderlyingresponse) | OK |
+| 400 | [ErrorResponse](#errorresponse) | Bad Request |
+| 500 | [ErrorResponse](#errorresponse) | Internal Server Error |
 
 ### US turnover intersection screener
 
@@ -960,9 +961,9 @@ Returns latest known values per (symbol, factor) at as_of. For us-stocks, price-
 
 | Status | Schema | Description |
 | --- | --- | --- |
-| 200 | github_com_Cyvadra_toktik_internal_dto.ScreenUSTurnoverIntersectionResponse | OK |
-| 400 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Bad Request |
-| 500 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Internal Server Error |
+| 200 | [ScreenUSTurnoverIntersectionResponse](#screenusturnoverintersectionresponse) | OK |
+| 400 | [ErrorResponse](#errorresponse) | Bad Request |
+| 500 | [ErrorResponse](#errorresponse) | Internal Server Error |
 
 ### Option screener
 
@@ -990,9 +991,9 @@ Returns latest known values per (symbol, factor) at as_of. For us-stocks, price-
 
 | Status | Schema | Description |
 | --- | --- | --- |
-| 200 | github_com_Cyvadra_toktik_internal_dto.ScreenOptionResponse | OK |
-| 400 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Bad Request |
-| 500 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Internal Server Error |
+| 200 | [ScreenOptionResponse](#screenoptionresponse) | OK |
+| 400 | [ErrorResponse](#errorresponse) | Bad Request |
+| 500 | [ErrorResponse](#errorresponse) | Internal Server Error |
 
 ## Calendar
 
@@ -1015,9 +1016,9 @@ Returns latest known values per (symbol, factor) at as_of. For us-stocks, price-
 
 | Status | Schema | Description |
 | --- | --- | --- |
-| 200 | github_com_Cyvadra_toktik_internal_dto.EconomicCalendarResponse | OK |
-| 400 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Bad Request |
-| 500 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Internal Server Error |
+| 200 | [EconomicCalendarResponse](#economiccalendarresponse) | OK |
+| 400 | [ErrorResponse](#errorresponse) | Bad Request |
+| 500 | [ErrorResponse](#errorresponse) | Internal Server Error |
 
 ### Stock calendar
 
@@ -1032,13 +1033,1180 @@ Returns latest known values per (symbol, factor) at as_of. For us-stocks, price-
 
 | Name | In | Type | Required | Description |
 | --- | --- | --- | --- | --- |
-| request | body | github_com_Cyvadra_toktik_internal_dto.StockCalendarRequest | yes | Stock calendar request |
+| request | body | [StockCalendarRequest](#stockcalendarrequest) | yes | Stock calendar request |
 
 #### Responses
 
 | Status | Schema | Description |
 | --- | --- | --- |
-| 200 | github_com_Cyvadra_toktik_internal_dto.StockCalendarResponse | OK |
-| 400 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Bad Request |
-| 500 | github_com_Cyvadra_toktik_internal_dto.ErrorResponse | Internal Server Error |
+| 200 | [StockCalendarResponse](#stockcalendarresponse) | OK |
+| 400 | [ErrorResponse](#errorresponse) | Bad Request |
+| 500 | [ErrorResponse](#errorresponse) | Internal Server Error |
+
+## Schemas
+
+This section expands every request/response schema referenced by the endpoints above. Nested DTOs are included so clients can inspect the complete JSON shape without opening Swagger.
+
+### CalendarEventDTO
+
+- Schema: `github_com_Cyvadra_toktik_internal_dto.CalendarEventDTO`
+- Type: `object`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| action | string | no | - |
+| actual | number | no | - |
+| adj_dividend | number | no | - |
+| change | number | no | - |
+| change_percentage | number | no | - |
+| company | string | no | - |
+| country | string | no | - |
+| currency | string | no | - |
+| date | string | no | - |
+| declaration_date | string | no | - |
+| denominator | number | no | - |
+| dividend | number | no | - |
+| eps_actual | number | no | - |
+| eps_estimated | number | no | - |
+| estimate | number | no | - |
+| exchange | string | no | - |
+| fiscal_year | integer | no | - |
+| frequency | string | no | - |
+| impact | string | no | - |
+| link_json | string | no | - |
+| link_xlsx | string | no | - |
+| market_cap | number | no | - |
+| numerator | number | no | - |
+| payment_date | string | no | - |
+| period | string | no | - |
+| previous | number | no | - |
+| price_range | string | no | - |
+| record_date | string | no | - |
+| revenue_actual | integer | no | - |
+| revenue_estimated | integer | no | - |
+| shares | number | no | - |
+| source | string | no | - |
+| split_type | string | no | - |
+| symbol | string | no | - |
+| time | string | no | - |
+| title | string | no | - |
+| type | string | no | - |
+| unit | string | no | - |
+| updated_at | string | no | - |
+| yield | number | no | - |
+
+### EconomicCalendarResponse
+
+- Schema: `github_com_Cyvadra_toktik_internal_dto.EconomicCalendarResponse`
+- Type: `object`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| data | array<[CalendarEventDTO](#calendareventdto)> | no | - |
+
+### ErrorResponse
+
+- Schema: `github_com_Cyvadra_toktik_internal_dto.ErrorResponse`
+- Type: `object`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| error | string | no | - |
+
+### FactorBarResponse
+
+- Schema: `github_com_Cyvadra_toktik_internal_dto.FactorBarResponse`
+- Type: `object`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| data | array<[FactorBarRow](#factorbarrow)> | no | - |
+| next_cursor | string | no | - |
+
+### FactorBarRow
+
+- Schema: `github_com_Cyvadra_toktik_internal_dto.FactorBarRow`
+- Type: `object`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| close | number | no | - |
+| high | number | no | - |
+| low | number | no | - |
+| open | number | no | - |
+| symbol | string | no | - |
+| timestamp | string | no | - |
+
+### FactorCatalogResponse
+
+- Schema: `github_com_Cyvadra_toktik_internal_dto.FactorCatalogResponse`
+- Type: `object`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| data | array<[FactorInfo](#factorinfo)> | no | - |
+
+### FactorInfo
+
+- Schema: `github_com_Cyvadra_toktik_internal_dto.FactorInfo`
+- Type: `object`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| fields | array<string> | no | - |
+| name | string | no | - |
+| source_windows | array<string> | no | - |
+| symbols | array<string> | no | - |
+
+### FeatureDailyPanelResponse
+
+- Schema: `github_com_Cyvadra_toktik_internal_dto.FeatureDailyPanelResponse`
+- Type: `object`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| data | array<[FeatureDailyPanelRow](#featuredailypanelrow)> | no | - |
+| lookback_days | integer | no | - |
+| market | string | no | - |
+| underlying | string | no | - |
+
+### FeatureDailyPanelRow
+
+- Schema: `github_com_Cyvadra_toktik_internal_dto.FeatureDailyPanelRow`
+- Type: `object`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| current_iv | number | no | - |
+| date | string | no | - |
+| days_from_prev_holiday | integer | no | - |
+| days_to_next_holiday | integer | no | - |
+| front_atm_iv | number | no | - |
+| front_days_to_expiry | integer | no | - |
+| front_expiration | string | no | - |
+| front_put_call_skew | number | no | - |
+| hv10 | number | no | - |
+| hv20 | number | no | - |
+| hv30 | number | no | - |
+| is_early_close | boolean | no | - |
+| iv_observations | integer | no | - |
+| iv_percentile | number | no | - |
+| iv_rank | number | no | - |
+| liquidity_active_contract_count | integer | no | - |
+| liquidity_activity_ratio | number | no | - |
+| liquidity_contract_count | integer | no | - |
+| liquidity_open_interest | number | no | - |
+| liquidity_relative_spread | number | no | - |
+| liquidity_tick_count | integer | no | - |
+| liquidity_tradability_ratio | number | no | - |
+| liquidity_tradable_contract_count | integer | no | - |
+| liquidity_transactions | integer | no | - |
+| liquidity_volume | integer | no | - |
+| price_observations | integer | no | - |
+| surface_contract_count | integer | no | - |
+
+### FeatureEventWindowHistoryResponse
+
+- Schema: `github_com_Cyvadra_toktik_internal_dto.FeatureEventWindowHistoryResponse`
+- Type: `object`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| data | array<[FeatureEventWindowHistoryRow](#featureeventwindowhistoryrow)> | no | - |
+| market | string | no | - |
+| underlying | string | no | - |
+
+### FeatureEventWindowHistoryRow
+
+- Schema: `github_com_Cyvadra_toktik_internal_dto.FeatureEventWindowHistoryRow`
+- Type: `object`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| as_of_date | string | no | - |
+| date | string | no | - |
+| days_from_prev_holiday | integer | no | - |
+| days_to_next_holiday | integer | no | - |
+| is_early_close | boolean | no | - |
+| market | string | no | - |
+| next_holiday_date | string | no | - |
+| previous_holiday_date | string | no | - |
+| underlying | string | no | - |
+
+### FeatureEventWindowSnapshotResponse
+
+- Schema: `github_com_Cyvadra_toktik_internal_dto.FeatureEventWindowSnapshotResponse`
+- Type: `object`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| as_of_date | string | no | - |
+| days_from_prev_holiday | integer | no | - |
+| days_to_next_holiday | integer | no | - |
+| is_early_close | boolean | no | - |
+| market | string | no | - |
+| next_holiday_date | string | no | - |
+| previous_holiday_date | string | no | - |
+| underlying | string | no | - |
+
+### FeatureLiquidityHistoryResponse
+
+- Schema: `github_com_Cyvadra_toktik_internal_dto.FeatureLiquidityHistoryResponse`
+- Type: `object`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| data | array<[FeatureLiquidityHistoryRow](#featureliquidityhistoryrow)> | no | - |
+| market | string | no | - |
+| underlying | string | no | - |
+
+### FeatureLiquidityHistoryRow
+
+- Schema: `github_com_Cyvadra_toktik_internal_dto.FeatureLiquidityHistoryRow`
+- Type: `object`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| active_contract_count | integer | no | - |
+| activity_ratio | number | no | - |
+| as_of_date | string | no | - |
+| avg_ask_close | number | no | - |
+| avg_bid_close | number | no | - |
+| avg_mark_close | number | no | - |
+| contract_count | integer | no | - |
+| days_to_expiry | integer | no | - |
+| expiration | string | no | - |
+| open_interest | number | no | - |
+| relative_spread | number | no | - |
+| tick_count | integer | no | - |
+| tradability_ratio | number | no | - |
+| tradable_contract_count | integer | no | - |
+| transactions | integer | no | - |
+| volume | integer | no | - |
+
+### FeatureLiquiditySnapshotResponse
+
+- Schema: `github_com_Cyvadra_toktik_internal_dto.FeatureLiquiditySnapshotResponse`
+- Type: `object`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| as_of | string | no | - |
+| data | array<[FeatureLiquiditySnapshotRow](#featureliquiditysnapshotrow)> | no | - |
+| market | string | no | - |
+| underlying | string | no | - |
+
+### FeatureLiquiditySnapshotRow
+
+- Schema: `github_com_Cyvadra_toktik_internal_dto.FeatureLiquiditySnapshotRow`
+- Type: `object`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| active_contract_count | integer | no | - |
+| activity_ratio | number | no | - |
+| avg_ask_close | number | no | - |
+| avg_bid_close | number | no | - |
+| avg_mark_close | number | no | - |
+| contract_count | integer | no | - |
+| days_to_expiry | integer | no | - |
+| expiration | string | no | - |
+| open_interest | number | no | - |
+| relative_spread | number | no | - |
+| tick_count | integer | no | - |
+| tradability_ratio | number | no | - |
+| tradable_contract_count | integer | no | - |
+| transactions | integer | no | - |
+| volume | integer | no | - |
+
+### FeatureSkewHistoryResponse
+
+- Schema: `github_com_Cyvadra_toktik_internal_dto.FeatureSkewHistoryResponse`
+- Type: `object`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| data | array<[FeatureSkewHistoryRow](#featureskewhistoryrow)> | no | - |
+| market | string | no | - |
+| underlying | string | no | - |
+
+### FeatureSkewHistoryRow
+
+- Schema: `github_com_Cyvadra_toktik_internal_dto.FeatureSkewHistoryRow`
+- Type: `object`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| as_of_date | string | no | - |
+| contract_count | integer | no | - |
+| days_to_expiry | integer | no | - |
+| expiration | string | no | - |
+| otm_call_iv | number | no | - |
+| otm_put_iv | number | no | - |
+| put_call_skew | number | no | - |
+
+### FeatureSkewSnapshotResponse
+
+- Schema: `github_com_Cyvadra_toktik_internal_dto.FeatureSkewSnapshotResponse`
+- Type: `object`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| as_of | string | no | - |
+| data | array<[FeatureSkewSnapshotRow](#featureskewsnapshotrow)> | no | - |
+| market | string | no | - |
+| underlying | string | no | - |
+
+### FeatureSkewSnapshotRow
+
+- Schema: `github_com_Cyvadra_toktik_internal_dto.FeatureSkewSnapshotRow`
+- Type: `object`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| contract_count | integer | no | - |
+| days_to_expiry | integer | no | - |
+| expiration | string | no | - |
+| otm_call_iv | number | no | - |
+| otm_put_iv | number | no | - |
+| put_call_skew | number | no | - |
+
+### FeatureTermStructureHistoryResponse
+
+- Schema: `github_com_Cyvadra_toktik_internal_dto.FeatureTermStructureHistoryResponse`
+- Type: `object`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| data | array<[FeatureTermStructureHistoryRow](#featuretermstructurehistoryrow)> | no | - |
+| market | string | no | - |
+| underlying | string | no | - |
+
+### FeatureTermStructureHistoryRow
+
+- Schema: `github_com_Cyvadra_toktik_internal_dto.FeatureTermStructureHistoryRow`
+- Type: `object`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| as_of_date | string | no | - |
+| atm_iv | number | no | - |
+| call_iv | number | no | - |
+| contract_count | integer | no | - |
+| days_to_expiry | integer | no | - |
+| expiration | string | no | - |
+| put_iv | number | no | - |
+
+### FeatureTermStructureSnapshotResponse
+
+- Schema: `github_com_Cyvadra_toktik_internal_dto.FeatureTermStructureSnapshotResponse`
+- Type: `object`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| as_of | string | no | - |
+| data | array<[FeatureTermStructureSnapshotRow](#featuretermstructuresnapshotrow)> | no | - |
+| market | string | no | - |
+| underlying | string | no | - |
+
+### FeatureTermStructureSnapshotRow
+
+- Schema: `github_com_Cyvadra_toktik_internal_dto.FeatureTermStructureSnapshotRow`
+- Type: `object`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| atm_iv | number | no | - |
+| call_iv | number | no | - |
+| contract_count | integer | no | - |
+| days_to_expiry | integer | no | - |
+| expiration | string | no | - |
+| put_iv | number | no | - |
+
+### FeatureVolatilityHistoryResponse
+
+- Schema: `github_com_Cyvadra_toktik_internal_dto.FeatureVolatilityHistoryResponse`
+- Type: `object`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| data | array<[FeatureVolatilityHistoryRow](#featurevolatilityhistoryrow)> | no | - |
+| lookback_days | integer | no | - |
+| market | string | no | - |
+| underlying | string | no | - |
+
+### FeatureVolatilityHistoryRow
+
+- Schema: `github_com_Cyvadra_toktik_internal_dto.FeatureVolatilityHistoryRow`
+- Type: `object`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| current_iv | number | no | - |
+| date | string | no | - |
+| hv10 | number | no | - |
+| hv20 | number | no | - |
+| hv30 | number | no | - |
+| iv_observations | integer | no | - |
+| iv_percentile | number | no | - |
+| iv_rank | number | no | - |
+| price_observations | integer | no | - |
+
+### FeatureVolatilitySnapshotResponse
+
+- Schema: `github_com_Cyvadra_toktik_internal_dto.FeatureVolatilitySnapshotResponse`
+- Type: `object`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| current_iv | number | no | - |
+| hv10 | number | no | - |
+| hv20 | number | no | - |
+| hv30 | number | no | - |
+| iv_as_of | string | no | - |
+| iv_observations | integer | no | - |
+| iv_percentile | number | no | - |
+| iv_rank | number | no | - |
+| lookback_days | integer | no | - |
+| market | string | no | - |
+| price_as_of | string | no | - |
+| price_observations | integer | no | - |
+| underlying | string | no | - |
+
+### FundamentalFactorCatalogEntry
+
+- Schema: `github_com_Cyvadra_toktik_internal_dto.FundamentalFactorCatalogEntry`
+- Type: `object`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| active | boolean | no | - |
+| description | string | no | - |
+| display_name | string | no | - |
+| factor_code | string | no | - |
+| fill_max_days | integer | no | - |
+| fill_policy | string | no | - |
+| market | string | no | - |
+| metadata | string | no | - |
+| point_in_time | boolean | no | - |
+| preferred_frequency | string | no | - |
+| sla_hours | integer | no | - |
+| source | string | no | - |
+| unit | string | no | - |
+| updated_at | string | no | - |
+| value_type | string | no | - |
+
+### FundamentalFactorCatalogResponse
+
+- Schema: `github_com_Cyvadra_toktik_internal_dto.FundamentalFactorCatalogResponse`
+- Type: `object`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| data | array<[FundamentalFactorCatalogEntry](#fundamentalfactorcatalogentry)> | no | - |
+
+### FundamentalFreshnessEntry
+
+- Schema: `github_com_Cyvadra_toktik_internal_dto.FundamentalFreshnessEntry`
+- Type: `object`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| factor | string | no | - |
+| last_known_at | string | no | - |
+| market | string | no | - |
+| sla_hours | integer | no | - |
+| stale | boolean | no | - |
+| stale_hours | number | no | - |
+
+### FundamentalFreshnessResponse
+
+- Schema: `github_com_Cyvadra_toktik_internal_dto.FundamentalFreshnessResponse`
+- Type: `object`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| data | array<[FundamentalFreshnessEntry](#fundamentalfreshnessentry)> | no | - |
+
+### FundamentalPanelResponse
+
+- Schema: `github_com_Cyvadra_toktik_internal_dto.FundamentalPanelResponse`
+- Type: `object`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| as_of | string | no | - |
+| data | array<[FundamentalPanelRow](#fundamentalpanelrow)> | no | - |
+| market | string | no | - |
+
+### FundamentalPanelRow
+
+- Schema: `github_com_Cyvadra_toktik_internal_dto.FundamentalPanelRow`
+- Type: `object`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| event_ts | string | no | - |
+| factor | string | no | - |
+| known_at | string | no | - |
+| symbol | string | no | - |
+| value | number | no | - |
+
+### FundamentalSeriesPoint
+
+- Schema: `github_com_Cyvadra_toktik_internal_dto.FundamentalSeriesPoint`
+- Type: `object`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| event_ts | string | no | - |
+| filled | boolean | no | - |
+| known_at | string | no | - |
+| revision | integer | no | - |
+| source | string | no | - |
+| value | number | no | - |
+
+### FundamentalSeriesResponse
+
+- Schema: `github_com_Cyvadra_toktik_internal_dto.FundamentalSeriesResponse`
+- Type: `object`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| as_of | string | no | - |
+| data | array<[FundamentalSeriesPoint](#fundamentalseriespoint)> | no | - |
+| factor | string | no | - |
+| fill_policy | string | no | - |
+| market | string | no | - |
+| mode | string | no | - |
+| symbol | string | no | - |
+
+### FundamentalSnapshotEntry
+
+- Schema: `github_com_Cyvadra_toktik_internal_dto.FundamentalSnapshotEntry`
+- Type: `object`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| event_ts | string | no | - |
+| factor | string | no | - |
+| known_at | string | no | - |
+| source | string | no | - |
+| value | number | no | - |
+
+### FundamentalSnapshotResponse
+
+- Schema: `github_com_Cyvadra_toktik_internal_dto.FundamentalSnapshotResponse`
+- Type: `object`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| as_of | string | no | - |
+| data | array<[FundamentalSnapshotEntry](#fundamentalsnapshotentry)> | no | - |
+| market | string | no | - |
+| symbol | string | no | - |
+
+### IndicatorPresetCatalogResponse
+
+- Schema: `github_com_Cyvadra_toktik_internal_dto.IndicatorPresetCatalogResponse`
+- Type: `object`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| presets | array<[IndicatorPresetDefinition](#indicatorpresetdefinition)> | no | - |
+
+### IndicatorPresetDefinition
+
+- Schema: `github_com_Cyvadra_toktik_internal_dto.IndicatorPresetDefinition`
+- Type: `object`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| description | string | no | - |
+| id | string | no | - |
+| indicators | array<[IndicatorPresetIndicator](#indicatorpresetindicator)> | no | - |
+| name | string | no | - |
+
+### IndicatorPresetIndicator
+
+- Schema: `github_com_Cyvadra_toktik_internal_dto.IndicatorPresetIndicator`
+- Type: `object`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| expression | string | no | - |
+| key | string | no | - |
+
+### IndicatorSeriesRequest
+
+- Schema: `github_com_Cyvadra_toktik_internal_dto.IndicatorSeriesRequest`
+- Type: `object`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| dsl | string | no | - |
+| from | string | yes | - |
+| indicators | array<string> | no | - |
+| interval | string | yes | - |
+| market | string | yes | - |
+| params | object | no | - |
+| precision | integer | no | - |
+| presets | array<string> | no | - |
+| session | string | no | - |
+| symbol | string | yes | - |
+| to | string | yes | - |
+
+### IndicatorSeriesResponse
+
+- Schema: `github_com_Cyvadra_toktik_internal_dto.IndicatorSeriesResponse`
+- Type: `object`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| interval | string | no | - |
+| market | string | no | - |
+| series | map<string,array<number>> | no | - |
+| symbol | string | no | - |
+| timestamps | array<string> | no | - |
+
+### MacroFactorCatalogEntry
+
+- Schema: `github_com_Cyvadra_toktik_internal_dto.MacroFactorCatalogEntry`
+- Type: `object`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| active | boolean | no | - |
+| dataset | string | no | - |
+| description | string | no | - |
+| display_name | string | no | - |
+| factor_code | string | no | - |
+| fill_max_days | integer | no | - |
+| fill_policy | string | no | - |
+| metadata | string | no | - |
+| point_in_time | boolean | no | - |
+| preferred_frequency | string | no | - |
+| realtime_mode | string | no | - |
+| reference_market | string | no | - |
+| reference_symbol | string | no | - |
+| sla_hours | integer | no | - |
+| source | string | no | - |
+| unit | string | no | - |
+| updated_at | string | no | - |
+| value_type | string | no | - |
+
+### MacroFactorCatalogResponse
+
+- Schema: `github_com_Cyvadra_toktik_internal_dto.MacroFactorCatalogResponse`
+- Type: `object`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| data | array<[MacroFactorCatalogEntry](#macrofactorcatalogentry)> | no | - |
+
+### MacroSeriesPoint
+
+- Schema: `github_com_Cyvadra_toktik_internal_dto.MacroSeriesPoint`
+- Type: `object`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| event_ts | string | no | - |
+| factor | string | no | - |
+| filled | boolean | no | - |
+| known_at | string | no | - |
+| realtime | boolean | no | - |
+| reference_market | string | no | - |
+| reference_symbol | string | no | - |
+| source | string | no | - |
+| timestamp | string | no | - |
+| value | number | no | - |
+
+### MacroSeriesResponse
+
+- Schema: `github_com_Cyvadra_toktik_internal_dto.MacroSeriesResponse`
+- Type: `object`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| as_of | string | no | - |
+| data | array<[MacroSeriesPoint](#macroseriespoint)> | no | - |
+| dataset | string | no | - |
+| interval | string | no | - |
+| reference_market | string | no | - |
+| reference_symbol | string | no | - |
+
+### ScreenOptionResponse
+
+- Schema: `github_com_Cyvadra_toktik_internal_dto.ScreenOptionResponse`
+- Type: `object`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| data | array<[ScreenedOption](#screenedoption)> | no | - |
+| next_cursor | string | no | - |
+
+### ScreenUSTurnoverIntersectionResponse
+
+- Schema: `github_com_Cyvadra_toktik_internal_dto.ScreenUSTurnoverIntersectionResponse`
+- Type: `object`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| candidate_limit | integer | no | - |
+| data | array<[ScreenedUSTurnoverIntersectionRow](#screenedusturnoverintersectionrow)> | no | - |
+| limit | integer | no | - |
+| lookback_days | integer | no | - |
+
+### ScreenUnderlyingResponse
+
+- Schema: `github_com_Cyvadra_toktik_internal_dto.ScreenUnderlyingResponse`
+- Type: `object`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| data | array<[ScreenedUnderlying](#screenedunderlying)> | no | - |
+| next_cursor | string | no | - |
+
+### ScreenedOption
+
+- Schema: `github_com_Cyvadra_toktik_internal_dto.ScreenedOption`
+- Type: `object`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| ask_close | number | no | - |
+| bid_close | number | no | - |
+| close | number | no | - |
+| days_to_expiry | integer | no | - |
+| delta | number | no | - |
+| expiration | string | no | - |
+| gamma | number | no | - |
+| implied_volatility | number | no | - |
+| open_interest | number | no | - |
+| option_type | string | no | - |
+| relative_spread | number | no | - |
+| strike | number | no | - |
+| symbol | string | no | - |
+| theta | number | no | - |
+| underlying | string | no | - |
+| underlying_close | number | no | - |
+| vega | number | no | - |
+| volume | number | no | - |
+
+### ScreenedUSTurnoverIntersectionRow
+
+- Schema: `github_com_Cyvadra_toktik_internal_dto.ScreenedUSTurnoverIntersectionRow`
+- Type: `object`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| combined_turnover_usd | number | no | - |
+| option_trading_days | integer | no | - |
+| option_turnover_usd | number | no | - |
+| option_volume | number | no | - |
+| stock_trading_days | integer | no | - |
+| stock_turnover_usd | number | no | - |
+| stock_volume | number | no | - |
+| underlying | string | no | - |
+
+### ScreenedUnderlying
+
+- Schema: `github_com_Cyvadra_toktik_internal_dto.ScreenedUnderlying`
+- Type: `object`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| activity_ratio | number | no | - |
+| as_of_date | string | no | - |
+| current_iv | number | no | - |
+| hv10 | number | no | - |
+| hv20 | number | no | - |
+| hv30 | number | no | - |
+| iv_percentile | number | no | - |
+| iv_rank | number | no | - |
+| market | string | no | - |
+| open_interest | number | no | - |
+| tradability_ratio | number | no | - |
+| underlying | string | no | - |
+| volume | integer | no | - |
+
+### StockCalendarRequest
+
+- Schema: `github_com_Cyvadra_toktik_internal_dto.StockCalendarRequest`
+- Type: `object`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| earnings_only | boolean | no | - |
+| from | string | no | - |
+| symbols | array<string> | yes | - |
+| to | string | no | - |
+| types | array<string> | no | - |
+
+### StockCalendarResponse
+
+- Schema: `github_com_Cyvadra_toktik_internal_dto.StockCalendarResponse`
+- Type: `object`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| data | array<[CalendarEventDTO](#calendareventdto)> | no | - |
+| symbols | array<string> | no | - |
+
+### USOptionBarResponse
+
+- Schema: `github_com_Cyvadra_toktik_internal_dto.USOptionBarResponse`
+- Type: `object`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| data | array<[USOptionBarRow](#usoptionbarrow)> | no | - |
+| next_cursor | string | no | - |
+
+### USOptionBarRow
+
+- Schema: `github_com_Cyvadra_toktik_internal_dto.USOptionBarRow`
+- Type: `object`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| close | number | no | - |
+| delta | number | no | - |
+| expiration | string | no | - |
+| gamma | number | no | - |
+| high | number | no | - |
+| implied_volatility | number | no | - |
+| low | number | no | - |
+| open | number | no | - |
+| option_type | string | no | - |
+| rho | number | no | - |
+| strike | number | no | - |
+| symbol | string | no | - |
+| theta | number | no | - |
+| timestamp | string | no | - |
+| transactions | integer | no | - |
+| underlying | string | no | - |
+| underlying_close | number | no | - |
+| vega | number | no | - |
+| volume | number | no | - |
+
+### USOptionChainContract
+
+- Schema: `github_com_Cyvadra_toktik_internal_dto.USOptionChainContract`
+- Type: `object`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| close | number | no | - |
+| delta | number | no | - |
+| expiration | string | no | - |
+| gamma | number | no | - |
+| implied_volatility | number | no | - |
+| option_type | string | no | - |
+| rho | number | no | - |
+| strike | number | no | - |
+| symbol | string | no | - |
+| theta | number | no | - |
+| transactions | integer | no | - |
+| underlying_close | number | no | - |
+| vega | number | no | - |
+| volume | number | no | - |
+
+### USOptionChainResponse
+
+- Schema: `github_com_Cyvadra_toktik_internal_dto.USOptionChainResponse`
+- Type: `object`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| data | array<[USOptionChainSnapshot](#usoptionchainsnapshot)> | no | - |
+| next_cursor | string | no | - |
+
+### USOptionChainSnapshot
+
+- Schema: `github_com_Cyvadra_toktik_internal_dto.USOptionChainSnapshot`
+- Type: `object`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| contracts | array<[USOptionChainContract](#usoptionchaincontract)> | no | - |
+| timestamp | string | no | - |
+| underlying | string | no | - |
+
+### USOptionGreeksResponse
+
+- Schema: `github_com_Cyvadra_toktik_internal_dto.USOptionGreeksResponse`
+- Type: `object`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| data | array<[USOptionGreeksRow](#usoptiongreeksrow)> | no | - |
+| next_cursor | string | no | - |
+
+### USOptionGreeksRow
+
+- Schema: `github_com_Cyvadra_toktik_internal_dto.USOptionGreeksRow`
+- Type: `object`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| delta | number | no | - |
+| expiration | string | no | - |
+| gamma | number | no | - |
+| implied_volatility | number | no | - |
+| option_type | string | no | - |
+| rho | number | no | - |
+| strike | number | no | - |
+| symbol | string | no | - |
+| theta | number | no | - |
+| timestamp | string | no | - |
+| transactions | integer | no | - |
+| underlying | string | no | - |
+| underlying_close | number | no | - |
+| vega | number | no | - |
+| volume | number | no | - |
+
+### USOptionSymbolResponse
+
+- Schema: `github_com_Cyvadra_toktik_internal_dto.USOptionSymbolResponse`
+- Type: `object`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| data | array<[USOptionSymbolRow](#usoptionsymbolrow)> | no | - |
+| next_cursor | string | no | - |
+
+### USOptionSymbolRow
+
+- Schema: `github_com_Cyvadra_toktik_internal_dto.USOptionSymbolRow`
+- Type: `object`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| expiration | string | no | - |
+| option_type | string | no | - |
+| strike | number | no | - |
+| symbol | string | no | - |
+| underlying | string | no | - |
+
+### USOptionWall
+
+- Schema: `github_com_Cyvadra_toktik_internal_dto.USOptionWall`
+- Type: `object`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| days_to_expiry | integer | no | - |
+| expiration | string | no | - |
+| snapshot_day | string | no | - |
+| strikes | array<[USOptionWallStrikeRow](#usoptionwallstrikerow)> | no | - |
+| symbol | string | no | - |
+
+### USOptionWallResponse
+
+- Schema: `github_com_Cyvadra_toktik_internal_dto.USOptionWallResponse`
+- Type: `object`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| data | array<[USOptionWall](#usoptionwall)> | no | - |
+| snapshot_day | string | no | - |
+| symbol | string | no | - |
+
+### USOptionWallStrikeRow
+
+- Schema: `github_com_Cyvadra_toktik_internal_dto.USOptionWallStrikeRow`
+- Type: `object`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| average_ask | number | no | - |
+| average_bid | number | no | - |
+| average_midpoint | number | no | - |
+| average_spread | number | no | - |
+| call_contract_count | integer | no | - |
+| call_open_interest | number | no | - |
+| put_contract_count | integer | no | - |
+| put_open_interest | number | no | - |
+| strike | number | no | - |
+| total_open_interest | number | no | - |
+
+### USStockBarFundamentalValue
+
+- Schema: `github_com_Cyvadra_toktik_internal_dto.USStockBarFundamentalValue`
+- Type: `object`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| event_ts | string | no | - |
+| filled | boolean | no | - |
+| known_at | string | no | - |
+| source | string | no | - |
+| value | number | no | - |
+
+### USStockBarMeta
+
+- Schema: `github_com_Cyvadra_toktik_internal_dto.USStockBarMeta`
+- Type: `object`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| profile | [USStockCompanyProfile](#usstockcompanyprofile) | no | - |
+
+### USStockBarResponse
+
+- Schema: `github_com_Cyvadra_toktik_internal_dto.USStockBarResponse`
+- Type: `object`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| data | array<[USStockBarRow](#usstockbarrow)> | no | - |
+| meta | [USStockBarMeta](#usstockbarmeta) | no | - |
+| next_cursor | string | no | - |
+
+### USStockBarRow
+
+- Schema: `github_com_Cyvadra_toktik_internal_dto.USStockBarRow`
+- Type: `object`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| close | number | no | - |
+| fundamentals | map<string,[USStockBarFundamentalValue](#usstockbarfundamentalvalue)> | no | - |
+| high | number | no | - |
+| low | number | no | - |
+| open | number | no | - |
+| symbol | string | no | - |
+| timestamp | string | no | - |
+| transactions | integer | no | - |
+| volume | number | no | - |
+
+### USStockCompanyProfile
+
+- Schema: `github_com_Cyvadra_toktik_internal_dto.USStockCompanyProfile`
+- Type: `object`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| country | string | no | - |
+| currency | string | no | - |
+| exchange | string | no | - |
+| exchange_full_name | string | no | - |
+| industry | string | no | - |
+| ipo | string | no | - |
+| is_etf | boolean | no | - |
+| is_fund | boolean | no | - |
+| logo | string | no | - |
+| market_capitalization | number | no | - |
+| name | string | no | - |
+| sector | string | no | - |
+| share_outstanding | number | no | - |
+| source | string | no | - |
+| symbol | string | no | - |
+| ticker | string | no | - |
+| weburl | string | no | - |
+
+### USStockFundamentalMetricsRequest
+
+- Schema: `github_com_Cyvadra_toktik_internal_dto.USStockFundamentalMetricsRequest`
+- Type: `object`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| as_of | string | no | - |
+| symbols | array<string> | yes | - |
+
+### USStockFundamentalMetricsResponse
+
+- Schema: `github_com_Cyvadra_toktik_internal_dto.USStockFundamentalMetricsResponse`
+- Type: `object`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| data | array<[USStockFundamentalMetricsRow](#usstockfundamentalmetricsrow)> | no | - |
+
+### USStockFundamentalMetricsRow
+
+- Schema: `github_com_Cyvadra_toktik_internal_dto.USStockFundamentalMetricsRow`
+- Type: `object`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| asOf | string | no | - |
+| bookValuePerShare | number | no | - |
+| epsGrowthQuarterlyYoy | number | no | - |
+| epsGrowthTtmYoy | number | no | - |
+| epsTtm | number | no | - |
+| forwardPe | number | no | - |
+| pb | number | no | - |
+| peTtm | number | no | - |
+| period | string | no | - |
+| revenueGrowthQuarterlyYoy | number | no | - |
+| revenueGrowthTtmYoy | number | no | - |
+| source | string | no | - |
+| symbol | string | no | - |
+
+### USStockProfileRequest
+
+- Schema: `github_com_Cyvadra_toktik_internal_dto.USStockProfileRequest`
+- Type: `object`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| symbols | array<string> | yes | - |
+
+### USStockProfileResponse
+
+- Schema: `github_com_Cyvadra_toktik_internal_dto.USStockProfileResponse`
+- Type: `object`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| data | array<[USStockCompanyProfile](#usstockcompanyprofile)> | no | - |
+
+### USStockSplitResponse
+
+- Schema: `github_com_Cyvadra_toktik_internal_dto.USStockSplitResponse`
+- Type: `object`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| data | array<[USStockSplitRow](#usstocksplitrow)> | no | - |
+
+### USStockSplitRow
+
+- Schema: `github_com_Cyvadra_toktik_internal_dto.USStockSplitRow`
+- Type: `object`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| denominator | number | no | - |
+| numerator | number | no | - |
+| source | string | no | - |
+| source_hash | string | no | - |
+| split_date | string | no | - |
+| split_type | string | no | - |
+| symbol | string | no | - |
+| updated_at | string | no | - |
+
+### USStockSymbolResponse
+
+- Schema: `github_com_Cyvadra_toktik_internal_dto.USStockSymbolResponse`
+- Type: `object`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| data | array<[USStockSymbolRow](#usstocksymbolrow)> | no | - |
+| next_cursor | string | no | - |
+
+### USStockSymbolRow
+
+- Schema: `github_com_Cyvadra_toktik_internal_dto.USStockSymbolRow`
+- Type: `object`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| profile | [USStockCompanyProfile](#usstockcompanyprofile) | no | - |
+| symbol | string | no | - |
 
