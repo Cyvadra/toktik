@@ -47,6 +47,12 @@ type FlatFileAssetResult struct {
 	Files           []string
 	AttemptedDates  []time.Time
 	SkippedDates    []time.Time
+	SkippedReasons  []FlatFileSkippedDate
+}
+
+type FlatFileSkippedDate struct {
+	Date   time.Time
+	Reason string
 }
 
 type FlatFileSyncResult struct {
@@ -60,6 +66,7 @@ type flatFileDownloadResult struct {
 	LastDownloaded time.Time
 	AttemptedDates []time.Time
 	SkippedDates   []time.Time
+	SkippedReasons []FlatFileSkippedDate
 }
 
 func SyncPolygonFlatFiles(ctx context.Context, cfg FlatFileSyncConfig) (FlatFileSyncResult, error) {
@@ -263,6 +270,7 @@ func syncFlatFileAsset(ctx context.Context, cfg flatFileAssetConfig, conn driver
 		result.LastDownloaded = downloadResult.LastDownloaded
 		result.AttemptedDates = downloadResult.AttemptedDates
 		result.SkippedDates = downloadResult.SkippedDates
+		result.SkippedReasons = downloadResult.SkippedReasons
 
 		if len(downloadResult.Files) == 0 {
 			log.Printf("No requested %s flatfiles were available for %d explicit dates", cfg.assetClass, len(explicitDates))
@@ -294,6 +302,7 @@ func syncFlatFileAsset(ctx context.Context, cfg flatFileAssetConfig, conn driver
 	result.LastDownloaded = downloadResult.LastDownloaded
 	result.AttemptedDates = downloadResult.AttemptedDates
 	result.SkippedDates = downloadResult.SkippedDates
+	result.SkippedReasons = downloadResult.SkippedReasons
 
 	if len(downloadResult.Files) == 0 {
 		log.Printf("No new %s flatfiles available from %s onward", cfg.assetClass, startDate.Format("2006-01-02"))
@@ -351,6 +360,7 @@ func downloadFlatFileRange(ctx context.Context, startDate, endDate time.Time, fo
 		if err != nil {
 			if isSkippableFlatFileDownloadError(err) {
 				result.SkippedDates = append(result.SkippedDates, current)
+				result.SkippedReasons = append(result.SkippedReasons, FlatFileSkippedDate{Date: current, Reason: summarizeFlatFileSkipError(err)})
 				log.Printf("Skipping flatfile date %s: %v", current.Format("2006-01-02"), err)
 				continue
 			}
@@ -379,6 +389,7 @@ func downloadFlatFileDates(ctx context.Context, dates []time.Time, force bool, d
 		if err != nil {
 			if isSkippableFlatFileDownloadError(err) {
 				result.SkippedDates = append(result.SkippedDates, current)
+				result.SkippedReasons = append(result.SkippedReasons, FlatFileSkippedDate{Date: current, Reason: summarizeFlatFileSkipError(err)})
 				log.Printf("Skipping flatfile date %s: %v", current.Format("2006-01-02"), err)
 				continue
 			}
@@ -426,12 +437,22 @@ func FormatFlatFileSyncSummary(result FlatFileSyncResult) []string {
 		return nil
 	}
 
-	lines := make([]string, 0, len(assets)+3)
+	lines := make([]string, 0, len(assets)*5+5)
+	lines = append(lines, fmt.Sprintf("polygon flatfiles import: completed_files=%d skipped_files=%d failed_files=%d stock_rows=%d option_rows=%d elapsed=%s", result.Import.CompletedFiles, result.Import.SkippedFiles, result.Import.FailedFiles, result.Import.StockRows, result.Import.OptionRows, result.Import.Elapsed.Round(time.Second)))
 	for _, asset := range assets {
 		if len(asset.AttemptedDates) == 0 {
 			continue
 		}
 		lines = append(lines, formatFlatFileAssetSummaryLine(asset))
+		if downloaded := flatFileDownloadedDates(asset); len(downloaded) > 0 {
+			lines = append(lines, fmt.Sprintf("polygon %s downloaded dates: %s", asset.AssetClass, formatFlatFileDateListLimited(downloaded, 12)))
+		}
+		if len(asset.SkippedDates) > 0 {
+			lines = append(lines, fmt.Sprintf("polygon %s skipped dates: %s", asset.AssetClass, formatFlatFileDateListLimited(asset.SkippedDates, 12)))
+		}
+		if len(asset.SkippedReasons) > 0 {
+			lines = append(lines, fmt.Sprintf("polygon %s skipped reasons: %s", asset.AssetClass, formatFlatFileSkippedReasons(asset.SkippedReasons, 6)))
+		}
 	}
 
 	combinedAttempted := uniqueSortedDates(flattenFlatFileDates(assets, func(asset FlatFileAssetResult) []time.Time { return asset.AttemptedDates }))
@@ -465,7 +486,91 @@ func formatFlatFileAssetSummaryLine(asset FlatFileAssetResult) string {
 	attempted := len(asset.AttemptedDates)
 	skipped := len(asset.SkippedDates)
 	downloaded := len(asset.Files)
-	return fmt.Sprintf("polygon %s flatfiles: attempted_days=%d downloaded_days=%d skipped_days=%d skipped_ratio=%.1f%%", asset.AssetClass, attempted, downloaded, skipped, flatFileSkipRatio(skipped, attempted))
+	parts := []string{
+		fmt.Sprintf("polygon %s flatfiles:", asset.AssetClass),
+		fmt.Sprintf("scan=%s..%s", formatOptionalFlatFileDate(asset.StartDate), formatOptionalFlatFileDate(asset.ScanEnd)),
+		fmt.Sprintf("latest_imported=%s", formatOptionalFlatFileDate(asset.LastImported)),
+		fmt.Sprintf("last_downloaded=%s", formatOptionalFlatFileDate(asset.LastDownloaded)),
+		fmt.Sprintf("attempted_days=%d", attempted),
+		fmt.Sprintf("downloaded_days=%d", downloaded),
+		fmt.Sprintf("skipped_days=%d", skipped),
+		fmt.Sprintf("skipped_ratio=%.1f%%", flatFileSkipRatio(skipped, attempted)),
+	}
+	return strings.Join(parts, " ")
+}
+
+func flatFileDownloadedDates(asset FlatFileAssetResult) []time.Time {
+	if len(asset.Files) == 0 {
+		return nil
+	}
+	dates := make([]time.Time, 0, len(asset.Files))
+	for _, path := range asset.Files {
+		date, err := ExtractDateFromFilename(path)
+		if err != nil {
+			continue
+		}
+		dates = append(dates, date)
+	}
+	return normalizeUniqueUTCDates(dates)
+}
+
+func formatOptionalFlatFileDate(date time.Time) string {
+	if date.IsZero() {
+		return "none"
+	}
+	return normalizeUTCDay(date).Format("2006-01-02")
+}
+
+func formatFlatFileDateListLimited(dates []time.Time, limit int) string {
+	normalized := normalizeUniqueUTCDates(dates)
+	if len(normalized) == 0 {
+		return "none"
+	}
+	if limit <= 0 || len(normalized) <= limit {
+		return formatFlatFileDateList(normalized)
+	}
+	return fmt.Sprintf("%s, ... +%d more", formatFlatFileDateList(normalized[:limit]), len(normalized)-limit)
+}
+
+func formatFlatFileSkippedReasons(reasons []FlatFileSkippedDate, limit int) string {
+	if len(reasons) == 0 {
+		return "none"
+	}
+	ordered := append([]FlatFileSkippedDate(nil), reasons...)
+	sort.Slice(ordered, func(i, j int) bool { return ordered[i].Date.Before(ordered[j].Date) })
+	if limit <= 0 || len(ordered) < limit {
+		limit = len(ordered)
+	}
+	parts := make([]string, 0, limit+1)
+	for _, reason := range ordered[:limit] {
+		parts = append(parts, fmt.Sprintf("%s=%s", formatOptionalFlatFileDate(reason.Date), reason.Reason))
+	}
+	if len(ordered) > limit {
+		parts = append(parts, fmt.Sprintf("... +%d more", len(ordered)-limit))
+	}
+	return strings.Join(parts, "; ")
+}
+
+func summarizeFlatFileSkipError(err error) string {
+	if err == nil {
+		return "unknown"
+	}
+	if statusErr, ok := err.(*polygonpkg.HTTPStatusError); ok {
+		if strings.TrimSpace(statusErr.Status) != "" {
+			return statusErr.Status
+		}
+		if statusErr.StatusCode > 0 {
+			return fmt.Sprintf("HTTP %d", statusErr.StatusCode)
+		}
+	}
+	text := strings.Join(strings.Fields(err.Error()), " ")
+	if len(text) > 160 {
+		text = text[:157] + "..."
+	}
+	if text == "" {
+		return "unknown"
+	}
+	return text
 }
 
 func flattenFlatFileDates(assets []FlatFileAssetResult, pick func(FlatFileAssetResult) []time.Time) []time.Time {

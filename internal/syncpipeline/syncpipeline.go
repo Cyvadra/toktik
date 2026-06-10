@@ -229,10 +229,12 @@ func (r *Runner) Run(ctx context.Context, specs []JobSpec) (RunReport, error) {
 	if err := importledger.EnsureSchema(ctx, r.conn); err != nil {
 		return RunReport{}, err
 	}
+	r.opts.Logger.Info("sync pipeline started", "jobs", len(ordered), "dry_run", r.opts.DryRun, "force", r.opts.Force, "dependency_mode", r.opts.DependencyMode)
 	report := RunReport{StartedAt: started}
 	completed := make(map[string]JobReport, len(ordered))
 	for _, spec := range ordered {
 		if blocked, ok := dependencyBlockedReport(spec, completed, r.opts.DependencyMode); ok {
+			r.opts.Logger.Warn("sync job skipped", "job", spec.Name, "reason", blocked.Err)
 			report.Jobs = append(report.Jobs, blocked)
 			completed[spec.Name] = blocked
 			continue
@@ -242,6 +244,7 @@ func (r *Runner) Run(ctx context.Context, specs []JobSpec) (RunReport, error) {
 		completed[spec.Name] = jobReport
 	}
 	report.FinishedAt = time.Now().UTC()
+	r.opts.Logger.Info("sync pipeline finished", "jobs", len(report.Jobs), "elapsed", report.FinishedAt.Sub(report.StartedAt).Round(time.Second))
 	return report, nil
 }
 
@@ -270,6 +273,8 @@ func dependencyBlockedReport(spec JobSpec, completed map[string]JobReport, mode 
 }
 
 func (r *Runner) runJob(ctx context.Context, spec JobSpec) JobReport {
+	jobStarted := time.Now().UTC()
+	r.opts.Logger.Info("sync job started", "job", spec.Name)
 	jobCtx := ctx
 	if spec.PerJobTimeout > 0 {
 		var cancel context.CancelFunc
@@ -278,14 +283,17 @@ func (r *Runner) runJob(ctx context.Context, spec JobSpec) JobReport {
 	}
 	keys, err := spec.Syncer.SourceKeys(jobCtx, r.conn)
 	if err != nil {
+		r.opts.Logger.Error("sync job source resolution failed", "job", spec.Name, "err", err)
 		return JobReport{Job: spec.Name, Status: JobStatusFailed, Err: err.Error()}
 	}
 	if len(keys) == 0 {
+		r.opts.Logger.Info("sync job skipped", "job", spec.Name, "reason", "no source keys")
 		return JobReport{Job: spec.Name, Status: JobStatusSkipped}
 	}
 	ledger := importledger.New(r.conn)
 	report := JobReport{Job: spec.Name, Status: JobStatusSuccess}
 	sourceConcurrency := r.sourceConcurrency(spec, len(keys))
+	r.opts.Logger.Info("sync job sources resolved", "job", spec.Name, "sources", len(keys), "source_concurrency", sourceConcurrency)
 	if sourceConcurrency <= 1 {
 		for _, rawKey := range keys {
 			key := NormalizeSourceKey(rawKey)
@@ -365,6 +373,7 @@ func (r *Runner) runJob(ctx context.Context, spec JobSpec) JobReport {
 			report.AuditFindings = findings
 		}
 	}
+	r.opts.Logger.Info("sync job finished", "job", spec.Name, "status", report.Status, "rows", report.RowsInserted, "sources", len(report.Sources), "audit_findings", len(report.AuditFindings), "elapsed", time.Since(jobStarted).Round(time.Second))
 	return report
 }
 
@@ -394,19 +403,25 @@ func (r *Runner) runSource(ctx context.Context, spec JobSpec, ledger *importledg
 	}
 	window, err := r.resolveWindow(sourceCtx, spec, sourceKey)
 	if err != nil {
+		r.opts.Logger.Error("sync source window failed", "job", spec.Name, "source", sourceKey, "err", err)
 		return SourceReport{SourceKey: sourceKey, Status: JobStatusFailed, Err: err.Error()}
 	}
 	if window.SkipReason != "" {
+		r.opts.Logger.Info("sync source skipped", "job", spec.Name, "source", sourceKey, "from", formatLogDate(window.From), "to", formatLogDate(window.To), "reason", window.SkipReason)
 		return SourceReport{SourceKey: sourceKey, From: window.From, To: window.To, Status: JobStatusSkipped, Notes: []string{window.SkipReason}}
 	}
 	from, to := window.From, window.To
 	scope := ScopeKeyForRange(from, to)
+	sourceStarted := time.Now().UTC()
+	r.opts.Logger.Info("sync source started", "job", spec.Name, "source", sourceKey, "scope", scope, "from", formatLogDate(from), "to", formatLogDate(to), "dry_run", r.opts.DryRun, "force", r.opts.Force)
 	if !r.opts.Force {
 		ok, err := ledger.AlreadySucceeded(sourceCtx, spec.Name, sourceKey, scope)
 		if err != nil {
+			r.opts.Logger.Error("sync source ledger check failed", "job", spec.Name, "source", sourceKey, "scope", scope, "err", err)
 			return SourceReport{SourceKey: sourceKey, From: from, To: to, Status: JobStatusFailed, Err: err.Error()}
 		}
 		if ok {
+			r.opts.Logger.Info("sync source skipped", "job", spec.Name, "source", sourceKey, "scope", scope, "reason", "ledger already succeeded")
 			return SourceReport{SourceKey: sourceKey, From: from, To: to, Status: JobStatusSkipped}
 		}
 	}
@@ -416,6 +431,7 @@ func (r *Runner) runSource(ctx context.Context, spec JobSpec, ledger *importledg
 		var err error
 		importID, err = ledger.Start(sourceCtx, importledger.StartRequest{ImporterName: spec.Name, SourceKey: sourceKey, ScopeKey: scope, SourceHash: sourceHash, StartedAt: time.Now().UTC(), PendingTTL: r.opts.LockOptions.TTL, IgnorePending: r.opts.LockOptions.ForceUnlock})
 		if err != nil {
+			r.opts.Logger.Error("sync source ledger start failed", "job", spec.Name, "source", sourceKey, "scope", scope, "err", err)
 			return SourceReport{SourceKey: sourceKey, From: from, To: to, Status: JobStatusFailed, Err: err.Error()}
 		}
 	}
@@ -424,14 +440,24 @@ func (r *Runner) runSource(ctx context.Context, spec JobSpec, ledger *importledg
 		if !r.opts.DryRun {
 			err = importledger.RecordFailure(context.Background(), ledger, importledger.CompletionRequest{ImporterName: spec.Name, SourceKey: sourceKey, ScopeKey: scope, ImportID: importID, SourceHash: sourceHash, RowsInserted: importledger.NonNegativeRows(res.RowsInserted), ErrorMessage: err.Error(), CompletedAt: time.Now().UTC()}, err)
 		}
+		r.opts.Logger.Error("sync source failed", "job", spec.Name, "source", sourceKey, "scope", scope, "rows", res.RowsInserted, "elapsed", time.Since(sourceStarted).Round(time.Second), "err", err)
 		return SourceReport{SourceKey: sourceKey, From: from, To: to, Status: JobStatusFailed, RowsInserted: res.RowsInserted, Err: err.Error(), Notes: res.Notes}
 	}
 	if !r.opts.DryRun {
 		if err := ledger.MarkSuccess(sourceCtx, importledger.CompletionRequest{ImporterName: spec.Name, SourceKey: sourceKey, ScopeKey: scope, ImportID: importID, SourceHash: sourceHash, RowsInserted: importledger.NonNegativeRows(res.RowsInserted), CompletedAt: time.Now().UTC()}); err != nil {
+			r.opts.Logger.Error("sync source ledger success failed", "job", spec.Name, "source", sourceKey, "scope", scope, "rows", res.RowsInserted, "err", err)
 			return SourceReport{SourceKey: sourceKey, From: from, To: to, Status: JobStatusFailed, RowsInserted: res.RowsInserted, Err: err.Error(), Notes: res.Notes}
 		}
 	}
+	r.opts.Logger.Info("sync source finished", "job", spec.Name, "source", sourceKey, "scope", scope, "rows", res.RowsInserted, "notes", len(res.Notes), "elapsed", time.Since(sourceStarted).Round(time.Second))
 	return SourceReport{SourceKey: sourceKey, From: from, To: to, Status: JobStatusSuccess, RowsInserted: res.RowsInserted, Notes: res.Notes}
+}
+
+func formatLogDate(value time.Time) string {
+	if value.IsZero() {
+		return ""
+	}
+	return value.UTC().Format("2006-01-02")
 }
 
 func (r *Runner) resolveWindow(ctx context.Context, spec JobSpec, sourceKey string) (resolvedWindow, error) {

@@ -146,8 +146,14 @@ func TestFormatFlatFileSyncSummarySeparatesTradingAndNonTradingSkips(t *testing.
 	}
 	lines := FormatFlatFileSyncSummary(result)
 	joined := strings.Join(lines, "\n")
-	if !strings.Contains(joined, "polygon stocks flatfiles: attempted_days=3 downloaded_days=1 skipped_days=2 skipped_ratio=66.7%") {
+	if !strings.Contains(joined, "polygon stocks flatfiles: scan=none..none latest_imported=none last_downloaded=none attempted_days=3 downloaded_days=1 skipped_days=2 skipped_ratio=66.7%") {
 		t.Fatalf("missing stock summary in %q", joined)
+	}
+	if !strings.Contains(joined, "polygon stocks downloaded dates: 2026-04-10") {
+		t.Fatalf("missing downloaded date list in %q", joined)
+	}
+	if !strings.Contains(joined, "polygon stocks skipped dates: 2026-04-11, 2026-04-13") {
+		t.Fatalf("missing skipped date list in %q", joined)
 	}
 	if !strings.Contains(joined, "polygon flatfiles combined: attempted_days=3 skipped_days=2 skipped_ratio=66.7%") {
 		t.Fatalf("missing combined summary in %q", joined)
