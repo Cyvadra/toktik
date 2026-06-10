@@ -94,8 +94,9 @@ func (h *Handler) RunBacktest(c *gin.Context) {
 }
 
 // ValidateStrategyBacktest handles POST /api/v1/backtests/validate.
-//	@Summary		Validate a strategy backtest request
-//	@Description	Validates strategy or DSL backtest inputs, resolves strategy metadata, and performs a prepare-time preflight check without starting an async run.
+//
+//	@Summary		Validate a strategy or DSL backtest request
+//	@Description	Validates a strategy backtest payload before execution. The response resolves strategy catalog metadata, inferred DSL profile, input parameter schema, diagnostics, warnings, capital mode, option-chain requirements, and prepare-time data availability without starting an async run. Use this endpoint to build client forms and catch DSL/runtime configuration problems before POST /backtests/runs.
 //	@Tags			Backtests
 //	@Accept			json
 //	@Produce		json
@@ -127,7 +128,7 @@ func (h *Handler) ValidateStrategyBacktest(c *gin.Context) {
 // StartStrategyBacktest handles POST /api/v1/backtests/runs.
 //
 //	@Summary		Start an async strategy backtest
-//	@Description	Submits a strategy backtest run that executes asynchronously. Poll the run status via GET /backtests/runs/:runID.
+//	@Description	Submits a strategy or DSL backtest run and returns immediately with run_id, status_url, events_url, and report_url. The run executes asynchronously in memory. Query progress and completed results with GET /backtests/runs/{runID}; stream live progress with GET /backtests/runs/{runID}/events; fetch HTML reports with GET /backtests/runs/{runID}/report or /backtests/runs/{runID}/reports/{reportID}. Completed JSON results are embedded in StrategyBacktestRunStatus.result.summaries.
 //	@Tags			Backtests
 //	@Accept			json
 //	@Produce		json
@@ -158,8 +159,8 @@ func (h *Handler) StartStrategyBacktest(c *gin.Context) {
 
 // GetStrategyBacktestRun handles GET /api/v1/backtests/runs/:runID.
 //
-//	@Summary		Get backtest run status
-//	@Description	Returns the current status and results of a strategy backtest run.
+//	@Summary		Get backtest run status and result
+//	@Description	Returns the latest run status for a backtest. While running, inspect progress.phase, progress.percent, progress.current, progress.total, and progress.message. When status is completed, result.summaries contains per-strategy metrics such as bars_count, initial_capital, final_equity, total_return, annualized_return, sharpe_ratio, max_drawdown, total_trades, win_rate, total_fees, report_url, and optional spread_summary. When status is failed, error contains the failure reason.
 //	@Tags			Backtests
 //	@Produce		json
 //	@Param			runID	path		string	true	"Backtest run ID"
@@ -185,7 +186,7 @@ func (h *Handler) GetStrategyBacktestRun(c *gin.Context) {
 // GetStrategyBacktestReport handles GET /api/v1/backtests/runs/:runID/report.
 //
 //	@Summary		Get primary backtest report
-//	@Description	Returns the reserved HTML report for a backtest run. Before completion, it returns 202 with the current run status.
+//	@Description	Returns the primary HTML report for a completed backtest run. If the run is still pending or running, the endpoint returns 202 with the current StrategyBacktestRunStatus JSON so clients can continue polling. If no report is available for the completed run, it returns 409.
 //	@Tags			Backtests
 //	@Produce		html
 //	@Produce		json
@@ -212,7 +213,7 @@ func (h *Handler) GetStrategyBacktestReport(c *gin.Context) {
 // GetStrategyBacktestNamedReport handles GET /api/v1/backtests/runs/:runID/reports/:reportID.
 //
 //	@Summary		Get a named backtest report
-//	@Description	Returns an HTML report variant for a backtest run. Use reportID=overview for the overview page or 1..N for per-strategy detail pages.
+//	@Description	Returns a named HTML report variant for a completed backtest run. Use reportID=overview for the portfolio/aggregate overview, or a 1-based numeric reportID for a per-strategy detail report. If the run is not complete, returns 202 with current StrategyBacktestRunStatus JSON.
 //	@Tags			Backtests
 //	@Produce		html
 //	@Produce		json
@@ -240,7 +241,7 @@ func (h *Handler) GetStrategyBacktestNamedReport(c *gin.Context) {
 // StreamStrategyBacktestEvents handles GET /api/v1/backtests/runs/:runID/events.
 //
 //	@Summary		Stream backtest run events (SSE)
-//	@Description	Returns a server-sent events stream for real-time backtest progress updates.
+//	@Description	Streams server-sent events for a backtest run. Events contain StrategyBacktestRunStatus snapshots, including progress updates and final completed/failed status. Clients should still call GET /backtests/runs/{runID} after reconnects or stream completion to obtain the authoritative final result.
 //	@Tags			Backtests
 //	@Produce		text/event-stream
 //	@Param			runID	path	string	true	"Backtest run ID"

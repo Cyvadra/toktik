@@ -79,7 +79,10 @@ swagger-docs:
 export-market-api-md:
 	go run ./cmd/api-docs-markdown -input docs/swagger.json -output docs/db-market-indicator-api.md
 
-refresh-api-docs: swagger-fmt swagger-docs export-market-api-md
+export-backtests-api-md:
+	go run ./cmd/api-docs-markdown -scope backtests -input docs/swagger.json -output docs/dsl.md -title "Backtests & DSL API"
+
+refresh-api-docs: swagger-fmt swagger-docs export-market-api-md export-backtests-api-md
 
 build-win-arm:
 	@mkdir -p $(BUILD_DIR)
