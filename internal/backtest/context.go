@@ -613,6 +613,11 @@ func (bc *BarContext) Position(ref SecurityRef) float64 {
 	return bc.broker.Positions().Get(ref).Qty
 }
 
+// PositionAvgEntryPrice returns the average entry price for a security position.
+func (bc *BarContext) PositionAvgEntryPrice(ref SecurityRef) float64 {
+	return bc.broker.Positions().Get(ref).AvgEntryPrice
+}
+
 // Equity returns the total account equity (cash + positions marked to market).
 func (bc *BarContext) Equity() float64 {
 	return bc.broker.Equity()

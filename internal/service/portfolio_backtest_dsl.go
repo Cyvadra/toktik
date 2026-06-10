@@ -7,9 +7,8 @@ import (
 	"strings"
 
 	"github.com/Cyvadra/toktik/internal/dto"
-	"github.com/Cyvadra/toktik/pkg/dsl/ast"
 	"github.com/Cyvadra/toktik/pkg/dsl/bridge"
-	"github.com/Cyvadra/toktik/pkg/dsl/parser"
+	"github.com/Cyvadra/toktik/pkg/dsl/configmap"
 	"github.com/Cyvadra/toktik/pkg/strategies"
 )
 
@@ -46,12 +45,13 @@ func buildDynamicDSLResolvedStrategy(req dto.StrategyBacktestRunRequest, cfg str
 	if errs := parsed.ParseErrors(); len(errs) > 0 {
 		return strategies.ResolvedStrategy{}, dto.NewValidationError("invalid dsl: %s", strings.Join(errs, "; "))
 	}
+	manifest := parsed.Manifest()
 
-	validatedParams, err := validateBacktestDSLParams(parsed.ParamSchema(), params)
+	validatedParams, err := validateBacktestDSLParams(manifest.Inputs, params)
 	if err != nil {
 		return strategies.ResolvedStrategy{}, err
 	}
-	profile, err := resolveDynamicDSLProfile(dslSource, req.DSLProfile)
+	profile, err := resolveDynamicDSLProfile(manifest, req.DSLProfile)
 	if err != nil {
 		return strategies.ResolvedStrategy{}, err
 	}
@@ -267,8 +267,8 @@ func validateDSLNumericBounds(label string, value float64, item bridge.ParamSche
 	return nil
 }
 
-func resolveDynamicDSLProfile(source string, hint *dto.StrategyBacktestDSLProfile) (strategies.StrategyProfile, error) {
-	profile := inferDynamicDSLProfile(source)
+func resolveDynamicDSLProfile(manifest bridge.Manifest, hint *dto.StrategyBacktestDSLProfile) (strategies.StrategyProfile, error) {
+	profile := inferDynamicDSLProfile(manifest)
 	if hint == nil {
 		return profile.Normalized(), nil
 	}
@@ -286,283 +286,40 @@ func resolveDynamicDSLProfile(source string, hint *dto.StrategyBacktestDSLProfil
 	return profile.Normalized(), nil
 }
 
-func inferDynamicDSLProfile(source string) strategies.StrategyProfile {
-	program, errs := parser.Parse(source)
-	if len(errs) > 0 || program == nil {
-		return inferDynamicDSLProfileFallback(source)
-	}
-
-	analysis := analyzeDynamicDSLProgram(program)
-
-	profile := strategies.StrategyProfile{UsesOptions: analysis.usesOptions}
+func inferDynamicDSLProfile(manifest bridge.Manifest) strategies.StrategyProfile {
+	profile := strategies.StrategyProfile{UsesOptions: manifest.UsesOptions}
 	switch {
-	case analysis.usesOptions && analysis.usesRegularTrades:
+	case manifest.UsesOptions && manifest.UsesRegularOrders:
 		profile.RegularTrade = strategies.RegularTradeSignalOnly
-	case analysis.usesOptions:
+	case manifest.UsesOptions:
 		profile.RegularTrade = strategies.RegularTradeNone
 	default:
 		profile.RegularTrade = strategies.RegularTradeMaterial
 	}
 	return profile.Normalized()
-}
-
-func inferDynamicDSLProfileFallback(source string) strategies.StrategyProfile {
-	lower := strings.ToLower(source)
-	usesOptions := containsAny(lower, "options.", "spread.", "leg.", "contract.")
-	usesRegularTrades := containsAny(lower, "buy(", "sell(", "strategy.entry", "strategy.close", "strategy.exit", "strategy.order")
-
-	profile := strategies.StrategyProfile{UsesOptions: usesOptions}
-	switch {
-	case usesOptions && usesRegularTrades:
-		profile.RegularTrade = strategies.RegularTradeSignalOnly
-	case usesOptions:
-		profile.RegularTrade = strategies.RegularTradeNone
-	default:
-		profile.RegularTrade = strategies.RegularTradeMaterial
-	}
-	return profile.Normalized()
-}
-
-type dynamicDSLProgramAnalysis struct {
-	usesOptions       bool
-	usesRegularTrades bool
-}
-
-func analyzeDynamicDSLProgram(program *ast.Program) dynamicDSLProgramAnalysis {
-	var analysis dynamicDSLProgramAnalysis
-	if program == nil {
-		return analysis
-	}
-	for _, stmt := range program.Stmts {
-		walkDynamicDSLStmt(stmt, &analysis)
-	}
-	return analysis
-}
-
-func walkDynamicDSLStmt(stmt ast.Stmt, analysis *dynamicDSLProgramAnalysis) {
-	if stmt == nil || analysis == nil {
-		return
-	}
-	switch node := stmt.(type) {
-	case *ast.StrategyDecl:
-		for _, arg := range node.Args {
-			walkDynamicDSLExpr(arg.Value, analysis)
-		}
-	case *ast.InputDecl:
-		for _, arg := range node.Args {
-			walkDynamicDSLExpr(arg.Value, analysis)
-		}
-	case *ast.VarDecl:
-		walkDynamicDSLExpr(node.Value, analysis)
-	case *ast.AssignStmt:
-		walkDynamicDSLExpr(node.Value, analysis)
-	case *ast.IndexAssignStmt:
-		walkDynamicDSLExpr(node.Left, analysis)
-		walkDynamicDSLExpr(node.Index, analysis)
-		walkDynamicDSLExpr(node.Value, analysis)
-	case *ast.TupleAssign:
-		walkDynamicDSLExpr(node.Value, analysis)
-	case *ast.ExprStmt:
-		walkDynamicDSLExpr(node.Expression, analysis)
-	case *ast.IfStmt:
-		walkDynamicDSLExpr(node.Condition, analysis)
-		walkDynamicDSLBlock(node.Body, analysis)
-		for _, branch := range node.ElseIfs {
-			walkDynamicDSLExpr(branch.Condition, analysis)
-			walkDynamicDSLBlock(branch.Body, analysis)
-		}
-		walkDynamicDSLBlock(node.Else, analysis)
-	case *ast.ForStmt:
-		walkDynamicDSLExpr(node.Start, analysis)
-		walkDynamicDSLExpr(node.End, analysis)
-		walkDynamicDSLExpr(node.Step, analysis)
-		walkDynamicDSLBlock(node.Body, analysis)
-	case *ast.ForInStmt:
-		walkDynamicDSLExpr(node.Collection, analysis)
-		walkDynamicDSLBlock(node.Body, analysis)
-	case *ast.WhileStmt:
-		walkDynamicDSLExpr(node.Condition, analysis)
-		walkDynamicDSLBlock(node.Body, analysis)
-	case *ast.SwitchStmt:
-		walkDynamicDSLExpr(node.Tag, analysis)
-		for _, switchCase := range node.Cases {
-			walkDynamicDSLExpr(switchCase.Value, analysis)
-			walkDynamicDSLBlock(switchCase.Body, analysis)
-		}
-		walkDynamicDSLBlock(node.Default, analysis)
-	case *ast.FnDecl:
-		for _, param := range node.Params {
-			walkDynamicDSLExpr(param.Default, analysis)
-		}
-		walkDynamicDSLBlock(node.Body, analysis)
-	case *ast.ReturnStmt:
-		walkDynamicDSLExpr(node.Value, analysis)
-	case *ast.Block:
-		walkDynamicDSLBlock(node, analysis)
-	}
-}
-
-func walkDynamicDSLBlock(block *ast.Block, analysis *dynamicDSLProgramAnalysis) {
-	if block == nil {
-		return
-	}
-	for _, stmt := range block.Stmts {
-		walkDynamicDSLStmt(stmt, analysis)
-	}
-}
-
-func walkDynamicDSLExpr(expr ast.Expr, analysis *dynamicDSLProgramAnalysis) {
-	if expr == nil || analysis == nil {
-		return
-	}
-	switch node := expr.(type) {
-	case *ast.BinaryExpr:
-		walkDynamicDSLExpr(node.Left, analysis)
-		walkDynamicDSLExpr(node.Right, analysis)
-	case *ast.UnaryExpr:
-		walkDynamicDSLExpr(node.Operand, analysis)
-	case *ast.CallExpr:
-		name := dynamicDSLQualifiedName(node.Callee)
-		if isDynamicDSLOptionsReference(name) {
-			analysis.usesOptions = true
-		}
-		if isDynamicDSLRegularTradeCall(name) {
-			analysis.usesRegularTrades = true
-		}
-		walkDynamicDSLExpr(node.Callee, analysis)
-		for _, arg := range node.Args {
-			walkDynamicDSLExpr(arg.Value, analysis)
-		}
-	case *ast.DotExpr:
-		name := dynamicDSLQualifiedName(node)
-		if isDynamicDSLOptionsReference(name) {
-			analysis.usesOptions = true
-		}
-		walkDynamicDSLExpr(node.Object, analysis)
-	case *ast.IndexExpr:
-		walkDynamicDSLExpr(node.Left, analysis)
-		walkDynamicDSLExpr(node.Index, analysis)
-	case *ast.TernaryExpr:
-		walkDynamicDSLExpr(node.Condition, analysis)
-		walkDynamicDSLExpr(node.Then, analysis)
-		walkDynamicDSLExpr(node.Else, analysis)
-	case *ast.ArrayLit:
-		for _, element := range node.Elements {
-			walkDynamicDSLExpr(element, analysis)
-		}
-	case *ast.LambdaExpr:
-		walkDynamicDSLExpr(node.Body, analysis)
-	}
-}
-
-func dynamicDSLQualifiedName(expr ast.Expr) string {
-	switch node := expr.(type) {
-	case *ast.IdentExpr:
-		return strings.ToLower(strings.TrimSpace(node.Name))
-	case *ast.DotExpr:
-		left := dynamicDSLQualifiedName(node.Object)
-		field := strings.ToLower(strings.TrimSpace(node.Field))
-		if left == "" {
-			return field
-		}
-		if field == "" {
-			return left
-		}
-		return left + "." + field
-	default:
-		return ""
-	}
-}
-
-func isDynamicDSLOptionsReference(name string) bool {
-	switch {
-	case strings.HasPrefix(name, "options."), strings.HasPrefix(name, "spread."), strings.HasPrefix(name, "leg."), strings.HasPrefix(name, "contract."):
-		return true
-	default:
-		return false
-	}
-}
-
-func isDynamicDSLRegularTradeCall(name string) bool {
-	switch name {
-	case "buy", "sell", "strategy.entry", "strategy.close", "strategy.exit", "strategy.order":
-		return true
-	default:
-		return false
-	}
-}
-
-func containsAny(source string, needles ...string) bool {
-	for _, needle := range needles {
-		if strings.Contains(source, needle) {
-			return true
-		}
-	}
-	return false
 }
 
 func backtestDSLConfigMap(cfg strategies.Config, req dto.StrategyBacktestRunRequest) map[string]interface{} {
-	config := make(map[string]interface{})
-	if cfg.FastPeriod != 0 {
-		config["fast_period"] = cfg.FastPeriod
+	return configmap.FromStrategyConfig(cfg, backtestDSLPortfolioItems(req))
+}
+
+func backtestDSLPortfolioItems(req dto.StrategyBacktestRunRequest) []configmap.PortfolioItem {
+	primary := resolvePrimaryBacktestAsset(req)
+	items := make([]configmap.PortfolioItem, 0, len(req.Portfolio)+len(req.Symbols)+1)
+	if primary != "" && len(req.Portfolio) == 0 && len(req.Symbols) == 0 {
+		items = append(items, configmap.PortfolioItem{Symbol: primary, Weight: 1})
 	}
-	if cfg.SlowPeriod != 0 {
-		config["slow_period"] = cfg.SlowPeriod
+	for _, leg := range req.Portfolio {
+		items = append(items, configmap.PortfolioItem{Market: leg.Market, Symbol: leg.Asset, Weight: leg.Weight})
 	}
-	if cfg.MAPeriod != 0 {
-		config["ma_period"] = cfg.MAPeriod
-	}
-	if cfg.PThreshold != 0 {
-		config["p_threshold"] = cfg.PThreshold
-	}
-	if cfg.PositionSize != 0 {
-		config["position_size"] = cfg.PositionSize
-	}
-	if cfg.EntryTWAPBars != 0 {
-		config["entry_twap_bars"] = cfg.EntryTWAPBars
-	}
-	if cfg.TargetExpiryDays != 0 {
-		config["target_expiry_days"] = cfg.TargetExpiryDays
-	}
-	if cfg.MinExpiryDays != 0 {
-		config["min_expiry_days"] = cfg.MinExpiryDays
-	}
-	if cfg.MinPremium != 0 {
-		config["min_premium"] = cfg.MinPremium
-	}
-	if cfg.ShortDeltaMin != 0 {
-		config["short_delta_min"] = cfg.ShortDeltaMin
-	}
-	if cfg.ShortDeltaMax != 0 {
-		config["short_delta_max"] = cfg.ShortDeltaMax
-	}
-	if cfg.LongDeltaMin != 0 {
-		config["long_delta_min"] = cfg.LongDeltaMin
-	}
-	if cfg.LongDeltaMax != 0 {
-		config["long_delta_max"] = cfg.LongDeltaMax
-	}
-	if cfg.MaxHoldTime != 0 {
-		config["max_hold_hours"] = cfg.MaxHoldTime.Hours()
-	}
-	if cfg.Direction != "" {
-		config["direction"] = string(cfg.Direction)
-	}
-	config["entry_price_mode"] = int(cfg.EntryPriceMode)
-	config["exit_price_mode"] = int(cfg.ExitPriceMode)
-	config["valuation_price_mode"] = int(cfg.ValuationPriceMode)
-	portfolioSymbols := collectPortfolioSymbols(req, resolvePrimaryBacktestAsset(req))
-	if len(portfolioSymbols) > 0 {
-		config["portfolio_symbols"] = strings.Join(portfolioSymbols, ",")
-	}
-	if len(req.Weights) > 0 {
-		parts := make([]string, 0, len(req.Weights))
-		for _, weight := range req.Weights {
-			parts = append(parts, fmt.Sprintf("%g", weight))
+	for index, symbol := range req.Symbols {
+		weight := 0.0
+		if index < len(req.Weights) {
+			weight = req.Weights[index]
 		}
-		config["portfolio_weights"] = strings.Join(parts, ",")
+		items = append(items, configmap.PortfolioItem{Symbol: symbol, Weight: weight})
 	}
-	return config
+	return items
 }
 
 func describeResolvedStrategies(items []strategies.ResolvedStrategy, fallback string) string {

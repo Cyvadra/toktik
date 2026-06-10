@@ -391,6 +391,64 @@ plot(close, title="Close")`,
 	}
 }
 
+func TestResolveBacktestPlanRejectsDynamicOptionChainWithoutScope(t *testing.T) {
+	svc := NewPortfolioBacktestService(nil, nil)
+	_, err := svc.resolveBacktestPlan(context.Background(), nil, dto.StrategyBacktestRunRequest{
+		Market:  "us",
+		Asset:   "QQQ",
+		From:    "2026-01-01",
+		To:      "2026-01-02",
+		Capital: 100000,
+		DSL: `strategy("Dynamic Chain")
+symbol = config.string("target_symbol", "MSFT")
+chain = options.chain("us", symbol)
+plot(close, title="Close")`,
+		DSLProfile: &dto.StrategyBacktestDSLProfile{UsesOptions: ptrBool(true), RegularTrade: "none"},
+	})
+	if err == nil {
+		t.Fatal("expected dynamic option chain without symbols/portfolio to fail validation")
+	}
+	if !strings.Contains(err.Error(), "dynamic options.chain") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestResolveBacktestPlanAllowsDynamicOptionChainWithSymbolsScope(t *testing.T) {
+	feed := &validationTestFeed{}
+	svc := NewPortfolioBacktestService(nil, nil)
+	svc.engineBuilder = func(cfg backtest.Config, chainProvider backtest.OptionsChainProvider, usesOptions bool) *backtest.Engine {
+		engine := backtest.NewEngine(cfg)
+		engine.RegisterDataFeed(usUnderlyingFeed, feed)
+		return engine
+	}
+	loaded := make([]string, 0, 2)
+	svc.chainLoader = func(_ context.Context, marketName, asset, interval string, from, to time.Time) (backtest.OptionsChainProvider, error) {
+		loaded = append(loaded, marketName+":"+asset)
+		return &stubOptionsChainProvider{}, nil
+	}
+	_, err := svc.resolveBacktestPlan(context.Background(), nil, dto.StrategyBacktestRunRequest{
+		Market:  "us",
+		Asset:   "QQQ",
+		Symbols: []string{"MSFT"},
+		Weights: []float64{1},
+		From:    "2026-01-01",
+		To:      "2026-01-02",
+		Capital: 100000,
+		DSL: `strategy("Dynamic Chain")
+for symbol in portfolio.symbols() {
+  chain = options.chain("us", symbol)
+}
+plot(close, title="Close")`,
+		DSLProfile: &dto.StrategyBacktestDSLProfile{UsesOptions: ptrBool(true), RegularTrade: "none"},
+	})
+	if err != nil {
+		t.Fatalf("resolveBacktestPlan returned error: %v", err)
+	}
+	if len(loaded) != 2 {
+		t.Fatalf("expected primary and scoped symbol chain loads, got %v", loaded)
+	}
+}
+
 func ptrBool(v bool) *bool { return &v }
 
 type stubNamedStrategy struct{ name string }

@@ -593,11 +593,7 @@ func executeIndicatorDSL(source string, bars []indicatorBar, params map[string]f
 	ip := runtime.NewInterpreter(prog)
 	ip.Inputs = params
 	ip.InputStrings = stringParams
-	runtime.RegisterTABuiltins(ip)
-	runtime.RegisterMathBuiltins(ip)
-	runtime.RegisterStrBuiltins(ip)
-	runtime.RegisterStrategyBuiltins(ip)
-	runtime.RegisterInputBuiltins(ip)
+	runtime.RegisterProfile(ip, runtime.ProfileIndicator)
 	ip.Init()
 
 	bridge := &indicatorBridge{bars: bars}

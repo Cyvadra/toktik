@@ -740,6 +740,33 @@ plot(alt_close, title="ALT Close", precision=1)
 	}
 }
 
+func TestDslStrategyPositionAvgPriceUsesEntryPrice(t *testing.T) {
+	src := `strategy("Avg Price")
+if bar_index == 0 {
+  strategy.entry(id="long", direction=strategy.long, qty=1)
+}
+plot(strategy.position_avg_price, title="Avg", precision=1)
+`
+
+	engine := backtest.NewEngine(backtest.Config{InitialCapital: 10000})
+	engine.RegisterDataFeed("test", &testDataFeed{fields: []string{"open", "high", "low", "close", "volume"}})
+
+	from := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	to := from.Add(6 * time.Hour)
+
+	result, err := engine.Run(context.Background(), "test", "TEST", "1h", from, to, New(src), nil)
+	if err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+	series := result.Series[result.ReportColumns[0].Source]
+	if len(series) < 3 {
+		t.Fatalf("series too short: %v", series)
+	}
+	if series[1] != 101 || series[2] != 101 {
+		t.Fatalf("expected avg entry price to stay at fill price 101, got %v", series[:3])
+	}
+}
+
 func TestDslStrategyRequestFactorPlotsFactorSeries(t *testing.T) {
 	src := `strategy("Factor Request")
 dvol = request.factor("dvol", "1h", "dvol")

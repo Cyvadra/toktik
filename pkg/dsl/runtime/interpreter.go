@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/Cyvadra/toktik/pkg/dsl/ast"
+	"github.com/Cyvadra/toktik/pkg/dsl/diagnostics"
 	"github.com/Cyvadra/toktik/pkg/dsl/token"
 )
 
@@ -60,7 +61,8 @@ type Interpreter struct {
 	InputStrings map[string]string
 
 	// Bridge for strategy/trading calls (set externally).
-	Bridge Bridge
+	Bridge      Bridge
+	Diagnostics diagnostics.Collector
 
 	// last signal and return value
 	sig    signal
@@ -568,6 +570,16 @@ func (ip *Interpreter) execWhile(s *ast.WhileStmt, scope *Scope) Value {
 		}
 		if ip.sig == sigReturn {
 			return last
+		}
+		if i == limit-1 && ip.Diagnostics != nil {
+			barIndex := ip.BarIndex
+			ip.Diagnostics.Add(diagnostics.Diagnostic{
+				Severity: diagnostics.SeverityWarning,
+				Code:     "dsl.while_iteration_cap",
+				Message:  "while loop reached the interpreter iteration cap",
+				BarIndex: &barIndex,
+				Hint:     "Check loop conditions and prefer bounded for loops when possible.",
+			})
 		}
 	}
 	return last

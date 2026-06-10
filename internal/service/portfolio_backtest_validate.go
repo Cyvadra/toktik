@@ -9,6 +9,7 @@ import (
 	"github.com/Cyvadra/toktik/internal/backtest"
 	"github.com/Cyvadra/toktik/internal/dto"
 	"github.com/Cyvadra/toktik/pkg/dsl/bridge"
+	"github.com/Cyvadra/toktik/pkg/dsl/diagnostics"
 	"github.com/Cyvadra/toktik/pkg/strategies"
 )
 
@@ -230,6 +231,10 @@ func collectOptionChainTargets(req dto.StrategyBacktestRunRequest, primaryMarket
 		if !ok {
 			continue
 		}
+		manifest := dslStrategy.Manifest()
+		if manifest.HasDynamicOptionChainRequest() && len(req.Portfolio) == 0 && len(req.Symbols) == 0 {
+			return nil, nil, dto.NewValidationError("dsl uses dynamic options.chain arguments; provide symbols or portfolio so option chains can be preloaded")
+		}
 		for _, chainReq := range dslStrategy.OptionChainRequests() {
 			if err := add(chainReq.Market, chainReq.Symbol, 0); err != nil {
 				return nil, nil, err
@@ -313,6 +318,12 @@ func buildStrategyBacktestValidationResponse(plan *resolvedBacktestPlan) *dto.St
 					Options: sliceOrEmpty(param.Options),
 				})
 			}
+			entry.DSLDiagnostics = dslDiagnosticsToDTO(ds.Diagnostics())
+			for _, diagnostic := range ds.Diagnostics() {
+				if diagnostic.Severity == diagnostics.SeverityWarning || diagnostic.Severity == diagnostics.SeverityError {
+					entry.Warnings = append(entry.Warnings, diagnostic.String())
+				}
+			}
 		}
 		items = append(items, entry)
 	}
@@ -321,6 +332,24 @@ func buildStrategyBacktestValidationResponse(plan *resolvedBacktestPlan) *dto.St
 		StrategyCount: len(items),
 		Strategies:    sliceOrEmpty(items),
 	}
+}
+
+func dslDiagnosticsToDTO(items []diagnostics.Diagnostic) []dto.StrategyBacktestDSLDiagnostic {
+	if len(items) == 0 {
+		return nil
+	}
+	out := make([]dto.StrategyBacktestDSLDiagnostic, 0, len(items))
+	for _, item := range items {
+		out = append(out, dto.StrategyBacktestDSLDiagnostic{
+			Severity: string(item.Severity),
+			Code:     item.Code,
+			Message:  item.Message,
+			Function: item.Function,
+			BarIndex: item.BarIndex,
+			Hint:     item.Hint,
+		})
+	}
+	return out
 }
 
 func buildStrategyBacktestValidationRuntime(plan *resolvedBacktestPlan, item strategies.ResolvedStrategy) dto.StrategyBacktestValidationRuntime {

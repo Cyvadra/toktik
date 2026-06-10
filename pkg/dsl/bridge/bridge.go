@@ -9,7 +9,9 @@ import (
 
 	"github.com/Cyvadra/toktik/internal/backtest"
 	"github.com/Cyvadra/toktik/internal/signals"
+	"github.com/Cyvadra/toktik/pkg/dsl/analysis"
 	"github.com/Cyvadra/toktik/pkg/dsl/ast"
+	"github.com/Cyvadra/toktik/pkg/dsl/diagnostics"
 	"github.com/Cyvadra/toktik/pkg/dsl/parser"
 	"github.com/Cyvadra/toktik/pkg/dsl/runtime"
 )
@@ -29,7 +31,11 @@ type Options struct {
 	PreloadHook func(ctx *backtest.PreloadContext) error
 }
 
-type strategyMetadata struct {
+type strategyMetadata = analysis.SignalMetadata
+
+type requestSpec = analysis.RequestSpec
+
+/*type strategyMetadata struct {
 	SignalSource        string
 	SignalName          string
 	SignalTimeLayouts   []string
@@ -58,6 +64,7 @@ type requestSpec struct {
 	Field    string
 	Key      string
 }
+*/
 
 // ChainRequestSpec describes one constant options.chain(market, symbol)
 // dependency discovered in a DSL program.
@@ -67,18 +74,21 @@ type ChainRequestSpec struct {
 	Key    string
 }
 
+type Manifest = analysis.Manifest
+
 // DslStrategy implements backtest.Strategy by interpreting a Toktik DSL script.
 type DslStrategy struct {
-	source  string
-	name    string
-	prog    *ast.Program
-	ip      *runtime.Interpreter
-	errs    []string
-	opts    Options
-	meta    strategyMetadata
-	secRefs map[string]backtest.SecurityRef
-	facRefs map[string]backtest.FactorRef
-	events  []signals.SignalEvent // structured events loaded during Preload
+	source   string
+	name     string
+	prog     *ast.Program
+	ip       *runtime.Interpreter
+	errs     []string
+	opts     Options
+	manifest analysis.Manifest
+	meta     strategyMetadata
+	secRefs  map[string]backtest.SecurityRef
+	facRefs  map[string]backtest.FactorRef
+	events   []signals.SignalEvent // structured events loaded during Preload
 }
 
 // New creates a DslStrategy from DSL source code.
@@ -89,19 +99,21 @@ func New(source string) *DslStrategy {
 // NewWithOptions creates a DslStrategy with runtime configuration overrides.
 func NewWithOptions(source string, opts Options) *DslStrategy {
 	prog, errs := parser.Parse(source)
-	name := extractStrategyName(prog)
+	manifest := analysis.Analyze(prog)
+	name := manifest.StrategyName
 	if name == "" {
 		name = "dsl_strategy"
 	}
 	return &DslStrategy{
-		source:  source,
-		name:    name,
-		prog:    prog,
-		errs:    errs,
-		opts:    opts,
-		meta:    extractMetadata(prog),
-		secRefs: make(map[string]backtest.SecurityRef),
-		facRefs: make(map[string]backtest.FactorRef),
+		source:   source,
+		name:     name,
+		prog:     prog,
+		errs:     errs,
+		opts:     opts,
+		manifest: manifest,
+		meta:     manifest.Metadata,
+		secRefs:  make(map[string]backtest.SecurityRef),
+		facRefs:  make(map[string]backtest.FactorRef),
 	}
 }
 
@@ -111,23 +123,20 @@ func (ds *DslStrategy) ParseErrors() []string { return ds.errs }
 // OptionChainRequests returns the constant option-chain dependencies that were
 // statically discovered in the DSL source.
 func (ds *DslStrategy) OptionChainRequests() []ChainRequestSpec {
-	if len(ds.meta.Requests) == 0 {
+	requests := ds.manifest.OptionChainRequests()
+	if len(requests) == 0 {
 		return nil
 	}
-	out := make([]ChainRequestSpec, 0, len(ds.meta.Requests))
-	seen := make(map[string]struct{}, len(ds.meta.Requests))
-	for _, req := range ds.meta.Requests {
-		if req.Kind != "option_chain" || req.Key == "" {
-			continue
-		}
-		if _, ok := seen[req.Key]; ok {
-			continue
-		}
-		seen[req.Key] = struct{}{}
+	out := make([]ChainRequestSpec, 0, len(requests))
+	for _, req := range requests {
 		out = append(out, ChainRequestSpec{Market: req.Market, Symbol: req.Symbol, Key: req.Key})
 	}
 	return out
 }
+
+func (ds *DslStrategy) Manifest() analysis.Manifest { return ds.manifest }
+
+func (ds *DslStrategy) Diagnostics() []diagnostics.Diagnostic { return ds.manifest.Diagnostics }
 
 // Name implements backtest.Strategy.
 func (ds *DslStrategy) Name() string { return ds.name }
@@ -148,20 +157,7 @@ func (ds *DslStrategy) Init(ctx *backtest.SetupContext) error {
 	}
 	ds.ip = runtime.NewInterpreter(ds.prog)
 	ApplyParams(ds.ip, ds.opts.Params)
-	runtime.RegisterTABuiltins(ds.ip)
-	runtime.RegisterMathBuiltins(ds.ip)
-	runtime.RegisterStrBuiltins(ds.ip)
-	runtime.RegisterStrategyBuiltins(ds.ip)
-	runtime.RegisterInputBuiltins(ds.ip)
-	runtime.RegisterRequestBuiltins(ds.ip, ds.requestSecurityBuiltin(), ds.requestFactorBuiltin())
-	runtime.RegisterOptionsBuiltins(ds.ip)
-	runtime.RegisterAlphaBuiltins(ds.ip)
-	runtime.RegisterSignalBuiltins(ds.ip)
-	runtime.RegisterEventBuiltins(ds.ip)
-	runtime.RegisterOrderBuiltins(ds.ip)
-	runtime.RegisterConfigBuiltins(ds.ip)
-	runtime.RegisterPortfolioBuiltins(ds.ip)
-	runtime.RegisterRefBuiltins(ds.ip)
+	runtime.RegisterBacktestProfile(ds.ip, ds.requestSecurityBuiltin(), ds.requestFactorBuiltin())
 	ds.ip.Init()
 	if ds.opts.InitHook != nil {
 		if err := ds.opts.InitHook(ctx); err != nil {
@@ -284,7 +280,7 @@ func (ds *DslStrategy) ReportSeries() map[string][]float64 {
 // This enables external tools (API, UI, optimizer) to discover available parameters
 // and their types, defaults, and constraints without executing the script.
 func (ds *DslStrategy) ParamSchema() []ParamSchema {
-	return ExtractParams(ds.prog)
+	return ds.manifest.Inputs
 }
 
 // Events returns the structured signal events loaded during Preload.
@@ -338,8 +334,7 @@ func (b *barContextBridge) PositionSize() float64 {
 }
 
 func (b *barContextBridge) PositionAvgPrice() float64 {
-	// Approximate: use current close if no direct API.
-	return b.ctx.Close()
+	return b.ctx.PositionAvgEntryPrice(b.primaryRef())
 }
 
 func (b *barContextBridge) Equity() float64 { return b.ctx.Equity() }

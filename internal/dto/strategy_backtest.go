@@ -64,6 +64,15 @@ type StrategyBacktestDSLParam struct {
 	Options []string    `json:"options,omitempty"`
 }
 
+type StrategyBacktestDSLDiagnostic struct {
+	Severity string `json:"severity"`
+	Code     string `json:"code,omitempty"`
+	Message  string `json:"message"`
+	Function string `json:"function,omitempty"`
+	BarIndex *int   `json:"bar_index,omitempty"`
+	Hint     string `json:"hint,omitempty"`
+}
+
 type StrategyBacktestValidationRuntime struct {
 	Market               string `json:"market,omitempty"`
 	Instrument           string `json:"instrument,omitempty"`
@@ -76,15 +85,16 @@ type StrategyBacktestValidationRuntime struct {
 }
 
 type StrategyBacktestValidationItem struct {
-	CanonicalName string                             `json:"canonical_name,omitempty"`
-	DisplayName   string                             `json:"display_name"`
-	ProfileLabel  string                             `json:"profile_label,omitempty"`
-	ProfileSource string                             `json:"profile_source,omitempty"`
-	UsesOptions   bool                               `json:"uses_options"`
-	RegularTrade  string                             `json:"regular_trade,omitempty"`
-	Runtime       *StrategyBacktestValidationRuntime `json:"runtime,omitempty"`
-	DSLParams     []StrategyBacktestDSLParam         `json:"dsl_params,omitempty"`
-	Warnings      []string                           `json:"warnings,omitempty"`
+	CanonicalName  string                             `json:"canonical_name,omitempty"`
+	DisplayName    string                             `json:"display_name"`
+	ProfileLabel   string                             `json:"profile_label,omitempty"`
+	ProfileSource  string                             `json:"profile_source,omitempty"`
+	UsesOptions    bool                               `json:"uses_options"`
+	RegularTrade   string                             `json:"regular_trade,omitempty"`
+	Runtime        *StrategyBacktestValidationRuntime `json:"runtime,omitempty"`
+	DSLParams      []StrategyBacktestDSLParam         `json:"dsl_params,omitempty"`
+	DSLDiagnostics []StrategyBacktestDSLDiagnostic    `json:"dsl_diagnostics,omitempty"`
+	Warnings       []string                           `json:"warnings,omitempty"`
 }
 
 type StrategyBacktestValidationResponse struct {
