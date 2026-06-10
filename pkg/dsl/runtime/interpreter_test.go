@@ -58,6 +58,55 @@ func TestInterpreterIf(t *testing.T) {
 	}
 }
 
+func TestInterpreterPineIndentedIfElse(t *testing.T) {
+	src := "x = 10\nif x > 5\n    y = 1\nelse\n    y = 0"
+	prog, errs := parser.Parse(src)
+	if len(errs) > 0 {
+		t.Fatal(errs)
+	}
+	ip := NewInterpreter(prog)
+	ip.Init()
+	ip.OnBar()
+	v, _ := ip.Global.Get("y")
+	if v.Float() != 1 {
+		t.Errorf("expected 1, got %g", v.Float())
+	}
+}
+
+func TestInterpreterPineTabIndentedIfElse(t *testing.T) {
+	src := "x = 10\nif x > 5\n\ty = 1\nelse\n\ty = 0"
+	prog, errs := parser.Parse(src)
+	if len(errs) > 0 {
+		t.Fatal(errs)
+	}
+	ip := NewInterpreter(prog)
+	ip.Init()
+	ip.OnBar()
+	v, _ := ip.Global.Get("y")
+	if v.Float() != 1 {
+		t.Errorf("expected 1, got %g", v.Float())
+	}
+}
+
+func TestInterpreterPineNestedIndentedBlocks(t *testing.T) {
+	src := "x = 10\ny = 0\nif x > 5\n    if x < 20\n        y = 2\nz = y + 1"
+	prog, errs := parser.Parse(src)
+	if len(errs) > 0 {
+		t.Fatal(errs)
+	}
+	ip := NewInterpreter(prog)
+	ip.Init()
+	ip.OnBar()
+	y, _ := ip.Global.Get("y")
+	if y.Float() != 2 {
+		t.Errorf("expected y=2, got %g", y.Float())
+	}
+	z, _ := ip.Global.Get("z")
+	if z.Float() != 3 {
+		t.Errorf("expected z=3, got %g", z.Float())
+	}
+}
+
 func TestInterpreterFor(t *testing.T) {
 	src := "var sum = 0\nfor i = 1 to 5 {\n  sum := sum + i\n}"
 	prog, errs := parser.Parse(src)
@@ -68,6 +117,21 @@ func TestInterpreterFor(t *testing.T) {
 	ip.Init()
 	ip.OnBar()
 	v, _ := ip.Global.Get("sum")
+	if v.Float() != 15 {
+		t.Errorf("expected 15, got %g", v.Float())
+	}
+}
+
+func TestInterpreterPineIndentedFor(t *testing.T) {
+	src := "var sum = 0\nfor i = 1 to 5\n    sum := sum + i\nout = sum"
+	prog, errs := parser.Parse(src)
+	if len(errs) > 0 {
+		t.Fatal(errs)
+	}
+	ip := NewInterpreter(prog)
+	ip.Init()
+	ip.OnBar()
+	v, _ := ip.Global.Get("out")
 	if v.Float() != 15 {
 		t.Errorf("expected 15, got %g", v.Float())
 	}
@@ -139,6 +203,70 @@ func TestInterpreterFnCall(t *testing.T) {
 	v, _ := ip.Global.Get("y")
 	if v.Float() != 42 {
 		t.Errorf("expected 42, got %g", v.Float())
+	}
+}
+
+func TestInterpreterPineArrowFnCall(t *testing.T) {
+	src := "indicator(\"Arrow\")\ndouble(float x) => x * 2\ny = double(21)"
+	prog, errs := parser.Parse(src)
+	if len(errs) > 0 {
+		t.Fatal(errs)
+	}
+	ip := NewInterpreter(prog)
+	ip.Init()
+	ip.OnBar()
+	v, _ := ip.Global.Get("y")
+	if v.Float() != 42 {
+		t.Errorf("expected 42, got %g", v.Float())
+	}
+}
+
+func TestInterpreterPineArrowFnIndentedBody(t *testing.T) {
+	src := "bump(x) =>\n    y = x + 1\n    return y\nout = bump(2)"
+	prog, errs := parser.Parse(src)
+	if len(errs) > 0 {
+		t.Fatal(errs)
+	}
+	ip := NewInterpreter(prog)
+	ip.Init()
+	ip.OnBar()
+	v, _ := ip.Global.Get("out")
+	if v.Float() != 3 {
+		t.Errorf("expected 3, got %g", v.Float())
+	}
+}
+
+func TestInterpreterPineTypedVarAndIncrement(t *testing.T) {
+	src := "var float count = 0\ncount++\ncount--\ncount++"
+	prog, errs := parser.Parse(src)
+	if len(errs) > 0 {
+		t.Fatal(errs)
+	}
+	ip := NewInterpreter(prog)
+	ip.Init()
+	ip.OnBar()
+	v, _ := ip.Global.Get("count")
+	if v.Float() != 1 {
+		t.Errorf("expected 1, got %g", v.Float())
+	}
+}
+
+func TestInterpreterShortCircuitLogicalOps(t *testing.T) {
+	src := "x = 0\nout = false and (1 / x > 0)\nout2 = true or (1 / x > 0)"
+	prog, errs := parser.Parse(src)
+	if len(errs) > 0 {
+		t.Fatal(errs)
+	}
+	ip := NewInterpreter(prog)
+	ip.Init()
+	ip.OnBar()
+	out, _ := ip.Global.Get("out")
+	if out.Bool() {
+		t.Fatalf("expected out=false")
+	}
+	out2, _ := ip.Global.Get("out2")
+	if !out2.Bool() {
+		t.Fatalf("expected out2=true")
 	}
 }
 

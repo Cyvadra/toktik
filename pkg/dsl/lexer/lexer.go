@@ -269,10 +269,16 @@ func (l *Lexer) tryTwoChar(line, col int) (token.Token, bool) {
 			return mk(token.ColonEq, ":=")
 		}
 	case '+':
+		if p == '+' {
+			return mk(token.PlusPlus, "++")
+		}
 		if p == '=' {
 			return mk(token.PlusEq, "+=")
 		}
 	case '-':
+		if p == '-' {
+			return mk(token.MinusMinus, "--")
+		}
 		if p == '=' {
 			return mk(token.MinusEq, "-=")
 		}

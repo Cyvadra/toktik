@@ -7,6 +7,7 @@ package parser
 import (
 	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/Cyvadra/toktik/pkg/dsl/ast"
 	"github.com/Cyvadra/toktik/pkg/dsl/lexer"
@@ -155,16 +156,21 @@ func (p *Parser) parseProgram() *ast.Program {
 
 func (p *Parser) parseStatement() ast.Stmt {
 	switch p.cur().Type {
-	case token.KwStrategy:
-		// strategy(...) is a declaration, but strategy.xxx is expression.
+	case token.KwStrategy, token.KwIndicator, token.KwLibrary:
+		// strategy(...), indicator(...), and library(...) are declarations,
+		// but strategy.xxx is expression.
 		if p.peekRaw().Type == token.LParen {
 			return p.parseStrategyDecl()
 		}
 		return p.parseExprOrAssignStmt()
 	case token.KwInput:
 		return p.parseInputDecl()
+	case token.KwConst, token.KwExport, token.KwMethod:
+		return p.parseQualifiedDeclOrStatement()
 	case token.KwVar, token.KwVarip:
 		return p.parseVarDecl(true)
+	case token.KwInt, token.KwFloat, token.KwBool, token.KwString, token.KwColor, token.KwSeries, token.KwSimple:
+		return p.parseTypedDeclOrFnDecl(false, false)
 	case token.KwIf:
 		return p.parseIfStmt()
 	case token.KwFor:
@@ -192,6 +198,9 @@ func (p *Parser) parseStatement() ast.Stmt {
 		}
 		return p.parseExprOrAssignStmt()
 	case token.Ident:
+		if p.isPineArrowFnDecl() {
+			return p.parsePineArrowFnDecl(false, false)
+		}
 		return p.parseExprOrAssignStmt()
 	default:
 		return p.parseExprOrAssignStmt()
@@ -224,6 +233,10 @@ func (p *Parser) parseExprOrAssignStmt() ast.Stmt {
 				Op:    op.Type,
 				Value: val,
 			}
+		case token.PlusPlus, token.MinusMinus:
+			tok := p.advance()
+			op := p.advance()
+			return &ast.AssignStmt{Token: tok, Name: tok.Literal, Op: op.Type, Value: &ast.NumberLit{Token: op, Value: 1}}
 		}
 	}
 
@@ -247,11 +260,43 @@ func (p *Parser) parseExprOrAssignStmt() ast.Stmt {
 // ---------- strategy ----------
 
 func (p *Parser) parseStrategyDecl() ast.Stmt {
-	tok := p.expect(token.KwStrategy)
+	tok := p.advance()
 	p.expect(token.LParen)
 	args := p.parseCallArgs()
 	p.expect(token.RParen)
-	return &ast.StrategyDecl{Token: tok, Args: args}
+	return &ast.StrategyDecl{Token: tok, Kind: tok.Literal, Args: args}
+}
+
+func (p *Parser) parseQualifiedDeclOrStatement() ast.Stmt {
+	qualifier := p.advance()
+	if qualifier.Type == token.KwExport && p.cur().Type == token.KwMethod {
+		p.advance()
+		if p.cur().Type == token.Ident {
+			return p.parsePineArrowFnDecl(true, true)
+		}
+		if p.isTypeQualifier(p.cur().Type) {
+			return p.parseTypedDeclOrFnDecl(true, true)
+		}
+	}
+	switch p.cur().Type {
+	case token.KwVar, token.KwVarip:
+		return p.parseVarDeclWithQualifier(qualifier.Literal)
+	case token.KwInt, token.KwFloat, token.KwBool, token.KwString, token.KwColor, token.KwSeries, token.KwSimple:
+		if qualifier.Type == token.KwMethod || qualifier.Type == token.KwExport {
+			return p.parseTypedDeclOrFnDecl(qualifier.Type == token.KwExport, qualifier.Type == token.KwMethod)
+		}
+		return p.parseTypedVarDecl(qualifier.Literal)
+	case token.Ident:
+		if qualifier.Type == token.KwMethod || qualifier.Type == token.KwExport {
+			return p.parsePineArrowFnDecl(qualifier.Type == token.KwExport, qualifier.Type == token.KwMethod)
+		}
+		if p.peekRaw().Type == token.Eq {
+			name := p.advance()
+			p.advance()
+			return &ast.VarDecl{Token: qualifier, Name: name.Literal, TypeHint: qualifier.Literal, Value: p.parseExpr(0)}
+		}
+	}
+	return &ast.ExprStmt{Expression: &ast.IdentExpr{Token: qualifier, Name: qualifier.Literal}}
 }
 
 // ---------- input ----------
@@ -281,19 +326,153 @@ func extractCallArgs(e ast.Expr) []ast.CallArg {
 // ---------- var/varip ----------
 
 func (p *Parser) parseVarDecl(hasQualifier bool) ast.Stmt {
+	return p.parseVarDeclWithQualifier("")
+}
+
+func (p *Parser) parseVarDeclWithQualifier(extraQualifier string) ast.Stmt {
 	tok := p.advance() // consume var/varip
 	isVarip := tok.Type == token.KwVarip
 	isPersist := tok.Type == token.KwVar
+	typeHint := strings.TrimSpace(extraQualifier)
+	for p.isTypeQualifier(p.cur().Type) {
+		qualifier := p.advance()
+		if typeHint != "" {
+			typeHint += " "
+		}
+		typeHint += qualifier.Literal
+	}
 
 	name := p.expect(token.Ident)
 	p.expect(token.Eq)
 	val := p.parseExpr(0)
 	return &ast.VarDecl{
-		Token:   tok,
-		Name:    name.Literal,
-		Varip:   isVarip,
-		Persist: isPersist,
-		Value:   val,
+		Token:    tok,
+		Name:     name.Literal,
+		TypeHint: typeHint,
+		Varip:    isVarip,
+		Persist:  isPersist,
+		Value:    val,
+	}
+}
+
+func (p *Parser) parseTypedDeclOrFnDecl(exported, method bool) ast.Stmt {
+	if p.isTypedPineArrowFnDecl() {
+		for p.isTypeQualifier(p.cur().Type) {
+			p.advance()
+		}
+		return p.parsePineArrowFnDecl(exported, method)
+	}
+	return p.parseTypedVarDecl("")
+}
+
+func (p *Parser) parseTypedVarDecl(leadingQualifier string) ast.Stmt {
+	tok := p.cur()
+	typeHint := strings.TrimSpace(leadingQualifier)
+	for p.isTypeQualifier(p.cur().Type) {
+		qualifier := p.advance()
+		if typeHint != "" {
+			typeHint += " "
+		}
+		typeHint += qualifier.Literal
+	}
+	name := p.expect(token.Ident)
+	p.expect(token.Eq)
+	return &ast.VarDecl{Token: tok, Name: name.Literal, TypeHint: typeHint, Value: p.parseExpr(0)}
+}
+
+func (p *Parser) isTypeQualifier(tt token.Type) bool {
+	switch tt {
+	case token.KwInt, token.KwFloat, token.KwBool, token.KwString, token.KwColor, token.KwSeries, token.KwSimple:
+		return true
+	default:
+		return false
+	}
+}
+
+func (p *Parser) isPineArrowFnDecl() bool {
+	if p.cur().Type != token.Ident || p.peekRaw().Type != token.LParen {
+		return false
+	}
+	saved := p.pos
+	defer func() { p.pos = saved }()
+	p.advance()
+	p.skipBalancedParens()
+	return p.cur().Type == token.Arrow
+}
+
+func (p *Parser) isTypedPineArrowFnDecl() bool {
+	saved := p.pos
+	defer func() { p.pos = saved }()
+	for p.isTypeQualifier(p.cur().Type) {
+		p.advance()
+	}
+	if p.cur().Type != token.Ident || p.peekRaw().Type != token.LParen {
+		return false
+	}
+	p.advance()
+	p.skipBalancedParens()
+	return p.cur().Type == token.Arrow
+}
+
+func (p *Parser) skipBalancedParens() {
+	if p.cur().Type != token.LParen {
+		return
+	}
+	depth := 0
+	for p.cur().Type != token.EOF {
+		switch p.cur().Type {
+		case token.LParen:
+			depth++
+		case token.RParen:
+			depth--
+			p.advance()
+			if depth == 0 {
+				return
+			}
+			continue
+		}
+		p.advance()
+	}
+}
+
+func (p *Parser) parsePineArrowFnDecl(exported, method bool) ast.Stmt {
+	_ = exported
+	_ = method
+	tok := p.cur()
+	name := p.expect(token.Ident)
+	p.expect(token.LParen)
+	params := p.parseFnParams()
+	p.expect(token.RParen)
+	p.expect(token.Arrow)
+	return &ast.FnDecl{Token: tok, Name: name.Literal, Params: params, Body: p.parseArrowBody(tok)}
+}
+
+func (p *Parser) parseArrowBody(tok token.Token) *ast.Block {
+	block := &ast.Block{Token: tok}
+	if p.cur().Type == token.Newline {
+		p.skipNewlines()
+		return p.parseIndentedBlock(tok)
+	}
+	if p.cur().Type == token.LBrace {
+		return p.parseBlock()
+	}
+	if p.startsBlockStatement(p.cur().Type) {
+		if stmt := p.parseStatement(); stmt != nil {
+			block.Stmts = append(block.Stmts, stmt)
+		}
+		return block
+	}
+	expr := p.parseExpr(0)
+	block.Stmts = append(block.Stmts, &ast.ReturnStmt{Token: tok, Value: expr})
+	return block
+}
+
+func (p *Parser) startsBlockStatement(tt token.Type) bool {
+	switch tt {
+	case token.KwIf, token.KwFor, token.KwWhile, token.KwSwitch, token.KwReturn, token.KwBreak, token.KwContinue, token.LBrace:
+		return true
+	default:
+		return false
 	}
 }
 
@@ -302,7 +481,7 @@ func (p *Parser) parseVarDecl(hasQualifier bool) ast.Stmt {
 func (p *Parser) parseIfStmt() ast.Stmt {
 	tok := p.expect(token.KwIf)
 	cond := p.parseExpr(0)
-	body := p.parseBlock()
+	body := p.parseBlockAfter(tok)
 
 	var elseIfs []ast.ElseIf
 	var elseBlock *ast.Block
@@ -312,14 +491,14 @@ func (p *Parser) parseIfStmt() ast.Stmt {
 		if p.cur().Type == token.KwIf {
 			p.advance()
 			eifCond := p.parseExpr(0)
-			eifBody := p.parseBlock()
+			eifBody := p.parseBlockAfter(elseTok)
 			elseIfs = append(elseIfs, ast.ElseIf{
 				Token:     elseTok,
 				Condition: eifCond,
 				Body:      eifBody,
 			})
 		} else {
-			elseBlock = p.parseBlock()
+			elseBlock = p.parseBlockAfter(elseTok)
 			break
 		}
 	}
@@ -343,7 +522,7 @@ func (p *Parser) parseForStmt() ast.Stmt {
 		name := p.advance()
 		p.expect(token.KwIn)
 		coll := p.parseExpr(0)
-		body := p.parseBlock()
+		body := p.parseBlockAfter(tok)
 		return &ast.ForInStmt{Token: tok, Var: name.Literal, Collection: coll, Body: body}
 	}
 
@@ -359,7 +538,7 @@ func (p *Parser) parseForStmt() ast.Stmt {
 		step = p.parseExpr(0)
 	}
 
-	body := p.parseBlock()
+	body := p.parseBlockAfter(tok)
 	return &ast.ForStmt{Token: tok, Var: name.Literal, Start: start, End: end, Step: step, Body: body}
 }
 
@@ -368,7 +547,7 @@ func (p *Parser) parseForStmt() ast.Stmt {
 func (p *Parser) parseWhileStmt() ast.Stmt {
 	tok := p.expect(token.KwWhile)
 	cond := p.parseExpr(0)
-	body := p.parseBlock()
+	body := p.parseBlockAfter(tok)
 	return &ast.WhileStmt{Token: tok, Condition: cond, Body: body}
 }
 
@@ -396,23 +575,24 @@ func (p *Parser) parseSwitchStmt() ast.Stmt {
 
 		// Check for default
 		if p.cur().Type == token.Ident && p.cur().Literal == "default" {
-			p.advance()
+			caseTok := p.advance()
 			p.expect(token.Arrow)
-			defBlock = p.parseBlock()
+			defBlock = p.parseBlockAfter(caseTok)
 			continue
 		}
 
 		// "else =>" as default
 		if p.cur().Type == token.KwElse {
-			p.advance()
+			caseTok := p.advance()
 			p.expect(token.Arrow)
-			defBlock = p.parseBlock()
+			defBlock = p.parseBlockAfter(caseTok)
 			continue
 		}
 
+		caseTok := p.cur()
 		val := p.parseExpr(0)
 		p.expect(token.Arrow)
-		body := p.parseBlock()
+		body := p.parseBlockAfter(caseTok)
 		cases = append(cases, ast.SwitchCase{Value: val, Body: body})
 	}
 
@@ -427,13 +607,16 @@ func (p *Parser) parseFnDecl() ast.Stmt {
 	p.expect(token.LParen)
 	params := p.parseFnParams()
 	p.expect(token.RParen)
-	body := p.parseBlock()
+	body := p.parseBlockAfter(tok)
 	return &ast.FnDecl{Token: tok, Name: name.Literal, Params: params, Body: body}
 }
 
 func (p *Parser) parseFnParams() []ast.FnParam {
 	var params []ast.FnParam
 	for p.cur().Type != token.RParen && p.cur().Type != token.EOF {
+		for p.isTypeQualifier(p.cur().Type) {
+			p.advance()
+		}
 		name := p.expect(token.Ident)
 		param := ast.FnParam{Name: name.Literal}
 		if p.match(token.Eq) {
@@ -505,10 +688,13 @@ func (p *Parser) parseTupleAssign() ast.Stmt {
 
 // ---------- block ----------
 
-// parseBlock parses a block: either { stmts } or newline-indented stmts.
-// For simplicity, we use braces or treat the next single line / indented lines as the block.
+// parseBlock parses a local block. Pine-style blocks use a newline followed by
+// indented statements; brace blocks are retained for existing Toktik DSL code.
 func (p *Parser) parseBlock() *ast.Block {
-	p.skipNewlines()
+	return p.parseBlockAfter(p.cur())
+}
+
+func (p *Parser) parseBlockAfter(parent token.Token) *ast.Block {
 	tok := p.cur()
 	block := &ast.Block{Token: tok}
 
@@ -529,10 +715,48 @@ func (p *Parser) parseBlock() *ast.Block {
 		return block
 	}
 
-	// Single-statement block (no braces, no indentation tracking).
+	if p.cur().Type == token.Newline {
+		p.skipNewlines()
+		return p.parseIndentedBlock(parent)
+	}
+
+	// Same-line single-statement block, useful for compact internal DSL snippets.
 	stmt := p.parseStatement()
 	if stmt != nil {
 		block.Stmts = append(block.Stmts, stmt)
+	}
+	return block
+}
+
+func (p *Parser) parseIndentedBlock(tok token.Token) *ast.Block {
+	block := &ast.Block{Token: tok}
+	if p.cur().Type == token.EOF || p.cur().Type == token.RBrace {
+		p.errorf("expected indented block at line %d col %d", tok.Line, tok.Col)
+		return block
+	}
+
+	blockIndent := p.cur().Col
+	if blockIndent <= tok.Col {
+		p.errorf("expected indented block after line %d col %d", tok.Line, tok.Col)
+		return block
+	}
+
+	for p.cur().Type != token.EOF && p.cur().Type != token.RBrace {
+		if p.cur().Type == token.Newline {
+			p.skipNewlines()
+			continue
+		}
+		if p.cur().Col < blockIndent {
+			break
+		}
+
+		stmt := p.parseStatement()
+		if stmt != nil {
+			block.Stmts = append(block.Stmts, stmt)
+		}
+		if p.cur().Type == token.Newline {
+			p.skipNewlines()
+		}
 	}
 	return block
 }

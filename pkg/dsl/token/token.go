@@ -48,8 +48,10 @@ const (
 	Not // not
 
 	// Operators – assignment
-	Eq      // =
-	ColonEq // :=
+	Eq         // =
+	ColonEq    // :=
+	PlusPlus   // ++
+	MinusMinus // --
 
 	// Operators – conditional
 	Question // ?
@@ -69,23 +71,27 @@ const (
 	Arrow  // =>
 
 	// Keywords
-	KwStrategy // strategy
-	KwInput    // input
-	KwVar      // var
-	KwVarip    // varip
-	KwIf       // if
-	KwElse     // else
-	KwFor      // for
-	KwWhile    // while
-	KwSwitch   // switch
-	KwFn       // fn
-	KwReturn   // return
-	KwImport   // import
-	KwIn       // in
-	KwTo       // to
-	KwBy       // by
-	KwBreak    // break
-	KwContinue // continue
+	KwStrategy  // strategy
+	KwIndicator // indicator
+	KwLibrary   // library
+	KwInput     // input
+	KwVar       // var
+	KwVarip     // varip
+	KwExport    // export
+	KwMethod    // method
+	KwIf        // if
+	KwElse      // else
+	KwFor       // for
+	KwWhile     // while
+	KwSwitch    // switch
+	KwFn        // fn
+	KwReturn    // return
+	KwImport    // import
+	KwIn        // in
+	KwTo        // to
+	KwBy        // by
+	KwBreak     // break
+	KwContinue  // continue
 
 	// Type keywords (optional annotations)
 	KwInt    // int
@@ -153,8 +159,10 @@ var typeNames = [...]string{
 	Or:  "or",
 	Not: "not",
 
-	Eq:      "=",
-	ColonEq: ":=",
+	Eq:         "=",
+	ColonEq:    ":=",
+	PlusPlus:   "++",
+	MinusMinus: "--",
 
 	Question: "?",
 	Colon:    ":",
@@ -169,23 +177,27 @@ var typeNames = [...]string{
 	Dot:      ".",
 	Arrow:    "=>",
 
-	KwStrategy: "strategy",
-	KwInput:    "input",
-	KwVar:      "var",
-	KwVarip:    "varip",
-	KwIf:       "if",
-	KwElse:     "else",
-	KwFor:      "for",
-	KwWhile:    "while",
-	KwSwitch:   "switch",
-	KwFn:       "fn",
-	KwReturn:   "return",
-	KwImport:   "import",
-	KwIn:       "in",
-	KwTo:       "to",
-	KwBy:       "by",
-	KwBreak:    "break",
-	KwContinue: "continue",
+	KwStrategy:  "strategy",
+	KwIndicator: "indicator",
+	KwLibrary:   "library",
+	KwInput:     "input",
+	KwVar:       "var",
+	KwVarip:     "varip",
+	KwExport:    "export",
+	KwMethod:    "method",
+	KwIf:        "if",
+	KwElse:      "else",
+	KwFor:       "for",
+	KwWhile:     "while",
+	KwSwitch:    "switch",
+	KwFn:        "fn",
+	KwReturn:    "return",
+	KwImport:    "import",
+	KwIn:        "in",
+	KwTo:        "to",
+	KwBy:        "by",
+	KwBreak:     "break",
+	KwContinue:  "continue",
 
 	KwInt:    "int",
 	KwFloat:  "float",
@@ -199,23 +211,27 @@ var typeNames = [...]string{
 
 // keywords maps textual identifiers to keyword token types.
 var keywords = map[string]Type{
-	"strategy": KwStrategy,
-	"input":    KwInput,
-	"var":      KwVar,
-	"varip":    KwVarip,
-	"if":       KwIf,
-	"else":     KwElse,
-	"for":      KwFor,
-	"while":    KwWhile,
-	"switch":   KwSwitch,
-	"fn":       KwFn,
-	"return":   KwReturn,
-	"import":   KwImport,
-	"in":       KwIn,
-	"to":       KwTo,
-	"by":       KwBy,
-	"break":    KwBreak,
-	"continue": KwContinue,
+	"strategy":  KwStrategy,
+	"indicator": KwIndicator,
+	"library":   KwLibrary,
+	"input":     KwInput,
+	"var":       KwVar,
+	"varip":     KwVarip,
+	"export":    KwExport,
+	"method":    KwMethod,
+	"if":        KwIf,
+	"else":      KwElse,
+	"for":       KwFor,
+	"while":     KwWhile,
+	"switch":    KwSwitch,
+	"fn":        KwFn,
+	"return":    KwReturn,
+	"import":    KwImport,
+	"in":        KwIn,
+	"to":        KwTo,
+	"by":        KwBy,
+	"break":     KwBreak,
+	"continue":  KwContinue,
 
 	"true":  True,
 	"false": False,

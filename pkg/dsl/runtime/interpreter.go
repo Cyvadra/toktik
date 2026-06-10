@@ -294,7 +294,7 @@ func (ip *Interpreter) execBlock(stmts []ast.Stmt, scope *Scope) Value {
 func (ip *Interpreter) execStmt(stmt ast.Stmt, scope *Scope) Value {
 	switch s := stmt.(type) {
 	case *ast.StrategyDecl:
-		// Strategy metadata — nothing to execute at bar-time.
+		// strategy()/indicator()/library() metadata — nothing to execute at bar-time.
 		return NaVal()
 	case *ast.VarDecl:
 		return ip.execVarDecl(s, scope)
@@ -428,6 +428,14 @@ func (ip *Interpreter) execAssign(a *ast.AssignStmt, scope *Scope) Value {
 	case token.PercentEq:
 		old, _ := scope.Get(a.Name)
 		val = FloatVal(math.Mod(old.Float(), val.Float()))
+		scope.Update(a.Name, val)
+	case token.PlusPlus:
+		old, _ := scope.Get(a.Name)
+		val = FloatVal(old.Float() + 1)
+		scope.Update(a.Name, val)
+	case token.MinusMinus:
+		old, _ := scope.Get(a.Name)
+		val = FloatVal(old.Float() - 1)
 		scope.Update(a.Name, val)
 	}
 	// Update persist storage if applicable.
@@ -678,6 +686,18 @@ func snapshotContainerValue(v Value) Value {
 
 func (ip *Interpreter) evalBinary(e *ast.BinaryExpr, scope *Scope) Value {
 	left := ip.evalExpr(e.Left, scope)
+	if e.Op == token.And {
+		if !left.Bool() {
+			return BoolVal(false)
+		}
+		return BoolVal(ip.evalExpr(e.Right, scope).Bool())
+	}
+	if e.Op == token.Or {
+		if left.Bool() {
+			return BoolVal(true)
+		}
+		return BoolVal(ip.evalExpr(e.Right, scope).Bool())
+	}
 	right := ip.evalExpr(e.Right, scope)
 
 	// String concatenation.
@@ -721,10 +741,6 @@ func (ip *Interpreter) evalBinary(e *ast.BinaryExpr, scope *Scope) Value {
 		return BoolVal(lf <= rf)
 	case token.GtEq:
 		return BoolVal(lf >= rf)
-	case token.And:
-		return BoolVal(left.Bool() && right.Bool())
-	case token.Or:
-		return BoolVal(left.Bool() || right.Bool())
 	}
 	return NaVal()
 }

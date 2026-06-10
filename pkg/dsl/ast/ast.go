@@ -35,9 +35,10 @@ func (p *Program) Pos() token.Token {
 func (*Program) nodeTag() {}
 func (*Program) stmtTag() {}
 
-// StrategyDecl: strategy("name", overlay=true, ...)
+// StrategyDecl: strategy("name", overlay=true, ...), indicator(...), or library(...)
 type StrategyDecl struct {
 	Token token.Token
+	Kind  string
 	Args  []CallArg
 }
 

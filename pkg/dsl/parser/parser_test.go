@@ -81,8 +81,25 @@ func TestParseStrategyDecl(t *testing.T) {
 	if len(sd.Args) != 2 {
 		t.Errorf("expected 2 args, got %d", len(sd.Args))
 	}
+	if sd.Kind != "strategy" {
+		t.Errorf("expected kind strategy, got %q", sd.Kind)
+	}
 	if sd.Args[1].Name != "overlay" {
 		t.Errorf("expected named arg overlay, got %q", sd.Args[1].Name)
+	}
+}
+
+func TestParseIndicatorDecl(t *testing.T) {
+	prog, errs := Parse(`indicator("My Indicator", overlay=true)`)
+	if len(errs) > 0 {
+		t.Fatal(errs)
+	}
+	sd, ok := prog.Stmts[0].(*ast.StrategyDecl)
+	if !ok {
+		t.Fatalf("expected StrategyDecl, got %T", prog.Stmts[0])
+	}
+	if sd.Kind != "indicator" {
+		t.Fatalf("kind = %q, want indicator", sd.Kind)
 	}
 }
 
@@ -98,6 +115,27 @@ func TestParseIfStmt(t *testing.T) {
 	_, ok := prog.Stmts[0].(*ast.IfStmt)
 	if !ok {
 		t.Fatalf("expected IfStmt, got %T", prog.Stmts[0])
+	}
+}
+
+func TestParsePineIndentedIfElse(t *testing.T) {
+	src := "if x > 0\n    y = 1\nelse\n    y = 0\nz = y"
+	prog, errs := Parse(src)
+	if len(errs) > 0 {
+		t.Fatal(errs)
+	}
+	if len(prog.Stmts) != 2 {
+		t.Fatalf("expected 2 top-level statements, got %d", len(prog.Stmts))
+	}
+	ifStmt, ok := prog.Stmts[0].(*ast.IfStmt)
+	if !ok {
+		t.Fatalf("expected IfStmt, got %T", prog.Stmts[0])
+	}
+	if len(ifStmt.Body.Stmts) != 1 || ifStmt.Else == nil || len(ifStmt.Else.Stmts) != 1 {
+		t.Fatalf("unexpected if/else body: %#v", ifStmt)
+	}
+	if _, ok := prog.Stmts[1].(*ast.VarDecl); !ok {
+		t.Fatalf("expected trailing top-level VarDecl, got %T", prog.Stmts[1])
 	}
 }
 
@@ -188,5 +226,68 @@ func TestParseVarDecl(t *testing.T) {
 	}
 	if vd.Name != "sum" {
 		t.Errorf("expected name sum, got %s", vd.Name)
+	}
+}
+
+func TestParsePineTypedDeclarations(t *testing.T) {
+	prog, errs := Parse("var float sum = 0\nint length = 14")
+	if len(errs) > 0 {
+		t.Fatal(errs)
+	}
+	if len(prog.Stmts) != 2 {
+		t.Fatalf("expected 2 statements, got %d", len(prog.Stmts))
+	}
+	first := prog.Stmts[0].(*ast.VarDecl)
+	if !first.Persist || first.TypeHint != "float" || first.Name != "sum" {
+		t.Fatalf("unexpected first declaration: %#v", first)
+	}
+	second := prog.Stmts[1].(*ast.VarDecl)
+	if second.TypeHint != "int" || second.Name != "length" {
+		t.Fatalf("unexpected second declaration: %#v", second)
+	}
+}
+
+func TestParsePineArrowFunction(t *testing.T) {
+	prog, errs := Parse("add(float a, float b) => a + b")
+	if len(errs) > 0 {
+		t.Fatal(errs)
+	}
+	fn, ok := prog.Stmts[0].(*ast.FnDecl)
+	if !ok {
+		t.Fatalf("expected FnDecl, got %T", prog.Stmts[0])
+	}
+	if fn.Name != "add" || len(fn.Params) != 2 {
+		t.Fatalf("unexpected function declaration: %#v", fn)
+	}
+}
+
+func TestParsePineArrowFunctionIndentedBody(t *testing.T) {
+	prog, errs := Parse("bump(x) =>\n    y = x + 1\n    return y\nout = bump(2)")
+	if len(errs) > 0 {
+		t.Fatal(errs)
+	}
+	fn, ok := prog.Stmts[0].(*ast.FnDecl)
+	if !ok {
+		t.Fatalf("expected FnDecl, got %T", prog.Stmts[0])
+	}
+	if len(fn.Body.Stmts) != 2 {
+		t.Fatalf("expected 2 statements in function body, got %d", len(fn.Body.Stmts))
+	}
+	if len(prog.Stmts) != 2 {
+		t.Fatalf("expected trailing top-level statement, got %d statements", len(prog.Stmts))
+	}
+}
+
+func TestParseExportMethodArrowFunction(t *testing.T) {
+	prog, errs := Parse("export method bump(float x) => x + 1")
+	if len(errs) > 0 {
+		t.Fatal(errs)
+	}
+	fn, ok := prog.Stmts[0].(*ast.FnDecl)
+	if !ok {
+		t.Fatalf("expected FnDecl, got %T", prog.Stmts[0])
+	}
+	if fn.Name != "bump" || len(fn.Params) != 1 {
+		t.Fatalf("unexpected function declaration: %#v", fn)
 	}
 }

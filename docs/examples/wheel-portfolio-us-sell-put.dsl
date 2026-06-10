@@ -1,3 +1,4 @@
+//@version=6
 // Weighted wheel phase-1 example: rotate cash-secured short puts across a US portfolio.
 // Current multi-symbol DSL/runtime can roll the short-put leg, but does not yet model
 // assignment plus covered-call rotation, so this script focuses on the put-writing side
@@ -18,38 +19,32 @@ max_open = input.int(6, title="Max Open Symbols", minval=1, maxval=12)
 plot(strategy.equity, title="equity", precision=2)
 plot(spread.count(), title="open_spreads", precision=0)
 
-for item in portfolio.items() {
-  symbol = item[0]
-  weight = item[1]
-  state_key = str.format("wheel_%s", symbol)
+for item in portfolio.items()
+    symbol = item[0]
+    weight = item[1]
+    state_key = str.format("wheel_%s", symbol)
 
-  if ref.has(state_key) {
-    sid = ref.get(state_key)
-    short_put = spread.leg_contract(sid, 0)
-    premium_base = spread.leg_entry_price(sid, 0) * spread.leg_qty(sid, 0)
-    profit_ratio = premium_base > 0 ? spread.pnl(sid) / premium_base : 0
+    if ref.has(state_key)
+        sid = ref.get(state_key)
+        short_put = spread.leg_contract(sid, 0)
+        premium_base = spread.leg_entry_price(sid, 0) * spread.leg_qty(sid, 0)
+        profit_ratio = premium_base > 0 ? spread.pnl(sid) / premium_base : 0
 
-    if contract.dte(short_put) <= roll_dte or profit_ratio >= profit_take {
-      spread.close(sid, str.format("%s_put_roll", symbol))
-      ref.clear(state_key)
-    }
-  } else if spread.count() < max_open {
-    chain = options.chain("us", symbol)
-    if chain != na {
-      puts = options.puts(chain)
-      expiry_slice = options.expiry_range(puts, min_dte, max_dte)
-      liquid = options.min_premium(expiry_slice, min_bid)
-      shortlist = options.delta_range(liquid, -target_delta-delta_band, -target_delta+delta_band)
-      ranked = options.sort_by_delta(shortlist, -target_delta)
+        if contract.dte(short_put) <= roll_dte or profit_ratio >= profit_take
+            spread.close(sid, str.format("%s_put_roll", symbol))
+            ref.clear(state_key)
+    else if spread.count() < max_open
+        chain = options.chain("us", symbol)
+        if chain != na
+            puts = options.puts(chain)
+            expiry_slice = options.expiry_range(puts, min_dte, max_dte)
+            liquid = options.min_premium(expiry_slice, min_bid)
+            shortlist = options.delta_range(liquid, -target_delta-delta_band, -target_delta+delta_band)
+            ranked = options.sort_by_delta(shortlist, -target_delta)
 
-      if len(ranked) > 0 {
-        short_put = ranked[0]
-        qty = math.max(1, math.floor((strategy.equity * weight) / contract_budget))
-        sid = spread.open_on("us", symbol, [leg.sell(short_put, qty)], str.format("wheel_put_%s", symbol))
-        if sid != na {
-          ref.set(state_key, sid)
-        }
-      }
-    }
-  }
-}
+            if len(ranked) > 0
+                short_put = ranked[0]
+                qty = math.max(1, math.floor((strategy.equity * weight) / contract_budget))
+                sid = spread.open_on("us", symbol, [leg.sell(short_put, qty)], str.format("wheel_put_%s", symbol))
+                if sid != na
+                    ref.set(state_key, sid)
