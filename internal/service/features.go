@@ -2568,6 +2568,8 @@ ORDER BY as_of_date ASC`, featureDailyPanelTable),
 	for rows.Next() {
 		var (
 			row                            dto.FeatureDailyPanelRow
+			priceObservations              uint32
+			ivObservations                 uint32
 			frontExpiration                time.Time
 			frontDaysToExpiry              int32
 			surfaceContractCount           int32
@@ -2583,8 +2585,8 @@ ORDER BY as_of_date ASC`, featureDailyPanelTable),
 		)
 		if err := rows.Scan(
 			&row.Date,
-			&row.PriceObservations,
-			&row.IVObservations,
+			&priceObservations,
+			&ivObservations,
 			&row.HV10,
 			&row.HV20,
 			&row.HV30,
@@ -2613,6 +2615,8 @@ ORDER BY as_of_date ASC`, featureDailyPanelTable),
 			return nil, false, fmt.Errorf("scan precomputed daily feature panel row: %w", err)
 		}
 		row.Date = normalizeCalendarDate(row.Date)
+		row.PriceObservations = int(priceObservations)
+		row.IVObservations = int(ivObservations)
 		// Sanitize float64 pointers that ClickHouse may have stored as NaN/Inf.
 		row.HV10 = sanitizeF64Ptr(row.HV10)
 		row.HV20 = sanitizeF64Ptr(row.HV20)
