@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 	"unicode"
+
+	"github.com/Cyvadra/toktik/pkg/dsl/runtime"
 )
 
 type swaggerDoc struct {
@@ -275,6 +277,7 @@ func renderMarkdown(doc *swaggerDoc, inputPath string, title string, config rend
 		builder.WriteString("- [DSL 快速教學](#dsl-快速教學)\n")
 		builder.WriteString("- [DSL 語法速查](#dsl-語法速查)\n")
 		builder.WriteString("- [DSL 內建模組速查](#dsl-內建模組速查)\n")
+		builder.WriteString("- [DSL 函數參考](#dsl-函數參考)\n")
 		builder.WriteString("- [提交與查詢範例](#提交與查詢範例)\n")
 	}
 	for _, section := range config.Sections {
@@ -478,6 +481,8 @@ func writeBacktestTutorial(builder *strings.Builder) {
 	builder.WriteString("### 外部信號\n\n")
 	builder.WriteString("- `signal.active`、`signal.count`、`signal.direction`、`signal.action`、`signal.qty`、`signal.name`、`signal.consume`\n")
 	builder.WriteString("- `event.pending`、`event.peek`、`event.next`、`event.consume_all`、`event.is_init`、`event.is_add`、`event.is_close`、`event.is_roll`\n\n")
+	writeDSLFunctionReference(builder)
+
 	builder.WriteString("## 提交與查詢範例\n\n")
 	builder.WriteString("### 驗證自訂 DSL 並讀取參數 schema\n\n")
 	builder.WriteString("```bash\n")
@@ -514,6 +519,87 @@ func writeBacktestTutorial(builder *strings.Builder) {
 	builder.WriteString("- `result.overview_report_url`：總覽 HTML 報告 URL。\n\n")
 	builder.WriteString("### 限制與注意事項\n\n")
 	builder.WriteString("Toktik DSL 不是完整 TradingView Pine Script v6 實作；語法風格接近 Pine，但內建函數和交易模型以 Toktik 回測引擎為準。型別標註目前主要用於相容和可讀性，runtime 仍採動態值模型。期權、合約、spread、group 是 handle，應透過內建函數操作。`request.*` 和 `options.chain()` 若使用動態字串，分析器可能無法完整預先枚舉依賴。\n\n")
+}
+
+func writeDSLFunctionReference(builder *strings.Builder) {
+	docs := runtime.BuiltinDocs(runtime.ProfileBacktest)
+	grouped := make(map[string][]runtime.BuiltinDoc)
+	var namespaces []string
+	for _, doc := range docs {
+		ns := docNamespace(doc.Name)
+		if _, ok := grouped[ns]; !ok {
+			namespaces = append(namespaces, ns)
+		}
+		grouped[ns] = append(grouped[ns], doc)
+	}
+	sort.Strings(namespaces)
+
+	builder.WriteString("## DSL 函數參考\n\n")
+	builder.WriteString("本節由 DSL runtime 的 builtin 註冊表自動產生；新增函數只要註冊到 backtest profile，就會出現在這裡。`Example` 欄提供可直接放進 DSL 腳本的最小調用形態。\n\n")
+	builder.WriteString("| 模組 | 數量 |\n")
+	builder.WriteString("| --- | --- |\n")
+	for _, ns := range namespaces {
+		builder.WriteString("| `")
+		builder.WriteString(ns)
+		builder.WriteString("` | ")
+		builder.WriteString(fmt.Sprintf("%d", len(grouped[ns])))
+		builder.WriteString(" |\n")
+	}
+	builder.WriteString("\n")
+
+	for _, ns := range namespaces {
+		builder.WriteString("### ")
+		builder.WriteString(ns)
+		builder.WriteString("\n\n")
+		builder.WriteString("| 名稱 | 簽名 | 種類 | 回傳 | 範例 | 用途 |\n")
+		builder.WriteString("| --- | --- | --- | --- | --- | --- |\n")
+		for _, doc := range grouped[ns] {
+			builder.WriteString("| `")
+			builder.WriteString(doc.Name)
+			builder.WriteString("` | `")
+			builder.WriteString(builtinSignature(doc))
+			builder.WriteString("` | `")
+			builder.WriteString(builtinKindLabel(doc.Kind))
+			builder.WriteString("` | `")
+			builder.WriteString(escapePipes(doc.ReturnValue))
+			builder.WriteString("` | `")
+			builder.WriteString(escapePipes(doc.Example))
+			builder.WriteString("` | ")
+			builder.WriteString(escapePipes(doc.Summary))
+			builder.WriteString(" |\n")
+		}
+		builder.WriteString("\n")
+	}
+}
+
+func docNamespace(name string) string {
+	if idx := strings.IndexByte(name, '.'); idx > 0 {
+		return name[:idx]
+	}
+	return "core"
+}
+
+func builtinSignature(doc runtime.BuiltinDoc) string {
+	if doc.Kind == runtime.BuiltinProperty || doc.Kind == runtime.BuiltinConstant {
+		return doc.Name
+	}
+	if len(doc.Params) == 0 {
+		return doc.Name + "()"
+	}
+	return doc.Name + "(" + strings.Join(doc.Params, ", ") + ")"
+}
+
+func builtinKindLabel(kind runtime.BuiltinKind) string {
+	switch kind {
+	case runtime.BuiltinFunction:
+		return "函數"
+	case runtime.BuiltinProperty:
+		return "屬性"
+	case runtime.BuiltinConstant:
+		return "常數"
+	default:
+		return string(kind)
+	}
 }
 
 func addSchemaRefs(doc *swaggerDoc, schema *schemaRef, seen map[string]bool, ordered *[]string) {

@@ -1,5 +1,7 @@
 package runtime
 
+// When changing DSL builtin behavior here, update builtins_docs.go so generated DSL docs stay accurate.
+
 // RegisterCoreBuiltins adds language-level builtins that should always exist.
 func RegisterCoreBuiltins(ip *Interpreter) {
 	ip.RegisterBuiltin("len", func(args []Value) Value {

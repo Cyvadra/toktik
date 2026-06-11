@@ -1,5 +1,7 @@
 package runtime
 
+// When changing DSL builtin behavior here, update builtins_docs.go so generated DSL docs stay accurate.
+
 // RegisterInputBuiltins adds input() and input.* parameter functions.
 // In backtesting mode, inputs use their default values unless the caller
 // has placed an override in ip.Inputs[title].

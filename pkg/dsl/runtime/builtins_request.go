@@ -1,5 +1,7 @@
 package runtime
 
+// When changing DSL builtin behavior here, update builtins_docs.go so generated DSL docs stay accurate.
+
 // RegisterRequestBuiltins adds request.* functions supplied by the DSL bridge.
 func RegisterRequestBuiltins(ip *Interpreter, securityFn func(args []Value) Value, factorFn func(args []Value) Value) {
 	if securityFn != nil {

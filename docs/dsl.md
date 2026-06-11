@@ -7,7 +7,7 @@
 - Source Swagger: `docs/swagger.json`
 - API title: `Toktik Options Platform API`
 - API version: `1.0`
-- Generated at: `2026-06-10T11:13:41Z`
+- Generated at: `2026-06-11T08:38:57Z`
 
 ## Scope
 
@@ -19,6 +19,7 @@
 - [DSL 快速教學](#dsl-快速教學)
 - [DSL 語法速查](#dsl-語法速查)
 - [DSL 內建模組速查](#dsl-內建模組速查)
+- [DSL 函數參考](#dsl-函數參考)
 - [提交與查詢範例](#提交與查詢範例)
 - [回測流程 API](#回測流程-api)
 - [策略目錄 API](#策略目錄-api)
@@ -165,6 +166,330 @@ first = arr[0]
 
 - `signal.active`、`signal.count`、`signal.direction`、`signal.action`、`signal.qty`、`signal.name`、`signal.consume`
 - `event.pending`、`event.peek`、`event.next`、`event.consume_all`、`event.is_init`、`event.is_add`、`event.is_close`、`event.is_roll`
+
+## DSL 函數參考
+
+本節由 DSL runtime 的 builtin 註冊表自動產生；新增函數只要註冊到 backtest profile，就會出現在這裡。`Example` 欄提供可直接放進 DSL 腳本的最小調用形態。
+
+| 模組 | 數量 |
+| --- | --- |
+| `alpha` | 20 |
+| `config` | 2 |
+| `contract` | 17 |
+| `core` | 16 |
+| `event` | 12 |
+| `group` | 7 |
+| `input` | 4 |
+| `leg` | 2 |
+| `math` | 13 |
+| `options` | 13 |
+| `order` | 10 |
+| `portfolio` | 6 |
+| `ref` | 6 |
+| `request` | 2 |
+| `schedule` | 3 |
+| `signal` | 12 |
+| `spread` | 16 |
+| `str` | 8 |
+| `strategy` | 9 |
+| `ta` | 19 |
+
+### alpha
+
+| 名稱 | 簽名 | 種類 | 回傳 | 範例 | 用途 |
+| --- | --- | --- | --- | --- | --- |
+| `alpha.decay_linear` | `alpha.decay_linear(x, window)` | `函數` | `數值` | `smooth = alpha.decay_linear(close, 10)` | 用於計算近期權重較高的線性衰減平均，降低舊資料影響。 |
+| `alpha.log_return` | `alpha.log_return(x, period)` | `函數` | `數值` | `ret = alpha.log_return(close, 5)` | 用於計算指定週期的對數報酬。 |
+| `alpha.rank` | `alpha.rank(x)` | `函數` | `數值` | `rank = alpha.rank(close)` | 用於把目前值轉成歷史百分位，適合判斷目前價格或因子相對自身歷史是否偏高。 |
+| `alpha.scale` | `alpha.scale(x, target_sum)` | `函數` | `數值` | `scaled = alpha.scale(close - ta.sma(close, 20), 1)` | 用於把單一訊號縮放到指定目標絕對值。 |
+| `alpha.signed_power` | `alpha.signed_power(x, exp)` | `函數` | `數值` | `signal2 = alpha.signed_power(close - ta.sma(close, 20), 2)` | 用於保留正負號並放大或壓縮訊號強度。 |
+| `alpha.ts_argmax` | `alpha.ts_argmax(x, window)` | `函數` | `數值` | `bars_from_high = alpha.ts_argmax(high, 20)` | 用於取得近期最高值距離目前幾根 bar。 |
+| `alpha.ts_argmin` | `alpha.ts_argmin(x, window)` | `函數` | `數值` | `bars_from_low = alpha.ts_argmin(low, 20)` | 用於取得近期最低值距離目前幾根 bar。 |
+| `alpha.ts_corr` | `alpha.ts_corr(x, y, window)` | `函數` | `數值` | `corr = alpha.ts_corr(close, volume, 20)` | 用於衡量兩個序列近期相關性，例如價格與成交量或標的與基準指數。 |
+| `alpha.ts_cov` | `alpha.ts_cov(x, y, window)` | `函數` | `數值` | `cov = alpha.ts_cov(close, volume, 20)` | 用於衡量兩個序列近期共同變動程度。 |
+| `alpha.ts_delta` | `alpha.ts_delta(x, period)` | `函數` | `數值` | `delta5 = alpha.ts_delta(close, 5)` | 用於計算目前值與 N 根 bar 前的差值。 |
+| `alpha.ts_kurtosis` | `alpha.ts_kurtosis(x, window)` | `函數` | `數值` | `kurt = alpha.ts_kurtosis(close, 20)` | 用於衡量近期分布尾部厚度，輔助辨識極端波動環境。 |
+| `alpha.ts_max` | `alpha.ts_max(x, window)` | `函數` | `數值` | `max20 = alpha.ts_max(high, 20)` | 用於取得近期視窗最大值。 |
+| `alpha.ts_mean` | `alpha.ts_mean(x, window)` | `函數` | `數值` | `mean20 = alpha.ts_mean(close, 20)` | 用於計算近期視窗平均值，可作平滑濾網。 |
+| `alpha.ts_median` | `alpha.ts_median(x, window)` | `函數` | `數值` | `median20 = alpha.ts_median(close, 20)` | 用於取得近期視窗中位數，降低極端值影響。 |
+| `alpha.ts_min` | `alpha.ts_min(x, window)` | `函數` | `數值` | `min20 = alpha.ts_min(low, 20)` | 用於取得近期視窗最小值。 |
+| `alpha.ts_rank` | `alpha.ts_rank(x, window)` | `函數` | `數值` | `rank20 = alpha.ts_rank(close, 20)` | 用於取得目前值在近期視窗內的排名比例。 |
+| `alpha.ts_skewness` | `alpha.ts_skewness(x, window)` | `函數` | `數值` | `skew = alpha.ts_skewness(close, 20)` | 用於衡量近期分布偏態，輔助辨識報酬分布是否偏向單側。 |
+| `alpha.ts_std` | `alpha.ts_std(x, window)` | `函數` | `數值` | `std20 = alpha.ts_std(close, 20)` | 用於衡量近期視窗波動度。 |
+| `alpha.ts_sum` | `alpha.ts_sum(x, window)` | `函數` | `數值` | `sum_vol = alpha.ts_sum(volume, 20)` | 用於計算近期視窗總和，例如累積成交量或累積報酬。 |
+| `alpha.zscore` | `alpha.zscore(x, window)` | `函數` | `數值` | `z = alpha.zscore(close, 20)` | 用於衡量目前值偏離近期均值幾個標準差，常作為均值回歸或異常波動濾網。 |
+
+### config
+
+| 名稱 | 簽名 | 種類 | 回傳 | 範例 | 用途 |
+| --- | --- | --- | --- | --- | --- |
+| `config.get` | `config.get(name, defval)` | `函數` | `數值` | `max_risk = config.get("max_risk", 0.02)` | 用於讀取策略 catalog 或 API 注入的數值設定，並在未設定時使用預設值。 |
+| `config.string` | `config.string(name, defval)` | `函數` | `字串` | `mode = config.string("mode", "default")` | 用於讀取策略 catalog 或 API 注入的字串設定，例如模式名稱或標籤。 |
+
+### contract
+
+| 名稱 | 簽名 | 種類 | 回傳 | 範例 | 用途 |
+| --- | --- | --- | --- | --- | --- |
+| `contract.ask` | `contract.ask(contract)` | `函數` | `合約欄位` | `ask = contract.ask(contract)` | 用於讀取已選期權合約的欄位，讓策略能依履約價、到期日、Greeks 或報價做篩選。 |
+| `contract.bid` | `contract.bid(contract)` | `函數` | `合約欄位` | `bid = contract.bid(contract)` | 用於讀取已選期權合約的欄位，讓策略能依履約價、到期日、Greeks 或報價做篩選。 |
+| `contract.delta` | `contract.delta(contract)` | `函數` | `合約欄位` | `delta = contract.delta(contract)` | 用於讀取已選期權合約的欄位，讓策略能依履約價、到期日、Greeks 或報價做篩選。 |
+| `contract.dte` | `contract.dte(contract)` | `函數` | `合約欄位` | `dte = contract.dte(contract)` | 用於讀取已選期權合約的欄位，讓策略能依履約價、到期日、Greeks 或報價做篩選。 |
+| `contract.expiry` | `contract.expiry(contract)` | `函數` | `合約欄位` | `expiry = contract.expiry(contract)` | 用於讀取已選期權合約的欄位，讓策略能依履約價、到期日、Greeks 或報價做篩選。 |
+| `contract.gamma` | `contract.gamma(contract)` | `函數` | `合約欄位` | `gamma = contract.gamma(contract)` | 用於讀取已選期權合約的欄位，讓策略能依履約價、到期日、Greeks 或報價做篩選。 |
+| `contract.iv` | `contract.iv(contract)` | `函數` | `合約欄位` | `iv = contract.iv(contract)` | 用於讀取已選期權合約的欄位，讓策略能依履約價、到期日、Greeks 或報價做篩選。 |
+| `contract.mark` | `contract.mark(contract)` | `函數` | `合約欄位` | `mark = contract.mark(contract)` | 用於讀取已選期權合約的欄位，讓策略能依履約價、到期日、Greeks 或報價做篩選。 |
+| `contract.market` | `contract.market(contract)` | `函數` | `合約欄位` | `market = contract.market(contract)` | 用於讀取已選期權合約的欄位，讓策略能依履約價、到期日、Greeks 或報價做篩選。 |
+| `contract.oi` | `contract.oi(contract)` | `函數` | `合約欄位` | `oi = contract.oi(contract)` | 用於讀取已選期權合約的欄位，讓策略能依履約價、到期日、Greeks 或報價做篩選。 |
+| `contract.strike` | `contract.strike(contract)` | `函數` | `合約欄位` | `strike = contract.strike(contract)` | 用於讀取已選期權合約的欄位，讓策略能依履約價、到期日、Greeks 或報價做篩選。 |
+| `contract.symbol` | `contract.symbol(contract)` | `函數` | `合約欄位` | `symbol = contract.symbol(contract)` | 用於讀取已選期權合約的欄位，讓策略能依履約價、到期日、Greeks 或報價做篩選。 |
+| `contract.theta` | `contract.theta(contract)` | `函數` | `合約欄位` | `theta = contract.theta(contract)` | 用於讀取已選期權合約的欄位，讓策略能依履約價、到期日、Greeks 或報價做篩選。 |
+| `contract.type` | `contract.type(contract)` | `函數` | `合約欄位` | `right = contract.type(contract)` | 用於讀取已選期權合約的欄位，讓策略能依履約價、到期日、Greeks 或報價做篩選。 |
+| `contract.underlying` | `contract.underlying(contract)` | `函數` | `合約欄位` | `underlying = contract.underlying(contract)` | 用於讀取已選期權合約的欄位，讓策略能依履約價、到期日、Greeks 或報價做篩選。 |
+| `contract.vega` | `contract.vega(contract)` | `函數` | `合約欄位` | `vega = contract.vega(contract)` | 用於讀取已選期權合約的欄位，讓策略能依履約價、到期日、Greeks 或報價做篩選。 |
+| `contract.volume` | `contract.volume(contract)` | `函數` | `合約欄位` | `vol = contract.volume(contract)` | 用於讀取已選期權合約的欄位，讓策略能依履約價、到期日、Greeks 或報價做篩選。 |
+
+### core
+
+| 名稱 | 簽名 | 種類 | 回傳 | 範例 | 用途 |
+| --- | --- | --- | --- | --- | --- |
+| `bar_index` | `bar_index` | `常數` | `數值` | `ready = bar_index > 50` | 用於限制策略暖身期、排除前幾根資料不足的 bar。 |
+| `buy` | `buy(qty)` | `函數` | `na` | `buy(1)` | 用於快速送出基本買入指令，適合最小範例或不需要命名部位的腳本。 |
+| `close` | `close` | `常數` | `series` | `fast = ta.sma(close, 20)` | 用作主要價格序列，常拿來計算均線、動能、突破與下單價格。 |
+| `high` | `high` | `常數` | `series` | `breakout = close > ta.highest(high, 20)[1]` | 用於偵測近期高點、突破條件或計算震幅類指標。 |
+| `input` | `input(defval, title, minval, maxval, step)` | `函數` | `值` | `risk = input(0.02, title="Risk", minval=0, maxval=1, step=0.01)` | 用於把策略參數暴露給 validate API 與回測請求，讓使用者能用 dsl_params 覆蓋預設值。 |
+| `len` | `len(value)` | `函數` | `數值` | `has_symbols = len(portfolio.symbols()) > 0` | 用於檢查陣列或字串長度，常搭配 portfolio、options.sort_by_delta 或字串拆分結果。 |
+| `low` | `low` | `常數` | `series` | `stop_price = ta.lowest(low, 10)` | 用於偵測近期低點、停損位置或回撤條件。 |
+| `math_e` | `math_e` | `常數` | `數值` | `one = math.log(math_e)` | 用於自然對數或指數模型中的 e 常數。 |
+| `math_phi` | `math_phi` | `常數` | `數值` | `target = close * math_phi` | 用於黃金比例相關的價格或比例計算。 |
+| `math_pi` | `math_pi` | `常數` | `數值` | `cycle = math_pi * 2` | 用於需要圓周率的自訂數學轉換。 |
+| `na` | `na(x)` | `函數` | `數值` | `warming_up = na(ta.sma(close, 50))` | 用於檢查值是否為 na。 |
+| `nz` | `nz(x, replacement)` | `函數` | `數值` | `safe_rsi = nz(ta.rsi(close, 14), 50)` | 用於把 na 替換成指定值，避免暖身期指標造成條件失效。 |
+| `open` | `open` | `常數` | `series` | `green_bar = close > open` | 用於判斷當根 K 線方向或估算開盤後價格變化。 |
+| `plot` | `plot(series, title, overlay, precision)` | `函數` | `值` | `plot(ta.sma(close, 20), title="SMA 20", overlay=true, precision=2)` | 用於把中間指標或交易條件輸出到回測結果，方便檢查策略為何進出場。 |
+| `sell` | `sell(qty)` | `函數` | `na` | `sell(1)` | 用於快速送出基本賣出指令，適合最小範例或不需要命名部位的腳本。 |
+| `volume` | `volume` | `常數` | `series` | `active_volume = volume > ta.sma(volume, 20)` | 用於成交量濾網、量能均線或流動性條件。 |
+
+### event
+
+| 名稱 | 簽名 | 種類 | 回傳 | 範例 | 用途 |
+| --- | --- | --- | --- | --- | --- |
+| `event.consume_all` | `event.consume_all()` | `函數` | `信號值` | `consumed = event.consume_all()` | 用於一次標記目前 bar 所有未處理事件為已消費。 |
+| `event.is_add` | `event.is_add()` | `函數` | `信號值` | `should_add = event.is_add() == 1` | 用於判斷下一個事件是否為 add 動作。 |
+| `event.is_close` | `event.is_close()` | `函數` | `信號值` | `should_close = event.is_close() == 1` | 用於判斷下一個事件是否為 close 動作。 |
+| `event.is_init` | `event.is_init()` | `函數` | `信號值` | `should_open = event.is_init() == 1` | 用於判斷下一個事件是否為 init 動作。 |
+| `event.is_roll` | `event.is_roll()` | `函數` | `信號值` | `should_roll = event.is_roll() == 1` | 用於判斷下一個事件是否為 roll 動作。 |
+| `event.next` | `event.next()` | `函數` | `信號值` | `direction = event.next()` | 用於消費下一個事件並取得方向，避免同一事件重複下單。 |
+| `event.next_action` | `event.next_action()` | `函數` | `信號值` | `action = event.next_action()` | 用於消費下一個事件並取得動作代碼。 |
+| `event.peek` | `event.peek()` | `函數` | `信號值` | `next_dir = event.peek()` | 用於查看下一個未消費事件方向，但不標記已處理。 |
+| `event.peek_action` | `event.peek_action()` | `函數` | `信號值` | `next_action = event.peek_action()` | 用於查看下一個未消費事件動作代碼，但不標記已處理。 |
+| `event.peek_name` | `event.peek_name()` | `函數` | `信號值` | `event_name = event.peek_name()` | 用於查看下一個未消費事件名稱。 |
+| `event.peek_qty` | `event.peek_qty()` | `函數` | `信號值` | `event_qty = event.peek_qty()` | 用於查看下一個未消費事件的數量。 |
+| `event.pending` | `event.pending()` | `函數` | `信號值` | `has_event = event.pending() > 0` | 用於檢查目前 bar 還有多少外部事件尚未被消費。 |
+
+### group
+
+| 名稱 | 簽名 | 種類 | 回傳 | 範例 | 用途 |
+| --- | --- | --- | --- | --- | --- |
+| `group.add_spread` | `group.add_spread(group_id, spread_id)` | `函數` | `handle 或值` | `group.add_spread("main", spread_id)` | 用於管理一組相關期權 spread，常見於分批建倉、roll 倉與組合平倉。 |
+| `group.close` | `group.close(group_id)` | `函數` | `handle 或值` | `group.close("main")` | 用於管理一組相關期權 spread，常見於分批建倉、roll 倉與組合平倉。 |
+| `group.get` | `group.get(group_id)` | `函數` | `handle 或值` | `group.get("main")` | 用於管理一組相關期權 spread，常見於分批建倉、roll 倉與組合平倉。 |
+| `group.increment_roll` | `group.increment_roll(group_id)` | `函數` | `handle 或值` | `group.increment_roll("main")` | 用於管理一組相關期權 spread，常見於分批建倉、roll 倉與組合平倉。 |
+| `group.open` | `group.open(tag, init_amount, decay_factor)` | `函數` | `handle 或值` | `group.open("main", 10000, 0.5)` | 用於管理一組相關期權 spread，常見於分批建倉、roll 倉與組合平倉。 |
+| `group.open_ids` | `group.open_ids()` | `函數` | `handle 或值` | `group.open_ids()` | 用於管理一組相關期權 spread，常見於分批建倉、roll 倉與組合平倉。 |
+| `group.spread_count` | `group.spread_count(group_id)` | `函數` | `handle 或值` | `group.spread_count("main")` | 用於管理一組相關期權 spread，常見於分批建倉、roll 倉與組合平倉。 |
+
+### input
+
+| 名稱 | 簽名 | 種類 | 回傳 | 範例 | 用途 |
+| --- | --- | --- | --- | --- | --- |
+| `input.bool` | `input.bool(defval, title)` | `函數` | `布林` | `use_filter = input.bool(true, title="Use Filter")` | 用於宣告功能開關，例如是否啟用趨勢濾網或是否允許加倉。 |
+| `input.float` | `input.float(defval, title, minval, maxval, step)` | `函數` | `數值` | `position_pct = input.float(0.95, title="Position %", minval=0.01, maxval=1.0)` | 用於宣告小數參數，例如資金比例、停損比例或權重上限。 |
+| `input.int` | `input.int(defval, title, minval, maxval, step)` | `函數` | `數值` | `fast_len = input.int(10, title="Fast SMA", minval=1, step=1)` | 用於宣告整數參數，例如均線週期、持倉 bar 數或分批次數。 |
+| `input.string` | `input.string(defval, title, options)` | `函數` | `字串` | `mode = input.string("trend", title="Mode", options=["trend", "mean"])` | 用於宣告模式、標的、分組名稱等字串參數，並可限制可選值。 |
+
+### leg
+
+| 名稱 | 簽名 | 種類 | 回傳 | 範例 | 用途 |
+| --- | --- | --- | --- | --- | --- |
+| `leg.buy` | `leg.buy(contract, qty)` | `函數` | `leg` | `long_leg = leg.buy(contract, 1)` | 用於建立買方 leg，提交 debit spread 或保護腿時使用。 |
+| `leg.sell` | `leg.sell(contract, qty)` | `函數` | `leg` | `short_leg = leg.sell(contract, 1)` | 用於建立賣方 leg，提交 short put、covered call 或 credit spread 時使用。 |
+
+### math
+
+| 名稱 | 簽名 | 種類 | 回傳 | 範例 | 用途 |
+| --- | --- | --- | --- | --- | --- |
+| `math.abs` | `math.abs(x)` | `函數` | `數值` | `distance = math.abs(close - ta.sma(close, 20))` | 用於取得絕對值，例如計算偏離程度或風險距離。 |
+| `math.avg` | `math.avg(a, b)` | `函數` | `數值` | `mid = math.avg(high, low, close)` | 用於計算多個數值的平均。 |
+| `math.ceil` | `math.ceil(x)` | `函數` | `數值` | `lots = math.ceil(strategy.equity / close)` | 用於把倉位數量或 bar 數向上取整。 |
+| `math.exp` | `math.exp(x)` | `函數` | `數值` | `restored = math.exp(math.log(close))` | 用於指數轉換或還原 log 值。 |
+| `math.floor` | `math.floor(x)` | `函數` | `數值` | `qty = math.floor(strategy.cash / close)` | 用於把倉位數量向下取整，避免買入零碎股數。 |
+| `math.log` | `math.log(x)` | `函數` | `數值` | `log_close = math.log(close)` | 用於自然對數轉換，例如對數報酬。 |
+| `math.log10` | `math.log10(x)` | `函數` | `數值` | `log10_close = math.log10(close)` | 用於十進位對數轉換。 |
+| `math.max` | `math.max(a, b)` | `函數` | `數值` | `risk = math.max(ta.atr(14), close * 0.01)` | 用於設定下限或在兩個風險值中取較大者。 |
+| `math.min` | `math.min(a, b)` | `函數` | `數值` | `budget = math.min(strategy.cash, strategy.equity * 0.5)` | 用於限制倉位、風險或價格門檻不超過上限。 |
+| `math.pow` | `math.pow(x, exp)` | `函數` | `數值` | `squared = math.pow(close - ta.sma(close, 20), 2)` | 用於自訂非線性權重或訊號強度。 |
+| `math.round` | `math.round(x)` | `函數` | `數值` | `rounded = math.round(close)` | 用於把價格或數量四捨五入。 |
+| `math.sign` | `math.sign(x)` | `函數` | `數值` | `dir = math.sign(close - ta.sma(close, 20))` | 用於把訊號轉成方向 -1、0 或 1。 |
+| `math.sqrt` | `math.sqrt(x)` | `函數` | `數值` | `root = math.sqrt(ta.stdev(close, 20))` | 用於自訂波動率或標準差相關公式。 |
+
+### options
+
+| 名稱 | 簽名 | 種類 | 回傳 | 範例 | 用途 |
+| --- | --- | --- | --- | --- | --- |
+| `options.best_spread` | `options.best_spread(chain)` | `函數` | `期權鏈或值` | `contract = options.best_spread(options.puts(options.chain("us-options", "SPY")))` | 用於從期權鏈中篩出符合到期日、Delta、權利金或履約價條件的候選合約。 |
+| `options.calls` | `options.calls(chain)` | `函數` | `期權鏈` | `calls = options.calls(options.chain("us-options", "SPY"))` | 用於把期權鏈縮小到 call 合約。 |
+| `options.chain` | `options.chain(market, symbol)` | `函數` | `期權鏈` | `chain = options.chain("us-options", "SPY")` | 用於取得目前 bar 可用的期權鏈；多標的策略可指定市場與 underlying。 |
+| `options.delta_range` | `options.delta_range(chain, min_delta, max_delta)` | `函數` | `期權鏈或值` | `puts = options.delta_range(options.puts(options.chain("us-options", "SPY")), -0.35, -0.15)` | 用於從期權鏈中篩出符合到期日、Delta、權利金或履約價條件的候選合約。 |
+| `options.expiry_max` | `options.expiry_max(chain, max_days)` | `函數` | `期權鏈或值` | `chain45 = options.expiry_max(options.chain("us-options", "SPY"), 45)` | 用於從期權鏈中篩出符合到期日、Delta、權利金或履約價條件的候選合約。 |
+| `options.expiry_min` | `options.expiry_min(chain, min_days)` | `函數` | `期權鏈或值` | `chain20 = options.expiry_min(options.chain("us-options", "SPY"), 20)` | 用於從期權鏈中篩出符合到期日、Delta、權利金或履約價條件的候選合約。 |
+| `options.expiry_nearest` | `options.expiry_nearest(chain, target_days)` | `函數` | `期權鏈或值` | `near = options.expiry_nearest(options.chain("us-options", "SPY"), 30)` | 用於從期權鏈中篩出符合到期日、Delta、權利金或履約價條件的候選合約。 |
+| `options.expiry_range` | `options.expiry_range(chain, min_days, max_days)` | `函數` | `期權鏈或值` | `chain30 = options.expiry_range(options.chain("us-options", "SPY"), 20, 45)` | 用於從期權鏈中篩出符合到期日、Delta、權利金或履約價條件的候選合約。 |
+| `options.len` | `options.len(chain)` | `函數` | `期權鏈或值` | `count = options.len(options.chain("us-options", "SPY"))` | 用於從期權鏈中篩出符合到期日、Delta、權利金或履約價條件的候選合約。 |
+| `options.min_premium` | `options.min_premium(chain, min_bid)` | `函數` | `期權鏈或值` | `rich = options.min_premium(options.puts(options.chain("us-options", "SPY")), 1.0)` | 用於從期權鏈中篩出符合到期日、Delta、權利金或履約價條件的候選合約。 |
+| `options.puts` | `options.puts(chain)` | `函數` | `期權鏈` | `puts = options.puts(options.chain("us-options", "SPY"))` | 用於把期權鏈縮小到 put 合約。 |
+| `options.sort_by_delta` | `options.sort_by_delta(chain, target)` | `函數` | `陣列` | `contracts = options.sort_by_delta(options.puts(options.chain("us-options", "SPY")), -0.3)` | 用於把候選合約依 Delta 接近目標值排序，方便取第一筆作交易。 |
+| `options.strike_range` | `options.strike_range(chain, min, max)` | `函數` | `期權鏈或值` | `near_money = options.strike_range(options.chain("us-options", "SPY"), close * 0.9, close * 1.1)` | 用於從期權鏈中篩出符合到期日、Delta、權利金或履約價條件的候選合約。 |
+
+### order
+
+| 名稱 | 簽名 | 種類 | 回傳 | 範例 | 用途 |
+| --- | --- | --- | --- | --- | --- |
+| `order.buy` | `order.buy` | `常數` | `數值` | `order.market(order.buy, 100, note="enter")` | 用於 order.* 函數表示買入方向。 |
+| `order.immediate` | `order.immediate(side, qty, note)` | `函數` | `數值` | `order.immediate(order.sell, 100, note="force_exit")` | 用於要求當根 bar 以目前 close 立即成交的市場單。 |
+| `order.limit` | `order.limit(side, qty, price, note)` | `函數` | `數值` | `order.limit(order.buy, 100, close * 0.99)` | 用於在指定價格送出限價單，例如等待回落買入或反彈賣出。 |
+| `order.market` | `order.market(side, qty, note)` | `函數` | `數值` | `order_id = order.market(order.buy, 100, note="enter")` | 用於立即以市場單買入或賣出固定數量，並取得訂單 ID 供後續追蹤。 |
+| `order.market_notional` | `order.market_notional(side, notional, note)` | `函數` | `數值` | `order_id = order.market_notional(order.buy, 10000, note="rebalance")` | 用於依名義金額下市場單，讓策略用資金金額而非股數控倉。 |
+| `order.sell` | `order.sell` | `常數` | `數值` | `order.market(order.sell, 100, note="exit")` | 用於 order.* 函數表示賣出方向。 |
+| `order.stop` | `order.stop(side, qty, stop_price, note)` | `函數` | `數值` | `order.stop(order.sell, 100, close * 0.95)` | 用於在觸及停損或突破價格後送出停損單。 |
+| `order.stop_limit` | `order.stop_limit(side, qty, stop_price, limit_price, note)` | `函數` | `數值` | `order.stop_limit(order.sell, 100, close * 0.95, close * 0.94)` | 用於建立同時含觸發價與限價的停損限價單。 |
+| `order.submit` | `order.submit(id, side, qty, notional, type, limit, stop, twap_bars, immediate, note, ref, group_ref, schedule_at)` | `函數` | `數值` | `order.submit(id="entry", side=order.buy, qty=100, type="market")` | 用於用單一入口送出可擴充訂單意圖，適合需要 ID、ref、group_ref 或排程資訊的策略。 |
+| `order.twap` | `order.twap(side, qty, bars, note)` | `函數` | `數值` | `order.twap(order.buy, 100, 5)` | 用於把一筆交易拆到多根 bar 執行，降低一次性成交衝擊。 |
+
+### portfolio
+
+| 名稱 | 簽名 | 種類 | 回傳 | 範例 | 用途 |
+| --- | --- | --- | --- | --- | --- |
+| `portfolio.items` | `portfolio.items()` | `函數` | `陣列` | `items = portfolio.items()` | 用於一次取得 [symbol, weight] 陣列，方便多標的輪詢。 |
+| `portfolio.len` | `portfolio.len()` | `函數` | `數值` | `n = portfolio.len()` | 用於取得組合標的數量，常作為 for 迴圈上限。 |
+| `portfolio.symbol` | `portfolio.symbol(index, defval)` | `函數` | `字串` | `symbol = portfolio.symbol(0, "SPY")` | 用於依索引讀取單一組合標的，索引不存在時回傳預設值。 |
+| `portfolio.symbols` | `portfolio.symbols()` | `函數` | `陣列` | `symbols = portfolio.symbols()` | 用於取得回測請求傳入的標的清單。 |
+| `portfolio.weight` | `portfolio.weight(symbol, defval)` | `函數` | `數值` | `w = portfolio.weight("SPY", 0)` | 用於依 symbol 查詢組合權重，找不到時回傳預設值。 |
+| `portfolio.weights` | `portfolio.weights()` | `函數` | `陣列` | `weights = portfolio.weights()` | 用於取得與 portfolio.symbols 對應的權重清單。 |
+
+### ref
+
+| 名稱 | 簽名 | 種類 | 回傳 | 範例 | 用途 |
+| --- | --- | --- | --- | --- | --- |
+| `ref.clear` | `ref.clear(name)` | `函數` | `數值` | `ref.clear("main")` | 用於跨 bar 保存自訂狀態，例如上次訂單 ID、spread ID 或已處理次數。 |
+| `ref.dec` | `ref.dec(name)` | `函數` | `數值` | `ref.dec("main")` | 用於跨 bar 保存自訂狀態，例如上次訂單 ID、spread ID 或已處理次數。 |
+| `ref.get` | `ref.get(name)` | `函數` | `數值` | `ref.get("main")` | 用於跨 bar 保存自訂狀態，例如上次訂單 ID、spread ID 或已處理次數。 |
+| `ref.has` | `ref.has(name)` | `函數` | `數值` | `ref.has("main")` | 用於跨 bar 保存自訂狀態，例如上次訂單 ID、spread ID 或已處理次數。 |
+| `ref.inc` | `ref.inc(name)` | `函數` | `數值` | `ref.inc("main")` | 用於跨 bar 保存自訂狀態，例如上次訂單 ID、spread ID 或已處理次數。 |
+| `ref.set` | `ref.set(name, value)` | `函數` | `數值` | `ref.set("main", close)` | 用於跨 bar 保存自訂狀態，例如上次訂單 ID、spread ID 或已處理次數。 |
+
+### request
+
+| 名稱 | 簽名 | 種類 | 回傳 | 範例 | 用途 |
+| --- | --- | --- | --- | --- | --- |
+| `request.factor` | `request.factor(name, interval, field)` | `函數` | `series` | `vix = request.factor("VIX", "1d", "close")` | 用於讀取預載因子資料，例如宏觀、波動率或基本面序列。 |
+| `request.security` | `request.security(market, symbol, interval, field)` | `函數` | `series` | `spy_close = request.security("us-stocks", "SPY", "1d", "close")` | 用於讀取其他市場、標的或週期的預載欄位，例如用 SPY 趨勢過濾個股策略。 |
+
+### schedule
+
+| 名稱 | 簽名 | 種類 | 回傳 | 範例 | 用途 |
+| --- | --- | --- | --- | --- | --- |
+| `schedule.close_group` | `schedule.close_group(bars_offset, group_id)` | `函數` | `handle 或值` | `schedule.close_group(20, "main")` | 用於排程未來幾根 bar 後關閉 spread、leg 或 group。 |
+| `schedule.close_leg` | `schedule.close_leg(bars_offset, spread_id, leg_index)` | `函數` | `handle 或值` | `schedule.close_leg(20, spread_id, 0)` | 用於排程未來幾根 bar 後關閉 spread、leg 或 group。 |
+| `schedule.close_spread` | `schedule.close_spread(bars_offset, spread_id, reason)` | `函數` | `handle 或值` | `schedule.close_spread(20, spread_id, "risk_exit")` | 用於排程未來幾根 bar 後關閉 spread、leg 或 group。 |
+
+### signal
+
+| 名稱 | 簽名 | 種類 | 回傳 | 範例 | 用途 |
+| --- | --- | --- | --- | --- | --- |
+| `signal.action` | `signal.action()` | `函數` | `信號值` | `action = signal.action()` | 用於讀取第一個信號動作代碼，對應 init/add/close/roll。 |
+| `signal.active` | `signal.active()` | `函數` | `信號值` | `has_signal = signal.active() == 1` | 用於判斷目前 bar 是否有外部信號。 |
+| `signal.consume` | `signal.consume()` | `函數` | `信號值` | `done = signal.consume()` | 用於把目前 bar 的第一個信號標記為已處理。 |
+| `signal.consumed` | `signal.consumed()` | `函數` | `信號值` | `if signal.active() == 1 and signal.consumed() == 0` | 用於判斷目前 bar 的第一個信號是否已被標記處理。 |
+| `signal.count` | `signal.count()` | `函數` | `信號值` | `signal_total = signal.count()` | 用於取得目前 bar 外部信號數量。 |
+| `signal.direction` | `signal.direction()` | `函數` | `信號值` | `dir = signal.direction()` | 用於讀取第一個信號方向，1 表示多、-1 表示空、0 表示無方向。 |
+| `signal.group_ref` | `signal.group_ref()` | `函數` | `信號值` | `group_id = signal.group_ref()` | 用於讀取信號分組參考 ID。 |
+| `signal.name` | `signal.name()` | `函數` | `信號值` | `name = signal.name()` | 用於讀取第一個信號名稱，便於路由不同策略邏輯。 |
+| `signal.qty` | `signal.qty()` | `函數` | `信號值` | `qty = nz(signal.qty(), 1)` | 用於讀取第一個信號建議數量。 |
+| `signal.ref` | `signal.ref()` | `函數` | `信號值` | `ref_id = signal.ref()` | 用於讀取信號參考 ID，方便連結訂單或 spread。 |
+| `signal.remarks` | `signal.remarks()` | `函數` | `信號值` | `note = signal.remarks()` | 用於讀取信號備註文字。 |
+| `signal.source` | `signal.source()` | `函數` | `信號值` | `source = signal.source()` | 用於讀取信號來源，便於區分不同上游系統。 |
+
+### spread
+
+| 名稱 | 簽名 | 種類 | 回傳 | 範例 | 用途 |
+| --- | --- | --- | --- | --- | --- |
+| `spread.close` | `spread.close(spread_id, reason)` | `函數` | `handle 或值` | `spread.close(spread_id, "risk_exit")` | 用於建立、查詢、關閉與監控期權價差部位。 |
+| `spread.close_leg` | `spread.close_leg(spread_id, leg_index, close_price)` | `函數` | `handle 或值` | `spread.close_leg(spread_id, 0, contract.mark(contract))` | 用於建立、查詢、關閉與監控期權價差部位。 |
+| `spread.count` | `spread.count()` | `函數` | `handle 或值` | `spread.count()` | 用於建立、查詢、關閉與監控期權價差部位。 |
+| `spread.get` | `spread.get(spread_id)` | `函數` | `handle 或值` | `spread.get(spread_id)` | 用於建立、查詢、關閉與監控期權價差部位。 |
+| `spread.leg_contract` | `spread.leg_contract(spread_id, leg_index)` | `函數` | `handle 或值` | `spread.leg_contract(spread_id, 0)` | 用於建立、查詢、關閉與監控期權價差部位。 |
+| `spread.leg_entry_price` | `spread.leg_entry_price(spread_id, leg_index)` | `函數` | `handle 或值` | `spread.leg_entry_price(spread_id, 0)` | 用於建立、查詢、關閉與監控期權價差部位。 |
+| `spread.leg_open` | `spread.leg_open(spread_id, leg_index)` | `函數` | `handle 或值` | `spread.leg_open(spread_id, 0)` | 用於建立、查詢、關閉與監控期權價差部位。 |
+| `spread.leg_qty` | `spread.leg_qty(spread_id, leg_index)` | `函數` | `handle 或值` | `spread.leg_qty(spread_id, 0)` | 用於建立、查詢、關閉與監控期權價差部位。 |
+| `spread.leg_side` | `spread.leg_side(spread_id, leg_index)` | `函數` | `handle 或值` | `spread.leg_side(spread_id, 0)` | 用於建立、查詢、關閉與監控期權價差部位。 |
+| `spread.open` | `spread.open(legs, tag)` | `函數` | `handle 或值` | `spread.open([leg.sell(contract, 1)], "main")` | 用於建立、查詢、關閉與監控期權價差部位。 |
+| `spread.open_ids` | `spread.open_ids()` | `函數` | `handle 或值` | `spread.open_ids()` | 用於建立、查詢、關閉與監控期權價差部位。 |
+| `spread.open_in_group` | `spread.open_in_group(legs, tag, group_id)` | `函數` | `handle 或值` | `spread.open_in_group([leg.sell(contract, 1)], "main", "main")` | 用於建立、查詢、關閉與監控期權價差部位。 |
+| `spread.open_in_group_on` | `spread.open_in_group_on(market, underlying, legs, tag, group_id)` | `函數` | `handle 或值` | `spread.open_in_group_on("us-options", "SPY", [leg.sell(contract, 1)], "main", "main")` | 用於建立、查詢、關閉與監控期權價差部位。 |
+| `spread.open_on` | `spread.open_on(market, underlying, legs, tag)` | `函數` | `handle 或值` | `spread.open_on("us-options", "SPY", [leg.sell(contract, 1)], "main")` | 用於建立、查詢、關閉與監控期權價差部位。 |
+| `spread.pnl` | `spread.pnl(spread_id)` | `函數` | `handle 或值` | `spread.pnl(spread_id)` | 用於建立、查詢、關閉與監控期權價差部位。 |
+| `spread.pnl_all` | `spread.pnl_all()` | `函數` | `handle 或值` | `spread.pnl_all()` | 用於建立、查詢、關閉與監控期權價差部位。 |
+
+### str
+
+| 名稱 | 簽名 | 種類 | 回傳 | 範例 | 用途 |
+| --- | --- | --- | --- | --- | --- |
+| `str.contains` | `str.contains(s, substr)` | `函數` | `字串或陣列` | `is_spy = str.contains("SPY.US", "SPY")` | 用於判斷字串是否包含子字串，例如篩選 symbol 或模式名稱。 |
+| `str.format` | `str.format(format, value)` | `函數` | `字串或陣列` | `note = str.format("close=%s", close)` | 用於格式化報告標籤或訂單備註。 |
+| `str.join` | `str.join(parts, sep)` | `函數` | `字串或陣列` | `label = str.join(["SPY", "long"], "-")` | 用於把字串陣列合併成標籤或備註。 |
+| `str.length` | `str.length(s)` | `函數` | `字串或陣列` | `symbol_len = str.length("SPY")` | 用於取得字串長度。 |
+| `str.lower` | `str.lower(s)` | `函數` | `字串或陣列` | `mode = str.lower("TREND")` | 用於把設定值轉成小寫以便比對。 |
+| `str.split` | `str.split(s, sep)` | `函數` | `字串或陣列` | `symbols = str.split("SPY,QQQ", ",")` | 用於把逗號分隔設定拆成陣列。 |
+| `str.tostring` | `str.tostring(value)` | `函數` | `字串或陣列` | `label = str.tostring(close)` | 用於把數值、布林或陣列轉成字串。 |
+| `str.upper` | `str.upper(s)` | `函數` | `字串或陣列` | `symbol = str.upper("spy")` | 用於把 symbol 或設定值轉成大寫以便比對。 |
+
+### strategy
+
+| 名稱 | 簽名 | 種類 | 回傳 | 範例 | 用途 |
+| --- | --- | --- | --- | --- | --- |
+| `strategy.cash` | `strategy.cash` | `屬性` | `數值` | `qty = math.min(strategy.cash, strategy.equity * 0.5) / close` | 用於避免下單金額超過可用現金。 |
+| `strategy.close` | `strategy.close(id)` | `函數` | `na` | `strategy.close(id="long")` | 用於依 entry ID 平掉既有部位，常放在出場訊號或風控條件中。 |
+| `strategy.entry` | `strategy.entry(id, direction, qty, limit, stop, twap_bars, immediate, note)` | `函數` | `na` | `strategy.entry(id="long", direction=strategy.long, qty=100)` | 用於以命名 ID 建立多頭或空頭部位；需要限價、停損或 TWAP 時也可帶進階參數。 |
+| `strategy.equity` | `strategy.equity` | `屬性` | `數值` | `budget = strategy.equity * 0.95` | 用於依目前權益估算倉位大小或風險預算。 |
+| `strategy.exit` | `strategy.exit(id)` | `函數` | `na` | `strategy.exit(id="long")` | 用於依 entry ID 退出部位；目前行為與 strategy.close 相同。 |
+| `strategy.long` | `strategy.long` | `常數` | `數值` | `strategy.entry(id="long", direction=strategy.long, qty=1)` | 用於 strategy.entry 表示建立多頭部位。 |
+| `strategy.position_avg_price` | `strategy.position_avg_price` | `屬性` | `數值` | `take_profit = close > strategy.position_avg_price * 1.08` | 用於根據持倉均價設停利、停損或移動停損。 |
+| `strategy.position_size` | `strategy.position_size` | `屬性` | `數值` | `flat = strategy.position_size == 0` | 用於判斷目前是否已有部位，避免重複進場或決定是否出場。 |
+| `strategy.short` | `strategy.short` | `常數` | `數值` | `strategy.entry(id="short", direction=strategy.short, qty=1)` | 用於 strategy.entry 表示建立空頭部位。 |
+
+### ta
+
+| 名稱 | 簽名 | 種類 | 回傳 | 範例 | 用途 |
+| --- | --- | --- | --- | --- | --- |
+| `ta.atr` | `ta.atr(length)` | `函數` | `series` | `atr = ta.atr(14)` | 用於衡量近期波動，常拿來設定停損距離或倉位大小。 |
+| `ta.barssince` | `ta.barssince(condition)` | `函數` | `數值` | `bars_from_entry = ta.barssince(close > ta.sma(close, 20))` | 用於計算某條件距離最近一次成立已過幾根 bar。 |
+| `ta.bb` | `ta.bb(source, length, mult)` | `函數` | `陣列` | `bands = ta.bb(close, 20, 2)` | 用於取得布林通道上軌、中線、下軌陣列。 |
+| `ta.bb_lower` | `ta.bb_lower(source, length, mult)` | `函數` | `series` | `lower = ta.bb_lower(close, 20, 2)` | 用於取得布林通道下軌，常作為超跌或回補判斷。 |
+| `ta.bb_upper` | `ta.bb_upper(source, length, mult)` | `函數` | `series` | `upper = ta.bb_upper(close, 20, 2)` | 用於取得布林通道上軌，常作為過熱或突破判斷。 |
+| `ta.cci` | `ta.cci(length)` | `函數` | `series` | `cci = ta.cci(20)` | 用於判斷價格偏離典型價格均值的程度，常作為反轉或過熱濾網。 |
+| `ta.change` | `ta.change(source, length)` | `函數` | `series` | `momentum = ta.change(close, 5)` | 用於計算目前值相對 N 根 bar 前的變化量。 |
+| `ta.crossover` | `ta.crossover(left, right)` | `函數` | `布林` | `long_signal = ta.crossover(ta.sma(close, 10), ta.sma(close, 50))` | 用於偵測左側序列在本 bar 向上穿越右側序列。 |
+| `ta.crossunder` | `ta.crossunder(left, right)` | `函數` | `布林` | `exit_signal = ta.crossunder(ta.sma(close, 10), ta.sma(close, 50))` | 用於偵測左側序列在本 bar 向下跌破右側序列。 |
+| `ta.cum` | `ta.cum(source)` | `函數` | `series` | `cum_volume = ta.cum(volume)` | 用於累加序列值，例如累積成交量或自訂資金流。 |
+| `ta.ema` | `ta.ema(source, length)` | `函數` | `series` | `trend = ta.ema(close, 20)` | 用於較重視近期價格的趨勢判斷。 |
+| `ta.highest` | `ta.highest(source, length)` | `函數` | `series` | `breakout_level = ta.highest(high, 20)` | 用於取得近期最高值，常作為突破或追蹤停利條件。 |
+| `ta.lowest` | `ta.lowest(source, length)` | `函數` | `series` | `stop_level = ta.lowest(low, 10)` | 用於取得近期最低值，常作為停損或跌破條件。 |
+| `ta.percentrank` | `ta.percentrank(source, length)` | `函數` | `series` | `rank = ta.percentrank(ta.rsi(close, 14), 20)` | 用於衡量目前值在近期視窗中的百分位排名。 |
+| `ta.rsi` | `ta.rsi(source, length)` | `函數` | `series` | `rsi = ta.rsi(close, 14)` | 用於衡量超買超賣或動能強弱。 |
+| `ta.sma` | `ta.sma(source, length)` | `函數` | `series` | `fast = ta.sma(close, 10)` | 用於平滑價格或成交量，常作為趨勢方向與均線交叉訊號。 |
+| `ta.stdev` | `ta.stdev(source, length)` | `函數` | `series` | `vol = ta.stdev(close, 20)` | 用於衡量序列波動程度，常搭配均線形成通道。 |
+| `ta.valuewhen` | `ta.valuewhen(condition, source, occurrence)` | `函數` | `數值` | `last_breakout_close = ta.valuewhen(close > ta.highest(high, 20)[1], close, 0)` | 用於取得某條件第 N 次成立時的來源序列值。 |
+| `ta.wma` | `ta.wma(source, length)` | `函數` | `series` | `weighted = ta.wma(close, 20)` | 用於計算線性加權均線，近期資料權重較高。 |
 
 ## 提交與查詢範例
 

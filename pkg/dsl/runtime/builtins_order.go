@@ -1,5 +1,7 @@
 package runtime
 
+// When changing DSL builtin behavior here, update builtins_docs.go so generated DSL docs stay accurate.
+
 import "math"
 
 // OrderBridge extends Bridge with rich order submission capabilities.

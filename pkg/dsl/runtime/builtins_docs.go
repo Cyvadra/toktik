@@ -1,0 +1,663 @@
+package runtime
+
+// This file documents DSL builtins registered in builtins_*.go. When builtin behavior,
+// parameters, return values, or examples change, update this metadata and regenerate docs/dsl.md.
+
+import (
+	"sort"
+	"strings"
+)
+
+type BuiltinKind string
+
+const (
+	BuiltinFunction BuiltinKind = "function"
+	BuiltinProperty BuiltinKind = "property"
+	BuiltinConstant BuiltinKind = "constant"
+)
+
+type BuiltinDoc struct {
+	Name        string
+	Kind        BuiltinKind
+	Params      []string
+	Summary     string
+	Example     string
+	ReturnValue string
+}
+
+func BuiltinDocs(profile Profile) []BuiltinDoc {
+	ip := NewInterpreter(nil)
+	if profile == ProfileBacktest {
+		stub := func(args []Value) Value { return NaVal() }
+		RegisterBacktestProfile(ip, stub, stub)
+	} else {
+		RegisterProfile(ip, profile)
+	}
+
+	docs := make([]BuiltinDoc, 0, len(ip.builtins)+len(ip.propertyFns)+8)
+	for name, value := range ip.builtins {
+		fn := value.FnPtr()
+		if fn == nil {
+			continue
+		}
+		doc := BuiltinDoc{
+			Name:   name,
+			Kind:   BuiltinFunction,
+			Params: append([]string(nil), fn.Params...),
+		}
+		applyBuiltinDocDefaults(&doc)
+		docs = append(docs, doc)
+	}
+	for name := range ip.propertyFns {
+		doc := BuiltinDoc{Name: name, Kind: BuiltinProperty}
+		applyBuiltinDocDefaults(&doc)
+		docs = append(docs, doc)
+	}
+	for _, doc := range builtinConstants() {
+		docs = append(docs, doc)
+	}
+	sort.Slice(docs, func(i, j int) bool {
+		if namespace(docs[i].Name) == namespace(docs[j].Name) {
+			return docs[i].Name < docs[j].Name
+		}
+		return namespace(docs[i].Name) < namespace(docs[j].Name)
+	})
+	return docs
+}
+
+func builtinConstants() []BuiltinDoc {
+	docs := []BuiltinDoc{
+		{Name: "bar_index", Kind: BuiltinConstant, Summary: "用於限制策略暖身期、排除前幾根資料不足的 bar。", Example: "ready = bar_index > 50", ReturnValue: "數值"},
+		{Name: "close", Kind: BuiltinConstant, Summary: "用作主要價格序列，常拿來計算均線、動能、突破與下單價格。", Example: "fast = ta.sma(close, 20)", ReturnValue: "series"},
+		{Name: "high", Kind: BuiltinConstant, Summary: "用於偵測近期高點、突破條件或計算震幅類指標。", Example: "breakout = close > ta.highest(high, 20)[1]", ReturnValue: "series"},
+		{Name: "low", Kind: BuiltinConstant, Summary: "用於偵測近期低點、停損位置或回撤條件。", Example: "stop_price = ta.lowest(low, 10)", ReturnValue: "series"},
+		{Name: "math_e", Kind: BuiltinConstant, Summary: "用於自然對數或指數模型中的 e 常數。", Example: "one = math.log(math_e)", ReturnValue: "數值"},
+		{Name: "math_phi", Kind: BuiltinConstant, Summary: "用於黃金比例相關的價格或比例計算。", Example: "target = close * math_phi", ReturnValue: "數值"},
+		{Name: "math_pi", Kind: BuiltinConstant, Summary: "用於需要圓周率的自訂數學轉換。", Example: "cycle = math_pi * 2", ReturnValue: "數值"},
+		{Name: "open", Kind: BuiltinConstant, Summary: "用於判斷當根 K 線方向或估算開盤後價格變化。", Example: "green_bar = close > open", ReturnValue: "series"},
+		{Name: "order.buy", Kind: BuiltinConstant, Summary: "用於 order.* 函數表示買入方向。", Example: "order.market(order.buy, 100, note=\"enter\")", ReturnValue: "數值"},
+		{Name: "order.sell", Kind: BuiltinConstant, Summary: "用於 order.* 函數表示賣出方向。", Example: "order.market(order.sell, 100, note=\"exit\")", ReturnValue: "數值"},
+		{Name: "strategy.long", Kind: BuiltinConstant, Summary: "用於 strategy.entry 表示建立多頭部位。", Example: "strategy.entry(id=\"long\", direction=strategy.long, qty=1)", ReturnValue: "數值"},
+		{Name: "strategy.short", Kind: BuiltinConstant, Summary: "用於 strategy.entry 表示建立空頭部位。", Example: "strategy.entry(id=\"short\", direction=strategy.short, qty=1)", ReturnValue: "數值"},
+		{Name: "volume", Kind: BuiltinConstant, Summary: "用於成交量濾網、量能均線或流動性條件。", Example: "active_volume = volume > ta.sma(volume, 20)", ReturnValue: "series"},
+	}
+	return docs
+}
+
+func applyBuiltinDocDefaults(doc *BuiltinDoc) {
+	if override, ok := builtinDocOverrides[doc.Name]; ok {
+		if len(doc.Params) == 0 && len(override.Params) > 0 {
+			doc.Params = append([]string(nil), override.Params...)
+		}
+		if override.Summary != "" {
+			doc.Summary = override.Summary
+		}
+		if override.Example != "" {
+			doc.Example = override.Example
+		}
+		if override.ReturnValue != "" {
+			doc.ReturnValue = override.ReturnValue
+		}
+	}
+	if len(doc.Params) == 0 {
+		if params, ok := builtinParamHints[doc.Name]; ok {
+			doc.Params = append([]string(nil), params...)
+		}
+	}
+	if doc.Summary == "" {
+		doc.Summary = defaultBuiltinSummary(doc.Name, doc.Kind)
+	}
+	if doc.Example == "" {
+		doc.Example = defaultBuiltinExample(doc.Name, doc.Params, doc.Kind)
+	}
+	if doc.ReturnValue == "" {
+		doc.ReturnValue = defaultBuiltinReturn(doc.Name, doc.Kind)
+	}
+}
+
+func defaultBuiltinSummary(name string, kind BuiltinKind) string {
+	if kind == BuiltinProperty {
+		return "用於讀取目前回測上下文中的帳戶、部位或狀態欄位。"
+	}
+	if summary, ok := builtinSummaryByName[name]; ok {
+		return summary
+	}
+	switch namespace(name) {
+	case "alpha":
+		return "用於把價格或成交量序列轉成量化 alpha 特徵，通常作為進出場濾網或排序訊號。"
+	case "contract":
+		return "用於讀取已選期權合約的欄位，讓策略能依履約價、到期日、Greeks 或報價做篩選。"
+	case "event":
+		return "用於逐筆消費外部信號事件，避免同一根 bar 重複處理同一個事件。"
+	case "group":
+		return "用於管理一組相關期權 spread，常見於分批建倉、roll 倉與組合平倉。"
+	case "leg":
+		return "用於把期權合約包成買方或賣方 leg，再提交給 spread.open 類函數。"
+	case "math":
+		return "用於風控、倉位大小、價格門檻或指標轉換中的數值計算。"
+	case "options":
+		return "用於從期權鏈中篩出符合到期日、Delta、權利金或履約價條件的候選合約。"
+	case "order":
+		return "用於提交明確類型的交易指令，適合需要限價、停損、TWAP 或名義金額下單的策略。"
+	case "portfolio":
+		return "用於讀取回測請求注入的多標的組合設定，支援輪詢符號與權重配置。"
+	case "ref":
+		return "用於跨 bar 保存自訂狀態，例如上次訂單 ID、spread ID 或已處理次數。"
+	case "schedule":
+		return "用於排程未來幾根 bar 後關閉 spread、leg 或 group。"
+	case "signal":
+		return "用於讀取目前 bar 的外部信號欄位，適合把信號平台輸出轉成 DSL 下單邏輯。"
+	case "spread":
+		return "用於建立、查詢、關閉與監控期權價差部位。"
+	case "str":
+		return "用於處理符號、標籤、設定字串或報告欄位文字。"
+	case "ta":
+		return "用於把 OHLCV 序列轉成技術指標，作為趨勢、動能、波動或突破條件。"
+	}
+	return "用於策略腳本中的資料處理、條件判斷或交易流程控制。"
+}
+
+func defaultBuiltinReturn(name string, kind BuiltinKind) string {
+	if kind == BuiltinProperty || kind == BuiltinConstant {
+		return "值"
+	}
+	switch {
+	case strings.HasPrefix(name, "str."):
+		return "字串或陣列"
+	case strings.HasPrefix(name, "options."):
+		return "期權鏈或值"
+	case strings.HasPrefix(name, "contract."):
+		return "合約欄位"
+	case strings.HasPrefix(name, "spread."), strings.HasPrefix(name, "group."), strings.HasPrefix(name, "schedule."), strings.HasPrefix(name, "leg."):
+		return "handle 或值"
+	case strings.HasPrefix(name, "signal."), strings.HasPrefix(name, "event."):
+		return "信號值"
+	case name == "strategy.entry" || name == "strategy.close" || name == "strategy.exit" || name == "buy" || name == "sell":
+		return "na"
+	}
+	return "數值"
+}
+
+func defaultBuiltinExample(name string, params []string, kind BuiltinKind) string {
+	if kind == BuiltinProperty || kind == BuiltinConstant {
+		return name
+	}
+	if example, ok := builtinExampleByName[name]; ok {
+		return example
+	}
+	if len(params) == 0 {
+		return zeroArgExample(name)
+	}
+	args := make([]string, 0, len(params))
+	for _, param := range params {
+		args = append(args, sampleArg(param))
+	}
+	return name + "(" + strings.Join(args, ", ") + ")"
+}
+
+func sampleArg(param string) string {
+	switch strings.ToLower(param) {
+	case "s":
+		return "\"SPY,QQQ\""
+	case "left", "a":
+		return "ta.sma(close, 10)"
+	case "right", "b":
+		return "ta.sma(close, 30)"
+	case "x":
+		return "close"
+	case "y":
+		return "volume"
+	case "window", "period", "occurrence":
+		return "20"
+	case "condition":
+		return "close > ta.sma(close, 20)"
+	case "target", "target_days":
+		return "30"
+	case "target_sum":
+		return "1"
+	case "min_delta":
+		return "-0.35"
+	case "max_delta":
+		return "-0.15"
+	case "min_days":
+		return "20"
+	case "max_days":
+		return "45"
+	case "min_bid":
+		return "1.0"
+	case "min":
+		return "close * 0.9"
+	case "max":
+		return "close * 1.1"
+	case "chain":
+		return "options.chain(\"us-options\", \"SPY\")"
+	case "contract":
+		return "contract"
+	case "spread_id":
+		return "spread_id"
+	case "leg_index":
+		return "0"
+	case "close_price":
+		return "contract.mark(contract)"
+	case "reason":
+		return "\"risk_exit\""
+	case "init_amount":
+		return "10000"
+	case "decay_factor":
+		return "0.5"
+	case "exp":
+		return "2"
+	case "source", "series", "value":
+		return "close"
+	case "length", "bars", "twap_bars", "bars_offset", "index", "precision":
+		return "20"
+	case "id", "name", "title", "tag", "ref", "group_ref", "group_id":
+		return "\"main\""
+	case "direction":
+		return "strategy.long"
+	case "side":
+		return "order.buy"
+	case "qty":
+		return "1"
+	case "notional":
+		return "1000"
+	case "market":
+		return "\"us-options\""
+	case "symbol", "underlying":
+		return "\"SPY\""
+	case "interval":
+		return "\"1d\""
+	case "field":
+		return "\"close\""
+	case "defval", "minval", "maxval", "step":
+		return "0"
+	case "limit", "limit_price", "price":
+		return "close * 0.99"
+	case "stop", "stop_price":
+		return "close * 0.95"
+	case "immediate", "overlay":
+		return "false"
+	case "note":
+		return "\"note\""
+	case "type":
+		return "\"market\""
+	case "options":
+		return "[\"fast\", \"slow\"]"
+	case "parts":
+		return "[\"A\", \"B\"]"
+	case "sep":
+		return "\",\""
+	case "legs":
+		return "[leg.sell(contract, 1)]"
+	case "schedule_at":
+		return "0"
+	}
+	return param
+}
+
+func zeroArgExample(name string) string {
+	switch namespace(name) {
+	case "event", "signal":
+		return name + "()"
+	case "portfolio":
+		return name + "()"
+	case "spread", "group":
+		return name + "()"
+	case "options":
+		return name + "(options.chain(\"us-options\", \"SPY\"))"
+	case "contract":
+		return name + "(contract)"
+	case "str":
+		return name + "(\"SPY\")"
+	case "math":
+		return name + "(close)"
+	case "ta", "alpha":
+		return name + "(close, 20)"
+	}
+	return name + "()"
+}
+
+func namespace(name string) string {
+	if idx := strings.IndexByte(name, '.'); idx > 0 {
+		return name[:idx]
+	}
+	return "core"
+}
+
+var builtinDocOverrides = map[string]BuiltinDoc{
+	"input":                       {Summary: "用於把策略參數暴露給 validate API 與回測請求，讓使用者能用 dsl_params 覆蓋預設值。", Example: "risk = input(0.02, title=\"Risk\", minval=0, maxval=1, step=0.01)", ReturnValue: "值"},
+	"input.int":                   {Summary: "用於宣告整數參數，例如均線週期、持倉 bar 數或分批次數。", Example: "fast_len = input.int(10, title=\"Fast SMA\", minval=1, step=1)", ReturnValue: "數值"},
+	"input.float":                 {Summary: "用於宣告小數參數，例如資金比例、停損比例或權重上限。", Example: "position_pct = input.float(0.95, title=\"Position %\", minval=0.01, maxval=1.0)", ReturnValue: "數值"},
+	"input.bool":                  {Summary: "用於宣告功能開關，例如是否啟用趨勢濾網或是否允許加倉。", Example: "use_filter = input.bool(true, title=\"Use Filter\")", ReturnValue: "布林"},
+	"input.string":                {Summary: "用於宣告模式、標的、分組名稱等字串參數，並可限制可選值。", Example: "mode = input.string(\"trend\", title=\"Mode\", options=[\"trend\", \"mean\"])", ReturnValue: "字串"},
+	"len":                         {Summary: "用於檢查陣列或字串長度，常搭配 portfolio、options.sort_by_delta 或字串拆分結果。", Example: "has_symbols = len(portfolio.symbols()) > 0", ReturnValue: "數值"},
+	"plot":                        {Summary: "用於把中間指標或交易條件輸出到回測結果，方便檢查策略為何進出場。", Example: "plot(ta.sma(close, 20), title=\"SMA 20\", overlay=true, precision=2)", ReturnValue: "值"},
+	"strategy.entry":              {Summary: "用於以命名 ID 建立多頭或空頭部位；需要限價、停損或 TWAP 時也可帶進階參數。", Example: "strategy.entry(id=\"long\", direction=strategy.long, qty=100)", ReturnValue: "na"},
+	"strategy.close":              {Summary: "用於依 entry ID 平掉既有部位，常放在出場訊號或風控條件中。", Example: "strategy.close(id=\"long\")", ReturnValue: "na"},
+	"strategy.exit":               {Summary: "用於依 entry ID 退出部位；目前行為與 strategy.close 相同。", Example: "strategy.exit(id=\"long\")", ReturnValue: "na"},
+	"buy":                         {Summary: "用於快速送出基本買入指令，適合最小範例或不需要命名部位的腳本。", Example: "buy(1)", ReturnValue: "na"},
+	"sell":                        {Summary: "用於快速送出基本賣出指令，適合最小範例或不需要命名部位的腳本。", Example: "sell(1)", ReturnValue: "na"},
+	"strategy.position_size":      {Summary: "用於判斷目前是否已有部位，避免重複進場或決定是否出場。", Example: "flat = strategy.position_size == 0", ReturnValue: "數值"},
+	"strategy.position_avg_price": {Summary: "用於根據持倉均價設停利、停損或移動停損。", Example: "take_profit = close > strategy.position_avg_price * 1.08", ReturnValue: "數值"},
+	"strategy.equity":             {Summary: "用於依目前權益估算倉位大小或風險預算。", Example: "budget = strategy.equity * 0.95", ReturnValue: "數值"},
+	"strategy.cash":               {Summary: "用於避免下單金額超過可用現金。", Example: "qty = math.min(strategy.cash, strategy.equity * 0.5) / close", ReturnValue: "數值"},
+	"request.security":            {Summary: "用於讀取其他市場、標的或週期的預載欄位，例如用 SPY 趨勢過濾個股策略。", Example: "spy_close = request.security(\"us-stocks\", \"SPY\", \"1d\", \"close\")", ReturnValue: "series"},
+	"request.factor":              {Summary: "用於讀取預載因子資料，例如宏觀、波動率或基本面序列。", Example: "vix = request.factor(\"VIX\", \"1d\", \"close\")", ReturnValue: "series"},
+	"config.get":                  {Summary: "用於讀取策略 catalog 或 API 注入的數值設定，並在未設定時使用預設值。", Example: "max_risk = config.get(\"max_risk\", 0.02)", ReturnValue: "數值"},
+	"config.string":               {Summary: "用於讀取策略 catalog 或 API 注入的字串設定，例如模式名稱或標籤。", Example: "mode = config.string(\"mode\", \"default\")", ReturnValue: "字串"},
+	"order.market":                {Summary: "用於立即以市場單買入或賣出固定數量，並取得訂單 ID 供後續追蹤。", Example: "order_id = order.market(order.buy, 100, note=\"enter\")", ReturnValue: "數值"},
+	"order.market_notional":       {Summary: "用於依名義金額下市場單，讓策略用資金金額而非股數控倉。", Example: "order_id = order.market_notional(order.buy, 10000, note=\"rebalance\")", ReturnValue: "數值"},
+	"order.limit":                 {Summary: "用於在指定價格送出限價單，例如等待回落買入或反彈賣出。", Example: "order.limit(order.buy, 100, close * 0.99)", ReturnValue: "數值"},
+	"order.stop":                  {Summary: "用於在觸及停損或突破價格後送出停損單。", Example: "order.stop(order.sell, 100, close * 0.95)", ReturnValue: "數值"},
+	"order.stop_limit":            {Summary: "用於建立同時含觸發價與限價的停損限價單。", Example: "order.stop_limit(order.sell, 100, close * 0.95, close * 0.94)", ReturnValue: "數值"},
+	"order.twap":                  {Summary: "用於把一筆交易拆到多根 bar 執行，降低一次性成交衝擊。", Example: "order.twap(order.buy, 100, 5)", ReturnValue: "數值"},
+	"order.immediate":             {Summary: "用於要求當根 bar 以目前 close 立即成交的市場單。", Example: "order.immediate(order.sell, 100, note=\"force_exit\")", ReturnValue: "數值"},
+	"order.submit":                {Summary: "用於用單一入口送出可擴充訂單意圖，適合需要 ID、ref、group_ref 或排程資訊的策略。", Example: "order.submit(id=\"entry\", side=order.buy, qty=100, type=\"market\")", ReturnValue: "數值"},
+	"ta.sma":                      {Params: []string{"source", "length"}, Summary: "用於平滑價格或成交量，常作為趨勢方向與均線交叉訊號。", Example: "fast = ta.sma(close, 10)", ReturnValue: "series"},
+	"ta.ema":                      {Params: []string{"source", "length"}, Summary: "用於較重視近期價格的趨勢判斷。", Example: "trend = ta.ema(close, 20)", ReturnValue: "series"},
+	"ta.rsi":                      {Params: []string{"source", "length"}, Summary: "用於衡量超買超賣或動能強弱。", Example: "rsi = ta.rsi(close, 14)", ReturnValue: "series"},
+	"ta.atr":                      {Params: []string{"length"}, Summary: "用於衡量近期波動，常拿來設定停損距離或倉位大小。", Example: "atr = ta.atr(14)", ReturnValue: "series"},
+	"ta.highest":                  {Params: []string{"source", "length"}, Summary: "用於取得近期最高值，常作為突破或追蹤停利條件。", Example: "breakout_level = ta.highest(high, 20)", ReturnValue: "series"},
+	"ta.lowest":                   {Params: []string{"source", "length"}, Summary: "用於取得近期最低值，常作為停損或跌破條件。", Example: "stop_level = ta.lowest(low, 10)", ReturnValue: "series"},
+	"ta.stdev":                    {Params: []string{"source", "length"}, Summary: "用於衡量序列波動程度，常搭配均線形成通道。", Example: "vol = ta.stdev(close, 20)", ReturnValue: "series"},
+	"ta.cci":                      {Params: []string{"length"}, Summary: "用於判斷價格偏離典型價格均值的程度，常作為反轉或過熱濾網。", Example: "cci = ta.cci(20)", ReturnValue: "series"},
+	"ta.crossover":                {Params: []string{"left", "right"}, Summary: "用於偵測左側序列在本 bar 向上穿越右側序列。", Example: "long_signal = ta.crossover(ta.sma(close, 10), ta.sma(close, 50))", ReturnValue: "布林"},
+	"ta.crossunder":               {Params: []string{"left", "right"}, Summary: "用於偵測左側序列在本 bar 向下跌破右側序列。", Example: "exit_signal = ta.crossunder(ta.sma(close, 10), ta.sma(close, 50))", ReturnValue: "布林"},
+	"ta.change":                   {Params: []string{"source", "length"}, Summary: "用於計算目前值相對 N 根 bar 前的變化量。", Example: "momentum = ta.change(close, 5)", ReturnValue: "series"},
+	"ta.cum":                      {Params: []string{"source"}, Summary: "用於累加序列值，例如累積成交量或自訂資金流。", Example: "cum_volume = ta.cum(volume)", ReturnValue: "series"},
+	"ta.wma":                      {Params: []string{"source", "length"}, Summary: "用於計算線性加權均線，近期資料權重較高。", Example: "weighted = ta.wma(close, 20)", ReturnValue: "series"},
+	"ta.bb":                       {Params: []string{"source", "length", "mult"}, Summary: "用於取得布林通道上軌、中線、下軌陣列。", Example: "bands = ta.bb(close, 20, 2)", ReturnValue: "陣列"},
+	"ta.bb_upper":                 {Params: []string{"source", "length", "mult"}, Summary: "用於取得布林通道上軌，常作為過熱或突破判斷。", Example: "upper = ta.bb_upper(close, 20, 2)", ReturnValue: "series"},
+	"ta.bb_lower":                 {Params: []string{"source", "length", "mult"}, Summary: "用於取得布林通道下軌，常作為超跌或回補判斷。", Example: "lower = ta.bb_lower(close, 20, 2)", ReturnValue: "series"},
+	"ta.barssince":                {Params: []string{"condition"}, Summary: "用於計算某條件距離最近一次成立已過幾根 bar。", Example: "bars_from_entry = ta.barssince(close > ta.sma(close, 20))", ReturnValue: "數值"},
+	"ta.valuewhen":                {Params: []string{"condition", "source", "occurrence"}, Summary: "用於取得某條件第 N 次成立時的來源序列值。", Example: "last_breakout_close = ta.valuewhen(close > ta.highest(high, 20)[1], close, 0)", ReturnValue: "數值"},
+	"ta.percentrank":              {Params: []string{"source", "length"}, Summary: "用於衡量目前值在近期視窗中的百分位排名。", Example: "rank = ta.percentrank(ta.rsi(close, 14), 20)", ReturnValue: "series"},
+	"options.chain":               {Params: []string{"market", "symbol"}, Summary: "用於取得目前 bar 可用的期權鏈；多標的策略可指定市場與 underlying。", Example: "chain = options.chain(\"us-options\", \"SPY\")", ReturnValue: "期權鏈"},
+	"options.calls":               {Params: []string{"chain"}, Summary: "用於把期權鏈縮小到 call 合約。", Example: "calls = options.calls(options.chain(\"us-options\", \"SPY\"))", ReturnValue: "期權鏈"},
+	"options.puts":                {Params: []string{"chain"}, Summary: "用於把期權鏈縮小到 put 合約。", Example: "puts = options.puts(options.chain(\"us-options\", \"SPY\"))", ReturnValue: "期權鏈"},
+	"options.sort_by_delta":       {Params: []string{"chain", "target"}, Summary: "用於把候選合約依 Delta 接近目標值排序，方便取第一筆作交易。", Example: "contracts = options.sort_by_delta(options.puts(options.chain(\"us-options\", \"SPY\")), -0.3)", ReturnValue: "陣列"},
+	"leg.buy":                     {Params: []string{"contract", "qty"}, Summary: "用於建立買方 leg，提交 debit spread 或保護腿時使用。", Example: "long_leg = leg.buy(contract, 1)", ReturnValue: "leg"},
+	"leg.sell":                    {Params: []string{"contract", "qty"}, Summary: "用於建立賣方 leg，提交 short put、covered call 或 credit spread 時使用。", Example: "short_leg = leg.sell(contract, 1)", ReturnValue: "leg"},
+	"portfolio.symbols":           {Summary: "用於取得回測請求傳入的標的清單。", Example: "symbols = portfolio.symbols()", ReturnValue: "陣列"},
+	"portfolio.weights":           {Summary: "用於取得與 portfolio.symbols 對應的權重清單。", Example: "weights = portfolio.weights()", ReturnValue: "陣列"},
+	"portfolio.len":               {Summary: "用於取得組合標的數量，常作為 for 迴圈上限。", Example: "n = portfolio.len()", ReturnValue: "數值"},
+	"portfolio.symbol":            {Summary: "用於依索引讀取單一組合標的，索引不存在時回傳預設值。", Example: "symbol = portfolio.symbol(0, \"SPY\")", ReturnValue: "字串"},
+	"portfolio.items":             {Summary: "用於一次取得 [symbol, weight] 陣列，方便多標的輪詢。", Example: "items = portfolio.items()", ReturnValue: "陣列"},
+	"portfolio.weight":            {Summary: "用於依 symbol 查詢組合權重，找不到時回傳預設值。", Example: "w = portfolio.weight(\"SPY\", 0)", ReturnValue: "數值"},
+}
+
+var builtinSummaryByName = map[string]string{
+	"alpha.rank":         "用於把目前值轉成歷史百分位，適合判斷目前價格或因子相對自身歷史是否偏高。",
+	"alpha.zscore":       "用於衡量目前值偏離近期均值幾個標準差，常作為均值回歸或異常波動濾網。",
+	"alpha.decay_linear": "用於計算近期權重較高的線性衰減平均，降低舊資料影響。",
+	"alpha.ts_rank":      "用於取得目前值在近期視窗內的排名比例。",
+	"alpha.ts_corr":      "用於衡量兩個序列近期相關性，例如價格與成交量或標的與基準指數。",
+	"alpha.ts_cov":       "用於衡量兩個序列近期共同變動程度。",
+	"alpha.ts_delta":     "用於計算目前值與 N 根 bar 前的差值。",
+	"alpha.ts_sum":       "用於計算近期視窗總和，例如累積成交量或累積報酬。",
+	"alpha.ts_mean":      "用於計算近期視窗平均值，可作平滑濾網。",
+	"alpha.ts_std":       "用於衡量近期視窗波動度。",
+	"alpha.ts_min":       "用於取得近期視窗最小值。",
+	"alpha.ts_max":       "用於取得近期視窗最大值。",
+	"alpha.ts_argmin":    "用於取得近期最低值距離目前幾根 bar。",
+	"alpha.ts_argmax":    "用於取得近期最高值距離目前幾根 bar。",
+	"alpha.ts_skewness":  "用於衡量近期分布偏態，輔助辨識報酬分布是否偏向單側。",
+	"alpha.ts_kurtosis":  "用於衡量近期分布尾部厚度，輔助辨識極端波動環境。",
+	"alpha.signed_power": "用於保留正負號並放大或壓縮訊號強度。",
+	"alpha.scale":        "用於把單一訊號縮放到指定目標絕對值。",
+	"alpha.log_return":   "用於計算指定週期的對數報酬。",
+	"alpha.ts_median":    "用於取得近期視窗中位數，降低極端值影響。",
+	"event.pending":      "用於檢查目前 bar 還有多少外部事件尚未被消費。",
+	"event.peek":         "用於查看下一個未消費事件方向，但不標記已處理。",
+	"event.peek_action":  "用於查看下一個未消費事件動作代碼，但不標記已處理。",
+	"event.peek_name":    "用於查看下一個未消費事件名稱。",
+	"event.peek_qty":     "用於查看下一個未消費事件的數量。",
+	"event.next":         "用於消費下一個事件並取得方向，避免同一事件重複下單。",
+	"event.next_action":  "用於消費下一個事件並取得動作代碼。",
+	"event.consume_all":  "用於一次標記目前 bar 所有未處理事件為已消費。",
+	"event.is_init":      "用於判斷下一個事件是否為 init 動作。",
+	"event.is_add":       "用於判斷下一個事件是否為 add 動作。",
+	"event.is_close":     "用於判斷下一個事件是否為 close 動作。",
+	"event.is_roll":      "用於判斷下一個事件是否為 roll 動作。",
+	"signal.active":      "用於判斷目前 bar 是否有外部信號。",
+	"signal.count":       "用於取得目前 bar 外部信號數量。",
+	"signal.direction":   "用於讀取第一個信號方向，1 表示多、-1 表示空、0 表示無方向。",
+	"signal.action":      "用於讀取第一個信號動作代碼，對應 init/add/close/roll。",
+	"signal.qty":         "用於讀取第一個信號建議數量。",
+	"signal.name":        "用於讀取第一個信號名稱，便於路由不同策略邏輯。",
+	"signal.source":      "用於讀取信號來源，便於區分不同上游系統。",
+	"signal.remarks":     "用於讀取信號備註文字。",
+	"signal.ref":         "用於讀取信號參考 ID，方便連結訂單或 spread。",
+	"signal.group_ref":   "用於讀取信號分組參考 ID。",
+	"signal.consumed":    "用於判斷目前 bar 的第一個信號是否已被標記處理。",
+	"signal.consume":     "用於把目前 bar 的第一個信號標記為已處理。",
+	"str.contains":       "用於判斷字串是否包含子字串，例如篩選 symbol 或模式名稱。",
+	"str.length":         "用於取得字串長度。",
+	"str.upper":          "用於把 symbol 或設定值轉成大寫以便比對。",
+	"str.lower":          "用於把設定值轉成小寫以便比對。",
+	"str.split":          "用於把逗號分隔設定拆成陣列。",
+	"str.join":           "用於把字串陣列合併成標籤或備註。",
+	"str.tostring":       "用於把數值、布林或陣列轉成字串。",
+	"str.format":         "用於格式化報告標籤或訂單備註。",
+	"math.abs":           "用於取得絕對值，例如計算偏離程度或風險距離。",
+	"math.ceil":          "用於把倉位數量或 bar 數向上取整。",
+	"math.floor":         "用於把倉位數量向下取整，避免買入零碎股數。",
+	"math.round":         "用於把價格或數量四捨五入。",
+	"math.sqrt":          "用於自訂波動率或標準差相關公式。",
+	"math.pow":           "用於自訂非線性權重或訊號強度。",
+	"math.log":           "用於自然對數轉換，例如對數報酬。",
+	"math.log10":         "用於十進位對數轉換。",
+	"math.exp":           "用於指數轉換或還原 log 值。",
+	"math.max":           "用於設定下限或在兩個風險值中取較大者。",
+	"math.min":           "用於限制倉位、風險或價格門檻不超過上限。",
+	"math.sign":          "用於把訊號轉成方向 -1、0 或 1。",
+	"math.avg":           "用於計算多個數值的平均。",
+	"nz":                 "用於把 na 替換成指定值，避免暖身期指標造成條件失效。",
+	"na":                 "用於檢查值是否為 na。",
+}
+
+var builtinExampleByName = map[string]string{
+	"alpha.rank":             "rank = alpha.rank(close)",
+	"alpha.zscore":           "z = alpha.zscore(close, 20)",
+	"alpha.decay_linear":     "smooth = alpha.decay_linear(close, 10)",
+	"alpha.ts_rank":          "rank20 = alpha.ts_rank(close, 20)",
+	"alpha.ts_corr":          "corr = alpha.ts_corr(close, volume, 20)",
+	"alpha.ts_cov":           "cov = alpha.ts_cov(close, volume, 20)",
+	"alpha.ts_delta":         "delta5 = alpha.ts_delta(close, 5)",
+	"alpha.ts_sum":           "sum_vol = alpha.ts_sum(volume, 20)",
+	"alpha.ts_mean":          "mean20 = alpha.ts_mean(close, 20)",
+	"alpha.ts_std":           "std20 = alpha.ts_std(close, 20)",
+	"alpha.ts_min":           "min20 = alpha.ts_min(low, 20)",
+	"alpha.ts_max":           "max20 = alpha.ts_max(high, 20)",
+	"alpha.ts_argmin":        "bars_from_low = alpha.ts_argmin(low, 20)",
+	"alpha.ts_argmax":        "bars_from_high = alpha.ts_argmax(high, 20)",
+	"alpha.ts_skewness":      "skew = alpha.ts_skewness(close, 20)",
+	"alpha.ts_kurtosis":      "kurt = alpha.ts_kurtosis(close, 20)",
+	"alpha.signed_power":     "signal2 = alpha.signed_power(close - ta.sma(close, 20), 2)",
+	"alpha.scale":            "scaled = alpha.scale(close - ta.sma(close, 20), 1)",
+	"alpha.log_return":       "ret = alpha.log_return(close, 5)",
+	"alpha.ts_median":        "median20 = alpha.ts_median(close, 20)",
+	"event.pending":          "has_event = event.pending() > 0",
+	"event.peek":             "next_dir = event.peek()",
+	"event.peek_action":      "next_action = event.peek_action()",
+	"event.peek_name":        "event_name = event.peek_name()",
+	"event.peek_qty":         "event_qty = event.peek_qty()",
+	"event.next":             "direction = event.next()",
+	"event.next_action":      "action = event.next_action()",
+	"event.consume_all":      "consumed = event.consume_all()",
+	"event.is_init":          "should_open = event.is_init() == 1",
+	"event.is_add":           "should_add = event.is_add() == 1",
+	"event.is_close":         "should_close = event.is_close() == 1",
+	"event.is_roll":          "should_roll = event.is_roll() == 1",
+	"signal.active":          "has_signal = signal.active() == 1",
+	"signal.count":           "signal_total = signal.count()",
+	"signal.direction":       "dir = signal.direction()",
+	"signal.action":          "action = signal.action()",
+	"signal.qty":             "qty = nz(signal.qty(), 1)",
+	"signal.name":            "name = signal.name()",
+	"signal.source":          "source = signal.source()",
+	"signal.remarks":         "note = signal.remarks()",
+	"signal.ref":             "ref_id = signal.ref()",
+	"signal.group_ref":       "group_id = signal.group_ref()",
+	"signal.consumed":        "if signal.active() == 1 and signal.consumed() == 0",
+	"signal.consume":         "done = signal.consume()",
+	"str.contains":           "is_spy = str.contains(\"SPY.US\", \"SPY\")",
+	"str.length":             "symbol_len = str.length(\"SPY\")",
+	"str.upper":              "symbol = str.upper(\"spy\")",
+	"str.lower":              "mode = str.lower(\"TREND\")",
+	"str.split":              "symbols = str.split(\"SPY,QQQ\", \",\")",
+	"str.join":               "label = str.join([\"SPY\", \"long\"], \"-\")",
+	"str.tostring":           "label = str.tostring(close)",
+	"str.format":             "note = str.format(\"close=%s\", close)",
+	"math.abs":               "distance = math.abs(close - ta.sma(close, 20))",
+	"math.ceil":              "lots = math.ceil(strategy.equity / close)",
+	"math.floor":             "qty = math.floor(strategy.cash / close)",
+	"math.round":             "rounded = math.round(close)",
+	"math.sqrt":              "root = math.sqrt(ta.stdev(close, 20))",
+	"math.pow":               "squared = math.pow(close - ta.sma(close, 20), 2)",
+	"math.log":               "log_close = math.log(close)",
+	"math.log10":             "log10_close = math.log10(close)",
+	"math.exp":               "restored = math.exp(math.log(close))",
+	"math.max":               "risk = math.max(ta.atr(14), close * 0.01)",
+	"math.min":               "budget = math.min(strategy.cash, strategy.equity * 0.5)",
+	"math.sign":              "dir = math.sign(close - ta.sma(close, 20))",
+	"math.avg":               "mid = math.avg(high, low, close)",
+	"nz":                     "safe_rsi = nz(ta.rsi(close, 14), 50)",
+	"na":                     "warming_up = na(ta.sma(close, 50))",
+	"options.expiry_nearest": "near = options.expiry_nearest(options.chain(\"us-options\", \"SPY\"), 30)",
+	"options.expiry_range":   "chain30 = options.expiry_range(options.chain(\"us-options\", \"SPY\"), 20, 45)",
+	"options.expiry_min":     "chain20 = options.expiry_min(options.chain(\"us-options\", \"SPY\"), 20)",
+	"options.expiry_max":     "chain45 = options.expiry_max(options.chain(\"us-options\", \"SPY\"), 45)",
+	"options.delta_range":    "puts = options.delta_range(options.puts(options.chain(\"us-options\", \"SPY\")), -0.35, -0.15)",
+	"options.min_premium":    "rich = options.min_premium(options.puts(options.chain(\"us-options\", \"SPY\")), 1.0)",
+	"options.strike_range":   "near_money = options.strike_range(options.chain(\"us-options\", \"SPY\"), close * 0.9, close * 1.1)",
+	"options.len":            "count = options.len(options.chain(\"us-options\", \"SPY\"))",
+	"options.best_spread":    "contract = options.best_spread(options.puts(options.chain(\"us-options\", \"SPY\")))",
+	"contract.symbol":        "symbol = contract.symbol(contract)",
+	"contract.underlying":    "underlying = contract.underlying(contract)",
+	"contract.market":        "market = contract.market(contract)",
+	"contract.type":          "right = contract.type(contract)",
+	"contract.strike":        "strike = contract.strike(contract)",
+	"contract.expiry":        "expiry = contract.expiry(contract)",
+	"contract.dte":           "dte = contract.dte(contract)",
+	"contract.delta":         "delta = contract.delta(contract)",
+	"contract.gamma":         "gamma = contract.gamma(contract)",
+	"contract.vega":          "vega = contract.vega(contract)",
+	"contract.theta":         "theta = contract.theta(contract)",
+	"contract.iv":            "iv = contract.iv(contract)",
+	"contract.bid":           "bid = contract.bid(contract)",
+	"contract.ask":           "ask = contract.ask(contract)",
+	"contract.mark":          "mark = contract.mark(contract)",
+	"contract.volume":        "vol = contract.volume(contract)",
+	"contract.oi":            "oi = contract.oi(contract)",
+}
+
+var builtinParamHints = map[string][]string{
+	"buy":                    {"qty"},
+	"sell":                   {"qty"},
+	"len":                    {"value"},
+	"math.abs":               {"x"},
+	"math.ceil":              {"x"},
+	"math.floor":             {"x"},
+	"math.round":             {"x"},
+	"math.sqrt":              {"x"},
+	"math.pow":               {"x", "exp"},
+	"math.log":               {"x"},
+	"math.log10":             {"x"},
+	"math.exp":               {"x"},
+	"math.max":               {"a", "b"},
+	"math.min":               {"a", "b"},
+	"math.sign":              {"x"},
+	"math.avg":               {"a", "b"},
+	"nz":                     {"x", "replacement"},
+	"na":                     {"x"},
+	"str.contains":           {"s", "substr"},
+	"str.length":             {"s"},
+	"str.upper":              {"s"},
+	"str.lower":              {"s"},
+	"str.tostring":           {"value"},
+	"str.format":             {"format", "value"},
+	"ta.highest":             {"source", "length"},
+	"ta.lowest":              {"source", "length"},
+	"ta.stdev":               {"source", "length"},
+	"ta.change":              {"source", "length"},
+	"ta.cum":                 {"source"},
+	"ta.wma":                 {"source", "length"},
+	"ta.bb":                  {"source", "length", "mult"},
+	"ta.bb_upper":            {"source", "length", "mult"},
+	"ta.bb_lower":            {"source", "length", "mult"},
+	"ta.barssince":           {"condition"},
+	"ta.valuewhen":           {"condition", "source", "occurrence"},
+	"ta.percentrank":         {"source", "length"},
+	"alpha.rank":             {"x"},
+	"alpha.zscore":           {"x", "window"},
+	"alpha.decay_linear":     {"x", "window"},
+	"alpha.ts_rank":          {"x", "window"},
+	"alpha.ts_corr":          {"x", "y", "window"},
+	"alpha.ts_cov":           {"x", "y", "window"},
+	"alpha.ts_delta":         {"x", "period"},
+	"alpha.ts_sum":           {"x", "window"},
+	"alpha.ts_mean":          {"x", "window"},
+	"alpha.ts_std":           {"x", "window"},
+	"alpha.ts_min":           {"x", "window"},
+	"alpha.ts_max":           {"x", "window"},
+	"alpha.ts_argmin":        {"x", "window"},
+	"alpha.ts_argmax":        {"x", "window"},
+	"alpha.ts_skewness":      {"x", "window"},
+	"alpha.ts_kurtosis":      {"x", "window"},
+	"alpha.signed_power":     {"x", "exp"},
+	"alpha.scale":            {"x", "target_sum"},
+	"alpha.log_return":       {"x", "period"},
+	"alpha.ts_median":        {"x", "window"},
+	"options.chain":          {"market", "symbol"},
+	"options.calls":          {"chain"},
+	"options.puts":           {"chain"},
+	"options.expiry_nearest": {"chain", "target_days"},
+	"options.expiry_range":   {"chain", "min_days", "max_days"},
+	"options.expiry_min":     {"chain", "min_days"},
+	"options.expiry_max":     {"chain", "max_days"},
+	"options.delta_range":    {"chain", "min_delta", "max_delta"},
+	"options.min_premium":    {"chain", "min_bid"},
+	"options.strike_range":   {"chain", "min", "max"},
+	"options.len":            {"chain"},
+	"options.best_spread":    {"chain"},
+	"options.sort_by_delta":  {"chain", "target"},
+	"contract.symbol":        {"contract"},
+	"contract.underlying":    {"contract"},
+	"contract.market":        {"contract"},
+	"contract.type":          {"contract"},
+	"contract.strike":        {"contract"},
+	"contract.expiry":        {"contract"},
+	"contract.dte":           {"contract"},
+	"contract.delta":         {"contract"},
+	"contract.gamma":         {"contract"},
+	"contract.vega":          {"contract"},
+	"contract.theta":         {"contract"},
+	"contract.iv":            {"contract"},
+	"contract.bid":           {"contract"},
+	"contract.ask":           {"contract"},
+	"contract.mark":          {"contract"},
+	"contract.volume":        {"contract"},
+	"contract.oi":            {"contract"},
+	"spread.open":            {"legs", "tag"},
+	"spread.open_in_group":   {"legs", "tag", "group_id"},
+	"spread.close":           {"spread_id", "reason"},
+	"spread.close_leg":       {"spread_id", "leg_index", "close_price"},
+	"spread.get":             {"spread_id"},
+	"spread.pnl":             {"spread_id"},
+	"spread.leg_contract":    {"spread_id", "leg_index"},
+	"spread.leg_entry_price": {"spread_id", "leg_index"},
+	"spread.leg_qty":         {"spread_id", "leg_index"},
+	"spread.leg_side":        {"spread_id", "leg_index"},
+	"spread.leg_open":        {"spread_id", "leg_index"},
+	"group.open":             {"tag", "init_amount", "decay_factor"},
+	"group.close":            {"group_id"},
+	"group.get":              {"group_id"},
+	"group.add_spread":       {"group_id", "spread_id"},
+	"group.increment_roll":   {"group_id"},
+	"group.spread_count":     {"group_id"},
+	"schedule.close_spread":  {"bars_offset", "spread_id", "reason"},
+	"schedule.close_leg":     {"bars_offset", "spread_id", "leg_index"},
+	"leg.buy":                {"contract", "qty"},
+	"leg.sell":               {"contract", "qty"},
+}

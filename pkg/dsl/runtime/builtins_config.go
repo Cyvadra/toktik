@@ -1,5 +1,7 @@
 package runtime
 
+// When changing DSL builtin behavior here, update builtins_docs.go so generated DSL docs stay accurate.
+
 // ConfigBridge provides access to catalog-level strategy configuration.
 // Implementations should be type-asserted from the Bridge at runtime.
 type ConfigBridge interface {

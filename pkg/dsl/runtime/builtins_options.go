@@ -1,5 +1,7 @@
 package runtime
 
+// When changing DSL builtin behavior here, update builtins_docs.go so generated DSL docs stay accurate.
+
 import "strings"
 
 // OptionsBridge extends Bridge with options trading capabilities.

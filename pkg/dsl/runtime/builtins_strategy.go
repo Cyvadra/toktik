@@ -1,5 +1,7 @@
 package runtime
 
+// When changing DSL builtin behavior here, update builtins_docs.go so generated DSL docs stay accurate.
+
 // RegisterStrategyBuiltins adds strategy.* functions that call through the Bridge.
 func RegisterStrategyBuiltins(ip *Interpreter) {
 	// strategy.entry(id, direction, qty, limit=na, stop=na, twap_bars=0, immediate=false, note="")
