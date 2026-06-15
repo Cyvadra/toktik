@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -736,6 +737,30 @@ func TestOptionChainReturnsHTTPStatusErrorOnAPIError(t *testing.T) {
 	}
 }
 
+func TestOptionChainClampsLimit(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v3/snapshot/options/SPY" {
+			t.Fatalf("unexpected request path: %s", r.URL.Path)
+		}
+		assertQueryValue(t, r.URL, "limit", "250")
+		writeJSON(t, w, map[string]any{
+			"status":  "OK",
+			"results": []map[string]any{},
+		})
+	}))
+	defer server.Close()
+
+	client, err := New(Config{APIKey: "test_massive_key", BaseURL: server.URL})
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+
+	_, err = client.OptionChain(context.Background(), OptionChainRequest{Underlying: "SPY", Limit: 500})
+	if err != nil {
+		t.Fatalf("OptionChain returned error: %v", err)
+	}
+}
+
 func TestOptionChainRetriesInitial429(t *testing.T) {
 	var attempts int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -837,6 +862,84 @@ func TestOptionChainRetriesPaginated429(t *testing.T) {
 	if nextAttempts != 2 {
 		t.Fatalf("expected 2 paginated attempts, got %d", nextAttempts)
 	}
+}
+
+func TestDefaultRetryAttemptsIsRelaxedForTransientNetworkErrors(t *testing.T) {
+	if got := (Config{}).normalizedRetryAttempts(); got != 6 {
+		t.Fatalf("default retry attempts = %d, want 6", got)
+	}
+}
+
+func TestRetryTransportRetriesTransientNetworkError(t *testing.T) {
+	attempts := 0
+	transport := newRetryTransport(Config{
+		APIKey:         "test_massive_key",
+		BaseURL:        "https://api.massive.test",
+		RESTQPS:        1000,
+		RetryAttempts:  3,
+		RetryBaseDelay: time.Millisecond,
+		RetryMaxDelay:  time.Millisecond,
+	}, roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		attempts++
+		if attempts == 1 {
+			return nil, errors.New("net/http: TLS handshake timeout")
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Status:     "200 OK",
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`{"status":"OK"}`)),
+			Request:    req,
+		}, nil
+	}))
+
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, "https://api.massive.test/v1/marketstatus/now", nil)
+	if err != nil {
+		t.Fatalf("NewRequestWithContext failed: %v", err)
+	}
+	resp, err := transport.RoundTrip(req)
+	if err != nil {
+		t.Fatalf("RoundTrip returned error: %v", err)
+	}
+	defer resp.Body.Close()
+	if attempts != 2 {
+		t.Fatalf("expected 2 attempts, got %d", attempts)
+	}
+}
+
+func TestRetryTransportDoesNotRetryCanceledContext(t *testing.T) {
+	attempts := 0
+	transport := newRetryTransport(Config{
+		APIKey:         "test_massive_key",
+		BaseURL:        "https://api.massive.test",
+		RESTQPS:        1000,
+		RetryAttempts:  3,
+		RetryBaseDelay: time.Millisecond,
+		RetryMaxDelay:  time.Millisecond,
+	}, roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+		attempts++
+		return nil, context.Canceled
+	}))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://api.massive.test/v1/marketstatus/now", nil)
+	if err != nil {
+		t.Fatalf("NewRequestWithContext failed: %v", err)
+	}
+	_, err = transport.RoundTrip(req)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("RoundTrip error = %v, want context.Canceled", err)
+	}
+	if attempts != 0 {
+		t.Fatalf("expected no transport attempts after gate sees canceled context, got %d", attempts)
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
 }
 
 func writeJSON(t *testing.T, w http.ResponseWriter, payload any) {

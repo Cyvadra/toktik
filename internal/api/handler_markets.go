@@ -108,16 +108,17 @@ func (h *Handler) GetGreeks(c *gin.Context) {
 //	@Description	Returns OHLCV bars for a US stock symbol, optionally enriched with point-in-time fundamentals aligned to each bar and cached company profile metadata when available.
 //	@Tags			USStocks
 //	@Produce		json
-//	@Param			symbol		query		string		true	"Stock ticker symbol"
-//	@Param			interval	query		string		true	"Bar interval"
-//	@Param			from		query		string		true	"Start time (RFC3339 or YYYY-MM-DD)"
-//	@Param			to			query		string		true	"End time (RFC3339 or YYYY-MM-DD)"
-//	@Param			factor		query		[]string	false	"Optional fundamentals to align onto each bar (repeat or comma-separated, e.g. pe,pb). PE/PB are recomputed from each bar close using the latest known filing-derived denominator."
-//	@Param			limit		query		int			false	"Max rows (default 1000)"
-//	@Param			cursor		query		string		false	"Pagination cursor"
-//	@Success		200			{object}	dto.USStockBarResponse
-//	@Failure		400			{object}	dto.ErrorResponse
-//	@Failure		500			{object}	dto.ErrorResponse
+//	@Param			symbol			query		string		true	"Stock ticker symbol"
+//	@Param			interval		query		string		true	"Bar interval"
+//	@Param			from			query		string		true	"Start time (RFC3339 or YYYY-MM-DD)"
+//	@Param			to				query		string		true	"End time (RFC3339 or YYYY-MM-DD)"
+//	@Param			factor			query		[]string	false	"Optional fundamentals to align onto each bar (repeat or comma-separated, e.g. pe,pb). PE/PB are recomputed from each bar close using the latest known filing-derived denominator."
+//	@Param			include_latest	query		bool		false	"Merge Redis-cached provisional latest daily bars when interval=1d. This never calls upstream providers and defaults to false."
+//	@Param			limit			query		int			false	"Max rows (default 1000)"
+//	@Param			cursor			query		string		false	"Pagination cursor"
+//	@Success		200				{object}	dto.USStockBarResponse
+//	@Failure		400				{object}	dto.ErrorResponse
+//	@Failure		500				{object}	dto.ErrorResponse
 //	@Router			/markets/us-stocks/bars [get]
 func (h *Handler) GetUSStockBars(c *gin.Context) {
 	var req dto.USStockBarRequest
@@ -270,16 +271,17 @@ func (h *Handler) GetUSStockSplits(c *gin.Context) {
 //	@Description	Returns OHLCV bars for a US listed option contract.
 //	@Tags			USOptions
 //	@Produce		json
-//	@Param			symbol		query		string	true	"Option contract symbol (Polygon OPRA ticker or raw OCC payload without O: prefix)"
-//	@Param			interval	query		string	true	"Bar interval"
-//	@Param			from		query		string	true	"Start time (RFC3339 or YYYY-MM-DD)"
-//	@Param			to			query		string	true	"End time (RFC3339 or YYYY-MM-DD)"
-//	@Param			session		query		string	false	"Session filter (1m only: regular, all, extended)"
-//	@Param			limit		query		int		false	"Max rows (default 1000)"
-//	@Param			cursor		query		string	false	"Pagination cursor"
-//	@Success		200			{object}	dto.USOptionBarResponse
-//	@Failure		400			{object}	dto.ErrorResponse
-//	@Failure		500			{object}	dto.ErrorResponse
+//	@Param			symbol			query		string	true	"Option contract symbol (Polygon OPRA ticker or raw OCC payload without O: prefix)"
+//	@Param			interval		query		string	true	"Bar interval"
+//	@Param			from			query		string	true	"Start time (RFC3339 or YYYY-MM-DD)"
+//	@Param			to				query		string	true	"End time (RFC3339 or YYYY-MM-DD)"
+//	@Param			session			query		string	false	"Session filter (1m only: regular, all, extended)"
+//	@Param			include_latest	query		bool	false	"Merge Redis-cached provisional latest daily option bars when interval=1d. This never calls upstream providers and defaults to false."
+//	@Param			limit			query		int		false	"Max rows (default 1000)"
+//	@Param			cursor			query		string	false	"Pagination cursor"
+//	@Success		200				{object}	dto.USOptionBarResponse
+//	@Failure		400				{object}	dto.ErrorResponse
+//	@Failure		500				{object}	dto.ErrorResponse
 //	@Router			/markets/us-options/bars [get]
 func (h *Handler) GetUSOptionBars(c *gin.Context) {
 	var req dto.USOptionBarRequest
@@ -311,14 +313,15 @@ func (h *Handler) GetUSOptionBars(c *gin.Context) {
 //	@Description	Returns available US listed option contract symbols.
 //	@Tags			USOptions
 //	@Produce		json
-//	@Param			underlying	query		string	false	"Filter by underlying ticker symbol"
-//	@Param			root		query		string	false	"Legacy alias for underlying"
-//	@Param			search		query		string	false	"Substring match filter"
-//	@Param			limit		query		int		false	"Max rows (default 100)"
-//	@Param			cursor		query		string	false	"Pagination cursor"
-//	@Success		200			{object}	dto.USOptionSymbolResponse
-//	@Failure		400			{object}	dto.ErrorResponse
-//	@Failure		500			{object}	dto.ErrorResponse
+//	@Param			underlying		query		string	false	"Filter by underlying ticker symbol"
+//	@Param			root			query		string	false	"Legacy alias for underlying"
+//	@Param			search			query		string	false	"Substring match filter"
+//	@Param			include_latest	query		bool	false	"When underlying/root is provided, merge Redis-cached latest option-chain contracts that are not yet present in ClickHouse. Defaults to false."
+//	@Param			limit			query		int		false	"Max rows (default 100)"
+//	@Param			cursor			query		string	false	"Pagination cursor"
+//	@Success		200				{object}	dto.USOptionSymbolResponse
+//	@Failure		400				{object}	dto.ErrorResponse
+//	@Failure		500				{object}	dto.ErrorResponse
 //	@Router			/markets/us-options/symbols [get]
 func (h *Handler) GetUSOptionSymbols(c *gin.Context) {
 	var req dto.USOptionSymbolRequest
@@ -387,16 +390,17 @@ func (h *Handler) GetUSOptionGreeks(c *gin.Context) {
 //	@Description	Returns option chain snapshots for a US underlying. If from/to are omitted, the latest available snapshot is returned.
 //	@Tags			USOptions
 //	@Produce		json
-//	@Param			underlying	query		string	true	"Underlying ticker symbol"
-//	@Param			expiration	query		string	false	"Filter contracts by expiration date (YYYY-MM-DD)"
-//	@Param			from		query		string	false	"Snapshot window start (RFC3339 or YYYY-MM-DD); defaults to latest available snapshot"
-//	@Param			to			query		string	false	"Snapshot window end (RFC3339 or YYYY-MM-DD); defaults to latest available snapshot"
-//	@Param			interval	query		string	false	"Chain interval (default 1d)"	Enums(5m,15m,30m,1h,2h,4h,1d)
-//	@Param			limit		query		int		false	"Max contracts (default 100)"
-//	@Param			cursor		query		string	false	"Pagination cursor"
-//	@Success		200			{object}	dto.USOptionChainResponse
-//	@Failure		400			{object}	dto.ErrorResponse
-//	@Failure		500			{object}	dto.ErrorResponse
+//	@Param			underlying		query		string	true	"Underlying ticker symbol"
+//	@Param			expiration		query		string	false	"Filter contracts by expiration date (YYYY-MM-DD)"
+//	@Param			from			query		string	false	"Snapshot window start (RFC3339 or YYYY-MM-DD); defaults to latest available snapshot"
+//	@Param			to				query		string	false	"Snapshot window end (RFC3339 or YYYY-MM-DD); defaults to latest available snapshot"
+//	@Param			interval		query		string	false	"Chain interval (default 1d)"	Enums(5m,15m,30m,1h,2h,4h,1d)
+//	@Param			include_latest	query		bool	false	"Merge Redis-cached provisional latest option-chain snapshot when interval=1d. This never calls upstream providers and defaults to false."
+//	@Param			limit			query		int		false	"Max contracts (default 100)"
+//	@Param			cursor			query		string	false	"Pagination cursor"
+//	@Success		200				{object}	dto.USOptionChainResponse
+//	@Failure		400				{object}	dto.ErrorResponse
+//	@Failure		500				{object}	dto.ErrorResponse
 //	@Router			/markets/us-options/chain [get]
 func (h *Handler) GetUSOptionChain(c *gin.Context) {
 	var req dto.USOptionChainRequest

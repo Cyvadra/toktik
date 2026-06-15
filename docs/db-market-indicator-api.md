@@ -7,7 +7,7 @@
 - Source Swagger: `docs/swagger.json`
 - API title: `Toktik Options Platform API`
 - API version: `1.0`
-- Generated at: `2026-06-10T10:49:15Z`
+- Generated at: `2026-06-11T12:33:02Z`
 
 ## Scope
 
@@ -672,6 +672,7 @@ Returns latest known values per (symbol, factor) at as_of. For us-stocks, price-
 | from | query | string | yes | Start time (RFC3339 or YYYY-MM-DD) |
 | to | query | string | yes | End time (RFC3339 or YYYY-MM-DD) |
 | factor | query | array<string> | no | Optional fundamentals to align onto each bar (repeat or comma-separated, e.g. pe,pb). PE/PB are recomputed from each bar close using the latest known filing-derived denominator. |
+| include_latest | query | boolean | no | Merge Redis-cached provisional latest daily bars when interval=1d. This never calls upstream providers and defaults to false. |
 | limit | query | integer | no | Max rows (default 1000) |
 | cursor | query | string | no | Pagination cursor |
 
@@ -795,6 +796,7 @@ Returns latest known values per (symbol, factor) at as_of. For us-stocks, price-
 | from | query | string | yes | Start time (RFC3339 or YYYY-MM-DD) |
 | to | query | string | yes | End time (RFC3339 or YYYY-MM-DD) |
 | session | query | string | no | Session filter (1m only: regular, all, extended) |
+| include_latest | query | boolean | no | Merge Redis-cached provisional latest daily option bars when interval=1d. This never calls upstream providers and defaults to false. |
 | limit | query | integer | no | Max rows (default 1000) |
 | cursor | query | string | no | Pagination cursor |
 
@@ -821,6 +823,7 @@ Returns latest known values per (symbol, factor) at as_of. For us-stocks, price-
 | underlying | query | string | no | Filter by underlying ticker symbol |
 | root | query | string | no | Legacy alias for underlying |
 | search | query | string | no | Substring match filter |
+| include_latest | query | boolean | no | When underlying/root is provided, merge Redis-cached latest option-chain contracts that are not yet present in ClickHouse. Defaults to false. |
 | limit | query | integer | no | Max rows (default 100) |
 | cursor | query | string | no | Pagination cursor |
 
@@ -877,6 +880,9 @@ Returns latest known values per (symbol, factor) at as_of. For us-stocks, price-
 | from | query | string | no | Snapshot window start (RFC3339 or YYYY-MM-DD); defaults to latest available snapshot |
 | to | query | string | no | Snapshot window end (RFC3339 or YYYY-MM-DD); defaults to latest available snapshot |
 | interval | query | string | no | Chain interval (default 1d) |
+| include_latest | query | boolean | no | Merge Redis-cached provisional latest option-chain snapshot when interval=1d. This never calls upstream providers and defaults to false. |
+
+Latest-market overlays are best-effort Redis reads. Refresh jobs track per-stage results, so a provider failure can leave the cache partially refreshed while still preserving successfully written symbols. Configure `latest_market_data.always_refresh_symbols` for underlyings that must be present in the cache regardless of turnover-pool membership; `smoke_symbols` is reserved for closed-market change detection.
 | limit | query | integer | no | Max contracts (default 100) |
 | cursor | query | string | no | Pagination cursor |
 
@@ -930,6 +936,7 @@ Returns latest known values per (symbol, factor) at as_of. For us-stocks, price-
 | market | query | string | yes | Market (crypto-options, us-options) |
 | sort_by | query | string | no | Sort field |
 | order | query | string | no | Sort order (asc, desc) |
+| include_latest | query | boolean | no | For market=us-options, overlay Redis-cached provisional latest option-chain data. Screener endpoints default this to true. |
 | limit | query | integer | no | Max rows (default 50) |
 | cursor | query | string | no | Pagination cursor |
 
@@ -956,6 +963,7 @@ Returns latest known values per (symbol, factor) at as_of. For us-stocks, price-
 | limit | query | integer | no | Max rows to return (default 100) |
 | lookback_days | query | integer | no | Trailing trading days to aggregate (default 20) |
 | non_etf_only | query | boolean | no | Restrict to stock underlyings with PE/PB fundamentals coverage, then exclude ETF/fund classifications from cached company profiles |
+| include_latest | query | boolean | no | Accepted for screener API consistency and defaulted to true, but turnover-intersection rankings remain based on historical aggregated turnover. |
 
 #### Responses
 
@@ -984,6 +992,7 @@ Returns latest known values per (symbol, factor) at as_of. For us-stocks, price-
 | max_dte | query | integer | no | Maximum days to expiry |
 | sort_by | query | string | no | Sort field |
 | order | query | string | no | Sort order (asc, desc) |
+| include_latest | query | boolean | no | For market=us-options, overlay Redis-cached provisional latest option-chain data. Screener endpoints default this to true. |
 | limit | query | integer | no | Max rows (default 50) |
 | cursor | query | string | no | Pagination cursor |
 
@@ -2209,4 +2218,3 @@ This section expands every request/response schema referenced by the endpoints a
 | --- | --- | --- | --- |
 | profile | [USStockCompanyProfile](#usstockcompanyprofile) | no | - |
 | symbol | string | no | - |
-

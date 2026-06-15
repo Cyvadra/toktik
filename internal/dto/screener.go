@@ -18,6 +18,7 @@ type ScreenUnderlyingRequest struct {
 	SortBy              string   `form:"sort_by" binding:"omitempty"`
 	Limit               int      `form:"limit" binding:"omitempty"`
 	Cursor              string   `form:"cursor" binding:"omitempty"`
+	IncludeLatest       *bool    `form:"include_latest" binding:"omitempty"`
 }
 
 // ScreenedUnderlying is one result from the underlying screener.
@@ -46,9 +47,10 @@ type ScreenUnderlyingResponse struct {
 // ScreenUSTurnoverIntersectionRequest defines the query for the US
 // stocks/options turnover intersection screener.
 type ScreenUSTurnoverIntersectionRequest struct {
-	Limit        int  `form:"limit" binding:"omitempty"`
-	LookbackDays int  `form:"lookback_days" binding:"omitempty"`
-	NonETFOnly   bool `form:"non_etf_only" binding:"omitempty"`
+	Limit         int   `form:"limit" binding:"omitempty"`
+	LookbackDays  int   `form:"lookback_days" binding:"omitempty"`
+	NonETFOnly    bool  `form:"non_etf_only" binding:"omitempty"`
+	IncludeLatest *bool `form:"include_latest" binding:"omitempty"`
 }
 
 // ScreenedUSTurnoverIntersectionRow is one intersected US underlying result.
@@ -92,6 +94,7 @@ type ScreenOptionRequest struct {
 	SortBy            string   `form:"sort_by" binding:"omitempty"`
 	Limit             int      `form:"limit" binding:"omitempty"`
 	Cursor            string   `form:"cursor" binding:"omitempty"`
+	IncludeLatest     *bool    `form:"include_latest" binding:"omitempty"`
 }
 
 func (r *ScreenOptionRequest) NormalizeAliases() {

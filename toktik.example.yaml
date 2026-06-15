@@ -64,6 +64,21 @@ fmp:
   cache_dir: "/mnt/hdd/toktik/fmp-cache"
   api_key: ""
 
+latest_market_data:
+  enabled: false
+  redis_ttl_hours: 72
+  open_refresh_interval_minutes: 180
+  closed_refresh_interval_minutes: 360
+  stale_alert_after_hours: 6
+  refresh_timeout_minutes: 15
+  workers: 4
+  stock_provider: "fmp"
+  option_provider: "polygon"
+  smoke_symbols: ["AAPL", "NVDA"]
+  always_refresh_symbols: ["AAPL", "NVDA"]
+  option_chain_limit: 250
+  option_aggregate_limit: 180
+
 redis:
   enabled: false
   addr: "127.0.0.1:6379"

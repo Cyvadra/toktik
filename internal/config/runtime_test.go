@@ -55,7 +55,18 @@ func TestLoadRuntimeFromPathYAML(t *testing.T) {
 		"  flat_files_secret_key: \"flat-secret\"\n" +
 		"fmp:\n" +
 		"  cache_dir: \"/srv/toktik/fmp-cache\"\n" +
-		"  api_key: \"fmp-runtime-key\"\n")
+		"  api_key: \"fmp-runtime-key\"\n" +
+		"latest_market_data:\n" +
+		"  enabled: true\n" +
+		"  redis_ttl_hours: 48\n" +
+		"  open_refresh_interval_minutes: 30\n" +
+		"  closed_refresh_interval_minutes: 120\n" +
+		"  stale_alert_after_hours: 5\n" +
+		"  refresh_timeout_minutes: 9\n" +
+		"  workers: 2\n" +
+		"  smoke_symbols: [\"SPY\", \"QQQ\"]\n" +
+		"redis:\n" +
+		"  enabled: true\n")
 	if err := os.WriteFile(configPath, content, 0o644); err != nil {
 		t.Fatalf("WriteFile(%q) failed: %v", configPath, err)
 	}
@@ -142,6 +153,15 @@ func TestLoadRuntimeFromPathYAML(t *testing.T) {
 	}
 	if cfg.FMP.CacheDir != "/srv/toktik/fmp-cache" {
 		t.Fatalf("unexpected FMP cache dir: %q", cfg.FMP.CacheDir)
+	}
+	if !cfg.LatestMarketData.Enabled || cfg.LatestMarketDataRedisTTL() != 48*time.Hour || cfg.LatestMarketDataOpenRefreshInterval() != 30*time.Minute || cfg.LatestMarketDataClosedRefreshInterval() != 120*time.Minute || cfg.LatestMarketDataStaleAlertAfter() != 5*time.Hour || cfg.LatestMarketDataRefreshTimeout() != 9*time.Minute || cfg.LatestMarketData.Workers != 2 {
+		t.Fatalf("unexpected latest market config: %#v", cfg.LatestMarketData)
+	}
+	if !reflect.DeepEqual(cfg.LatestMarketData.SmokeSymbols, []string{"SPY", "QQQ"}) {
+		t.Fatalf("unexpected latest market smoke symbols: %#v", cfg.LatestMarketData.SmokeSymbols)
+	}
+	if !reflect.DeepEqual(cfg.LatestMarketData.AlwaysRefreshSymbols, []string{"SPY", "QQQ"}) {
+		t.Fatalf("unexpected latest market always-refresh symbols: %#v", cfg.LatestMarketData.AlwaysRefreshSymbols)
 	}
 }
 
@@ -239,6 +259,36 @@ func TestLoadRuntimeFromPathEnvOverrides(t *testing.T) {
 	}
 	if cfg.FMP.CacheDir != "/env/fmp-cache" {
 		t.Fatalf("unexpected FMP cache dir override: %q", cfg.FMP.CacheDir)
+	}
+}
+
+func TestLatestMarketDataOptionChainLimitIsCapped(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath := filepath.Join(tempDir, "toktik.yaml")
+	content := []byte("latest_market_data:\n" +
+		"  option_chain_limit: 500\n")
+	if err := os.WriteFile(configPath, content, 0o644); err != nil {
+		t.Fatalf("WriteFile(%q) failed: %v", configPath, err)
+	}
+
+	cfg, err := LoadRuntimeFromPath(configPath)
+	if err != nil {
+		t.Fatalf("LoadRuntimeFromPath(%q) failed: %v", configPath, err)
+	}
+
+	if cfg.LatestMarketData.OptionChainLimit != maxLatestMarketDataOptionChainLimit {
+		t.Fatalf("unexpected option chain limit: got %d want %d", cfg.LatestMarketData.OptionChainLimit, maxLatestMarketDataOptionChainLimit)
+	}
+}
+
+func TestLatestMarketDataAlwaysRefreshSymbolsEnvOverride(t *testing.T) {
+	t.Setenv(EnvLatestMarketDataAlwaysRefreshSymbols, "SPY, QQQ, NVDA")
+	cfg, err := LoadRuntimeFromPath(filepath.Join(t.TempDir(), "missing.yaml"))
+	if err != nil {
+		t.Fatalf("LoadRuntimeFromPath(missing) failed: %v", err)
+	}
+	if !reflect.DeepEqual(cfg.LatestMarketData.AlwaysRefreshSymbols, []string{"SPY", "QQQ", "NVDA"}) {
+		t.Fatalf("unexpected always-refresh symbols: %#v", cfg.LatestMarketData.AlwaysRefreshSymbols)
 	}
 }
 

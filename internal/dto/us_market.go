@@ -4,14 +4,15 @@ import "time"
 
 // USStockBarRequest is the query parameters for the US stock bars endpoint.
 type USStockBarRequest struct {
-	Symbol   string   `form:"symbol" binding:"required"`
-	Interval string   `form:"interval" binding:"required"`
-	From     string   `form:"from" binding:"required"`
-	To       string   `form:"to" binding:"required"`
-	Session  string   `form:"session" binding:"omitempty"`
-	Factors  []string `form:"factor" binding:"omitempty"`
-	Limit    int      `form:"limit" binding:"omitempty"`
-	Cursor   string   `form:"cursor" binding:"omitempty"`
+	Symbol        string   `form:"symbol" binding:"required"`
+	Interval      string   `form:"interval" binding:"required"`
+	From          string   `form:"from" binding:"required"`
+	To            string   `form:"to" binding:"required"`
+	Session       string   `form:"session" binding:"omitempty"`
+	Factors       []string `form:"factor" binding:"omitempty"`
+	Limit         int      `form:"limit" binding:"omitempty"`
+	Cursor        string   `form:"cursor" binding:"omitempty"`
+	IncludeLatest bool     `form:"include_latest" binding:"omitempty"`
 }
 
 // USStockBarFundamentalValue is one point-in-time factor aligned onto a bar.
@@ -146,13 +147,14 @@ type USStockSplitResponse struct {
 
 // USOptionBarRequest is the query parameters for the US option bars endpoint.
 type USOptionBarRequest struct {
-	Symbol   string `form:"symbol" binding:"required"`
-	Interval string `form:"interval" binding:"required"`
-	From     string `form:"from" binding:"required"`
-	To       string `form:"to" binding:"required"`
-	Session  string `form:"session" binding:"omitempty"`
-	Limit    int    `form:"limit" binding:"omitempty"`
-	Cursor   string `form:"cursor" binding:"omitempty"`
+	Symbol        string `form:"symbol" binding:"required"`
+	Interval      string `form:"interval" binding:"required"`
+	From          string `form:"from" binding:"required"`
+	To            string `form:"to" binding:"required"`
+	Session       string `form:"session" binding:"omitempty"`
+	Limit         int    `form:"limit" binding:"omitempty"`
+	Cursor        string `form:"cursor" binding:"omitempty"`
+	IncludeLatest bool   `form:"include_latest" binding:"omitempty"`
 }
 
 // USOptionBarRow is a single OHLCV bar returned by the US option bars endpoint.
@@ -186,11 +188,12 @@ type USOptionBarResponse struct {
 
 // USOptionSymbolRequest is the query parameters for the US option symbols endpoint.
 type USOptionSymbolRequest struct {
-	Root       string `form:"root" binding:"omitempty"`
-	Underlying string `form:"underlying" binding:"omitempty"`
-	Search     string `form:"search" binding:"omitempty"`
-	Limit      int    `form:"limit" binding:"omitempty"`
-	Cursor     string `form:"cursor" binding:"omitempty"`
+	Root          string `form:"root" binding:"omitempty"`
+	Underlying    string `form:"underlying" binding:"omitempty"`
+	Search        string `form:"search" binding:"omitempty"`
+	Limit         int    `form:"limit" binding:"omitempty"`
+	Cursor        string `form:"cursor" binding:"omitempty"`
+	IncludeLatest bool   `form:"include_latest" binding:"omitempty"`
 }
 
 // USOptionSymbolRow describes one US option contract.
@@ -246,13 +249,14 @@ type USOptionGreeksResponse struct {
 
 // USOptionChainRequest is the query parameters for the US option chain endpoint.
 type USOptionChainRequest struct {
-	Underlying string `form:"underlying" binding:"required"`
-	Expiration string `form:"expiration" binding:"omitempty"`
-	From       string `form:"from" binding:"omitempty"`
-	To         string `form:"to" binding:"omitempty"`
-	Interval   string `form:"interval" binding:"omitempty"`
-	Limit      int    `form:"limit" binding:"omitempty"`
-	Cursor     string `form:"cursor" binding:"omitempty"`
+	Underlying    string `form:"underlying" binding:"required"`
+	Expiration    string `form:"expiration" binding:"omitempty"`
+	From          string `form:"from" binding:"omitempty"`
+	To            string `form:"to" binding:"omitempty"`
+	Interval      string `form:"interval" binding:"omitempty"`
+	Limit         int    `form:"limit" binding:"omitempty"`
+	Cursor        string `form:"cursor" binding:"omitempty"`
+	IncludeLatest bool   `form:"include_latest" binding:"omitempty"`
 }
 
 // USOptionChainContract is one contract inside a chain snapshot.

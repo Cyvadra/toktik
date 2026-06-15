@@ -378,6 +378,60 @@ func TestUSOptionsBarsRoute(t *testing.T) {
 	}
 }
 
+func TestUSMarketRoutesBindIncludeLatest(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	stocks := &mockUSStocksQuerier{barsResp: &dto.USStockBarResponse{Data: []dto.USStockBarRow{}}}
+	options := &mockUSOptionsQuerier{
+		barsResp:    &dto.USOptionBarResponse{Data: []dto.USOptionBarRow{}},
+		symbolsResp: &dto.USOptionSymbolResponse{Data: []dto.USOptionSymbolRow{}},
+		chainResp:   &dto.USOptionChainResponse{Data: []dto.USOptionChainSnapshot{}},
+	}
+	r := NewRouter(
+		&mockQuerier{},
+		stocks,
+		options,
+		&mockInfra{},
+		&mockFeature{},
+		nil,
+		nil, nil, nil, nil, nil,
+	)
+
+	requests := []struct {
+		url   string
+		check func()
+	}{
+		{url: "/api/v1/markets/us-stocks/bars?symbol=AAPL&interval=1d&from=2026-06-09&to=2026-06-11&include_latest=true", check: func() {
+			if !stocks.barsReq.IncludeLatest {
+				t.Fatalf("expected us-stocks bars include_latest to bind true")
+			}
+		}},
+		{url: "/api/v1/markets/us-options/bars?symbol=O:AAPL260619C00190000&interval=1d&from=2026-06-09&to=2026-06-11&include_latest=true", check: func() {
+			if !options.barsReq.IncludeLatest {
+				t.Fatalf("expected us-options bars include_latest to bind true")
+			}
+		}},
+		{url: "/api/v1/markets/us-options/symbols?underlying=AAPL&include_latest=true", check: func() {
+			if !options.symbolsReq.IncludeLatest {
+				t.Fatalf("expected us-options symbols include_latest to bind true")
+			}
+		}},
+		{url: "/api/v1/markets/us-options/chain?underlying=AAPL&include_latest=true", check: func() {
+			if !options.chainReq.IncludeLatest {
+				t.Fatalf("expected us-options chain include_latest to bind true")
+			}
+		}},
+	}
+	for _, tc := range requests {
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest("GET", tc.url, nil)
+		r.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s: expected 200, got %d: %s", tc.url, w.Code, w.Body.String())
+		}
+		tc.check()
+	}
+}
+
 func TestUSOptionsSymbolsRoute(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	mock := &mockUSOptionsQuerier{symbolsResp: &dto.USOptionSymbolResponse{Data: []dto.USOptionSymbolRow{{Symbol: "O:AAPL240119C00190000", Underlying: "AAPL", OptionType: "C", Strike: 190}}}}
@@ -464,6 +518,9 @@ func TestScreenOptionsRouteSupportsMinDTEAliases(t *testing.T) {
 	if mock.optionsReq.MaxDTE == nil || *mock.optionsReq.MaxDTE != 60 {
 		t.Fatalf("expected normalized MaxDTE, got %+v", mock.optionsReq)
 	}
+	if mock.optionsReq.IncludeLatest == nil || !*mock.optionsReq.IncludeLatest {
+		t.Fatalf("expected screener options include_latest to default true, got %+v", mock.optionsReq.IncludeLatest)
+	}
 }
 
 func TestScreenUSTurnoverIntersectionRoute(t *testing.T) {
@@ -492,6 +549,9 @@ func TestScreenUSTurnoverIntersectionRoute(t *testing.T) {
 	}
 	if mock.usTurnoverReq.Limit != 25 || mock.usTurnoverReq.LookbackDays != 30 || !mock.usTurnoverReq.NonETFOnly {
 		t.Fatalf("unexpected request bind: %+v", mock.usTurnoverReq)
+	}
+	if mock.usTurnoverReq.IncludeLatest == nil || !*mock.usTurnoverReq.IncludeLatest {
+		t.Fatalf("expected turnover intersection include_latest to default true, got %+v", mock.usTurnoverReq.IncludeLatest)
 	}
 	var resp dto.ScreenUSTurnoverIntersectionResponse
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {

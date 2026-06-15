@@ -53,6 +53,8 @@ type apiCoreServices struct {
 	financeCalendar *service.FinanceCalendarService
 	usStocks        *service.USStocksService
 	screener        *service.ScreenerService
+	latestMarket    *service.LatestUSMarketCache
+	fmpClient       *fmp.Client
 }
 
 const (
@@ -70,15 +72,20 @@ func buildAPICoreServices(runtimeCfg config.Runtime, repo *chrepo.Repo, calendar
 	fmpClient := fmp.New(fmpAPIKey, fmp.WithCacheDir(runtimeCfg.FMP.CacheDir))
 	financeCalendarSvc := service.NewFinanceCalendarService(calendarRepo, fmpClient, cacheStore)
 	companyProfileProvider := service.NewClickHouseUSStockCompanyProfileProvider(repo)
+	latestMarket := service.NewLatestUSMarketCache(cacheStore, runtimeCfg.LatestMarketDataRedisTTL())
 
 	return &apiCoreServices{
 		fundamentals:    fundamentalsSvc,
 		macro:           macroSvc,
 		financeCalendar: financeCalendarSvc,
 		usStocks: service.NewUSStocksService(repo, fundamentalsSvc).
-			WithCompanyProfileProvider(companyProfileProvider),
+			WithCompanyProfileProvider(companyProfileProvider).
+			WithLatestMarketCache(latestMarket),
 		screener: service.NewScreenerService(repo, cacheStore).
-			WithCompanyProfileProvider(companyProfileProvider),
+			WithCompanyProfileProvider(companyProfileProvider).
+			WithLatestMarketCache(latestMarket),
+		latestMarket: latestMarket,
+		fmpClient:    fmpClient,
 	}, nil
 }
 
@@ -87,7 +94,7 @@ func buildAPIDeps(runtimeCfg config.Runtime, repo *chrepo.Repo, factorStore *fee
 		Config:            runtimeCfg,
 		CryptoOptions:     service.NewCryptoOptionsService(repo),
 		USStocks:          services.usStocks,
-		USOptions:         service.NewUSOptionsService(repo).WithPolygonClient(polygonSvc).WithCache(cacheStore),
+		USOptions:         service.NewUSOptionsService(repo).WithPolygonClient(polygonSvc).WithCache(cacheStore).WithLatestMarketCache(services.latestMarket),
 		Infra:             service.NewInfraService(repo),
 		DataBrowser:       service.NewDataBrowserService(repo),
 		Features:          service.NewFeatureService(repo),
@@ -267,6 +274,15 @@ func run() error {
 		runtimeCfg.APIServerWarmupCooldown(),
 		15*time.Minute,
 	)
+	latestMarketRefresher := service.StartLatestUSMarketCacheRefresher(ctx, service.LatestUSMarketRefresherConfig{
+		Runtime:   runtimeCfg,
+		Logger:    slog.Default(),
+		Store:     cacheStore,
+		Screener:  apiServices.screener,
+		FMPClient: apiServices.fmpClient,
+		Polygon:   polygonSvc,
+		Now:       time.Now,
+	})
 
 	select {
 	case <-signalCtx.Done():
@@ -274,6 +290,7 @@ func run() error {
 	case err := <-serverErr:
 		cancel()
 		cacheRefresher.Wait()
+		latestMarketRefresher.Wait()
 		if err != nil {
 			return fmt.Errorf("server error: %w", err)
 		}
@@ -282,6 +299,7 @@ func run() error {
 
 	cancel()
 	cacheRefresher.Wait()
+	latestMarketRefresher.Wait()
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer shutdownCancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {

@@ -17,6 +17,7 @@ type USStocksService struct {
 	repo         *chrepo.Repo
 	fundamentals usStockFundamentalsQuerier
 	companyInfo  usStockCompanyProfileProvider
+	latest       LatestUSMarketCacheReader
 }
 
 type usStockFundamentalsQuerier interface {
@@ -38,6 +39,14 @@ func (s *USStocksService) WithCompanyProfileProvider(provider usStockCompanyProf
 		return nil
 	}
 	s.companyInfo = provider
+	return s
+}
+
+func (s *USStocksService) WithLatestMarketCache(reader LatestUSMarketCacheReader) *USStocksService {
+	if s == nil {
+		return nil
+	}
+	s.latest = reader
 	return s
 }
 
@@ -256,6 +265,13 @@ func (s *USStocksService) QueryBars(ctx context.Context, req dto.USStockBarReque
 			return nil, err
 		}
 	}
+	if s.shouldMergeLatestStockBars(req) {
+		if merged, _, err := s.latest.MergeStockBars(ctx, req.Symbol, fromT, toT, bars); err != nil {
+			return nil, err
+		} else {
+			bars = merged
+		}
+	}
 
 	resp := &dto.USStockBarResponse{Data: make([]dto.USStockBarRow, 0)}
 	resp.Data, resp.NextCursor = applyTimeCursorPagination(bars, limit, func(r dto.USStockBarRow) string {
@@ -266,6 +282,10 @@ func (s *USStocksService) QueryBars(ctx context.Context, req dto.USStockBarReque
 	}
 	s.attachCompanyProfile(ctx, req.Symbol, resp)
 	return resp, nil
+}
+
+func (s *USStocksService) shouldMergeLatestStockBars(req dto.USStockBarRequest) bool {
+	return s != nil && s.latest != nil && req.IncludeLatest && req.Interval == "1d" && !isSyntheticVIXSymbol(req.Symbol)
 }
 
 func (s *USStocksService) queryBarRows(ctx context.Context, tableName, symbol string, fromT, toT time.Time, session string, limit int) ([]dto.USStockBarRow, error) {

@@ -37,6 +37,7 @@ type polygonClient interface {
 	OptionAggregates(ctx context.Context, req polygonpkg.AggregateRequest) ([]polygonpkg.AggregateBar, error)
 	OptionQuotes(ctx context.Context, ticker string, req polygonpkg.QuoteRequest) ([]polygonpkg.Quote, error)
 	OptionTrades(ctx context.Context, ticker string, req polygonpkg.TradeRequest) ([]polygonpkg.Trade, error)
+	MarketStatusNow(ctx context.Context) (*polygonpkg.MarketStatus, error)
 }
 
 type PolygonService struct {
@@ -139,6 +140,12 @@ func (s *PolygonService) OptionTrades(ctx context.Context, ticker string, req po
 	key := s.cacheKey("option-trades", strings.ToUpper(strings.TrimSpace(ticker)), req)
 	return cacheFetch(ctx, s.cache, key, ttl, func() ([]polygonpkg.Trade, error) {
 		return s.client.OptionTrades(ctx, ticker, req)
+	})
+}
+
+func (s *PolygonService) MarketStatusNow(ctx context.Context) (*polygonpkg.MarketStatus, error) {
+	return cacheFetch(ctx, s.cache, s.cacheKey("market-status-now"), polygonRealtimeTTL, func() (*polygonpkg.MarketStatus, error) {
+		return s.client.MarketStatusNow(ctx)
 	})
 }
 

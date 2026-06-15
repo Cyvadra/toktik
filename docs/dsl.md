@@ -7,7 +7,7 @@
 - Source Swagger: `docs/swagger.json`
 - API title: `Toktik Options Platform API`
 - API version: `1.0`
-- Generated at: `2026-06-11T08:38:57Z`
+- Generated at: `2026-06-11T12:33:02Z`
 
 ## Scope
 

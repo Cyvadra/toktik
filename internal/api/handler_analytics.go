@@ -308,14 +308,15 @@ func (h *Handler) StreamStrategyBacktestEvents(c *gin.Context) {
 //	@Description	Filters and ranks underlying assets by IV, volume, and other criteria.
 //	@Tags			Screener
 //	@Produce		json
-//	@Param			market	query		string	true	"Market (crypto-options, us-options)"
-//	@Param			sort_by	query		string	false	"Sort field"
-//	@Param			order	query		string	false	"Sort order (asc, desc)"
-//	@Param			limit	query		int		false	"Max rows (default 50)"
-//	@Param			cursor	query		string	false	"Pagination cursor"
-//	@Success		200		{object}	dto.ScreenUnderlyingResponse
-//	@Failure		400		{object}	dto.ErrorResponse
-//	@Failure		500		{object}	dto.ErrorResponse
+//	@Param			market			query		string	true	"Market (crypto-options, us-options)"
+//	@Param			sort_by			query		string	false	"Sort field"
+//	@Param			order			query		string	false	"Sort order (asc, desc)"
+//	@Param			include_latest	query		bool	false	"For market=us-options, overlay Redis-cached provisional latest option-chain data. Screener endpoints default this to true."
+//	@Param			limit			query		int		false	"Max rows (default 50)"
+//	@Param			cursor			query		string	false	"Pagination cursor"
+//	@Success		200				{object}	dto.ScreenUnderlyingResponse
+//	@Failure		400				{object}	dto.ErrorResponse
+//	@Failure		500				{object}	dto.ErrorResponse
 //	@Router			/screener/underlyings [get]
 func (h *Handler) ScreenUnderlyings(c *gin.Context) {
 	var req dto.ScreenUnderlyingRequest
@@ -323,6 +324,7 @@ func (h *Handler) ScreenUnderlyings(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: err.Error()})
 		return
 	}
+	defaultBoolPtr(&req.IncludeLatest, true)
 	if h.screener == nil {
 		c.JSON(http.StatusNotImplemented, dto.ErrorResponse{Error: "screener provider not configured"})
 		return
@@ -346,6 +348,7 @@ func (h *Handler) ScreenUnderlyings(c *gin.Context) {
 //	@Param			limit			query		int		false	"Max rows to return (default 100)"
 //	@Param			lookback_days	query		int		false	"Trailing trading days to aggregate (default 20)"
 //	@Param			non_etf_only	query		bool	false	"Restrict to stock underlyings with PE/PB fundamentals coverage, then exclude ETF/fund classifications from cached company profiles"
+//	@Param			include_latest	query		bool	false	"Accepted for screener API consistency and defaulted to true, but turnover-intersection rankings remain based on historical aggregated turnover."
 //	@Success		200				{object}	dto.ScreenUSTurnoverIntersectionResponse
 //	@Failure		400				{object}	dto.ErrorResponse
 //	@Failure		500				{object}	dto.ErrorResponse
@@ -356,6 +359,7 @@ func (h *Handler) ScreenUSTurnoverIntersection(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: err.Error()})
 		return
 	}
+	defaultBoolPtr(&req.IncludeLatest, true)
 	if h.screener == nil {
 		c.JSON(http.StatusNotImplemented, dto.ErrorResponse{Error: "screener provider not configured"})
 		return
@@ -376,18 +380,19 @@ func (h *Handler) ScreenUSTurnoverIntersection(c *gin.Context) {
 //	@Description	Filters and ranks individual option contracts by Greeks, volume, open interest, and other criteria.
 //	@Tags			Screener
 //	@Produce		json
-//	@Param			market		query		string	true	"Market (crypto-options, us-options)"
-//	@Param			underlying	query		string	false	"Filter by underlying"
-//	@Param			type		query		string	false	"Option type (call, put)"
-//	@Param			min_dte		query		int		false	"Minimum days to expiry"
-//	@Param			max_dte		query		int		false	"Maximum days to expiry"
-//	@Param			sort_by		query		string	false	"Sort field"
-//	@Param			order		query		string	false	"Sort order (asc, desc)"
-//	@Param			limit		query		int		false	"Max rows (default 50)"
-//	@Param			cursor		query		string	false	"Pagination cursor"
-//	@Success		200			{object}	dto.ScreenOptionResponse
-//	@Failure		400			{object}	dto.ErrorResponse
-//	@Failure		500			{object}	dto.ErrorResponse
+//	@Param			market			query		string	true	"Market (crypto-options, us-options)"
+//	@Param			underlying		query		string	false	"Filter by underlying"
+//	@Param			type			query		string	false	"Option type (call, put)"
+//	@Param			min_dte			query		int		false	"Minimum days to expiry"
+//	@Param			max_dte			query		int		false	"Maximum days to expiry"
+//	@Param			sort_by			query		string	false	"Sort field"
+//	@Param			order			query		string	false	"Sort order (asc, desc)"
+//	@Param			include_latest	query		bool	false	"For market=us-options, overlay Redis-cached provisional latest option-chain data. Screener endpoints default this to true."
+//	@Param			limit			query		int		false	"Max rows (default 50)"
+//	@Param			cursor			query		string	false	"Pagination cursor"
+//	@Success		200				{object}	dto.ScreenOptionResponse
+//	@Failure		400				{object}	dto.ErrorResponse
+//	@Failure		500				{object}	dto.ErrorResponse
 //	@Router			/screener/options [get]
 func (h *Handler) ScreenOptions(c *gin.Context) {
 	var req dto.ScreenOptionRequest
@@ -395,6 +400,7 @@ func (h *Handler) ScreenOptions(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: err.Error()})
 		return
 	}
+	defaultBoolPtr(&req.IncludeLatest, true)
 	if h.screener == nil {
 		c.JSON(http.StatusNotImplemented, dto.ErrorResponse{Error: "screener provider not configured"})
 		return
@@ -407,4 +413,12 @@ func (h *Handler) ScreenOptions(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, resp)
+}
+
+func defaultBoolPtr(target **bool, value bool) {
+	if target == nil || *target != nil {
+		return
+	}
+	v := value
+	*target = &v
 }

@@ -15,71 +15,81 @@ import (
 )
 
 const (
-	EnvConfigPath             = "TOKTIK_CONFIG"
-	EnvClickHouseDSN          = "CLICKHOUSE_DSN"
-	EnvMySQLDSN               = "MYSQL_DSN"
-	EnvMySQLHost              = "MYSQL_HOST"
-	EnvMySQLUser              = "MYSQL_USER"
-	EnvMySQLPassword          = "MYSQL_PASSWORD"
-	EnvMySQLDatabase          = "MYSQL_DATABASE"
-	EnvListenAddr             = "LISTEN_ADDR"
-	EnvCORSOrigins            = "CORS_ORIGINS"
-	EnvAPIKeys                = "API_KEYS"
-	EnvRateLimitRPS           = "RATE_LIMIT_RPS"
-	EnvSchemaDir              = "TOKTIK_SCHEMA_DIR"
-	EnvDeribitBaseURL         = "DERIBIT_BASE_URL"
-	EnvFMPAPIKey              = "FMP_API_KEY"
-	EnvFMPCacheDir            = "TOKTIK_FMP_CACHE_DIR"
-	EnvTigerID                = "TIGEROPEN_TIGER_ID"
-	EnvTigerPrivateKey        = "TIGEROPEN_PRIVATE_KEY"
-	EnvTigerAccount           = "TIGEROPEN_ACCOUNT"
-	EnvTigerLicense           = "TIGEROPEN_LICENSE"
-	EnvTigerEnvironment       = "TIGEROPEN_ENV"
-	EnvTigerLanguage          = "TIGEROPEN_LANGUAGE"
-	EnvTigerTimezone          = "TIGEROPEN_TIMEZONE"
-	EnvTigerTimeoutSec        = "TIGEROPEN_TIMEOUT_SECONDS"
-	EnvTigerDynamicDomain     = "TIGEROPEN_ENABLE_DYNAMIC_DOMAIN"
-	EnvTigerToken             = "TIGEROPEN_TOKEN"
-	EnvTigerTokenFile         = "TIGEROPEN_TOKEN_FILE"
-	EnvTigerServerURL         = "TIGEROPEN_SERVER_URL"
-	EnvTigerDeviceID          = "TIGEROPEN_DEVICE_ID"
-	EnvRedisEnabled           = "TOKTIK_REDIS_ENABLED"
-	EnvRedisAddr              = "TOKTIK_REDIS_ADDR"
-	EnvRedisPassword          = "TOKTIK_REDIS_PASSWORD"
-	EnvRedisDB                = "TOKTIK_REDIS_DB"
-	EnvRedisKeyPrefix         = "TOKTIK_REDIS_KEY_PREFIX"
-	EnvRedisDialTimeoutSec    = "TOKTIK_REDIS_DIAL_TIMEOUT_SECONDS"
-	EnvRedisReadTimeoutSec    = "TOKTIK_REDIS_READ_TIMEOUT_SECONDS"
-	EnvRedisWriteTimeoutSec   = "TOKTIK_REDIS_WRITE_TIMEOUT_SECONDS"
-	EnvAPIWarmupRefreshHours  = "TOKTIK_API_WARMUP_REFRESH_INTERVAL_HOURS"
-	EnvAPIWarmupCooldownHours = "TOKTIK_API_WARMUP_COOLDOWN_HOURS"
-	EnvAESKey                 = "TOKTIK_AES_KEY"
-	defaultConfigPath         = "toktik.yaml"
-	defaultClickHouseDSN      = "clickhouse://default:@localhost:9000/default"
-	defaultMySQLHost          = "127.0.0.1:3306"
-	defaultMySQLUser          = "toktik"
-	defaultMySQLDatabase      = "toktik"
-	defaultListenAddr         = ":9010"
-	defaultSchemaDir          = "schema/clickhouse"
-	defaultDeribitBaseURL     = "https://www.deribit.com"
-	defaultRedisKeyPrefix     = "toktik"
-	defaultRedisAddr          = "127.0.0.1:6379"
-	defaultPolygonTimeoutSec  = 60
-	defaultReportsRoot        = "reports/backtests"
+	EnvConfigPath                            = "TOKTIK_CONFIG"
+	EnvClickHouseDSN                         = "CLICKHOUSE_DSN"
+	EnvMySQLDSN                              = "MYSQL_DSN"
+	EnvMySQLHost                             = "MYSQL_HOST"
+	EnvMySQLUser                             = "MYSQL_USER"
+	EnvMySQLPassword                         = "MYSQL_PASSWORD"
+	EnvMySQLDatabase                         = "MYSQL_DATABASE"
+	EnvListenAddr                            = "LISTEN_ADDR"
+	EnvCORSOrigins                           = "CORS_ORIGINS"
+	EnvAPIKeys                               = "API_KEYS"
+	EnvRateLimitRPS                          = "RATE_LIMIT_RPS"
+	EnvSchemaDir                             = "TOKTIK_SCHEMA_DIR"
+	EnvDeribitBaseURL                        = "DERIBIT_BASE_URL"
+	EnvFMPAPIKey                             = "FMP_API_KEY"
+	EnvFMPCacheDir                           = "TOKTIK_FMP_CACHE_DIR"
+	EnvTigerID                               = "TIGEROPEN_TIGER_ID"
+	EnvTigerPrivateKey                       = "TIGEROPEN_PRIVATE_KEY"
+	EnvTigerAccount                          = "TIGEROPEN_ACCOUNT"
+	EnvTigerLicense                          = "TIGEROPEN_LICENSE"
+	EnvTigerEnvironment                      = "TIGEROPEN_ENV"
+	EnvTigerLanguage                         = "TIGEROPEN_LANGUAGE"
+	EnvTigerTimezone                         = "TIGEROPEN_TIMEZONE"
+	EnvTigerTimeoutSec                       = "TIGEROPEN_TIMEOUT_SECONDS"
+	EnvTigerDynamicDomain                    = "TIGEROPEN_ENABLE_DYNAMIC_DOMAIN"
+	EnvTigerToken                            = "TIGEROPEN_TOKEN"
+	EnvTigerTokenFile                        = "TIGEROPEN_TOKEN_FILE"
+	EnvTigerServerURL                        = "TIGEROPEN_SERVER_URL"
+	EnvTigerDeviceID                         = "TIGEROPEN_DEVICE_ID"
+	EnvRedisEnabled                          = "TOKTIK_REDIS_ENABLED"
+	EnvRedisAddr                             = "TOKTIK_REDIS_ADDR"
+	EnvRedisPassword                         = "TOKTIK_REDIS_PASSWORD"
+	EnvRedisDB                               = "TOKTIK_REDIS_DB"
+	EnvRedisKeyPrefix                        = "TOKTIK_REDIS_KEY_PREFIX"
+	EnvRedisDialTimeoutSec                   = "TOKTIK_REDIS_DIAL_TIMEOUT_SECONDS"
+	EnvRedisReadTimeoutSec                   = "TOKTIK_REDIS_READ_TIMEOUT_SECONDS"
+	EnvRedisWriteTimeoutSec                  = "TOKTIK_REDIS_WRITE_TIMEOUT_SECONDS"
+	EnvAPIWarmupRefreshHours                 = "TOKTIK_API_WARMUP_REFRESH_INTERVAL_HOURS"
+	EnvAPIWarmupCooldownHours                = "TOKTIK_API_WARMUP_COOLDOWN_HOURS"
+	EnvLatestMarketDataEnabled               = "TOKTIK_LATEST_MARKET_DATA_ENABLED"
+	EnvLatestMarketDataRedisTTLHours         = "TOKTIK_LATEST_MARKET_DATA_REDIS_TTL_HOURS"
+	EnvLatestMarketDataOpenRefreshMinutes    = "TOKTIK_LATEST_MARKET_DATA_OPEN_REFRESH_MINUTES"
+	EnvLatestMarketDataClosedRefreshMinutes  = "TOKTIK_LATEST_MARKET_DATA_CLOSED_REFRESH_MINUTES"
+	EnvLatestMarketDataStaleAlertHours       = "TOKTIK_LATEST_MARKET_DATA_STALE_ALERT_HOURS"
+	EnvLatestMarketDataRefreshTimeoutMinutes = "TOKTIK_LATEST_MARKET_DATA_REFRESH_TIMEOUT_MINUTES"
+	EnvLatestMarketDataWorkers               = "TOKTIK_LATEST_MARKET_DATA_WORKERS"
+	EnvLatestMarketDataAlwaysRefreshSymbols  = "TOKTIK_LATEST_MARKET_DATA_ALWAYS_REFRESH_SYMBOLS"
+	EnvAESKey                                = "TOKTIK_AES_KEY"
+	defaultConfigPath                        = "toktik.yaml"
+	defaultClickHouseDSN                     = "clickhouse://default:@localhost:9000/default"
+	defaultMySQLHost                         = "127.0.0.1:3306"
+	defaultMySQLUser                         = "toktik"
+	defaultMySQLDatabase                     = "toktik"
+	defaultListenAddr                        = ":9010"
+	defaultSchemaDir                         = "schema/clickhouse"
+	defaultDeribitBaseURL                    = "https://www.deribit.com"
+	defaultRedisKeyPrefix                    = "toktik"
+	defaultRedisAddr                         = "127.0.0.1:6379"
+	defaultPolygonTimeoutSec                 = 60
+	defaultReportsRoot                       = "reports/backtests"
+	maxLatestMarketDataOptionChainLimit      = 250
 )
 
 type Runtime struct {
-	ClickHouse ClickHouse `yaml:"clickhouse"`
-	MySQL      MySQL      `yaml:"mysql"`
-	APIServer  APIServer  `yaml:"api_server"`
-	API        API        `yaml:"api"`
-	Paths      Paths      `yaml:"paths"`
-	Deribit    Deribit    `yaml:"deribit"`
-	Tiger      Tiger      `yaml:"tiger"`
-	Polygon    Polygon    `yaml:"polygon"`
-	FMP        FMP        `yaml:"fmp"`
-	Redis      Redis      `yaml:"redis"`
-	AESKey     string     `yaml:"aes_key"`
+	ClickHouse       ClickHouse       `yaml:"clickhouse"`
+	MySQL            MySQL            `yaml:"mysql"`
+	APIServer        APIServer        `yaml:"api_server"`
+	API              API              `yaml:"api"`
+	Paths            Paths            `yaml:"paths"`
+	Deribit          Deribit          `yaml:"deribit"`
+	Tiger            Tiger            `yaml:"tiger"`
+	Polygon          Polygon          `yaml:"polygon"`
+	FMP              FMP              `yaml:"fmp"`
+	LatestMarketData LatestMarketData `yaml:"latest_market_data"`
+	Redis            Redis            `yaml:"redis"`
+	AESKey           string           `yaml:"aes_key"`
 
 	// Secrets is the in-memory secrets manager initialised after config load.
 	// Not serialised to YAML.
@@ -164,6 +174,22 @@ type Polygon struct {
 type FMP struct {
 	CacheDir string `yaml:"cache_dir"`
 	apiKey   string
+}
+
+type LatestMarketData struct {
+	Enabled                      bool     `yaml:"enabled"`
+	RedisTTLHours                int      `yaml:"redis_ttl_hours"`
+	OpenRefreshIntervalMinutes   int      `yaml:"open_refresh_interval_minutes"`
+	ClosedRefreshIntervalMinutes int      `yaml:"closed_refresh_interval_minutes"`
+	StaleAlertAfterHours         int      `yaml:"stale_alert_after_hours"`
+	RefreshTimeoutMinutes        int      `yaml:"refresh_timeout_minutes"`
+	Workers                      int      `yaml:"workers"`
+	StockProvider                string   `yaml:"stock_provider"`
+	OptionProvider               string   `yaml:"option_provider"`
+	SmokeSymbols                 []string `yaml:"smoke_symbols"`
+	AlwaysRefreshSymbols         []string `yaml:"always_refresh_symbols"`
+	OptionChainLimit             int      `yaml:"option_chain_limit"`
+	OptionAggregateLimit         int      `yaml:"option_aggregate_limit"`
 }
 
 func (m *MySQL) UnmarshalYAML(value *yaml.Node) error {
@@ -333,6 +359,20 @@ func DefaultRuntime() Runtime {
 			RetryMaxDelayMS:  8000,
 		},
 		FMP: FMP{},
+		LatestMarketData: LatestMarketData{
+			Enabled:                      false,
+			RedisTTLHours:                72,
+			OpenRefreshIntervalMinutes:   60,
+			ClosedRefreshIntervalMinutes: 180,
+			StaleAlertAfterHours:         6,
+			RefreshTimeoutMinutes:        15,
+			Workers:                      4,
+			StockProvider:                "fmp",
+			OptionProvider:               "polygon",
+			SmokeSymbols:                 []string{"SPY", "AAPL"},
+			OptionChainLimit:             maxLatestMarketDataOptionChainLimit,
+			OptionAggregateLimit:         50,
+		},
 		Redis: Redis{
 			Addr:                defaultRedisAddr,
 			KeyPrefix:           defaultRedisKeyPrefix,
@@ -510,6 +550,44 @@ func (c *Runtime) applyEnvOverrides() {
 			c.APIServer.WarmupCooldownHours = parsed
 		}
 	}
+	if value := strings.TrimSpace(os.Getenv(EnvLatestMarketDataEnabled)); value != "" {
+		if parsed, err := strconv.ParseBool(value); err == nil {
+			c.LatestMarketData.Enabled = parsed
+		}
+	}
+	if value := strings.TrimSpace(os.Getenv(EnvLatestMarketDataRedisTTLHours)); value != "" {
+		if parsed, err := strconv.Atoi(value); err == nil {
+			c.LatestMarketData.RedisTTLHours = parsed
+		}
+	}
+	if value := strings.TrimSpace(os.Getenv(EnvLatestMarketDataOpenRefreshMinutes)); value != "" {
+		if parsed, err := strconv.Atoi(value); err == nil {
+			c.LatestMarketData.OpenRefreshIntervalMinutes = parsed
+		}
+	}
+	if value := strings.TrimSpace(os.Getenv(EnvLatestMarketDataClosedRefreshMinutes)); value != "" {
+		if parsed, err := strconv.Atoi(value); err == nil {
+			c.LatestMarketData.ClosedRefreshIntervalMinutes = parsed
+		}
+	}
+	if value := strings.TrimSpace(os.Getenv(EnvLatestMarketDataStaleAlertHours)); value != "" {
+		if parsed, err := strconv.Atoi(value); err == nil {
+			c.LatestMarketData.StaleAlertAfterHours = parsed
+		}
+	}
+	if value := strings.TrimSpace(os.Getenv(EnvLatestMarketDataRefreshTimeoutMinutes)); value != "" {
+		if parsed, err := strconv.Atoi(value); err == nil {
+			c.LatestMarketData.RefreshTimeoutMinutes = parsed
+		}
+	}
+	if value := strings.TrimSpace(os.Getenv(EnvLatestMarketDataWorkers)); value != "" {
+		if parsed, err := strconv.Atoi(value); err == nil {
+			c.LatestMarketData.Workers = parsed
+		}
+	}
+	if value := strings.TrimSpace(os.Getenv(EnvLatestMarketDataAlwaysRefreshSymbols)); value != "" {
+		c.LatestMarketData.AlwaysRefreshSymbols = splitCSV(value)
+	}
 	if value := strings.TrimSpace(os.Getenv(EnvAESKey)); value != "" {
 		c.AESKey = value
 	}
@@ -665,6 +743,48 @@ func (c *Runtime) normalize() {
 			c.FMP.CacheDir = filepath.Clean(c.FMP.CacheDir)
 		}
 	}
+	c.LatestMarketData.StockProvider = strings.ToLower(strings.TrimSpace(c.LatestMarketData.StockProvider))
+	if c.LatestMarketData.StockProvider == "" {
+		c.LatestMarketData.StockProvider = "fmp"
+	}
+	c.LatestMarketData.OptionProvider = strings.ToLower(strings.TrimSpace(c.LatestMarketData.OptionProvider))
+	if c.LatestMarketData.OptionProvider == "" {
+		c.LatestMarketData.OptionProvider = "polygon"
+	}
+	c.LatestMarketData.SmokeSymbols = normalizeCSVList(c.LatestMarketData.SmokeSymbols)
+	if len(c.LatestMarketData.SmokeSymbols) == 0 {
+		c.LatestMarketData.SmokeSymbols = []string{"SPY", "AAPL"}
+	}
+	c.LatestMarketData.AlwaysRefreshSymbols = normalizeCSVList(c.LatestMarketData.AlwaysRefreshSymbols)
+	if len(c.LatestMarketData.AlwaysRefreshSymbols) == 0 {
+		c.LatestMarketData.AlwaysRefreshSymbols = slices.Clone(c.LatestMarketData.SmokeSymbols)
+	}
+	if c.LatestMarketData.RedisTTLHours <= 0 {
+		c.LatestMarketData.RedisTTLHours = 72
+	}
+	if c.LatestMarketData.OpenRefreshIntervalMinutes <= 0 {
+		c.LatestMarketData.OpenRefreshIntervalMinutes = 60
+	}
+	if c.LatestMarketData.ClosedRefreshIntervalMinutes <= 0 {
+		c.LatestMarketData.ClosedRefreshIntervalMinutes = 180
+	}
+	if c.LatestMarketData.StaleAlertAfterHours <= 0 {
+		c.LatestMarketData.StaleAlertAfterHours = 6
+	}
+	if c.LatestMarketData.RefreshTimeoutMinutes <= 0 {
+		c.LatestMarketData.RefreshTimeoutMinutes = 15
+	}
+	if c.LatestMarketData.Workers <= 0 {
+		c.LatestMarketData.Workers = 4
+	}
+	if c.LatestMarketData.OptionChainLimit <= 0 {
+		c.LatestMarketData.OptionChainLimit = maxLatestMarketDataOptionChainLimit
+	} else if c.LatestMarketData.OptionChainLimit > maxLatestMarketDataOptionChainLimit {
+		c.LatestMarketData.OptionChainLimit = maxLatestMarketDataOptionChainLimit
+	}
+	if c.LatestMarketData.OptionAggregateLimit <= 0 {
+		c.LatestMarketData.OptionAggregateLimit = 50
+	}
 	if strings.TrimSpace(c.Redis.Addr) == "" {
 		c.Redis.Addr = defaultRedisAddr
 	}
@@ -702,6 +822,15 @@ func (c Runtime) Validate() error {
 	}
 	if c.Redis.Enabled && strings.TrimSpace(c.Redis.Addr) == "" {
 		return fmt.Errorf("redis.addr is required when redis is enabled")
+	}
+	if c.LatestMarketData.Enabled && !c.Redis.Enabled {
+		return fmt.Errorf("latest_market_data requires redis.enabled=true")
+	}
+	if c.LatestMarketData.Enabled && c.LatestMarketData.StockProvider != "fmp" && c.LatestMarketData.StockProvider != "polygon" {
+		return fmt.Errorf("latest_market_data.stock_provider must be fmp or polygon")
+	}
+	if c.LatestMarketData.Enabled && c.LatestMarketData.OptionProvider != "polygon" {
+		return fmt.Errorf("latest_market_data.option_provider must be polygon")
 	}
 	return nil
 }
@@ -855,6 +984,26 @@ func (c Runtime) APIServerWarmupRefreshInterval() time.Duration {
 
 func (c Runtime) APIServerWarmupCooldown() time.Duration {
 	return time.Duration(c.APIServer.WarmupCooldownHours) * time.Hour
+}
+
+func (c Runtime) LatestMarketDataRedisTTL() time.Duration {
+	return time.Duration(c.LatestMarketData.RedisTTLHours) * time.Hour
+}
+
+func (c Runtime) LatestMarketDataOpenRefreshInterval() time.Duration {
+	return time.Duration(c.LatestMarketData.OpenRefreshIntervalMinutes) * time.Minute
+}
+
+func (c Runtime) LatestMarketDataClosedRefreshInterval() time.Duration {
+	return time.Duration(c.LatestMarketData.ClosedRefreshIntervalMinutes) * time.Minute
+}
+
+func (c Runtime) LatestMarketDataStaleAlertAfter() time.Duration {
+	return time.Duration(c.LatestMarketData.StaleAlertAfterHours) * time.Hour
+}
+
+func (c Runtime) LatestMarketDataRefreshTimeout() time.Duration {
+	return time.Duration(c.LatestMarketData.RefreshTimeoutMinutes) * time.Minute
 }
 
 // APIRequestTimeout returns the per-request handler timeout.

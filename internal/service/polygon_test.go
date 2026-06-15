@@ -71,6 +71,10 @@ func (s *stubPolygonClient) OptionTrades(ctx context.Context, ticker string, req
 	return nil, nil
 }
 
+func (s *stubPolygonClient) MarketStatusNow(ctx context.Context) (*polygonpkg.MarketStatus, error) {
+	return &polygonpkg.MarketStatus{Market: "open"}, nil
+}
+
 func TestPolygonServiceStockSnapshotUsesCache(t *testing.T) {
 	client := &stubPolygonClient{}
 	svc := NewPolygonService(client, cache.NewMemoryStore())

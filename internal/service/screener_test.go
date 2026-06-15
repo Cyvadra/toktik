@@ -256,6 +256,45 @@ func TestScreenUnderlyingsCoalescesNullableLiquidityAggregates(t *testing.T) {
 	}
 }
 
+func TestScreenOptionsFiltersExpiredUSContractsByDefault(t *testing.T) {
+	conn := &fakeScreenerConn{rows: []driver.Rows{&fakeScreenerRows{}}}
+	svc := NewScreenerService(chrepo.NewRepo(conn))
+
+	_, err := svc.ScreenOptions(context.Background(), dto.ScreenOptionRequest{Market: "us-options", Underlying: "SPY", Limit: 10})
+	if err != nil {
+		t.Fatalf("ScreenOptions() error = %v", err)
+	}
+	if len(conn.queries) != 1 {
+		t.Fatalf("expected 1 query, got %d", len(conn.queries))
+	}
+	if !strings.Contains(conn.queries[0], "dateDiff('day', now(), expiration_val)) >= 0") {
+		t.Fatalf("expected default query to exclude expired contracts, got %q", conn.queries[0])
+	}
+}
+
+func TestMergeLatestOptionScreenRowsAddsLatestContractsBeforePagination(t *testing.T) {
+	store := cache.NewMemoryStore()
+	latest := NewLatestUSMarketCache(store, time.Hour)
+	ctx := context.Background()
+	if err := latest.StoreOptionChain(ctx, "SPY", "polygon", dto.USOptionChainSnapshot{
+		Timestamp:  time.Date(2026, 6, 10, 16, 0, 0, 0, time.UTC),
+		Underlying: "SPY",
+		Contracts: []dto.USOptionChainContract{
+			{Symbol: "O:SPY260620C00735000", OptionType: "C", Expiration: time.Date(2026, 6, 20, 0, 0, 0, 0, time.UTC), Strike: 735, Close: 3.68, ImpliedVolatility: 0.28, Delta: 0.55, Volume: 60962, UnderlyingClose: 737.21},
+		},
+	}); err != nil {
+		t.Fatalf("StoreOptionChain failed: %v", err)
+	}
+	svc := NewScreenerService(nil).WithLatestMarketCache(latest)
+	rows := []dto.ScreenedOption{{Symbol: "O:SPY260620C00750000", Underlying: "SPY", OptionType: "c", Expiration: time.Date(2026, 6, 20, 0, 0, 0, 0, time.UTC), DaysToExpiry: 9, Strike: 750, Volume: 100}}
+
+	got, _ := svc.mergeLatestOptionScreenRows(ctx, dto.ScreenOptionRequest{Market: "us-options", Underlying: "SPY", SortBy: "volume"}, rows, "", 1)
+
+	if len(got) != 1 || got[0].Symbol != "O:SPY260620C00735000" || got[0].Volume != 60962 {
+		t.Fatalf("expected latest high-volume contract on first page, got %#v", got)
+	}
+}
+
 func TestFilterNonETFUSTurnoverResultsDropsETFProfiles(t *testing.T) {
 	provider := &stubUSStockCompanyProfileProvider{}
 	provider.requests = nil

@@ -3,9 +3,11 @@ package polygon
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -76,6 +78,8 @@ type OptionChainRequest struct {
 	Limit             int
 	DisablePagination bool
 }
+
+const maxOptionChainLimit = 250
 
 type AggregateBar struct {
 	Ticker     string   `json:"ticker"`
@@ -206,6 +210,29 @@ type OptionChainContract struct {
 	LastTrade         *Trade          `json:"lastTrade,omitempty"`
 	OpenInterest      float64         `json:"openInterest"`
 	UnderlyingAsset   UnderlyingAsset `json:"underlyingAsset"`
+}
+
+type MarketStatus struct {
+	Market     string            `json:"market"`
+	ServerTime string            `json:"serverTime"`
+	Currencies map[string]string `json:"currencies,omitempty"`
+	Exchanges  map[string]string `json:"exchanges,omitempty"`
+}
+
+func (s MarketStatus) IsUSStocksOpen() bool {
+	if strings.EqualFold(strings.TrimSpace(s.Market), "open") {
+		return true
+	}
+	for exchange, status := range s.Exchanges {
+		exchange = strings.ToLower(strings.TrimSpace(exchange))
+		if exchange != "nyse" && exchange != "nasdaq" {
+			continue
+		}
+		if strings.EqualFold(strings.TrimSpace(status), "open") {
+			return true
+		}
+	}
+	return false
 }
 
 type pagedResults[T any] struct {
@@ -374,6 +401,37 @@ func (c *Client) Config() Config {
 
 func (c *Client) SDKClient() *gen.ClientWithResponses {
 	return c.sdk
+}
+
+func (c *Client) MarketStatusNow(ctx context.Context) (*MarketStatus, error) {
+	if c == nil {
+		return nil, fmt.Errorf("polygon client is nil")
+	}
+	requestURL := c.config.normalizedBaseURL() + "/v1/marketstatus/now"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	if err := c.addHeaders(ctx, req); err != nil {
+		return nil, err
+	}
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("query massive market status: %w", err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read massive market status response: %w", err)
+	}
+	if err := normalizeResponseError(nil, resp, body, rest.CheckResponse(resp)); err != nil {
+		return nil, err
+	}
+	var status MarketStatus
+	if err := json.Unmarshal(body, &status); err != nil {
+		return nil, fmt.Errorf("decode massive market status: %w", err)
+	}
+	return &status, nil
 }
 
 func (c *Client) StockSnapshot(ctx context.Context, symbol string) (*StockSnapshot, error) {
@@ -660,7 +718,8 @@ func (c *Client) OptionChain(ctx context.Context, req OptionChainRequest) ([]Opt
 		params.Sort = &sort
 	}
 	if req.Limit > 0 {
-		params.Limit = rest.Ptr(req.Limit)
+		limit := min(req.Limit, maxOptionChainLimit)
+		params.Limit = rest.Ptr(limit)
 	}
 
 	resp, err := c.sdk.GetOptionsChainWithResponse(ctx, underlying, params)
@@ -876,6 +935,12 @@ func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		}
 		resp, err := t.base.RoundTrip(cloneRequest(req))
 		if err != nil {
+			if attempt < attempts && shouldRetryNetworkError(req.Context(), err) {
+				if waitErr := waitForBackoff(req.Context(), t.retryDelay(nil, attempt)); waitErr != nil {
+					return nil, waitErr
+				}
+				continue
+			}
 			return nil, err
 		}
 		if resp.StatusCode != http.StatusTooManyRequests || attempt == attempts {
@@ -889,6 +954,37 @@ func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		}
 	}
 	return nil, fmt.Errorf("polygon retry transport exhausted for %s", t.requestTarget)
+}
+
+func shouldRetryNetworkError(ctx context.Context, err error) bool {
+	if err == nil {
+		return false
+	}
+	if ctx != nil && ctx.Err() != nil {
+		return false
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && (netErr.Timeout() || netErr.Temporary()) {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	retryMarkers := []string{
+		"tls handshake timeout",
+		"i/o timeout",
+		"connection reset",
+		"connection refused",
+		"connection closed",
+		"unexpected eof",
+		"eof",
+		"temporary failure",
+		"server misbehaving",
+	}
+	for _, marker := range retryMarkers {
+		if strings.Contains(msg, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func (g *requestGate) wait(ctx context.Context) error {

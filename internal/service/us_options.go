@@ -37,6 +37,7 @@ type USOptionsService struct {
 	repo                  *chrepo.Repo
 	polygon               optionWallPolygonClient
 	cache                 cache.Store
+	latest                LatestUSMarketCacheReader
 	now                   func() time.Time
 	ensureWallSchemaOnce  sync.Once
 	ensureWallSchemaError error
@@ -59,6 +60,14 @@ func (s *USOptionsService) WithCache(store cache.Store) *USOptionsService {
 		return nil
 	}
 	s.cache = store
+	return s
+}
+
+func (s *USOptionsService) WithLatestMarketCache(reader LatestUSMarketCacheReader) *USOptionsService {
+	if s == nil {
+		return nil
+	}
+	s.latest = reader
 	return s
 }
 
@@ -110,6 +119,13 @@ LIMIT %s`, clickhouseUInt32Literal(limit+1))
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate US option symbol rows: %w", err)
+	}
+	if s.shouldMergeLatestOptionSymbols(req, underlying) {
+		merged, err := s.mergeLatestOptionSymbols(ctx, underlying, req.Search, symbols)
+		if err != nil {
+			return nil, err
+		}
+		symbols = merged
 	}
 
 	resp := &dto.USOptionSymbolResponse{Data: make([]dto.USOptionSymbolRow, 0)}
@@ -230,6 +246,13 @@ LIMIT %s`, tableName, clickhouseStringLiteral(req.Symbol), clickhouseDateTimeLit
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate US option bar rows: %w", err)
+	}
+	if s.shouldMergeLatestOptionBars(req, interval) {
+		if merged, _, err := s.latest.MergeOptionBars(ctx, req.Symbol, fromT, toT, bars); err != nil {
+			return nil, err
+		} else {
+			bars = merged
+		}
 	}
 
 	resp := &dto.USOptionBarResponse{Data: make([]dto.USOptionBarRow, 0)}
@@ -372,9 +395,15 @@ func (s *USOptionsService) QueryChain(ctx context.Context, req dto.USOptionChain
 			return nil, err
 		}
 		if !hasData {
-			return &dto.USOptionChainResponse{Data: make([]dto.USOptionChainSnapshot, 0)}, nil
+			if !req.IncludeLatest || s.latest == nil {
+				return &dto.USOptionChainResponse{Data: make([]dto.USOptionChainSnapshot, 0)}, nil
+			}
+			latest = time.Now().UTC()
 		}
 		req.From, req.To = defaultUSOptionChainWindow(latest)
+		if s.shouldMergeLatestOptionChain(req, interval) {
+			req.To = time.Now().UTC().AddDate(0, 0, 1).Format(time.RFC3339)
+		}
 	}
 
 	fromT, toT, err := dto.ParseTimeRange(req.From, req.To)
@@ -498,6 +527,13 @@ LIMIT %s`, viewName, clickhouseStringLiteral(underlying), clickhouseDateTimeLite
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate US option chain rows: %w", err)
 	}
+	if s.shouldMergeLatestOptionChain(req, interval) {
+		if merged, _, err := s.latest.MergeOptionChain(ctx, underlying, expiration, fromT, toT, snapshots); err != nil {
+			return nil, err
+		} else {
+			snapshots = merged
+		}
+	}
 
 	resp := &dto.USOptionChainResponse{Data: make([]dto.USOptionChainSnapshot, 0)}
 	resp.Data, resp.NextCursor = applyTimeCursorPagination(snapshots, limit, func(r dto.USOptionChainSnapshot) string {
@@ -528,6 +564,72 @@ WHERE underlying = %s`, viewName, clickhouseStringLiteral(underlying)))
 		return time.Time{}, false, nil
 	}
 	return latest.UTC(), true, nil
+}
+
+func (s *USOptionsService) shouldMergeLatestOptionSymbols(req dto.USOptionSymbolRequest, underlying string) bool {
+	return s != nil && s.latest != nil && req.IncludeLatest && strings.TrimSpace(underlying) != ""
+}
+
+func (s *USOptionsService) shouldMergeLatestOptionBars(req dto.USOptionBarRequest, interval string) bool {
+	return s != nil && s.latest != nil && req.IncludeLatest && interval == "1d"
+}
+
+func (s *USOptionsService) shouldMergeLatestOptionChain(req dto.USOptionChainRequest, interval string) bool {
+	return s != nil && s.latest != nil && req.IncludeLatest && interval == "1d"
+}
+
+func (s *USOptionsService) mergeLatestOptionSymbols(ctx context.Context, underlying, search string, rows []dto.USOptionSymbolRow) ([]dto.USOptionSymbolRow, error) {
+	snapshot, ok, err := s.latest.LatestOptionChainSnapshot(ctx, underlying, time.Time{})
+	if err != nil || !ok {
+		return rows, err
+	}
+	search = strings.ToUpper(strings.TrimSpace(search))
+	merged := make(map[string]dto.USOptionSymbolRow, len(rows)+len(snapshot.Contracts))
+	for _, row := range rows {
+		merged[strings.ToUpper(strings.TrimSpace(row.Symbol))] = row
+	}
+	for _, contract := range snapshot.Contracts {
+		symbol := strings.ToUpper(strings.TrimSpace(contract.Symbol))
+		if symbol == "" {
+			continue
+		}
+		if search != "" && !strings.Contains(symbol, search) {
+			continue
+		}
+		merged[symbol] = dto.USOptionSymbolRow{Symbol: symbol, Underlying: strings.ToUpper(strings.TrimSpace(underlying)), OptionType: contract.OptionType, Expiration: dateAsUTC(contract.Expiration), Strike: sanitizeFloat64(contract.Strike)}
+	}
+	out := make([]dto.USOptionSymbolRow, 0, len(merged))
+	for _, row := range merged {
+		out = append(out, row)
+	}
+	sortUSOptionSymbolsForDiscovery(out, s.now())
+	return out, nil
+}
+
+func sortUSOptionSymbolsForDiscovery(rows []dto.USOptionSymbolRow, now time.Time) {
+	today := normalizeCalendarDate(now.UTC())
+	sort.SliceStable(rows, func(i, j int) bool {
+		leftFuture := !normalizeCalendarDate(rows[i].Expiration).Before(today)
+		rightFuture := !normalizeCalendarDate(rows[j].Expiration).Before(today)
+		if leftFuture != rightFuture {
+			return leftFuture
+		}
+		leftExpiration := normalizeCalendarDate(rows[i].Expiration)
+		rightExpiration := normalizeCalendarDate(rows[j].Expiration)
+		if !leftExpiration.Equal(rightExpiration) {
+			if leftFuture {
+				return leftExpiration.Before(rightExpiration)
+			}
+			return leftExpiration.After(rightExpiration)
+		}
+		if rows[i].Strike != rows[j].Strike {
+			return rows[i].Strike < rows[j].Strike
+		}
+		if rows[i].OptionType != rows[j].OptionType {
+			return rows[i].OptionType < rows[j].OptionType
+		}
+		return rows[i].Symbol < rows[j].Symbol
+	})
 }
 
 func (s *USOptionsService) QueryOptionWall(ctx context.Context, req dto.USOptionWallRequest) (*dto.USOptionWallResponse, error) {

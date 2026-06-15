@@ -14,6 +14,7 @@ import (
 	"github.com/Cyvadra/toktik/internal/chquery"
 	"github.com/Cyvadra/toktik/internal/chrepo"
 	"github.com/Cyvadra/toktik/internal/dto"
+	"github.com/Cyvadra/toktik/internal/usmarket"
 )
 
 const (
@@ -26,7 +27,10 @@ type ScreenerService struct {
 	repo        *chrepo.Repo
 	cache       cache.Store
 	companyInfo usStockCompanyProfileProvider
+	latest      LatestUSMarketCacheReader
 }
+
+const minLatestOptionChainContractsForUnderlyingOverlay = 100
 
 type usTurnoverStockCandidate struct {
 	Underlying       string
@@ -56,6 +60,14 @@ func (s *ScreenerService) WithCompanyProfileProvider(provider usStockCompanyProf
 		return nil
 	}
 	s.companyInfo = provider
+	return s
+}
+
+func (s *ScreenerService) WithLatestMarketCache(reader LatestUSMarketCacheReader) *ScreenerService {
+	if s == nil {
+		return nil
+	}
+	s.latest = reader
 	return s
 }
 
@@ -348,6 +360,9 @@ func (s *ScreenerService) ScreenUnderlyings(ctx context.Context, req dto.ScreenU
 	} else {
 		resp.Data = results
 	}
+	if req.IncludeLatest != nil && *req.IncludeLatest && req.Market == "us-options" && s.latest != nil {
+		s.applyLatestUnderlyingOverlay(ctx, resp.Data)
+	}
 	return resp, nil
 }
 
@@ -507,6 +522,9 @@ WHERE chain.timestamp = latest.ts
 	if req.OpenInterestMin != nil {
 		query += fmt.Sprintf(` AND %s >= %.17g`, oiCol, *req.OpenInterestMin)
 	}
+	if !isCrypto && req.DTEMin == nil && req.DTEMax == nil {
+		query += ` AND toInt32(dateDiff('day', now(), expiration_val)) >= 0`
+	}
 
 	_ = premiumCol
 	_ = volumeCol
@@ -567,7 +585,168 @@ WHERE chain.timestamp = latest.ts
 	} else {
 		resp.Data = results
 	}
+	if req.IncludeLatest != nil && *req.IncludeLatest && req.Market == "us-options" && s.latest != nil {
+		resp.Data, resp.NextCursor = s.mergeLatestOptionScreenRows(ctx, req, resp.Data, resp.NextCursor, limit)
+	}
 	return resp, nil
+}
+
+func (s *ScreenerService) applyLatestUnderlyingOverlay(ctx context.Context, rows []dto.ScreenedUnderlying) {
+	for i := range rows {
+		latest, changed, err := s.latest.MergeOptionChain(ctx, rows[i].Underlying, time.Time{}, time.Time{}, time.Now().UTC().AddDate(0, 0, 1), nil)
+		if err != nil || !changed || len(latest) == 0 {
+			continue
+		}
+		snapshot := latest[len(latest)-1]
+		if len(snapshot.Contracts) < minLatestOptionChainContractsForUnderlyingOverlay {
+			continue
+		}
+		var totalVolume float64
+		for _, contract := range snapshot.Contracts {
+			totalVolume += contract.Volume
+		}
+		if totalVolume > 0 {
+			volume := int(totalVolume)
+			rows[i].Volume = &volume
+		}
+		rows[i].AsOfDate = snapshot.Timestamp.UTC()
+	}
+}
+
+func (s *ScreenerService) mergeLatestOptionScreenRows(ctx context.Context, req dto.ScreenOptionRequest, rows []dto.ScreenedOption, nextCursor string, limit int) ([]dto.ScreenedOption, string) {
+	underlying := req.Underlying
+	if underlying == "" && len(rows) > 0 {
+		underlying = rows[0].Underlying
+	}
+	latest, changed, err := s.latest.MergeOptionChain(ctx, underlying, time.Time{}, time.Time{}, time.Now().UTC().AddDate(0, 0, 1), nil)
+	if err != nil || !changed || len(latest) == 0 {
+		return rows, nextCursor
+	}
+	merged := make(map[string]dto.ScreenedOption, len(rows)+len(latest[len(latest)-1].Contracts))
+	for _, row := range rows {
+		merged[strings.ToUpper(strings.TrimSpace(row.Symbol))] = row
+	}
+	for _, contract := range latest[len(latest)-1].Contracts {
+		row := screenedOptionFromLatestContract(underlying, contract)
+		if row.Symbol == "" || !screenedOptionMatchesRequest(row, req) {
+			continue
+		}
+		merged[strings.ToUpper(strings.TrimSpace(row.Symbol))] = row
+	}
+	out := make([]dto.ScreenedOption, 0, len(merged))
+	for _, row := range merged {
+		out = append(out, row)
+	}
+	sortScreenedOptions(out, req.SortBy)
+	return applySymbolCursorPagination(out, limit, func(r dto.ScreenedOption) string {
+		return encodeCursorString(r.Symbol)
+	})
+}
+
+func screenedOptionFromLatestContract(underlying string, contract dto.USOptionChainContract) dto.ScreenedOption {
+	underlying = strings.ToUpper(strings.TrimSpace(underlying))
+	if underlying == "" {
+		underlying = inferUnderlyingFromUSOptionTicker(contract.Symbol)
+	}
+	row := dto.ScreenedOption{
+		Symbol:            strings.ToUpper(strings.TrimSpace(contract.Symbol)),
+		Underlying:        underlying,
+		OptionType:        strings.ToLower(strings.TrimSpace(contract.OptionType)),
+		Expiration:        dateAsUTC(contract.Expiration),
+		Strike:            sanitizeFloat64(contract.Strike),
+		Close:             float64(contract.Close),
+		ImpliedVolatility: float64(contract.ImpliedVolatility),
+		Delta:             float64(contract.Delta),
+		Gamma:             float64(contract.Gamma),
+		Vega:              float64(contract.Vega),
+		Theta:             float64(contract.Theta),
+		Volume:            sanitizeFloat64(contract.Volume),
+		UnderlyingClose:   float64(contract.UnderlyingClose),
+	}
+	row.DaysToExpiry = int(normalizeCalendarDate(row.Expiration).Sub(normalizeCalendarDate(time.Now().UTC())).Hours() / 24)
+	sanitizeOptionResult(&row)
+	return row
+}
+
+func inferUnderlyingFromUSOptionTicker(symbol string) string {
+	underlying, _, _, _, err := usmarket.ParseOptionTicker(strings.ToUpper(strings.TrimSpace(symbol)))
+	if err != nil {
+		return ""
+	}
+	return strings.ToUpper(strings.TrimSpace(underlying))
+}
+
+func screenedOptionMatchesRequest(row dto.ScreenedOption, req dto.ScreenOptionRequest) bool {
+	if req.Underlying != "" && !strings.EqualFold(row.Underlying, req.Underlying) {
+		return false
+	}
+	if req.OptionType != "" && !strings.EqualFold(row.OptionType, req.OptionType) {
+		return false
+	}
+	if req.DTEMin == nil && req.DTEMax == nil && row.DaysToExpiry < 0 {
+		return false
+	}
+	if req.DTEMin != nil && row.DaysToExpiry < *req.DTEMin {
+		return false
+	}
+	if req.DTEMax != nil && row.DaysToExpiry > *req.DTEMax {
+		return false
+	}
+	if req.DeltaMin != nil && row.Delta < *req.DeltaMin {
+		return false
+	}
+	if req.DeltaMax != nil && row.Delta > *req.DeltaMax {
+		return false
+	}
+	if req.IVMin != nil && row.ImpliedVolatility < *req.IVMin {
+		return false
+	}
+	if req.IVMax != nil && row.ImpliedVolatility > *req.IVMax {
+		return false
+	}
+	if req.PremiumMin != nil && row.Close < *req.PremiumMin {
+		return false
+	}
+	if req.PremiumMax != nil && row.Close > *req.PremiumMax {
+		return false
+	}
+	if req.VolumeMin != nil && row.Volume < *req.VolumeMin {
+		return false
+	}
+	if req.OpenInterestMin != nil && row.OpenInterest < *req.OpenInterestMin {
+		return false
+	}
+	return true
+}
+
+func sortScreenedOptions(rows []dto.ScreenedOption, sortBy string) {
+	sort.SliceStable(rows, func(i, j int) bool {
+		switch strings.ToLower(sortBy) {
+		case "delta":
+			if rows[i].Delta != rows[j].Delta {
+				return rows[i].Delta > rows[j].Delta
+			}
+		case "iv", "implied_volatility":
+			if rows[i].ImpliedVolatility != rows[j].ImpliedVolatility {
+				return rows[i].ImpliedVolatility > rows[j].ImpliedVolatility
+			}
+		case "volume":
+			if rows[i].Volume != rows[j].Volume {
+				return rows[i].Volume > rows[j].Volume
+			}
+		case "premium":
+			if rows[i].Close != rows[j].Close {
+				return rows[i].Close > rows[j].Close
+			}
+		}
+		if rows[i].DaysToExpiry != rows[j].DaysToExpiry {
+			return rows[i].DaysToExpiry < rows[j].DaysToExpiry
+		}
+		if rows[i].Strike != rows[j].Strike {
+			return rows[i].Strike < rows[j].Strike
+		}
+		return rows[i].Symbol < rows[j].Symbol
+	})
 }
 
 func expirationCol(isCrypto bool) string {

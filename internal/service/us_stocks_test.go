@@ -173,6 +173,62 @@ func TestUSStocksQuerySplitsRequiresSymbol(t *testing.T) {
 	}
 }
 
+func TestUSOptionsQuerySymbolsMergesLatestChainContracts(t *testing.T) {
+	rows := &fakeForexRows{data: [][]any{
+		{"O:AAPL260619C00190000", "AAPL", "C", time.Date(2026, 6, 19, 0, 0, 0, 0, time.UTC), 190.0},
+	}}
+	store := cache.NewMemoryStore()
+	latest := NewLatestUSMarketCache(store, time.Hour)
+	ctx := context.Background()
+	if err := latest.StoreOptionChain(ctx, "AAPL", "polygon", dto.USOptionChainSnapshot{
+		Timestamp:  time.Date(2026, 6, 10, 16, 0, 0, 0, time.UTC),
+		Underlying: "AAPL",
+		Contracts: []dto.USOptionChainContract{
+			{Symbol: "O:AAPL260619C00190000", OptionType: "C", Expiration: time.Date(2026, 6, 19, 0, 0, 0, 0, time.UTC), Strike: 190},
+			{Symbol: "O:AAPL260619P00185000", OptionType: "P", Expiration: time.Date(2026, 6, 19, 0, 0, 0, 0, time.UTC), Strike: 185},
+		},
+	}); err != nil {
+		t.Fatalf("StoreOptionChain failed: %v", err)
+	}
+	svc := NewUSOptionsService(chrepo.NewRepo(&fakeForexConn{rows: rows})).WithLatestMarketCache(latest)
+
+	resp, err := svc.QuerySymbols(ctx, dto.USOptionSymbolRequest{Underlying: "aapl", IncludeLatest: true, Limit: 10})
+	if err != nil {
+		t.Fatalf("QuerySymbols returned error: %v", err)
+	}
+	if len(resp.Data) != 2 {
+		t.Fatalf("expected ClickHouse and latest symbols, got %#v", resp.Data)
+	}
+	if resp.Data[0].Symbol != "O:AAPL260619P00185000" || resp.Data[1].Symbol != "O:AAPL260619C00190000" {
+		t.Fatalf("unexpected merged symbols: %#v", resp.Data)
+	}
+}
+
+func TestUSOptionsQuerySymbolsLatestRequiresOptIn(t *testing.T) {
+	rows := &fakeForexRows{data: [][]any{
+		{"O:AAPL260619C00190000", "AAPL", "C", time.Date(2026, 6, 19, 0, 0, 0, 0, time.UTC), 190.0},
+	}}
+	store := cache.NewMemoryStore()
+	latest := NewLatestUSMarketCache(store, time.Hour)
+	ctx := context.Background()
+	if err := latest.StoreOptionChain(ctx, "AAPL", "polygon", dto.USOptionChainSnapshot{
+		Timestamp:  time.Date(2026, 6, 10, 16, 0, 0, 0, time.UTC),
+		Underlying: "AAPL",
+		Contracts:  []dto.USOptionChainContract{{Symbol: "O:AAPL260619P00185000", OptionType: "P", Expiration: time.Date(2026, 6, 19, 0, 0, 0, 0, time.UTC), Strike: 185}},
+	}); err != nil {
+		t.Fatalf("StoreOptionChain failed: %v", err)
+	}
+	svc := NewUSOptionsService(chrepo.NewRepo(&fakeForexConn{rows: rows})).WithLatestMarketCache(latest)
+
+	resp, err := svc.QuerySymbols(ctx, dto.USOptionSymbolRequest{Underlying: "AAPL", Limit: 10})
+	if err != nil {
+		t.Fatalf("QuerySymbols returned error: %v", err)
+	}
+	if len(resp.Data) != 1 || resp.Data[0].Symbol != "O:AAPL260619C00190000" {
+		t.Fatalf("expected ClickHouse-only symbols without include_latest, got %#v", resp.Data)
+	}
+}
+
 func TestClickHouseUSStockCompanyProfileProviderReadsPersistedProfiles(t *testing.T) {
 	marketCap := 123456789.0
 	rows := &fakeForexRows{data: [][]any{

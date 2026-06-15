@@ -14,7 +14,7 @@ const (
 	defaultTimeout          = 60 * time.Second
 	defaultRESTQPS          = 4.0
 	defaultRESTBurst        = 1
-	defaultRetryAttempts    = 4
+	defaultRetryAttempts    = 6
 	defaultRetryBaseDelay   = 500 * time.Millisecond
 	defaultRetryMaxDelay    = 8 * time.Second
 )
