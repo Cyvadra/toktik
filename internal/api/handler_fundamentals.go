@@ -30,7 +30,7 @@ func (h *Handler) ListFundamentalFactors(c *gin.Context) {
 	}
 	resp, err := h.fundamentals.ListFactors(c.Request.Context(), req)
 	if err != nil {
-		handleServiceError(c, err)
+		h.handleServiceError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, resp)
@@ -66,7 +66,7 @@ func (h *Handler) GetFundamentalSeries(c *gin.Context) {
 	}
 	resp, err := h.fundamentals.QuerySeries(c.Request.Context(), req)
 	if err != nil {
-		handleServiceError(c, err)
+		h.handleServiceError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, resp)
@@ -99,7 +99,7 @@ func (h *Handler) GetFundamentalSnapshot(c *gin.Context) {
 	}
 	resp, err := h.fundamentals.QuerySnapshot(c.Request.Context(), req)
 	if err != nil {
-		handleServiceError(c, err)
+		h.handleServiceError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, resp)
@@ -132,7 +132,7 @@ func (h *Handler) GetFundamentalPanel(c *gin.Context) {
 	}
 	resp, err := h.fundamentals.QueryPanel(c.Request.Context(), req)
 	if err != nil {
-		handleServiceError(c, err)
+		h.handleServiceError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, resp)
@@ -162,7 +162,7 @@ func (h *Handler) GetFundamentalFreshness(c *gin.Context) {
 	}
 	resp, err := h.fundamentals.QueryFreshness(c.Request.Context(), req)
 	if err != nil {
-		handleServiceError(c, err)
+		h.handleServiceError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, resp)

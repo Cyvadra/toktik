@@ -24,7 +24,7 @@ func (h *Handler) GetReadiness(c *gin.Context) {
 
 	resp, err := h.infra.Readiness(c.Request.Context())
 	if err != nil {
-		handleServiceError(c, err)
+		h.handleServiceError(c, err)
 		return
 	}
 
@@ -48,7 +48,7 @@ func (h *Handler) GetMarkets(c *gin.Context) {
 
 	resp, err := h.infra.ListMarkets(c.Request.Context())
 	if err != nil {
-		handleServiceError(c, err)
+		h.handleServiceError(c, err)
 		return
 	}
 
@@ -80,7 +80,7 @@ func (h *Handler) GetDatasets(c *gin.Context) {
 
 	resp, err := h.infra.ListDatasets(c.Request.Context(), req)
 	if err != nil {
-		handleServiceError(c, err)
+		h.handleServiceError(c, err)
 		return
 	}
 
@@ -111,7 +111,7 @@ func (h *Handler) ListStrategies(c *gin.Context) {
 
 	resp, err := h.strategyCatalog.ListStrategies(c.Request.Context(), req)
 	if err != nil {
-		handleServiceError(c, err)
+		h.handleServiceError(c, err)
 		return
 	}
 
@@ -135,7 +135,7 @@ func (h *Handler) ListFactors(c *gin.Context) {
 
 	resp, err := h.factors.ListFactors(c.Request.Context())
 	if err != nil {
-		handleServiceError(c, err)
+		h.handleServiceError(c, err)
 		return
 	}
 
@@ -172,7 +172,7 @@ func (h *Handler) GetFactorBars(c *gin.Context) {
 
 	resp, err := h.factors.QueryFactorBars(c.Request.Context(), req)
 	if err != nil {
-		handleServiceError(c, err)
+		h.handleServiceError(c, err)
 		return
 	}
 

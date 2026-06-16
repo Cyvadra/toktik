@@ -25,6 +25,7 @@ func TestLoadRuntimeFromPathYAML(t *testing.T) {
 		"    - \"alpha\"\n" +
 		"    - \"beta\"\n" +
 		"  rate_limit_rps: 125\n" +
+		"  environment: \"dev\"\n" +
 		"mysql:\n" +
 		"  host: \"mysql.internal\"\n" +
 		"  user: \"runtime-user\"\n" +
@@ -96,6 +97,9 @@ func TestLoadRuntimeFromPathYAML(t *testing.T) {
 	}
 	if cfg.API.RateLimitRPS != 125 {
 		t.Fatalf("unexpected api rate limit: %v", cfg.API.RateLimitRPS)
+	}
+	if cfg.API.Environment != "dev" {
+		t.Fatalf("unexpected api environment: %q", cfg.API.Environment)
 	}
 	mysqlPassword, err := cfg.MySQLPassword()
 	if err != nil {

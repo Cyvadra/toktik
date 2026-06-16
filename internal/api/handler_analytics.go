@@ -33,7 +33,7 @@ func (h *Handler) RunIndicatorSeries(c *gin.Context) {
 
 	resp, err := h.indicators.QueryIndicatorSeries(c.Request.Context(), req)
 	if err != nil {
-		handleServiceError(c, err)
+		h.handleServiceError(c, err)
 		return
 	}
 
@@ -57,7 +57,7 @@ func (h *Handler) ListIndicatorPresets(c *gin.Context) {
 
 	resp, err := h.indicators.ListIndicatorPresets(c.Request.Context())
 	if err != nil {
-		handleServiceError(c, err)
+		h.handleServiceError(c, err)
 		return
 	}
 
@@ -86,7 +86,7 @@ func (h *Handler) RunBacktest(c *gin.Context) {
 
 	resp, err := h.cryptoOptions.RunBacktest(c.Request.Context(), req)
 	if err != nil {
-		handleServiceError(c, err)
+		h.handleServiceError(c, err)
 		return
 	}
 
@@ -118,7 +118,7 @@ func (h *Handler) ValidateStrategyBacktest(c *gin.Context) {
 
 	resp, err := h.strategyBacktests.ValidateStrategyBacktest(c.Request.Context(), req)
 	if err != nil {
-		handleServiceError(c, err)
+		h.handleServiceError(c, err)
 		return
 	}
 
@@ -150,7 +150,7 @@ func (h *Handler) StartStrategyBacktest(c *gin.Context) {
 
 	resp, err := h.strategyBacktests.StartStrategyBacktest(c.Request.Context(), req)
 	if err != nil {
-		handleServiceError(c, err)
+		h.handleServiceError(c, err)
 		return
 	}
 
@@ -176,7 +176,7 @@ func (h *Handler) GetStrategyBacktestRun(c *gin.Context) {
 
 	resp, err := h.strategyBacktests.GetStrategyBacktestRun(c.Request.Context(), c.Param("runID"))
 	if err != nil {
-		handleServiceError(c, err)
+		h.handleServiceError(c, err)
 		return
 	}
 
@@ -204,7 +204,7 @@ func (h *Handler) GetStrategyBacktestReport(c *gin.Context) {
 	}
 	status, err := h.strategyBacktests.GetStrategyBacktestRun(c.Request.Context(), c.Param("runID"))
 	if err != nil {
-		handleServiceError(c, err)
+		h.handleServiceError(c, err)
 		return
 	}
 	writeBacktestReportResponse(c, h, status, "")
@@ -232,7 +232,7 @@ func (h *Handler) GetStrategyBacktestNamedReport(c *gin.Context) {
 	}
 	status, err := h.strategyBacktests.GetStrategyBacktestRun(c.Request.Context(), c.Param("runID"))
 	if err != nil {
-		handleServiceError(c, err)
+		h.handleServiceError(c, err)
 		return
 	}
 	writeBacktestReportResponse(c, h, status, c.Param("reportID"))
@@ -259,14 +259,14 @@ func (h *Handler) StreamStrategyBacktestEvents(c *gin.Context) {
 
 	stream, unsubscribe, err := h.strategyBacktests.SubscribeStrategyBacktest(c.Request.Context(), runID)
 	if err != nil {
-		handleServiceError(c, err)
+		h.handleServiceError(c, err)
 		return
 	}
 	defer unsubscribe()
 
 	status, err := h.strategyBacktests.GetStrategyBacktestRun(c.Request.Context(), runID)
 	if err != nil {
-		handleServiceError(c, err)
+		h.handleServiceError(c, err)
 		return
 	}
 
@@ -332,7 +332,7 @@ func (h *Handler) ScreenUnderlyings(c *gin.Context) {
 
 	resp, err := h.screener.ScreenUnderlyings(c.Request.Context(), req)
 	if err != nil {
-		handleServiceError(c, err)
+		h.handleServiceError(c, err)
 		return
 	}
 
@@ -367,7 +367,7 @@ func (h *Handler) ScreenUSTurnoverIntersection(c *gin.Context) {
 
 	resp, err := h.screener.ScreenUSTurnoverIntersection(c.Request.Context(), req)
 	if err != nil {
-		handleServiceError(c, err)
+		h.handleServiceError(c, err)
 		return
 	}
 
@@ -408,7 +408,7 @@ func (h *Handler) ScreenOptions(c *gin.Context) {
 
 	resp, err := h.screener.ScreenOptions(c.Request.Context(), req)
 	if err != nil {
-		handleServiceError(c, err)
+		h.handleServiceError(c, err)
 		return
 	}
 

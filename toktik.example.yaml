@@ -26,6 +26,8 @@ api:
   api_keys: []
   rate_limit_rps: 50
   request_timeout_seconds: 180
+  # "dev" or "prod"
+  environment: "prod"
 
 paths:
   schema_dir: "schema/clickhouse"

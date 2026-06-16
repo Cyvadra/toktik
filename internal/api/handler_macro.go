@@ -30,7 +30,7 @@ func (h *Handler) ListMacroFactors(c *gin.Context) {
 	}
 	resp, err := h.macro.ListFactors(c.Request.Context(), req)
 	if err != nil {
-		handleServiceError(c, err)
+		h.handleServiceError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, resp)
@@ -67,7 +67,7 @@ func (h *Handler) GetMacroSeries(c *gin.Context) {
 	}
 	resp, err := h.macro.QuerySeries(c.Request.Context(), req)
 	if err != nil {
-		handleServiceError(c, err)
+		h.handleServiceError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, resp)

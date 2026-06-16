@@ -33,7 +33,7 @@ func (h *Handler) GetBars(c *gin.Context) {
 
 	resp, err := h.cryptoOptions.QueryBars(c.Request.Context(), req)
 	if err != nil {
-		handleServiceError(c, err)
+		h.handleServiceError(c, err)
 		return
 	}
 
@@ -63,7 +63,7 @@ func (h *Handler) GetSymbols(c *gin.Context) {
 
 	resp, err := h.cryptoOptions.QuerySymbols(c.Request.Context(), req)
 	if err != nil {
-		handleServiceError(c, err)
+		h.handleServiceError(c, err)
 		return
 	}
 
@@ -95,7 +95,7 @@ func (h *Handler) GetGreeks(c *gin.Context) {
 
 	resp, err := h.cryptoOptions.QueryGreeks(c.Request.Context(), req)
 	if err != nil {
-		handleServiceError(c, err)
+		h.handleServiceError(c, err)
 		return
 	}
 
@@ -133,7 +133,7 @@ func (h *Handler) GetUSStockBars(c *gin.Context) {
 
 	resp, err := h.usStocks.QueryBars(c.Request.Context(), req)
 	if err != nil {
-		handleServiceError(c, err)
+		h.handleServiceError(c, err)
 		return
 	}
 
@@ -166,7 +166,7 @@ func (h *Handler) GetUSStockSymbols(c *gin.Context) {
 
 	resp, err := h.usStocks.QuerySymbols(c.Request.Context(), req)
 	if err != nil {
-		handleServiceError(c, err)
+		h.handleServiceError(c, err)
 		return
 	}
 
@@ -197,7 +197,7 @@ func (h *Handler) GetUSStockProfiles(c *gin.Context) {
 	}
 	resp, err := h.usStocks.QueryProfiles(c.Request.Context(), req)
 	if err != nil {
-		handleServiceError(c, err)
+		h.handleServiceError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, resp)
@@ -227,7 +227,7 @@ func (h *Handler) GetUSStockFundamentalMetrics(c *gin.Context) {
 	}
 	resp, err := h.usStocks.QueryFundamentalMetrics(c.Request.Context(), req)
 	if err != nil {
-		handleServiceError(c, err)
+		h.handleServiceError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, resp)
@@ -258,7 +258,7 @@ func (h *Handler) GetUSStockSplits(c *gin.Context) {
 
 	resp, err := h.usStocks.QuerySplits(c.Request.Context(), req)
 	if err != nil {
-		handleServiceError(c, err)
+		h.handleServiceError(c, err)
 		return
 	}
 
@@ -300,7 +300,7 @@ func (h *Handler) GetUSOptionBars(c *gin.Context) {
 
 	resp, err := h.usOptions.QueryBars(c.Request.Context(), req)
 	if err != nil {
-		handleServiceError(c, err)
+		h.handleServiceError(c, err)
 		return
 	}
 
@@ -336,7 +336,7 @@ func (h *Handler) GetUSOptionSymbols(c *gin.Context) {
 
 	resp, err := h.usOptions.QuerySymbols(c.Request.Context(), req)
 	if err != nil {
-		handleServiceError(c, err)
+		h.handleServiceError(c, err)
 		return
 	}
 
@@ -377,7 +377,7 @@ func (h *Handler) GetUSOptionGreeks(c *gin.Context) {
 
 	resp, err := h.usOptions.QueryGreeks(c.Request.Context(), req)
 	if err != nil {
-		handleServiceError(c, err)
+		h.handleServiceError(c, err)
 		return
 	}
 
@@ -415,7 +415,7 @@ func (h *Handler) GetUSOptionChain(c *gin.Context) {
 
 	resp, err := h.usOptions.QueryChain(c.Request.Context(), req)
 	if err != nil {
-		handleServiceError(c, err)
+		h.handleServiceError(c, err)
 		return
 	}
 	if resp == nil {
@@ -452,7 +452,7 @@ func (h *Handler) GetUSOptionWall(c *gin.Context) {
 
 	resp, err := h.usOptions.QueryOptionWall(c.Request.Context(), req)
 	if err != nil {
-		handleServiceError(c, err)
+		h.handleServiceError(c, err)
 		return
 	}
 	if resp == nil {
@@ -491,7 +491,7 @@ func (h *Handler) GetCryptoSpotBars(c *gin.Context) {
 
 	resp, err := h.cryptoSpot.QueryBars(c.Request.Context(), req)
 	if err != nil {
-		handleServiceError(c, err)
+		h.handleServiceError(c, err)
 		return
 	}
 
@@ -524,7 +524,7 @@ func (h *Handler) GetCryptoSpotSymbols(c *gin.Context) {
 
 	resp, err := h.cryptoSpot.QuerySymbols(c.Request.Context(), req)
 	if err != nil {
-		handleServiceError(c, err)
+		h.handleServiceError(c, err)
 		return
 	}
 
@@ -560,7 +560,7 @@ func (h *Handler) GetForexBars(c *gin.Context) {
 
 	resp, err := h.forex.QueryBars(c.Request.Context(), req)
 	if err != nil {
-		handleServiceError(c, err)
+		h.handleServiceError(c, err)
 		return
 	}
 
@@ -593,7 +593,7 @@ func (h *Handler) GetForexSymbols(c *gin.Context) {
 
 	resp, err := h.forex.QuerySymbols(c.Request.Context(), req)
 	if err != nil {
-		handleServiceError(c, err)
+		h.handleServiceError(c, err)
 		return
 	}
 
@@ -625,7 +625,7 @@ func (h *Handler) GetCryptoOptionChain(c *gin.Context) {
 
 	resp, err := h.cryptoOptions.QueryChain(c.Request.Context(), req)
 	if err != nil {
-		handleServiceError(c, err)
+		h.handleServiceError(c, err)
 		return
 	}
 

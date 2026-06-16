@@ -40,6 +40,7 @@ type Handler struct {
 	macro             MacroProvider
 	financeCalendar   FinanceCalendarProvider
 	polygon           PolygonProvider
+	showInternalError bool
 
 	// reportsRoot is the directory on disk under which all backtest
 	// HTML reports must live. Any path outside this root is rejected
@@ -75,12 +76,17 @@ func NewHandler(d Deps) *Handler {
 		macro:             d.Macro,
 		financeCalendar:   d.FinanceCalendar,
 		polygon:           d.Polygon,
+		showInternalError: strings.EqualFold(strings.TrimSpace(d.Config.API.Environment), "dev"),
 		reportsRoot:       root,
 	}
 }
 
 // handleServiceError maps service-level errors to appropriate HTTP responses.
-func handleServiceError(c *gin.Context, err error) {
+func (h *Handler) handleServiceError(c *gin.Context, err error) {
+	handleServiceError(c, err, h.showInternalError)
+}
+
+func handleServiceError(c *gin.Context, err error, showInternalError bool) {
 	var ve *dto.ValidationError
 	if errors.As(err, &ve) {
 		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: err.Error()})
@@ -105,7 +111,11 @@ func handleServiceError(c *gin.Context, err error) {
 		return
 	}
 	slog.Error("internal error", "error", err)
-	c.JSON(http.StatusInternalServerError, dto.ErrorResponse{Error: "internal server error"})
+	message := "internal server error"
+	if showInternalError {
+		message = err.Error()
+	}
+	c.JSON(http.StatusInternalServerError, dto.ErrorResponse{Error: message})
 }
 
 func polygonErrorMessage(err *polygonpkg.HTTPStatusError) string {
@@ -312,16 +322,16 @@ func writeBacktestReportResponse(c *gin.Context, h *Handler, status *dto.Strateg
 	}
 	reportPath, err := h.resolveStrategyBacktestReportPath(status, reportID)
 	if err != nil {
-		handleServiceError(c, err)
+		h.handleServiceError(c, err)
 		return
 	}
 	body, err := os.ReadFile(reportPath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			handleServiceError(c, dto.NewNotFoundError("backtest report file not found"))
+			h.handleServiceError(c, dto.NewNotFoundError("backtest report file not found"))
 			return
 		}
-		handleServiceError(c, err)
+		h.handleServiceError(c, err)
 		return
 	}
 	c.Data(http.StatusOK, "text/html; charset=utf-8", body)

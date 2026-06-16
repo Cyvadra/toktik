@@ -26,6 +26,7 @@ const (
 	EnvCORSOrigins                           = "CORS_ORIGINS"
 	EnvAPIKeys                               = "API_KEYS"
 	EnvRateLimitRPS                          = "RATE_LIMIT_RPS"
+	EnvAPIEnvironment                        = "TOKTIK_API_ENVIRONMENT"
 	EnvSchemaDir                             = "TOKTIK_SCHEMA_DIR"
 	EnvDeribitBaseURL                        = "DERIBIT_BASE_URL"
 	EnvFMPAPIKey                             = "FMP_API_KEY"
@@ -124,6 +125,7 @@ type API struct {
 	RateLimitRPS          float64  `yaml:"rate_limit_rps"`
 	TrustedProxies        []string `yaml:"trusted_proxies"`
 	RequestTimeoutSeconds int      `yaml:"request_timeout_seconds"`
+	Environment           string   `yaml:"environment"`
 }
 
 type Paths struct {
@@ -451,6 +453,9 @@ func (c *Runtime) applyEnvOverrides() {
 			c.API.RateLimitRPS = parsed
 		}
 	}
+	if value := strings.TrimSpace(os.Getenv(EnvAPIEnvironment)); value != "" {
+		c.API.Environment = value
+	}
 	if value := strings.TrimSpace(os.Getenv(EnvSchemaDir)); value != "" {
 		c.Paths.SchemaDir = value
 	}
@@ -679,6 +684,10 @@ func (c *Runtime) normalize() {
 	}
 	if c.API.RequestTimeoutSeconds <= 0 {
 		c.API.RequestTimeoutSeconds = 180
+	}
+	c.API.Environment = strings.ToLower(strings.TrimSpace(c.API.Environment))
+	if c.API.Environment == "" {
+		c.API.Environment = "prod"
 	}
 	if strings.TrimSpace(c.Paths.SchemaDir) == "" {
 		c.Paths.SchemaDir = defaultSchemaDir

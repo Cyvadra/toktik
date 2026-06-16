@@ -85,7 +85,35 @@ func TestGetBars_InternalError(t *testing.T) {
 		t.Fatalf("unmarshal: %v", err)
 	}
 	if errResp.Error != "internal server error" {
-		t.Fatalf("expected generic error, got %q", errResp.Error)
+		t.Fatalf("expected generic prod error, got %q", errResp.Error)
+	}
+}
+
+func TestGetBars_InternalErrorDevEnvironment(t *testing.T) {
+	g := config.DefaultRuntime()
+	g.API.Environment = "dev"
+	r := NewRouterFromDeps(Deps{
+		Config:        g,
+		CryptoOptions: &mockQuerier{err: errors.New("db down")},
+		USStocks:      &mockUSStocksQuerier{},
+		USOptions:     &mockUSOptionsQuerier{},
+		Infra:         &mockInfra{},
+		Features:      &mockFeature{},
+	})
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/api/v1/markets/crypto-options/bars?symbol=X&interval=1m&from=2024-01-01&to=2024-01-02", nil)
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d", w.Code)
+	}
+	var errResp dto.ErrorResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &errResp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if errResp.Error != "db down" {
+		t.Fatalf("expected propagated dev error, got %q", errResp.Error)
 	}
 }
 

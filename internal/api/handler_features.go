@@ -33,7 +33,7 @@ func (h *Handler) GetVolatilitySnapshot(c *gin.Context) {
 
 	resp, err := h.features.QueryVolatilitySnapshot(c.Request.Context(), req)
 	if err != nil {
-		handleServiceError(c, err)
+		h.handleServiceError(c, err)
 		return
 	}
 
@@ -68,7 +68,7 @@ func (h *Handler) GetVolatilityHistory(c *gin.Context) {
 
 	resp, err := h.features.QueryVolatilityHistory(c.Request.Context(), req)
 	if err != nil {
-		handleServiceError(c, err)
+		h.handleServiceError(c, err)
 		return
 	}
 
@@ -102,7 +102,7 @@ func (h *Handler) GetTermStructureSnapshot(c *gin.Context) {
 
 	resp, err := h.features.QueryTermStructureSnapshot(c.Request.Context(), req)
 	if err != nil {
-		handleServiceError(c, err)
+		h.handleServiceError(c, err)
 		return
 	}
 
@@ -138,7 +138,7 @@ func (h *Handler) GetTermStructureHistory(c *gin.Context) {
 
 	resp, err := h.features.QueryTermStructureHistory(c.Request.Context(), req)
 	if err != nil {
-		handleServiceError(c, err)
+		h.handleServiceError(c, err)
 		return
 	}
 
@@ -172,7 +172,7 @@ func (h *Handler) GetSkewSnapshot(c *gin.Context) {
 
 	resp, err := h.features.QuerySkewSnapshot(c.Request.Context(), req)
 	if err != nil {
-		handleServiceError(c, err)
+		h.handleServiceError(c, err)
 		return
 	}
 
@@ -208,7 +208,7 @@ func (h *Handler) GetSkewHistory(c *gin.Context) {
 
 	resp, err := h.features.QuerySkewHistory(c.Request.Context(), req)
 	if err != nil {
-		handleServiceError(c, err)
+		h.handleServiceError(c, err)
 		return
 	}
 
@@ -242,7 +242,7 @@ func (h *Handler) GetLiquiditySnapshot(c *gin.Context) {
 
 	resp, err := h.features.QueryLiquiditySnapshot(c.Request.Context(), req)
 	if err != nil {
-		handleServiceError(c, err)
+		h.handleServiceError(c, err)
 		return
 	}
 
@@ -278,7 +278,7 @@ func (h *Handler) GetLiquidityHistory(c *gin.Context) {
 
 	resp, err := h.features.QueryLiquidityHistory(c.Request.Context(), req)
 	if err != nil {
-		handleServiceError(c, err)
+		h.handleServiceError(c, err)
 		return
 	}
 
@@ -310,7 +310,7 @@ func (h *Handler) GetEventWindowSnapshot(c *gin.Context) {
 
 	resp, err := h.features.QueryEventWindowSnapshot(c.Request.Context(), req)
 	if err != nil {
-		handleServiceError(c, err)
+		h.handleServiceError(c, err)
 		return
 	}
 
@@ -344,7 +344,7 @@ func (h *Handler) GetEventWindowHistory(c *gin.Context) {
 
 	resp, err := h.features.QueryEventWindowHistory(c.Request.Context(), req)
 	if err != nil {
-		handleServiceError(c, err)
+		h.handleServiceError(c, err)
 		return
 	}
 
@@ -381,7 +381,7 @@ func (h *Handler) GetDailyFeaturePanel(c *gin.Context) {
 
 	resp, err := h.features.QueryDailyFeaturePanel(c.Request.Context(), req)
 	if err != nil {
-		handleServiceError(c, err)
+		h.handleServiceError(c, err)
 		return
 	}
 

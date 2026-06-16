@@ -37,7 +37,7 @@ func (h *Handler) GetPolygonStockSnapshot(c *gin.Context) {
 	}
 	resp, err := h.polygon.QueryStockSnapshot(c.Request.Context(), req)
 	if err != nil {
-		handleServiceError(c, err)
+		h.handleServiceError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, resp)
@@ -96,7 +96,7 @@ func (h *Handler) GetPolygonStockQuotes(c *gin.Context) {
 	}
 	resp, err := h.polygon.QueryStockQuotes(c.Request.Context(), req)
 	if err != nil {
-		handleServiceError(c, err)
+		h.handleServiceError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, resp)
@@ -133,7 +133,7 @@ func (h *Handler) GetPolygonStockTrades(c *gin.Context) {
 	}
 	resp, err := h.polygon.QueryStockTrades(c.Request.Context(), req)
 	if err != nil {
-		handleServiceError(c, err)
+		h.handleServiceError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, resp)
@@ -162,7 +162,7 @@ func (h *Handler) GetPolygonOptionContract(c *gin.Context) {
 	}
 	resp, err := h.polygon.QueryOptionContract(c.Request.Context(), req)
 	if err != nil {
-		handleServiceError(c, err)
+		h.handleServiceError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, resp)
@@ -205,7 +205,7 @@ func (h *Handler) GetPolygonOptionChain(c *gin.Context) {
 	}
 	resp, err := h.polygon.QueryOptionChain(c.Request.Context(), req)
 	if err != nil {
-		handleServiceError(c, err)
+		h.handleServiceError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, resp)
@@ -264,7 +264,7 @@ func (h *Handler) GetPolygonOptionQuotes(c *gin.Context) {
 	}
 	resp, err := h.polygon.QueryOptionQuotes(c.Request.Context(), req)
 	if err != nil {
-		handleServiceError(c, err)
+		h.handleServiceError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, resp)
@@ -301,7 +301,7 @@ func (h *Handler) GetPolygonOptionTrades(c *gin.Context) {
 	}
 	resp, err := h.polygon.QueryOptionTrades(c.Request.Context(), req)
 	if err != nil {
-		handleServiceError(c, err)
+		h.handleServiceError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, resp)
@@ -327,7 +327,7 @@ func (h *Handler) handlePolygonAggregate(c *gin.Context, option bool) {
 		resp, err = h.polygon.QueryStockAggregates(c.Request.Context(), req)
 	}
 	if err != nil {
-		handleServiceError(c, err)
+		h.handleServiceError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, resp)

@@ -24,7 +24,7 @@ func (h *Handler) ListBrowserPresets(c *gin.Context) {
 	}
 	resp, err := h.dataBrowser.ListBrowserPresets(c.Request.Context())
 	if err != nil {
-		handleServiceError(c, err)
+		h.handleServiceError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, resp)
@@ -52,7 +52,7 @@ func (h *Handler) GetBrowserDatasetSchema(c *gin.Context) {
 	}
 	resp, err := h.dataBrowser.QueryDatasetSchema(c.Request.Context(), req)
 	if err != nil {
-		handleServiceError(c, err)
+		h.handleServiceError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, resp)
@@ -86,7 +86,7 @@ func (h *Handler) GetBrowserDatasetPreview(c *gin.Context) {
 	}
 	resp, err := h.dataBrowser.QueryDatasetPreview(c.Request.Context(), req)
 	if err != nil {
-		handleServiceError(c, err)
+		h.handleServiceError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, resp)
@@ -118,7 +118,7 @@ func (h *Handler) GetBrowserDatasetCoverage(c *gin.Context) {
 	}
 	resp, err := h.dataBrowser.QueryDatasetCoverage(c.Request.Context(), req)
 	if err != nil {
-		handleServiceError(c, err)
+		h.handleServiceError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, resp)
@@ -149,7 +149,7 @@ func (h *Handler) GetBrowserFieldProfile(c *gin.Context) {
 	}
 	resp, err := h.dataBrowser.QueryFieldProfile(c.Request.Context(), req)
 	if err != nil {
-		handleServiceError(c, err)
+		h.handleServiceError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, resp)
@@ -180,7 +180,7 @@ func (h *Handler) GetBrowserValidCount(c *gin.Context) {
 	}
 	resp, err := h.dataBrowser.QueryValidCount(c.Request.Context(), req)
 	if err != nil {
-		handleServiceError(c, err)
+		h.handleServiceError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, resp)
@@ -210,7 +210,7 @@ func (h *Handler) GetBrowserDatasetValues(c *gin.Context) {
 	}
 	resp, err := h.dataBrowser.QueryDatasetValues(c.Request.Context(), req)
 	if err != nil {
-		handleServiceError(c, err)
+		h.handleServiceError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, resp)

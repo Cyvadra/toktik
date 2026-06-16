@@ -31,7 +31,7 @@ func (h *Handler) GetEconomicCalendar(c *gin.Context) {
 	}
 	resp, err := h.financeCalendar.QueryEconomicCalendar(c.Request.Context(), req)
 	if err != nil {
-		handleServiceError(c, err)
+		h.handleServiceError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, resp)
@@ -61,7 +61,7 @@ func (h *Handler) GetStockCalendar(c *gin.Context) {
 	}
 	resp, err := h.financeCalendar.QueryStockCalendar(c.Request.Context(), req)
 	if err != nil {
-		handleServiceError(c, err)
+		h.handleServiceError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, resp)
