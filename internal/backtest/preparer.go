@@ -180,12 +180,15 @@ func (dp *DataPreparer) Prepare(ctx context.Context, market, symbol, interval st
 			go func(idx int, f FactorFeed, r FactorRef) {
 				defer wg.Done()
 				ds, err := f.Load(ctx, FactorRequest{
-					Name:     r.Name,
-					Interval: r.Interval,
-					Market:   r.Market,
-					Symbol:   r.Symbol,
-					From:     loadFrom,
-					To:       to,
+					Name:          r.Name,
+					Interval:      r.Interval,
+					Mode:          r.Mode,
+					Market:        r.Market,
+					Symbol:        r.Symbol,
+					PrimaryMarket: setupCtx.primaryRef.Market,
+					PrimarySymbol: setupCtx.primaryRef.Symbol,
+					From:          loadFrom,
+					To:            to,
 				})
 				results <- factorResult{index: idx, ds: ds, err: err}
 			}(i, feed, factor.ref)

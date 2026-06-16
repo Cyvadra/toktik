@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"log/slog"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -301,6 +302,9 @@ func (s *PortfolioBacktestService) StartStrategyBacktest(_ context.Context, req 
 	if req.Capital <= 0 {
 		return nil, dto.NewValidationError("capital must be > 0")
 	}
+	if _, err := s.ValidateStrategyBacktest(context.Background(), req); err != nil {
+		return nil, err
+	}
 
 	runID, err := newBacktestRunID()
 	if err != nil {
@@ -468,10 +472,38 @@ func newPortfolioBacktestEngine(cfg backtest.Config, conn driver.Conn, factorSto
 	if factorStore != nil {
 		engine.RegisterFactorFeed("dvol", datafeed.NewFeedFactorBridge("dvol", factorStore))
 	}
+	engine.RegisterFactorFeed("volatility", datafeed.NewFeatureVolatilityFactorFeed(conn))
+	fundamentalsSvc := NewFundamentalsService(chrepo.NewRepo(conn))
+	registerFundamentalFactorFeeds(engine, fundamentalsSvc)
 	if usesOptions && chainProvider != nil {
 		engine.SetOptionsChainProvider(chainProvider)
 	}
 	return engine
+}
+
+func registerFundamentalFactorFeeds(engine *backtest.Engine, fundamentalsSvc *FundamentalsService) {
+	if engine == nil || fundamentalsSvc == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	catalog, err := fundamentalsSvc.ListFactors(ctx, dto.FundamentalFactorCatalogRequest{})
+	if err != nil {
+		slog.Warn("register fundamentals factor feeds: list factors failed", "error", err)
+		return
+	}
+	seen := make(map[string]struct{}, len(catalog.Data))
+	for _, entry := range catalog.Data {
+		factorCode := strings.TrimSpace(entry.FactorCode)
+		if factorCode == "" || !entry.Active {
+			continue
+		}
+		if _, ok := seen[factorCode]; ok {
+			continue
+		}
+		seen[factorCode] = struct{}{}
+		engine.RegisterFactorFeed(factorCode, datafeed.NewFundamentalsFactorFeed(fundamentalsSvc, factorCode))
+	}
 }
 
 func validateStrategyBacktestRunRequest(req dto.StrategyBacktestRunRequest) error {

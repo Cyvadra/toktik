@@ -16,7 +16,7 @@ func RegisterProfile(ip *Interpreter, profile Profile) {
 	if profile == ProfileIndicator {
 		return
 	}
-	RegisterRequestBuiltins(ip, nil, nil)
+	RegisterRequestBuiltins(ip, nil, nil, nil)
 	RegisterOptionsBuiltins(ip)
 	RegisterAlphaBuiltins(ip)
 	RegisterSignalBuiltins(ip)
@@ -27,13 +27,13 @@ func RegisterProfile(ip *Interpreter, profile Profile) {
 	RegisterRefBuiltins(ip)
 }
 
-func RegisterBacktestProfile(ip *Interpreter, requestSecurity func(args []Value) Value, requestFactor func(args []Value) Value) {
+func RegisterBacktestProfile(ip *Interpreter, requestSecurity func(args []Value) Value, requestFactor func(args []Value) Value, requestFundamental func(args []Value) Value) {
 	RegisterTABuiltins(ip)
 	RegisterMathBuiltins(ip)
 	RegisterStrBuiltins(ip)
 	RegisterStrategyBuiltins(ip)
 	RegisterInputBuiltins(ip)
-	RegisterRequestBuiltins(ip, requestSecurity, requestFactor)
+	RegisterRequestBuiltins(ip, requestSecurity, requestFactor, requestFundamental)
 	RegisterOptionsBuiltins(ip)
 	RegisterAlphaBuiltins(ip)
 	RegisterSignalBuiltins(ip)

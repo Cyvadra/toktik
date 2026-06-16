@@ -11,12 +11,15 @@ import (
 // factor (e.g., a fundamental like PE for AAPL on us-stocks). Feeds that do
 // not need symbol context may ignore them.
 type FactorRequest struct {
-	Name     string
-	Interval string
-	Market   string
-	Symbol   string
-	From     time.Time
-	To       time.Time
+	Name          string
+	Interval      string
+	Mode          string
+	Market        string
+	Symbol        string
+	PrimaryMarket string
+	PrimarySymbol string
+	From          time.Time
+	To            time.Time
 }
 
 // FactorFeed loads external factor series. Implementations may be
@@ -34,6 +37,7 @@ type FactorFeed interface {
 type FactorRef struct {
 	Name     string
 	Interval string
+	Mode     string
 	Market   string
 	Symbol   string
 	Index    int

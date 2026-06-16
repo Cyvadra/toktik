@@ -69,13 +69,17 @@ func (f *FundamentalsFactorFeed) Load(ctx context.Context, req backtest.FactorRe
 	if req.Market == "" || req.Symbol == "" {
 		return nil, fmt.Errorf("fundamentals factor %q requires Market and Symbol on FactorRequest", f.factorCode)
 	}
+	mode := strings.TrimSpace(req.Mode)
+	if mode == "" {
+		mode = f.mode
+	}
 	resp, err := f.svc.QuerySeries(ctx, dto.FundamentalSeriesRequest{
 		Market: req.Market,
 		Symbol: req.Symbol,
 		Factor: f.factorCode,
 		From:   req.From.UTC().Format(time.RFC3339Nano),
 		To:     req.To.UTC().Format(time.RFC3339Nano),
-		Mode:   f.mode,
+		Mode:   mode,
 		AsOf:   req.To.UTC().Format(time.RFC3339Nano),
 	})
 	if err != nil {

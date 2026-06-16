@@ -270,6 +270,31 @@ type immediateAndDeferredStrategy struct{}
 
 type scheduledNotionalStrategy struct{}
 
+type primaryContextFactorFeed struct {
+	lastReq FactorRequest
+}
+
+func (f *primaryContextFactorFeed) Fields() []string { return []string{"value"} }
+
+func (f *primaryContextFactorFeed) Load(_ context.Context, req FactorRequest) (*DataSet, error) {
+	f.lastReq = req
+	ds := NewDataSet(1)
+	ds.SetTimestamps([]time.Time{req.From})
+	ds.AddColumn("value", []float64{1})
+	return ds, nil
+}
+
+type primaryContextFactorStrategy struct{}
+
+func (s *primaryContextFactorStrategy) Name() string { return "primary-context-factor" }
+
+func (s *primaryContextFactorStrategy) Init(ctx *SetupContext) error {
+	ctx.AddFactor("primary_context", "1h")
+	return nil
+}
+
+func (s *primaryContextFactorStrategy) OnBar(_ *BarContext) {}
+
 func (s *immediateAndDeferredStrategy) Name() string { return "immediate-and-deferred" }
 
 func (s *immediateAndDeferredStrategy) Init(_ *SetupContext) error { return nil }
@@ -453,5 +478,21 @@ func TestRunReportsProgress(t *testing.T) {
 	}
 	if !sawReplayDone {
 		t.Fatalf("expected replay completion progress update")
+	}
+}
+
+func TestFactorRequestCarriesPrimaryContext(t *testing.T) {
+	engine := NewEngine(Config{InitialCapital: 10000})
+	engine.RegisterDataFeed("us-stocks", &stubDataFeed{fields: []string{"open", "high", "low", "close", "volume"}})
+	feed := &primaryContextFactorFeed{}
+	engine.RegisterFactorFeed("primary_context", feed)
+
+	from := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	to := from.Add(2 * time.Hour)
+	if _, err := engine.Run(context.Background(), "us-stocks", "NVDA", "1h", from, to, &primaryContextFactorStrategy{}, nil); err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+	if feed.lastReq.PrimaryMarket != "us-stocks" || feed.lastReq.PrimarySymbol != "NVDA" {
+		t.Fatalf("primary context = %s/%s, want us-stocks/NVDA", feed.lastReq.PrimaryMarket, feed.lastReq.PrimarySymbol)
 	}
 }

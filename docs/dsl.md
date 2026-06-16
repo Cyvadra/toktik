@@ -7,7 +7,7 @@
 - Source Swagger: `docs/swagger.json`
 - API title: `Toktik Options Platform API`
 - API version: `1.0`
-- Generated at: `2026-06-16T14:01:15Z`
+- Generated at: `2026-06-16T14:34:45Z`
 
 ## Scope
 
@@ -165,6 +165,17 @@ first = arr[0]
 ### 因子、組合與配置
 
 - `request.security(market, symbol, interval, field)`、`request.factor(name, interval, field)`
+- `request.factor("volatility", "1d", field)` 會綁定目前回測主標的，讀取與 `/features/volatility-history` 相同上游的日頻波動率特徵。
+- `volatility` 支援欄位：`iv`/`current_iv`、`hv10`、`hv20`、`hv30`、`iv_percentile`、`iv_rank`、`price_observations`、`iv_observations`。
+
+```pine
+iv = request.factor("volatility", "1d", "iv")
+hv20 = request.factor("volatility", "1d", "hv20")
+iv_rank = request.factor("volatility", "1d", "iv_rank")
+high_iv = iv_rank > 80
+plot(iv, title="IV", precision=4)
+```
+
 - `alpha.rank`、`alpha.zscore`、`alpha.decay_linear`、`alpha.ts_rank`、`alpha.ts_corr`、`alpha.ts_delta`、`alpha.ts_mean`、`alpha.log_return` 等時序因子函數
 - `portfolio.symbols()`、`portfolio.weights()`、`portfolio.items()`、`portfolio.weight(symbol, defval)`
 - `config.get(name, defval)`、`config.string(name, defval)`、`ref.set/get/has/clear/inc/dec`
@@ -201,7 +212,7 @@ first = arr[0]
 | `order` | 10 |
 | `portfolio` | 6 |
 | `ref` | 6 |
-| `request` | 2 |
+| `request` | 3 |
 | `schedule` | 3 |
 | `signal` | 12 |
 | `spread` | 16 |
@@ -406,7 +417,8 @@ first = arr[0]
 
 | 名稱 | 簽名 | 種類 | 回傳 | 範例 | 用途 |
 | --- | --- | --- | --- | --- | --- |
-| `request.factor` | `request.factor(name, interval, field)` | `函數` | `series` | `vix = request.factor("VIX", "1d", "close")` | 用於讀取預載因子資料，例如宏觀、波動率或基本面序列。 |
+| `request.factor` | `request.factor(name, interval, field)` | `函數` | `series` | `iv_rank = request.factor("volatility", "1d", "iv_rank")` | 用於讀取預載因子資料；內建 volatility 因子會綁定目前回測主標的，提供 iv/current_iv、hv10、hv20、hv30、iv_percentile、iv_rank、price_observations、iv_observations 等 1d 欄位。 |
+| `request.fundamental` | `request.fundamental(market, symbol, factor, mode)` | `函數` | `series` | `pe = request.fundamental("us-stocks", "AAPL", "pe")` | 用於讀取標的綁定的基本面序列，例如 PE、PB、market_cap 等；美股的 PE/PB 會依 bar close 以 point-in-time 方式動態重估。 |
 | `request.security` | `request.security(market, symbol, interval, field)` | `函數` | `series` | `spy_close = request.security("us-stocks", "SPY", "1d", "close")` | 用於讀取其他市場、標的或週期的預載欄位，例如用 SPY 趨勢過濾個股策略。 |
 
 ### schedule

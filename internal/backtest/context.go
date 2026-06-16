@@ -89,10 +89,11 @@ func (sc *SetupContext) AddFactor(name, interval string) FactorRef {
 // AddSymbolFactor requests an external symbol-bound factor series (e.g.,
 // a fundamental like PE for one symbol). The same registered FactorFeed may
 // service many symbols by inspecting FactorRequest.Market/Symbol.
-func (sc *SetupContext) AddSymbolFactor(name, market, symbol, interval string) FactorRef {
+func (sc *SetupContext) AddSymbolFactor(name, market, symbol, interval, mode string) FactorRef {
 	ref := FactorRef{
 		Name:     name,
 		Interval: interval,
+		Mode:     mode,
 		Market:   market,
 		Symbol:   symbol,
 		Index:    sc.nextFacIdx,

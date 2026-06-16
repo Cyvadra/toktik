@@ -29,7 +29,7 @@ func BuiltinDocs(profile Profile) []BuiltinDoc {
 	ip := NewInterpreter(nil)
 	if profile == ProfileBacktest {
 		stub := func(args []Value) Value { return NaVal() }
-		RegisterBacktestProfile(ip, stub, stub)
+		RegisterBacktestProfile(ip, stub, stub, stub)
 	} else {
 		RegisterProfile(ip, profile)
 	}
@@ -342,7 +342,8 @@ var builtinDocOverrides = map[string]BuiltinDoc{
 	"strategy.equity":             {Summary: "用於依目前權益估算倉位大小或風險預算。", Example: "budget = strategy.equity * 0.95", ReturnValue: "數值"},
 	"strategy.cash":               {Summary: "用於避免下單金額超過可用現金。", Example: "qty = math.min(strategy.cash, strategy.equity * 0.5) / close", ReturnValue: "數值"},
 	"request.security":            {Summary: "用於讀取其他市場、標的或週期的預載欄位，例如用 SPY 趨勢過濾個股策略。", Example: "spy_close = request.security(\"us-stocks\", \"SPY\", \"1d\", \"close\")", ReturnValue: "series"},
-	"request.factor":              {Summary: "用於讀取預載因子資料，例如宏觀、波動率或基本面序列。", Example: "vix = request.factor(\"VIX\", \"1d\", \"close\")", ReturnValue: "series"},
+	"request.factor":              {Summary: "用於讀取預載因子資料；內建 volatility 因子會綁定目前回測主標的，提供 iv/current_iv、hv10、hv20、hv30、iv_percentile、iv_rank、price_observations、iv_observations 等 1d 欄位。", Example: "iv_rank = request.factor(\"volatility\", \"1d\", \"iv_rank\")", ReturnValue: "series"},
+	"request.fundamental":         {Summary: "用於讀取標的綁定的基本面序列，例如 PE、PB、market_cap 等；美股的 PE/PB 會依 bar close 以 point-in-time 方式動態重估。", Example: "pe = request.fundamental(\"us-stocks\", \"AAPL\", \"pe\")", ReturnValue: "series"},
 	"config.get":                  {Summary: "用於讀取策略 catalog 或 API 注入的數值設定，並在未設定時使用預設值。", Example: "max_risk = config.get(\"max_risk\", 0.02)", ReturnValue: "數值"},
 	"config.string":               {Summary: "用於讀取策略 catalog 或 API 注入的字串設定，例如模式名稱或標籤。", Example: "mode = config.string(\"mode\", \"default\")", ReturnValue: "字串"},
 	"order.market":                {Summary: "用於立即以市場單買入或賣出固定數量，並取得訂單 ID 供後續追蹤。", Example: "order_id = order.market(order.buy, 100, note=\"enter\")", ReturnValue: "數值"},

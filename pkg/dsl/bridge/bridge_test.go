@@ -55,6 +55,10 @@ func (f *testDataFeed) Load(_ context.Context, req backtest.DataRequest) (*backt
 
 type testFactorFeed struct{}
 
+type testFundamentalFactorFeed struct {
+	lastReq backtest.FactorRequest
+}
+
 type testOptionsChainProvider struct{}
 
 func (p *testOptionsChainProvider) AvailableContracts(t time.Time) []backtest.OptionContract {
@@ -91,6 +95,27 @@ func (f *testFactorFeed) Load(_ context.Context, req backtest.FactorRequest) (*b
 	}
 	ds.SetTimestamps(ts)
 	ds.AddColumn("dvol", dvol)
+	return ds, nil
+}
+
+func (f *testFundamentalFactorFeed) Fields() []string { return []string{"value"} }
+
+func (f *testFundamentalFactorFeed) Load(_ context.Context, req backtest.FactorRequest) (*backtest.DataSet, error) {
+	f.lastReq = req
+	nBars := 12
+	ds := backtest.NewDataSet(nBars)
+	ts := make([]time.Time, nBars)
+	values := make([]float64, nBars)
+	step := time.Hour
+	if d, err := time.ParseDuration(strings.TrimSpace(req.Interval)); err == nil && d > 0 {
+		step = d
+	}
+	for i := 0; i < nBars; i++ {
+		ts[i] = req.From.Add(time.Duration(i) * step)
+		values[i] = 24.5 + float64(i)
+	}
+	ds.SetTimestamps(ts)
+	ds.AddColumn("value", values)
 	return ds, nil
 }
 
@@ -787,6 +812,89 @@ plot(dvol, title="DVOL", precision=1)
 	series := result.Series[result.ReportColumns[0].Source]
 	if series[0] != 50 || series[1] != 51 {
 		t.Fatalf("unexpected request.factor plot series: first=%v second=%v", series[0], series[1])
+	}
+}
+
+func TestDslStrategyRequestFundamentalPlotsFactorSeries(t *testing.T) {
+	src := `strategy("Fundamental Request")
+pe = request.fundamental("us-stocks", "AAPL", "pe")
+plot(pe, title="PE", precision=2)
+`
+
+	engine := backtest.NewEngine(backtest.Config{InitialCapital: 10000})
+	engine.RegisterDataFeed("test", &testDataFeed{fields: []string{"open", "high", "low", "close", "volume"}})
+	fundamentalFeed := &testFundamentalFactorFeed{}
+	engine.RegisterFactorFeed("pe", fundamentalFeed)
+
+	from := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	to := from.Add(6 * time.Hour)
+
+	result, err := engine.Run(context.Background(), "test", "TEST", "1h", from, to, New(src), nil)
+	if err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+	series := result.Series[result.ReportColumns[0].Source]
+	if series[0] != 24.5 || series[1] != 25.5 {
+		t.Fatalf("unexpected request.fundamental plot series: first=%v second=%v", series[0], series[1])
+	}
+	if fundamentalFeed.lastReq.Interval != "1h" || fundamentalFeed.lastReq.Mode != "filled" || fundamentalFeed.lastReq.Market != "us-stocks" || fundamentalFeed.lastReq.Symbol != "AAPL" {
+		t.Fatalf("unexpected request.fundamental factor request: %+v", fundamentalFeed.lastReq)
+	}
+}
+
+func TestDslStrategyRequestFundamentalWithNamedArgsPreloadsFactorSeries(t *testing.T) {
+	src := `strategy("Named Fundamental Request")
+pe = request.fundamental(symbol="AAPL", factor="pe", market="us-stocks")
+plot(pe, title="PE", precision=2)
+`
+
+	engine := backtest.NewEngine(backtest.Config{InitialCapital: 10000})
+	engine.RegisterDataFeed("test", &testDataFeed{fields: []string{"open", "high", "low", "close", "volume"}})
+	fundamentalFeed := &testFundamentalFactorFeed{}
+	engine.RegisterFactorFeed("pe", fundamentalFeed)
+
+	from := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	to := from.Add(6 * time.Hour)
+
+	result, err := engine.Run(context.Background(), "test", "TEST", "1h", from, to, New(src), nil)
+	if err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+	series := result.Series[result.ReportColumns[0].Source]
+	if series[0] != 24.5 || series[1] != 25.5 {
+		t.Fatalf("unexpected request.fundamental plot series: first=%v second=%v", series[0], series[1])
+	}
+	if fundamentalFeed.lastReq.Interval != "1h" || fundamentalFeed.lastReq.Mode != "filled" || fundamentalFeed.lastReq.Market != "us-stocks" || fundamentalFeed.lastReq.Symbol != "AAPL" {
+		t.Fatalf("unexpected request.fundamental factor request: %+v", fundamentalFeed.lastReq)
+	}
+}
+
+func TestDslStrategyRequestFundamentalSurvivesRepeatedInit(t *testing.T) {
+	src := `strategy("Fundamental Request")
+pe = request.fundamental("us-stocks", "AAPL", "pe")
+plot(pe, title="PE", precision=2)
+`
+
+	strategy := New(src)
+	from := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	to := from.Add(6 * time.Hour)
+
+	run := func() *backtest.Result {
+		engine := backtest.NewEngine(backtest.Config{InitialCapital: 10000})
+		engine.RegisterDataFeed("test", &testDataFeed{fields: []string{"open", "high", "low", "close", "volume"}})
+		engine.RegisterFactorFeed("pe", &testFundamentalFactorFeed{})
+		result, err := engine.Run(context.Background(), "test", "TEST", "1h", from, to, strategy, nil)
+		if err != nil {
+			t.Fatalf("Run failed: %v", err)
+		}
+		return result
+	}
+
+	_ = run()
+	result := run()
+	series := result.Series[result.ReportColumns[0].Source]
+	if series[0] != 24.5 || series[1] != 25.5 {
+		t.Fatalf("unexpected repeated request.fundamental plot series: first=%v second=%v", series[0], series[1])
 	}
 }
 

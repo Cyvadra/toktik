@@ -363,6 +363,7 @@ func newEngine(cfg backtest.Config, conn driver.Conn, factorStore *feeds.Store, 
 	engine.RegisterDataFeed(usUnderlyingFeed, datafeed.NewUSUnderlyingDataFeed(conn))
 	engine.RegisterDataFeed(forexUnderlyingFeed, datafeed.NewForexUnderlyingDataFeed(conn))
 	engine.RegisterFactorFeed("dvol", datafeed.NewFeedFactorBridge("dvol", factorStore))
+	engine.RegisterFactorFeed("volatility", datafeed.NewFeatureVolatilityFactorFeed(conn))
 	if usesOptions && chainProvider != nil {
 		engine.SetOptionsChainProvider(chainProvider)
 	}

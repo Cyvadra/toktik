@@ -143,6 +143,8 @@ func (ds *DslStrategy) Name() string { return ds.name }
 
 // Init implements backtest.Strategy.
 func (ds *DslStrategy) Init(ctx *backtest.SetupContext) error {
+	ds.secRefs = make(map[string]backtest.SecurityRef)
+	ds.facRefs = make(map[string]backtest.FactorRef)
 	for _, req := range ds.meta.Requests {
 		switch req.Kind {
 		case "security":
@@ -153,11 +155,19 @@ func (ds *DslStrategy) Init(ctx *backtest.SetupContext) error {
 			if _, ok := ds.facRefs[req.Key]; !ok {
 				ds.facRefs[req.Key] = ctx.AddFactor(req.Name, req.Interval)
 			}
+		case "fundamental":
+			if _, ok := ds.facRefs[req.Key]; !ok {
+				interval := req.Interval
+				if strings.TrimSpace(strings.ToLower(interval)) == "primary" {
+					interval = ctx.PrimaryRef().Interval
+				}
+				ds.facRefs[req.Key] = ctx.AddSymbolFactor(req.Name, req.Market, req.Symbol, interval, req.Mode)
+			}
 		}
 	}
 	ds.ip = runtime.NewInterpreter(ds.prog)
 	ApplyParams(ds.ip, ds.opts.Params)
-	runtime.RegisterBacktestProfile(ds.ip, ds.requestSecurityBuiltin(), ds.requestFactorBuiltin())
+	runtime.RegisterBacktestProfile(ds.ip, ds.requestSecurityBuiltin(), ds.requestFactorBuiltin(), ds.requestFundamentalBuiltin())
 	ds.ip.Init()
 	if ds.opts.InitHook != nil {
 		if err := ds.opts.InitHook(ctx); err != nil {
@@ -484,6 +494,38 @@ func (ds *DslStrategy) requestFactorBuiltin() func(args []runtime.Value) runtime
 		}
 		value := bridge.ctx.Factor(ref).Field(field)
 		return ds.ip.CaptureSeries("request.factor."+key+"."+field, value)
+	}
+}
+
+func (ds *DslStrategy) requestFundamentalBuiltin() func(args []runtime.Value) runtime.Value {
+	return func(args []runtime.Value) runtime.Value {
+		if len(args) < 3 {
+			return runtime.NaVal()
+		}
+		market := strings.TrimSpace(args[0].Str())
+		symbol := strings.TrimSpace(args[1].Str())
+		factor := strings.TrimSpace(args[2].Str())
+		mode := "filled"
+		if len(args) >= 4 {
+			mode = strings.TrimSpace(args[3].Str())
+		}
+		if mode == "" {
+			mode = "filled"
+		}
+		if factor == "" {
+			return runtime.NaVal()
+		}
+		key := analysis.RequestFundamentalKey(market, symbol, factor, mode)
+		ref, ok := ds.facRefs[key]
+		if !ok || ds.ip == nil || ds.ip.Bridge == nil {
+			return runtime.NaVal()
+		}
+		bridge, ok := ds.ip.Bridge.(*barContextBridge)
+		if !ok {
+			return runtime.NaVal()
+		}
+		value := bridge.ctx.Factor(ref).Field("value")
+		return ds.ip.CaptureSeries("request.fundamental."+key+".value", value)
 	}
 }
 
