@@ -7,7 +7,7 @@
 - Source Swagger: `docs/swagger.json`
 - API title: `Toktik Options Platform API`
 - API version: `1.0`
-- Generated at: `2026-06-11T12:33:02Z`
+- Generated at: `2026-06-16T14:01:15Z`
 
 ## Scope
 
@@ -18,6 +18,7 @@
 - [使用流程總覽](#使用流程總覽)
 - [DSL 快速教學](#dsl-快速教學)
 - [DSL 語法速查](#dsl-語法速查)
+- [DSL 詞法規則速查](#dsl-詞法規則速查)
 - [DSL 內建模組速查](#dsl-內建模組速查)
 - [DSL 函數參考](#dsl-函數參考)
 - [提交與查詢範例](#提交與查詢範例)
@@ -129,6 +130,20 @@ arr = [10, 20, 30]
 first = arr[0]
 [a, b] = [1, 2]
 ```
+
+## DSL 詞法規則速查
+
+本節由 DSL lexer 的文檔元資料自動產生，用於提醒會在 parser 之前生效的規則，例如註釋、換行、續行、字串與數字格式。
+
+| 主題 | 寫法 | 範例 | 注意事項 |
+| --- | --- | --- | --- |
+| 單行註釋 | `// ...` | `//@version=6\n// rebalance monthly` | 從 `//` 到行尾都會被忽略；`//@version=6` 也是註釋，保留給 Pine v6 風格相容。 |
+| 多行註釋 | `/* ... */` | `/*\nentry rules\nexit rules\n*/` | 可跨多行，直到第一個 `*/` 結束；目前不支援巢狀 block comment。 |
+| 換行 | `\n` | `fast = ta.sma(close, 10)\nslow = ta.sma(close, 30)` | 換行是 statement separator；空格、tab、carriage return 會被略過。 |
+| 續行 | `\ + newline` | `signal = close > open and \\n    volume > ta.sma(volume, 20)` | 反斜線必須緊接換行，lexer 會移除該換行，讓下一行接續同一個 expression。 |
+| 字串 | `"..." 或 '...'` | `label = "SMA"\nside = 'long'` | 支援 `\n`、`\t`、`\\`、`\'`、`\"` escape；字串不可直接跨換行。 |
+| 數字 | `int、float、scientific notation` | `risk = 0.02\nscale = 6.02e23\nwhole = 3.` | 整數、小數、科學記號都會被 token 化；`3.` 會被視為 float。 |
+| 識別字 | `letter 或 underscore 開頭，後續可含數字` | `_fast_len = 10\n信號 = close > open` | 使用 Unicode letter 判定，因此非 ASCII 變數名可被 lexer 接受；關鍵字會被轉成對應 token。 |
 
 ## DSL 內建模組速查
 

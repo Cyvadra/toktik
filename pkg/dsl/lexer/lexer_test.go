@@ -92,6 +92,30 @@ func TestComments(t *testing.T) {
 	}
 }
 
+func TestBlockComments(t *testing.T) {
+	src := "x = 1 /* comment\ncontinues */\ny = 2"
+	tokens, err := Tokenize(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	types := make([]token.Type, len(tokens))
+	for i, tok := range tokens {
+		types[i] = tok.Type
+	}
+	expected := []token.Type{
+		token.Ident, token.Eq, token.Int, token.Newline,
+		token.Ident, token.Eq, token.Int, token.EOF,
+	}
+	if len(tokens) != len(expected) {
+		t.Fatalf("expected %d tokens, got %d: %v", len(expected), len(tokens), types)
+	}
+	for i, tt := range expected {
+		if tokens[i].Type != tt {
+			t.Fatalf("token[%d]: expected %s, got %s (%q); all=%v", i, tt, tokens[i].Type, tokens[i].Literal, types)
+		}
+	}
+}
+
 func TestScientificNotation(t *testing.T) {
 	src := `6.02e23 1E10`
 	tokens, _ := Tokenize(src)

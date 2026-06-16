@@ -11,6 +11,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/Cyvadra/toktik/pkg/dsl/lexer"
 	"github.com/Cyvadra/toktik/pkg/dsl/runtime"
 )
 
@@ -276,6 +277,7 @@ func renderMarkdown(doc *swaggerDoc, inputPath string, title string, config rend
 		builder.WriteString("- [使用流程總覽](#使用流程總覽)\n")
 		builder.WriteString("- [DSL 快速教學](#dsl-快速教學)\n")
 		builder.WriteString("- [DSL 語法速查](#dsl-語法速查)\n")
+		builder.WriteString("- [DSL 詞法規則速查](#dsl-詞法規則速查)\n")
 		builder.WriteString("- [DSL 內建模組速查](#dsl-內建模組速查)\n")
 		builder.WriteString("- [DSL 函數參考](#dsl-函數參考)\n")
 		builder.WriteString("- [提交與查詢範例](#提交與查詢範例)\n")
@@ -455,6 +457,8 @@ func writeBacktestTutorial(builder *strings.Builder) {
 	builder.WriteString("[a, b] = [1, 2]\n")
 	builder.WriteString("```\n\n")
 
+	writeDSLLexicalReference(builder)
+
 	builder.WriteString("## DSL 內建模組速查\n\n")
 	builder.WriteString("### 交易與輸出\n\n")
 	builder.WriteString("- `plot(series, title, overlay, precision)`：輸出報告/指標序列。\n")
@@ -519,6 +523,30 @@ func writeBacktestTutorial(builder *strings.Builder) {
 	builder.WriteString("- `result.overview_report_url`：總覽 HTML 報告 URL。\n\n")
 	builder.WriteString("### 限制與注意事項\n\n")
 	builder.WriteString("Toktik DSL 不是完整 TradingView Pine Script v6 實作；語法風格接近 Pine，但內建函數和交易模型以 Toktik 回測引擎為準。型別標註目前主要用於相容和可讀性，runtime 仍採動態值模型。期權、合約、spread、group 是 handle，應透過內建函數操作。`request.*` 和 `options.chain()` 若使用動態字串，分析器可能無法完整預先枚舉依賴。\n\n")
+}
+
+func writeDSLLexicalReference(builder *strings.Builder) {
+	docs := lexer.LexicalDocs()
+	builder.WriteString("## DSL 詞法規則速查\n\n")
+	builder.WriteString("本節由 DSL lexer 的文檔元資料自動產生，用於提醒會在 parser 之前生效的規則，例如註釋、換行、續行、字串與數字格式。\n\n")
+	builder.WriteString("| 主題 | 寫法 | 範例 | 注意事項 |\n")
+	builder.WriteString("| --- | --- | --- | --- |\n")
+	for _, doc := range docs {
+		builder.WriteString("| ")
+		builder.WriteString(escapePipes(doc.Topic))
+		builder.WriteString(" | `")
+		builder.WriteString(escapePipes(doc.Syntax))
+		builder.WriteString("` | `")
+		builder.WriteString(escapePipes(oneLineCode(doc.Example)))
+		builder.WriteString("` | ")
+		builder.WriteString(escapePipes(doc.Notes))
+		builder.WriteString(" |\n")
+	}
+	builder.WriteString("\n")
+}
+
+func oneLineCode(value string) string {
+	return strings.ReplaceAll(value, "\n", "\\n")
 }
 
 func writeDSLFunctionReference(builder *strings.Builder) {
