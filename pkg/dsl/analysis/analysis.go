@@ -61,6 +61,7 @@ type RequestSpec struct {
 	Symbol   string
 	Name     string
 	Interval string
+	Mode     string
 	Field    string
 	Key      string
 	Dynamic  bool
@@ -353,12 +354,15 @@ func parseRequestSpec(call *ast.CallExpr) (RequestSpec, bool) {
 		return RequestSpec{}, false
 	}
 	get := func(name string, idx int) (string, bool) {
-		for i, arg := range call.Args {
+		for _, arg := range call.Args {
 			if arg.Name == name {
 				value := literalString(arg.Value)
 				return value, value == ""
 			}
-			if arg.Name == "" && i == idx {
+		}
+		if idx >= 0 && idx < len(call.Args) {
+			arg := call.Args[idx]
+			if arg.Name == "" {
 				value := literalString(arg.Value)
 				return value, value == ""
 			}
@@ -403,9 +407,32 @@ func parseRequestSpec(call *ast.CallExpr) (RequestSpec, bool) {
 			return RequestSpec{Kind: "factor", Dynamic: true}, true
 		}
 		return RequestSpec{Kind: "factor", Name: name, Interval: interval, Field: field, Key: RequestFactorKey(name, interval)}, true
+	case "fundamental":
+		if obj.Name != "request" {
+			return RequestSpec{}, false
+		}
+		market, dynMarket := get("market", 0)
+		symbol, dynSymbol := get("symbol", 1)
+		factor, dynFactor := get("factor", 2)
+		mode, dynMode := get("mode", 3)
+		if dynMarket || dynSymbol || dynFactor {
+			return RequestSpec{Kind: "fundamental", Dynamic: true}, true
+		}
+		if dynMode || mode == "" {
+			mode = "filled"
+		}
+		return RequestSpec{Kind: "fundamental", Market: market, Symbol: symbol, Name: factor, Interval: "primary", Mode: mode, Field: "value", Key: RequestFundamentalKey(market, symbol, factor, mode)}, true
 	default:
 		return RequestSpec{}, false
 	}
+}
+
+func RequestFundamentalKey(market, symbol, factor, mode string) string {
+	market = strings.TrimSpace(strings.ToLower(market))
+	symbol = strings.TrimSpace(strings.ToUpper(symbol))
+	factor = strings.TrimSpace(strings.ToLower(factor))
+	mode = strings.TrimSpace(strings.ToLower(mode))
+	return market + "|" + symbol + "|" + factor + "|" + mode
 }
 
 func qualifiedName(expr ast.Expr) string {
