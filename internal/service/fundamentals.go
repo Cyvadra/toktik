@@ -578,7 +578,7 @@ func (s *FundamentalsService) loadPriceDerivedDenominators(ctx context.Context, 
 			continue
 		}
 		if point.Source == "fmp_statement_derived_v2" {
-			denominator, ok, err := s.loadFMPStatementDenominator(ctx, symbol, factor, point.EventTS)
+			denominator, ok, err := s.loadFMPStatementDenominator(ctx, symbol, factor, point.EventTS, point.KnownAt)
 			if err != nil {
 				return nil, err
 			}
@@ -594,18 +594,21 @@ func (s *FundamentalsService) loadPriceDerivedDenominators(ctx context.Context, 
 	return denominators, nil
 }
 
-func (s *FundamentalsService) loadFMPStatementDenominator(ctx context.Context, symbol, factor string, eventTS time.Time) (float64, bool, error) {
+func (s *FundamentalsService) loadFMPStatementDenominator(ctx context.Context, symbol, factor string, eventTS, knownAt time.Time) (float64, bool, error) {
+	if knownAt.IsZero() {
+		knownAt = eventTS
+	}
 	switch factor {
 	case "pe":
-		return s.loadFMPStatementTTMEPS(ctx, symbol, eventTS)
+		return s.loadFMPStatementTTMEPS(ctx, symbol, eventTS, knownAt)
 	case "pb":
-		return s.loadFMPStatementBookValuePerShare(ctx, symbol, eventTS)
+		return s.loadFMPStatementBookValuePerShare(ctx, symbol, eventTS, knownAt)
 	default:
 		return 0, false, nil
 	}
 }
 
-func (s *FundamentalsService) loadFMPStatementTTMEPS(ctx context.Context, symbol string, eventTS time.Time) (float64, bool, error) {
+func (s *FundamentalsService) loadFMPStatementTTMEPS(ctx context.Context, symbol string, eventTS, knownAt time.Time) (float64, bool, error) {
 	rows, err := s.repo.Query(ctx, `SELECT
 	date,
 	argMax(eps, (accepted_date, revision, ingested_at)) AS eps,
@@ -615,11 +618,13 @@ FROM fmp_income_statement_quarterly
 WHERE symbol = {symbol:String}
   AND source = 'fmp'
   AND date <= {event_date:Date}
+  AND accepted_date <= parseDateTimeBestEffort({known_at:String}, 'UTC')
 GROUP BY date
 ORDER BY date DESC
 LIMIT 4`,
 		clickhouse.Named("symbol", strings.ToUpper(strings.TrimSpace(symbol))),
 		clickhouse.Named("event_date", eventTS.UTC().Format("2006-01-02")),
+		clickhouse.Named("known_at", knownAt.UTC().Format(time.RFC3339Nano)),
 	)
 	if err != nil {
 		return 0, false, fmt.Errorf("query FMP statement TTM EPS denominator: %w", err)
@@ -660,7 +665,7 @@ LIMIT 4`,
 	return total, true, nil
 }
 
-func (s *FundamentalsService) loadFMPStatementBookValuePerShare(ctx context.Context, symbol string, eventTS time.Time) (float64, bool, error) {
+func (s *FundamentalsService) loadFMPStatementBookValuePerShare(ctx context.Context, symbol string, eventTS, knownAt time.Time) (float64, bool, error) {
 	rows, err := s.repo.Query(ctx, `WITH
 income AS (
 	SELECT
@@ -670,6 +675,7 @@ income AS (
 	WHERE symbol = {symbol:String}
 	  AND source = 'fmp'
 	  AND date = {event_date:Date}
+	  AND accepted_date <= parseDateTimeBestEffort({known_at:String}, 'UTC')
 	GROUP BY date
 ),
 balance AS (
@@ -683,6 +689,7 @@ balance AS (
 	WHERE symbol = {symbol:String}
 	  AND source = 'fmp'
 	  AND date = {event_date:Date}
+	  AND accepted_date <= parseDateTimeBestEffort({known_at:String}, 'UTC')
 	GROUP BY date
 )
 SELECT income.shares, balance.stockholders_equity, balance.total_equity, balance.total_assets, balance.total_liabilities
@@ -690,6 +697,7 @@ FROM income INNER JOIN balance USING (date)
 LIMIT 1`,
 		clickhouse.Named("symbol", strings.ToUpper(strings.TrimSpace(symbol))),
 		clickhouse.Named("event_date", eventTS.UTC().Format("2006-01-02")),
+		clickhouse.Named("known_at", knownAt.UTC().Format(time.RFC3339Nano)),
 	)
 	if err != nil {
 		return 0, false, fmt.Errorf("query FMP statement PB denominator: %w", err)
@@ -784,7 +792,7 @@ func (s *FundamentalsService) revalueSnapshotEntries(ctx context.Context, symbol
 			continue
 		}
 		if entry.Source == "fmp_statement_derived_v2" {
-			denominator, ok, err := s.loadFMPStatementDenominator(ctx, symbol, entry.Factor, entry.EventTS)
+			denominator, ok, err := s.loadFMPStatementDenominator(ctx, symbol, entry.Factor, entry.EventTS, entry.KnownAt)
 			if err != nil {
 				return nil, err
 			}

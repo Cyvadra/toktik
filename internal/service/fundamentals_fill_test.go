@@ -108,6 +108,47 @@ func TestRevaluePriceDerivedFundamentalUsesGridPrice(t *testing.T) {
 	}
 }
 
+func TestLoadFMPStatementTTMEPSConstrainsAcceptedDateByKnownAt(t *testing.T) {
+	rows := &fakeForexRows{data: [][]any{
+		{time.Date(2026, 5, 3, 0, 0, 0, 0, time.UTC), 1.0, 100.0, 100.0},
+		{time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC), 2.0, 200.0, 100.0},
+		{time.Date(2025, 11, 2, 0, 0, 0, 0, time.UTC), 3.0, 300.0, 100.0},
+		{time.Date(2025, 8, 3, 0, 0, 0, 0, time.UTC), 4.0, 400.0, 100.0},
+	}}
+	conn := &fakeForexConn{rows: rows}
+	svc := NewFundamentalsService(chrepo.NewRepo(conn))
+	knownAt := time.Date(2026, 6, 3, 20, 21, 35, 0, time.UTC)
+
+	denominator, ok, err := svc.loadFMPStatementTTMEPS(context.Background(), "avgo", time.Date(2026, 5, 3, 0, 0, 0, 0, time.UTC), knownAt)
+	if err != nil {
+		t.Fatalf("loadFMPStatementTTMEPS returned error: %v", err)
+	}
+	if !ok || denominator != 10 {
+		t.Fatalf("loadFMPStatementTTMEPS = (%v, %v), want (10, true)", denominator, ok)
+	}
+	if !strings.Contains(conn.queryText, "accepted_date <= parseDateTimeBestEffort({known_at:String}, 'UTC')") {
+		t.Fatalf("expected accepted_date known_at cutoff in query, got: %s", conn.queryText)
+	}
+}
+
+func TestLoadFMPStatementBookValuePerShareConstrainsAcceptedDateByKnownAt(t *testing.T) {
+	rows := &fakeForexRows{data: [][]any{{100.0, 250.0, 0.0, 0.0, 0.0}}}
+	conn := &fakeForexConn{rows: rows}
+	svc := NewFundamentalsService(chrepo.NewRepo(conn))
+	knownAt := time.Date(2026, 6, 3, 20, 21, 35, 0, time.UTC)
+
+	denominator, ok, err := svc.loadFMPStatementBookValuePerShare(context.Background(), "avgo", time.Date(2026, 5, 3, 0, 0, 0, 0, time.UTC), knownAt)
+	if err != nil {
+		t.Fatalf("loadFMPStatementBookValuePerShare returned error: %v", err)
+	}
+	if !ok || denominator != 2.5 {
+		t.Fatalf("loadFMPStatementBookValuePerShare = (%v, %v), want (2.5, true)", denominator, ok)
+	}
+	if strings.Count(conn.queryText, "accepted_date <= parseDateTimeBestEffort({known_at:String}, 'UTC')") != 2 {
+		t.Fatalf("expected accepted_date known_at cutoff in both PB CTEs, got: %s", conn.queryText)
+	}
+}
+
 func TestSplitFundamentalFactorSelectionKeepsBasePE(t *testing.T) {
 	selection := splitFundamentalFactorSelection([]string{"pe", "pe10_live", "pb"})
 	if len(selection.base) != 2 || selection.base[0] != "pe" || selection.base[1] != "pb" {
