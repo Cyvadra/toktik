@@ -19,9 +19,14 @@ import (
 
 // HTMLMeta carries extra presentation metadata for a generated backtest report.
 type HTMLMeta struct {
-	Asset       string
-	Interval    string
-	GeneratedAt time.Time
+	Asset               string
+	Interval            string
+	GeneratedAt         time.Time
+	ChartMarket         string
+	ChartSymbol         string
+	ChartInterval       string
+	ChartSeriesPrefix   string
+	ChartSelectionLabel string
 }
 
 type htmlReportView struct {
@@ -61,6 +66,9 @@ type htmlReportView struct {
 	UnderlyingPriceMin           string
 	UnderlyingPriceMax           string
 	UnderlyingChartNote          string
+	UnderlyingChartLabel         string
+	UnderlyingChartSource        string
+	UnderlyingChartOverride      bool
 	UnderlyingVolumeLabel        string
 	UnderlyingCandleData         template.JS
 	UnderlyingVolumeData         template.JS
@@ -98,6 +106,8 @@ type htmlReportView struct {
 	ActiveTimeData               template.JS
 	EquityAnalysis               equityAnalysisView
 	TradeOverview                tradeOverviewView
+	MarketMix                    marketMixView
+	SecurityMix                  []securityMixRowView
 	SpreadSummary                *spreadSummaryView
 	SpreadGroups                 []spreadGroupView
 	TopDrawdownGroups            []spreadGroupDrawdownView
@@ -136,6 +146,24 @@ type tradeOverviewView struct {
 	NetPnL               string
 	AvgPnLPerRoundTrip   string
 	AvgCommissionPerFill string
+}
+
+type marketMixView struct {
+	SecurityCount       string
+	MarketCount         string
+	OptionLegCount      string
+	RegularTradeCount   string
+	HasOptions          bool
+	HasRegularTrades    bool
+	HasMixedInstruments bool
+	Description         string
+}
+
+type securityMixRowView struct {
+	Security string
+	Trades   string
+	Notional string
+	NetCash  string
 }
 
 type equityAnalysisView struct {
@@ -381,6 +409,14 @@ type spreadMetricResolver struct {
 type underlyingPriceResolver struct {
 	timestamps []time.Time
 	series     map[string][]float64
+	source     chartSeriesSource
+}
+
+type chartSeriesSource struct {
+	Prefix     string
+	Label      string
+	SourceText string
+	Override   bool
 }
 
 var (
@@ -629,6 +665,7 @@ func buildHTMLView(result *backtest.Result, meta HTMLMeta) htmlReportView {
 	if meta.GeneratedAt.IsZero() {
 		meta.GeneratedAt = time.Now()
 	}
+	chartSource := resolveChartSeriesSource(result, meta)
 
 	drawdown := drawdownSeries(result.EquityCurve)
 	displayIsDaily := hasSubDailyInterval(result.Timestamps)
@@ -774,9 +811,10 @@ func buildHTMLView(result *backtest.Result, meta HTMLMeta) htmlReportView {
 
 	view.TradeOverview = buildTradeOverviewView(result.TradeOverview, result.AccountUnit)
 	view.EquityAnalysis = buildEquityAnalysisView(result.EquityAnalysis, result.AccountUnit)
+	view.MarketMix, view.SecurityMix = buildMarketMixView(result, result.AccountUnit)
 	view.Trades = buildTradeRows(result.Trades, result.AccountUnit)
 	metricResolver := newSpreadMetricResolver(result)
-	priceResolver := newUnderlyingPriceResolver(result)
+	priceResolver := newUnderlyingPriceResolver(result, chartSource)
 	view.Spreads = buildSpreadRows(result.SpreadPositions, result.AccountUnit, metricResolver, priceResolver)
 	view.SpreadGroups, view.UngroupedSpreads = buildSpreadGroupViews(result.SpreadGroups, result.SpreadPositions, result.AccountUnit, metricResolver, priceResolver)
 	view.TopDrawdownGroups = buildTopSpreadGroupDrawdownViews(result.SpreadGroups, result.AccountUnit)
@@ -794,12 +832,15 @@ func buildHTMLView(result *backtest.Result, meta HTMLMeta) htmlReportView {
 		}
 	}
 
-	candles, candleFallback := buildUnderlyingCandles(result)
+	candles, candleFallback := buildUnderlyingCandles(result, chartSource)
 	if displayIsDaily {
 		candles = compressCandlesDailyEOD(candles)
 	}
 	if len(candles) > 0 {
 		view.HasUnderlyingChart = true
+		view.UnderlyingChartLabel = chartSource.Label
+		view.UnderlyingChartSource = chartSource.SourceText
+		view.UnderlyingChartOverride = chartSource.Override
 		view.UnderlyingCandleData = marshalJS(candles)
 		minUnderlying, maxUnderlying := candleRange(candles)
 		view.UnderlyingPriceMin = currency(minUnderlying)
@@ -809,7 +850,7 @@ func buildHTMLView(result *backtest.Result, meta HTMLMeta) htmlReportView {
 		}
 	}
 
-	volumePoints, volumeLabel := buildUnderlyingVolume(result)
+	volumePoints, volumeLabel := buildUnderlyingVolume(result, chartSource)
 	if displayIsDaily {
 		volumePoints = compressHistogramSeriesDaily(volumePoints, histogramAggregateSum)
 	}
@@ -959,6 +1000,118 @@ func buildTradeRows(trades []backtest.Trade, unit string) []tradeRowView {
 		})
 	}
 	return rows
+}
+
+func buildMarketMixView(result *backtest.Result, unit string) (marketMixView, []securityMixRowView) {
+	if result == nil {
+		return marketMixView{Description: "无交易标的记录。"}, nil
+	}
+	type aggregate struct {
+		trades   int
+		notional float64
+		netCash  float64
+	}
+	markets := make(map[string]struct{})
+	securities := make(map[string]*aggregate)
+	regularTrades := 0
+	optionLegs := 0
+
+	addMarket := func(market string) {
+		market = strings.TrimSpace(market)
+		if market != "" {
+			markets[market] = struct{}{}
+		}
+	}
+	securityKey := func(market, symbol, interval string) string {
+		parts := []string{strings.TrimSpace(market), strings.TrimSpace(symbol)}
+		if strings.TrimSpace(interval) != "" {
+			parts = append(parts, strings.TrimSpace(interval))
+		}
+		return strings.Join(parts, " / ")
+	}
+
+	for _, trade := range result.Trades {
+		regularTrades++
+		addMarket(trade.Security.Market)
+		key := securityKey(trade.Security.Market, trade.Security.Symbol, trade.Security.Interval)
+		if key == " / " || strings.TrimSpace(key) == "" {
+			key = "regular"
+		}
+		agg := securities[key]
+		if agg == nil {
+			agg = &aggregate{}
+			securities[key] = agg
+		}
+		agg.trades++
+		agg.notional += math.Abs(trade.Qty * trade.FillPrice)
+		agg.netCash += trade.NetAmount()
+	}
+	for _, spread := range result.SpreadPositions {
+		for _, leg := range spread.Legs {
+			optionLegs++
+			key := strings.TrimSpace(leg.Symbol)
+			if key == "" {
+				key = fmt.Sprintf("option spread #%d", spread.ID)
+			}
+			agg := securities[key]
+			if agg == nil {
+				agg = &aggregate{}
+				securities[key] = agg
+			}
+			agg.trades++
+			agg.notional += math.Abs(leg.Qty * leg.EntryPrice)
+			if leg.Closed {
+				agg.netCash += leg.RealizedPnL
+			}
+		}
+	}
+
+	keys := make([]string, 0, len(securities))
+	for key := range securities {
+		keys = append(keys, key)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		left := securities[keys[i]]
+		right := securities[keys[j]]
+		if left.trades != right.trades {
+			return left.trades > right.trades
+		}
+		return keys[i] < keys[j]
+	})
+	if len(keys) > 8 {
+		keys = keys[:8]
+	}
+	rows := make([]securityMixRowView, 0, len(keys))
+	for _, key := range keys {
+		agg := securities[key]
+		rows = append(rows, securityMixRowView{
+			Security: key,
+			Trades:   integer(agg.trades),
+			Notional: amount4(agg.notional, unit),
+			NetCash:  signedAmount(agg.netCash, unit),
+		})
+	}
+
+	view := marketMixView{
+		SecurityCount:       integer(len(securities)),
+		MarketCount:         integer(len(markets)),
+		OptionLegCount:      integer(optionLegs),
+		RegularTradeCount:   integer(regularTrades),
+		HasOptions:          optionLegs > 0,
+		HasRegularTrades:    regularTrades > 0,
+		HasMixedInstruments: optionLegs > 0 && regularTrades > 0,
+	}
+	switch {
+	case view.HasMixedInstruments:
+		view.Description = "本报告包含普通股票/现货成交与期权价差腿，价格图仅代表被声明的参考品种，收益与风险以组合权益为准。"
+	case view.HasOptions:
+		view.Description = "本报告主要由期权合约或价差生命周期构成，价格图用于显示所选底层参考品种。"
+	case view.HasRegularTrades:
+		view.Description = "本报告由普通标的成交构成；多品种策略的价格图仅显示所选参考品种。"
+	default:
+		view.Description = "本次运行未记录成交或期权腿，图表仅展示可用的行情与权益序列。"
+	}
+	return view, rows
 }
 
 func buildSpreadRows(spreads []backtest.SpreadPositionReport, unit string, metricResolver spreadMetricResolver, priceResolver underlyingPriceResolver) []spreadRowView {
@@ -1364,10 +1517,10 @@ func buildNotes(result *backtest.Result, candleFallback bool) []string {
 		notes = append(notes, "该报告使用了兼容性回退市场数据源。价格 bar 仍可使用，但部分辅助字段可能缺失或为重建值。")
 	}
 	if !reportHasUsableVolume(result) {
-		notes = append(notes, "本次运行没有可用的原生成交量序列。基于成交量的指标和悬停窗口中的成交量字段将显示为 n/a。")
+		notes = append(notes, "本次运行没有可用的原生成交量序列。基于成交量的指标和悬停窗口中的成交量字段将显示为 n/a；若使用报告图表覆盖，请确认覆盖源同时暴露 volume 或 tick_count。")
 	}
 	if candleFallback {
-		notes = append(notes, "由于导出结果中缺少完整 OHLC 序列，标的 K 线已根据收盘价数据重建。")
+		notes = append(notes, "由于导出结果中缺少完整 OHLC 序列，参考价格图已根据收盘价数据重建。")
 	}
 	return notes
 }
@@ -1410,17 +1563,81 @@ func seriesHasFiniteValue(values []float64) bool {
 	return false
 }
 
-func buildUnderlyingCandles(result *backtest.Result) ([]chartCandlePoint, bool) {
+func resolveChartSeriesSource(result *backtest.Result, meta HTMLMeta) chartSeriesSource {
+	defaultLabel := strings.TrimSpace(meta.Asset)
+	if defaultLabel == "" && result != nil {
+		defaultLabel = strings.TrimSpace(result.UnderlyingUnit)
+	}
+	if defaultLabel == "" {
+		defaultLabel = "primary"
+	}
+	if strings.TrimSpace(meta.Interval) != "" {
+		defaultLabel = defaultLabel + " / " + strings.TrimSpace(meta.Interval)
+	}
+
+	source := chartSeriesSource{Label: defaultLabel, SourceText: "primary OHLC series"}
+	if result == nil || len(result.Series) == 0 {
+		return source
+	}
+	prefix := normalizeSeriesPrefix(meta.ChartSeriesPrefix)
+	if prefix == "" {
+		return source
+	}
+	if !seriesHasFiniteValue(seriesBySource(result.Series, prefix, "close")) {
+		source.SourceText = fmt.Sprintf("primary OHLC series; requested chart source %q was not available", prefix)
+		return source
+	}
+	label := strings.TrimSpace(meta.ChartSelectionLabel)
+	if label == "" {
+		label = inferChartSourceLabel(prefix)
+	}
+	return chartSeriesSource{
+		Prefix:     prefix,
+		Label:      fallbackText(label, prefix),
+		SourceText: prefix,
+		Override:   true,
+	}
+}
+
+func normalizeSeriesPrefix(prefix string) string {
+	return strings.Trim(strings.TrimSpace(prefix), ".")
+}
+
+func inferChartSourceLabel(prefix string) string {
+	trimmed := strings.TrimSpace(prefix)
+	if strings.HasPrefix(trimmed, "request.security.") {
+		key := strings.TrimPrefix(trimmed, "request.security.")
+		parts := strings.Split(key, "|")
+		if len(parts) == 3 {
+			return fmt.Sprintf("%s / %s / %s", parts[1], parts[0], parts[2])
+		}
+	}
+	return trimmed
+}
+
+func seriesBySource(series map[string][]float64, prefix, field string) []float64 {
+	if len(series) == 0 {
+		return nil
+	}
+	if prefix != "" {
+		if values := series[prefix+"."+field]; len(values) > 0 {
+			return values
+		}
+	}
+	return series[field]
+}
+
+func buildUnderlyingCandles(result *backtest.Result, source chartSeriesSource) ([]chartCandlePoint, bool) {
 	if result == nil || len(result.Timestamps) == 0 || result.Series == nil {
 		return nil, false
 	}
-	closeSeries := result.Series["close"]
+	closeSeries := seriesBySource(result.Series, source.Prefix, "close")
 	if len(closeSeries) == 0 {
 		return nil, false
 	}
-	openSeries := result.Series["open"]
-	highSeries := result.Series["high"]
-	lowSeries := result.Series["low"]
+	openSeries := seriesBySource(result.Series, source.Prefix, "open")
+	highSeries := seriesBySource(result.Series, source.Prefix, "high")
+	lowSeries := seriesBySource(result.Series, source.Prefix, "low")
 	n := minInt(len(result.Timestamps), len(closeSeries))
 	if n == 0 {
 		return nil, false
@@ -1471,7 +1688,7 @@ func buildUnderlyingCandles(result *backtest.Result) ([]chartCandlePoint, bool) 
 	return candles, usedFallback
 }
 
-func buildUnderlyingVolume(result *backtest.Result) ([]chartHistogramPoint, string) {
+func buildUnderlyingVolume(result *backtest.Result, source chartSeriesSource) ([]chartHistogramPoint, string) {
 	if result == nil || len(result.Timestamps) == 0 || result.Series == nil {
 		return nil, ""
 	}
@@ -1479,22 +1696,22 @@ func buildUnderlyingVolume(result *backtest.Result) ([]chartHistogramPoint, stri
 	seriesName := ""
 	label := ""
 	switch {
-	case seriesHasFiniteValue(result.Series["volume"]):
+	case seriesHasFiniteValue(seriesBySource(result.Series, source.Prefix, "volume")):
 		seriesName = "volume"
 		label = "成交量"
-	case seriesHasFiniteValue(result.Series["tick_count"]):
+	case seriesHasFiniteValue(seriesBySource(result.Series, source.Prefix, "tick_count")):
 		seriesName = "tick_count"
 		label = "成交笔数"
-	case seriesHasFiniteValue(result.Series["vol_norm"]):
+	case seriesHasFiniteValue(seriesBySource(result.Series, source.Prefix, "vol_norm")):
 		seriesName = "vol_norm"
 		label = "成交量"
 	default:
 		return nil, ""
 	}
 
-	values := result.Series[seriesName]
-	openSeries := result.Series["open"]
-	closeSeries := result.Series["close"]
+	values := seriesBySource(result.Series, source.Prefix, seriesName)
+	openSeries := seriesBySource(result.Series, source.Prefix, "open")
+	closeSeries := seriesBySource(result.Series, source.Prefix, "close")
 	n := minInt(len(result.Timestamps), len(values))
 	if n == 0 {
 		return nil, ""
@@ -1573,13 +1790,14 @@ func newSpreadMetricResolver(result *backtest.Result) spreadMetricResolver {
 	}
 }
 
-func newUnderlyingPriceResolver(result *backtest.Result) underlyingPriceResolver {
+func newUnderlyingPriceResolver(result *backtest.Result, source chartSeriesSource) underlyingPriceResolver {
 	if result == nil || len(result.Timestamps) == 0 || len(result.Series) == 0 {
 		return underlyingPriceResolver{}
 	}
 	return underlyingPriceResolver{
 		timestamps: result.Timestamps,
 		series:     result.Series,
+		source:     source,
 	}
 }
 
@@ -1592,7 +1810,7 @@ func (resolver underlyingPriceResolver) valueAt(eventTime time.Time) string {
 		return ""
 	}
 	for _, key := range []string{"close", "open", "high", "low"} {
-		values := resolver.series[key]
+		values := seriesBySource(resolver.series, resolver.source.Prefix, key)
 		if index >= len(values) {
 			continue
 		}
@@ -3331,6 +3549,31 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
 	</div>
 
 	<div class="section">
+	  <div class="flex flex-wrap items-start justify-between gap-4 mb-4">
+		<div>
+		  <h2 class="!mb-1">交易范围</h2>
+		  <p class="text-xs text-slate-400">{{ .MarketMix.Description }}</p>
+		</div>
+		<div class="grid grid-cols-2 gap-2 sm:grid-cols-4 text-xs">
+		  <div class="rounded-md border border-white/10 bg-white/[0.03] px-3 py-2"><div class="text-slate-500">标的/合约</div><div class="mt-1 mono text-slate-100">{{ .MarketMix.SecurityCount }}</div></div>
+		  <div class="rounded-md border border-white/10 bg-white/[0.03] px-3 py-2"><div class="text-slate-500">市场</div><div class="mt-1 mono text-slate-100">{{ .MarketMix.MarketCount }}</div></div>
+		  <div class="rounded-md border border-white/10 bg-white/[0.03] px-3 py-2"><div class="text-slate-500">普通成交</div><div class="mt-1 mono text-slate-100">{{ .MarketMix.RegularTradeCount }}</div></div>
+		  <div class="rounded-md border border-white/10 bg-white/[0.03] px-3 py-2"><div class="text-slate-500">期权腿</div><div class="mt-1 mono text-slate-100">{{ .MarketMix.OptionLegCount }}</div></div>
+		</div>
+	  </div>
+	  {{ if .SecurityMix }}
+	  <div class="overflow-x-auto border border-white/8 rounded-lg">
+		<table class="w-full text-sm">
+		  <thead><tr class="text-left text-slate-500 text-xs uppercase border-b border-white/5"><th class="px-4 py-2 font-medium">标的 / 合约</th><th class="px-4 py-2 font-medium">事件数</th><th class="px-4 py-2 font-medium">名义金额</th><th class="px-4 py-2 font-medium">净现金 / 已实现</th></tr></thead>
+		  <tbody>
+			{{ range .SecurityMix }}<tr class="border-b border-white/[0.03]"><td class="px-4 py-2 mono text-slate-200">{{ .Security }}</td><td class="px-4 py-2 mono text-slate-300">{{ .Trades }}</td><td class="px-4 py-2 mono text-slate-300">{{ .Notional }}</td><td class="px-4 py-2 mono text-slate-200">{{ .NetCash }}</td></tr>{{ end }}
+		  </tbody>
+		</table>
+	  </div>
+	  {{ end }}
+	</div>
+
+	<div class="section">
 	  <div class="flex flex-wrap items-center justify-between gap-3">
 		<div>
 		  <h2 class="!mb-1">图表时间轴</h2>
@@ -3458,7 +3701,10 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
     {{ if .HasUnderlyingChart }}
     <div class="section">
       <div class="flex items-center justify-between mb-3">
-				<h2 class="!mb-0">标的价格</h2>
+				<div>
+				  <h2 class="!mb-0">参考价格图</h2>
+				  <p class="mt-1 text-xs text-slate-400">显示 {{ .UnderlyingChartLabel }} · 数据源 {{ .UnderlyingChartSource }}{{ if .UnderlyingChartOverride }} · 用户显式覆盖{{ end }}</p>
+				</div>
         <div class="flex gap-2 text-xs mono">
 					<span class="text-up">买入</span>
 					<span class="text-down">卖出</span>

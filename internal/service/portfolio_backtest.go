@@ -416,7 +416,7 @@ func (s *PortfolioBacktestService) runBacktest(ctx context.Context, run *portfol
 	// traversal / arbitrary file read vector. API runs are pinned to
 	// runDir; the CLI binary still honours its own --output-html flag.
 	htmlBase := ""
-	htmlMeta := report.HTMLMeta{Asset: plan.asset, Interval: plan.interval, GeneratedAt: s.now()}
+	htmlMeta := buildBacktestReportHTMLMeta(req, plan, s.now())
 	resultSet := make([]dto.StrategyBacktestSummary, 0, len(plan.resolved))
 	overviewItems := make([]report.OverviewItem, 0, len(plan.resolved))
 
@@ -553,6 +553,14 @@ func validateStrategyBacktestRunRequest(req dto.StrategyBacktestRunRequest) erro
 	if req.SlippagePct > 1 {
 		return dto.NewValidationError("slippage_pct must be <= 1")
 	}
+	if strings.TrimSpace(req.ReportChartPrefix) != "" {
+		if strings.TrimSpace(req.ReportChartMarket) != "" || strings.TrimSpace(req.ReportChartSymbol) != "" || strings.TrimSpace(req.ReportChartInterval) != "" {
+			return dto.NewValidationError("report_chart_prefix cannot be combined with report_chart_market, report_chart_symbol, or report_chart_interval")
+		}
+	}
+	if strings.TrimSpace(req.ReportChartSymbol) == "" && (strings.TrimSpace(req.ReportChartMarket) != "" || strings.TrimSpace(req.ReportChartInterval) != "") {
+		return dto.NewValidationError("report_chart_symbol is required when report_chart_market or report_chart_interval is provided")
+	}
 	if req.ShortDeltaMin < 0 || req.ShortDeltaMax < 0 || req.LongDeltaMin < 0 || req.LongDeltaMax < 0 {
 		return dto.NewValidationError("delta bounds must be >= 0")
 	}
@@ -635,6 +643,38 @@ func buildStrategyBacktestSummary(result *backtest.Result, htmlPath string) dto.
 		}
 	}
 	return summary
+}
+
+func buildBacktestReportHTMLMeta(req dto.StrategyBacktestRunRequest, plan *resolvedBacktestPlan, generatedAt time.Time) report.HTMLMeta {
+	meta := report.HTMLMeta{GeneratedAt: generatedAt}
+	if plan != nil {
+		meta.Asset = plan.asset
+		meta.Interval = plan.interval
+	}
+	meta.ChartSeriesPrefix = strings.TrimSpace(req.ReportChartPrefix)
+	meta.ChartMarket = strings.TrimSpace(req.ReportChartMarket)
+	meta.ChartSymbol = strings.ToUpper(strings.TrimSpace(req.ReportChartSymbol))
+	meta.ChartInterval = strings.TrimSpace(req.ReportChartInterval)
+	if meta.ChartInterval == "" {
+		meta.ChartInterval = meta.Interval
+	}
+	if meta.ChartMarket == "" && meta.ChartSymbol != "" && plan != nil {
+		meta.ChartMarket = plan.primaryMarket.underlyingFeed
+	}
+	if meta.ChartMarket != "" && meta.ChartSymbol != "" && meta.ChartInterval != "" {
+		meta.ChartSeriesPrefix = strings.Join([]string{"request.security", meta.ChartMarket + "|" + meta.ChartSymbol + "|" + meta.ChartInterval}, ".")
+	}
+	if meta.ChartSelectionLabel == "" && meta.ChartSymbol != "" {
+		parts := []string{meta.ChartSymbol}
+		if meta.ChartMarket != "" {
+			parts = append(parts, meta.ChartMarket)
+		}
+		if meta.ChartInterval != "" {
+			parts = append(parts, meta.ChartInterval)
+		}
+		meta.ChartSelectionLabel = strings.Join(parts, " / ")
+	}
+	return meta
 }
 
 func parsePrimaryMarket(raw string) (marketSpec, error) {

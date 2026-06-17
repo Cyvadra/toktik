@@ -165,6 +165,113 @@ func TestBuildHTMLViewIncludesOverlayColumns(t *testing.T) {
 	}
 }
 
+func TestBuildHTMLViewUsesExplicitRequestSecurityChartSource(t *testing.T) {
+	result := &backtest.Result{
+		StrategyName:   "multi-symbol",
+		StartTime:      time.Date(2024, time.January, 1, 0, 0, 0, 0, time.UTC),
+		EndTime:        time.Date(2024, time.January, 1, 2, 0, 0, 0, time.UTC),
+		InitialCapital: 100000,
+		FinalEquity:    101000,
+		EquityCurve:    []float64{100000, 100500, 101000},
+		Timestamps: []time.Time{
+			time.Date(2024, time.January, 1, 0, 0, 0, 0, time.UTC),
+			time.Date(2024, time.January, 1, 1, 0, 0, 0, time.UTC),
+			time.Date(2024, time.January, 1, 2, 0, 0, 0, time.UTC),
+		},
+		Series: map[string][]float64{
+			"open":  {10, 11, 12},
+			"high":  {11, 12, 13},
+			"low":   {9, 10, 11},
+			"close": {10.5, 11.5, 12.5},
+			"request.security.us-underlying|MSFT|1h.open":   {300, 301, 302},
+			"request.security.us-underlying|MSFT|1h.high":   {305, 306, 307},
+			"request.security.us-underlying|MSFT|1h.low":    {299, 300, 301},
+			"request.security.us-underlying|MSFT|1h.close":  {304, 305, 306},
+			"request.security.us-underlying|MSFT|1h.volume": {1000, 1200, 1100},
+		},
+	}
+
+	view := buildHTMLView(result, HTMLMeta{
+		Asset:             "AAPL",
+		Interval:          "1h",
+		ChartSeriesPrefix: "request.security.us-underlying|MSFT|1h",
+	})
+	if !view.UnderlyingChartOverride {
+		t.Fatal("view.UnderlyingChartOverride = false, want true")
+	}
+	if view.UnderlyingChartLabel != "MSFT / us-underlying / 1h" {
+		t.Fatalf("view.UnderlyingChartLabel = %q", view.UnderlyingChartLabel)
+	}
+
+	var candles []chartCandlePoint
+	if err := json.Unmarshal([]byte(view.UnderlyingCandleData), &candles); err != nil {
+		t.Fatalf("json.Unmarshal(UnderlyingCandleData) error = %v", err)
+	}
+	if len(candles) != 1 || candles[0].Open != 300 || candles[0].High != 307 || candles[0].Low != 299 || candles[0].Close != 306 {
+		t.Fatalf("unexpected override candles: %#v", candles)
+	}
+
+	var volume []chartHistogramPoint
+	if err := json.Unmarshal([]byte(view.UnderlyingVolumeData), &volume); err != nil {
+		t.Fatalf("json.Unmarshal(UnderlyingVolumeData) error = %v", err)
+	}
+	if len(volume) != 1 || volume[0].Value != 3300 {
+		t.Fatalf("unexpected override volume: %#v", volume)
+	}
+}
+
+func TestBuildHTMLViewSummarizesMixedRegularAndOptionActivity(t *testing.T) {
+	closeTime := time.Date(2024, time.January, 10, 0, 0, 0, 0, time.UTC)
+	result := &backtest.Result{
+		StrategyName:   "mixed",
+		StartTime:      time.Date(2024, time.January, 1, 0, 0, 0, 0, time.UTC),
+		EndTime:        closeTime,
+		InitialCapital: 100000,
+		FinalEquity:    102000,
+		AccountUnit:    "USD",
+		EquityCurve:    []float64{100000, 102000},
+		Timestamps: []time.Time{
+			time.Date(2024, time.January, 1, 0, 0, 0, 0, time.UTC),
+			closeTime,
+		},
+		Series: map[string][]float64{"close": {100, 102}},
+		Trades: []backtest.Trade{{
+			Security:  backtest.SecurityRef{Market: "us-underlying", Symbol: "AAPL", Interval: "1d"},
+			Side:      backtest.Buy,
+			Qty:       10,
+			FillPrice: 100,
+		}},
+		SpreadPositions: []backtest.SpreadPositionReport{{
+			ID:          1,
+			Status:      "closed",
+			OpenTime:    time.Date(2024, time.January, 2, 0, 0, 0, 0, time.UTC),
+			CloseTime:   &closeTime,
+			RealizedPnL: 250,
+			Legs: []backtest.SpreadLegReport{{
+				Symbol:      "AAPL240119P00100000",
+				Side:        "sell",
+				Type:        backtest.Put,
+				Qty:         1,
+				EntryPrice:  2.5,
+				EntryTime:   time.Date(2024, time.January, 2, 0, 0, 0, 0, time.UTC),
+				Closed:      true,
+				RealizedPnL: 250,
+			}},
+		}},
+	}
+
+	view := buildHTMLView(result, HTMLMeta{Asset: "AAPL", Interval: "1d"})
+	if !view.MarketMix.HasMixedInstruments {
+		t.Fatalf("view.MarketMix.HasMixedInstruments = false, summary=%#v", view.MarketMix)
+	}
+	if view.MarketMix.RegularTradeCount != "1" || view.MarketMix.OptionLegCount != "1" {
+		t.Fatalf("unexpected mix counts: %#v", view.MarketMix)
+	}
+	if len(view.SecurityMix) != 2 {
+		t.Fatalf("len(view.SecurityMix) = %d, want 2", len(view.SecurityMix))
+	}
+}
+
 func TestBuildHTMLViewIncludesCalmarRatio(t *testing.T) {
 	result := &backtest.Result{
 		StrategyName:         "calmar-view",

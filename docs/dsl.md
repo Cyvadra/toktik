@@ -7,7 +7,7 @@
 - Source Swagger: `docs/swagger.json`
 - API title: `Toktik Options Platform API`
 - API version: `1.0`
-- Generated at: `2026-06-17T07:04:39Z`
+- Generated at: `2026-06-17T07:38:00Z`
 
 ## Scope
 
@@ -178,13 +178,16 @@ plot(iv, title="IV", precision=4)
 
 - `alpha.rank`、`alpha.zscore`、`alpha.decay_linear`、`alpha.ts_rank`、`alpha.ts_corr`、`alpha.ts_delta`、`alpha.ts_mean`、`alpha.log_return` 等時序因子函數
 - `portfolio.symbols()`、`portfolio.weights()`、`portfolio.items()`、`portfolio.weight(symbol, defval)`
+- `portfolio.*` 讀取的是回測請求中的 `portfolio` / `symbols` / `weights` 配置。這些符號會用於策略配置與期權鏈預載，但一般股票訂單函數（`strategy.entry`、`buy/sell`、`order.*`）目前仍下在 primary asset；若要交易不同 underlying 的期權，請使用 `options.chain(market, symbol)` 搭配 `spread.open_on(...)`。
+- `request.security(...)`、`request.factor(...)`、`request.fundamental(...)` 的 market/symbol/interval/field 參數需使用字面量，validate 階段才能預先註冊依賴；動態 `request.security("us", portfolio.symbol(0), ...)` 不會自動載入額外資料。
 - `config.get(name, defval)`、`config.string(name, defval)`、`ref.set/get/has/clear/inc/dec`
 
 ### 期權與價差
 
 - `options.chain()`、`options.chain(market, symbol)`、`options.calls`、`options.puts`
+- `options.chain(market, symbol)` 可讀取不同 underlying 的期權鏈。若 market 或 symbol 是動態字串，請在回測請求中提供 `symbols` 或 `portfolio`，讓 API 能預載期權鏈；否則 validate 會回報需要可枚舉的 symbols / portfolio。
 - `options.expiry_range`、`options.delta_range`、`options.min_premium`、`options.strike_range`、`options.sort_by_delta`
-- `contract.symbol`、`contract.underlying`、`contract.strike`、`contract.expiry`、`contract.dte`、`contract.delta`、`contract.bid`、`contract.ask`、`contract.mark`
+- `contract.symbol`、`contract.underlying`、`contract.strike`、`contract.expiry`、`contract.dte`、`contract.delta`、`contract.bid`、`contract.ask`、`contract.mark`、`contract.iv`
 - `leg.buy`、`leg.sell`、`spread.open_on`、`spread.close`、`spread.pnl`、`spread.leg_contract`、`spread.count`
 - `group.open`、`group.close`、`group.add_spread`、`schedule.close_spread`、`schedule.close_group`
 
@@ -546,6 +549,24 @@ curl -sS -X POST "http://127.0.0.1:9010/api/v1/backtests/validate" \
 }
 ```
 
+### 自訂 DSL：多 underlying 期權鏈與 IV/HV 濾網
+
+以下範例展示同一個 DSL 腳本讀取 AAPL / MSFT 兩條期權鏈，各自用 `contract.iv` 讀取候選合約 IV，並用主標的的 `volatility` factor 取得日頻 HV/IV rank 作為風險濾網。注意：普通股票訂單仍作用於 primary asset；此範例交易的是不同 underlying 的 option spread。
+
+```json
+{
+  "market": "us",
+  "asset": "SPY",
+  "symbols": ["AAPL", "MSFT"],
+  "weights": [0.5, 0.5],
+  "interval": "1d",
+  "from": "2024-01-01",
+  "to": "2024-12-31",
+  "capital": 100000,
+  "dsl": "//@version=6\nstrategy(\"Multi Underlying Option IV\")\nprimary_hv20 = request.factor(\"volatility\", \"1d\", \"hv20\")\nprimary_iv_rank = request.factor(\"volatility\", \"1d\", \"iv_rank\")\nselect_call(string symbol) =>\n    chain = options.chain(\"us\", symbol)\n    calls = options.delta_range(options.expiry_range(options.calls(chain), 20, 60), 0.25, 0.45)\n    options.best_spread(calls)\naapl_call = select_call(\"AAPL\")\nmsft_call = select_call(\"MSFT\")\naapl_iv = contract.iv(aapl_call)\nmsft_iv = contract.iv(msft_call)\nplot(aapl_iv, title=\"AAPL Call IV\", precision=4)\nplot(msft_iv, title=\"MSFT Call IV\", precision=4)\nif bar_index > 20 and primary_iv_rank < 80 and not na(aapl_iv) and not na(primary_hv20)\n    spread.open_on(\"us\", \"AAPL\", [leg.buy(aapl_call, 1)], \"aapl-call\")"
+}
+```
+
 ### 查詢結果重點欄位
 
 完成後呼叫 `GET /api/v1/backtests/runs/{runID}`。常用欄位：
@@ -562,7 +583,11 @@ curl -sS -X POST "http://127.0.0.1:9010/api/v1/backtests/validate" \
 
 ### 限制與注意事項
 
-Toktik DSL 不是完整 TradingView Pine Script v6 實作；語法風格接近 Pine，但內建函數和交易模型以 Toktik 回測引擎為準。型別標註目前主要用於相容和可讀性，runtime 仍採動態值模型。期權、合約、spread、group 是 handle，應透過內建函數操作。`request.*` 和 `options.chain()` 若使用動態字串，分析器可能無法完整預先枚舉依賴。
+Toktik DSL 不是完整 TradingView Pine Script v6 實作；語法風格接近 Pine，但內建函數和交易模型以 Toktik 回測引擎為準。型別標註目前主要用於相容和可讀性，runtime 仍採動態值模型。期權、合約、spread、group 是 handle，應透過內建函數操作。
+
+目前普通股票/現貨交易指令只針對 primary asset 建倉與平倉；`portfolio` / `symbols` 主要用於策略配置與可枚舉的期權鏈預載。若要在同一策略中交易多個股票 underlying 的期權，請用 `options.chain(market, symbol)` 取得各 underlying 的合約，再用 `spread.open_on(market, underlying, legs, tag)` 或 `spread.open_in_group_on(...)` 建立期權部位。
+
+`request.security(...)`、`request.factor(...)`、`request.fundamental(...)` 目前依賴 validate 階段的靜態分析，因此參數應使用字面量。`request.factor("volatility", "1d", field)` 讀取目前回測主標的的 IV/HV 特徵；若需要同一腳本中讀取多個不同美股 symbol 的 HV，需要先擴展 symbol-bound volatility factor 或新增專用 DSL builtin。`contract.iv(contract)` 則可透過不同 `options.chain(market, symbol)` 讀取各 underlying 候選期權合約的 IV。
 
 ## 回測流程 API
 
@@ -637,6 +662,17 @@ curl -sS "http://127.0.0.1:9010/api/v1/backtests/runs/${run_id}" | jq
 curl -sS "http://127.0.0.1:9010/api/v1/backtests/runs/${run_id}/report" -o report.html
 curl -sS "http://127.0.0.1:9010/api/v1/backtests/runs/${run_id}/reports/overview" -o overview.html
 ```
+
+#### HTML 報告主圖品種覆蓋
+
+多品種 DSL、期權輪動、或股票與期權混合策略的交易範圍可能大於請求中的 `asset`。HTML 報告會把收益、回撤、成交與價差活動視為整個組合，但價格 K 線只作為「參考價格圖」。如需明確指定報告中顯示的 K 線品種，可在建立 run 時加入下列欄位：
+
+- `report_chart_symbol`: 要顯示在 HTML 主圖的品種，例如 `MSFT`。
+- `report_chart_market`: 可選；例如 `us-underlying`。省略時使用本次回測的主市場 underlying feed。
+- `report_chart_interval`: 可選；省略時使用 `interval`。
+- `report_chart_prefix`: 進階用法，直接指定已存在於結果 series 的前綴，例如 `request.security.us-underlying|MSFT|1d`。不可與前三個欄位混用。
+
+使用 `report_chart_symbol` 時，DSL 也需要透過 `request.security(report_chart_market, report_chart_symbol, report_chart_interval, "open/high/low/close")` 或等價邏輯讓這些欄位進入結果 series；否則報告會回退到 primary OHLC，並在圖表來源中標明回退原因。
 
 #### curl 範例：串流即時進度事件
 
