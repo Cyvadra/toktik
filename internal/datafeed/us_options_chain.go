@@ -22,6 +22,8 @@ var usOptionPrecomputedIntervals = map[string]string{
 	"1d":  "us_options_bar_1d",
 }
 
+const usOptionsChainChunkWindow = 31 * 24 * time.Hour
+
 // USOptionsChainProvider implements backtest.OptionsChainProvider for US options.
 // It loads chain snapshots for an underlying symbol into memory before replay.
 type USOptionsChainProvider struct {
@@ -148,17 +150,46 @@ WHERE underlying = {underlying:String}
   AND timestamp >= toDateTime({from:String}, 'UTC')
   AND timestamp < toDateTime({to:String}, 'UTC')`, chainView)
 
+	byTimestamp := make(map[int64][]backtest.OptionContract, numTimestamps)
+	var rowCount uint64
+
+	fromTime, err := time.ParseInLocation("2006-01-02 15:04:05", fromParam, time.UTC)
+	if err != nil {
+		return nil, 0, fmt.Errorf("parse US chain cache from time %q: %w", fromParam, err)
+	}
+	toTime, err := time.ParseInLocation("2006-01-02 15:04:05", toParam, time.UTC)
+	if err != nil {
+		return nil, 0, fmt.Errorf("parse US chain cache to time %q: %w", toParam, err)
+	}
+
+	for _, window := range splitTimeWindows(fromTime.UTC(), toTime.UTC(), usOptionsChainChunkWindow) {
+		chunkRows, err := loadUSOptionsChainCacheChunk(ctx, conn, query, underlying, window.start, window.end, resolution, byTimestamp)
+		rowCount += chunkRows
+		if err != nil {
+			return nil, 0, err
+		}
+	}
+	return byTimestamp, rowCount, nil
+}
+
+func loadUSOptionsChainCacheChunk(
+	ctx context.Context,
+	conn driver.Conn,
+	query, underlying string,
+	chunkStart, chunkEnd time.Time,
+	resolution time.Duration,
+	byTimestamp map[int64][]backtest.OptionContract,
+) (uint64, error) {
 	rows, err := conn.Query(ctx, query,
 		clickhouse.Named("underlying", underlying),
-		clickhouse.Named("from", fromParam),
-		clickhouse.Named("to", toParam),
+		clickhouse.Named("from", backtestTimeParam(chunkStart)),
+		clickhouse.Named("to", backtestTimeParam(chunkEnd)),
 	)
 	if err != nil {
-		return nil, 0, fmt.Errorf("load US options chain cache for %s: %w", underlying, err)
+		return 0, fmt.Errorf("load US options chain cache for %s [%s,%s): %w", underlying, backtestTimeParam(chunkStart), backtestTimeParam(chunkEnd), err)
 	}
 	defer rows.Close()
 
-	byTimestamp := make(map[int64][]backtest.OptionContract, numTimestamps)
 	var rowCount uint64
 
 	for rows.Next() {
@@ -183,14 +214,14 @@ WHERE underlying = {underlying:String}
 			&ts, &symbols, &types, &expiries, &strikes, &closes, &underCloses, &ivs,
 			&deltas, &gammas, &vegas, &thetas, &rhos, &volumes, &txs,
 		); err != nil {
-			return nil, 0, fmt.Errorf("scan US cached chain row: %w", err)
+			return 0, fmt.Errorf("scan US cached chain row: %w", err)
 		}
 
 		n := len(symbols)
 		if n == 0 || len(types) != n || len(expiries) != n || len(strikes) != n || len(closes) != n ||
 			len(underCloses) != n || len(ivs) != n || len(deltas) != n || len(gammas) != n ||
 			len(vegas) != n || len(thetas) != n || len(rhos) != n || len(volumes) != n || len(txs) != n {
-			return nil, 0, fmt.Errorf("invalid US cached chain row at %s: array lengths mismatch", ts.UTC().Format(time.RFC3339))
+			return 0, fmt.Errorf("invalid US cached chain row at %s: array lengths mismatch", ts.UTC().Format(time.RFC3339))
 		}
 
 		contracts := make([]backtest.OptionContract, 0, n)
@@ -205,9 +236,9 @@ WHERE underlying = {underlying:String}
 		rowCount++
 	}
 	if err := rows.Err(); err != nil {
-		return nil, 0, fmt.Errorf("iterate US cached chain rows for %s: %w", underlying, err)
+		return 0, fmt.Errorf("iterate US cached chain rows for %s [%s,%s): %w", underlying, backtestTimeParam(chunkStart), backtestTimeParam(chunkEnd), err)
 	}
-	return byTimestamp, rowCount, nil
+	return rowCount, nil
 }
 
 func loadUSOptionsChainFromBars(
@@ -243,17 +274,41 @@ WHERE underlying = {underlying:String}
   AND timestamp >= toDateTime({from:String}, 'UTC')
   AND timestamp < toDateTime({to:String}, 'UTC')`, tableName)
 
+	byTimestamp := make(map[int64][]backtest.OptionContract, numTimestamps)
+	fromTime, err := time.ParseInLocation("2006-01-02 15:04:05", fromParam, time.UTC)
+	if err != nil {
+		return nil, fmt.Errorf("parse US chain from time %q: %w", fromParam, err)
+	}
+	toTime, err := time.ParseInLocation("2006-01-02 15:04:05", toParam, time.UTC)
+	if err != nil {
+		return nil, fmt.Errorf("parse US chain to time %q: %w", toParam, err)
+	}
+	for _, window := range splitTimeWindows(fromTime.UTC(), toTime.UTC(), usOptionsChainChunkWindow) {
+		if err := loadUSOptionsChainBarsChunk(ctx, conn, query, underlying, window.start, window.end, resolution, byTimestamp); err != nil {
+			return nil, err
+		}
+	}
+	return byTimestamp, nil
+}
+
+func loadUSOptionsChainBarsChunk(
+	ctx context.Context,
+	conn driver.Conn,
+	query, underlying string,
+	chunkStart, chunkEnd time.Time,
+	resolution time.Duration,
+	byTimestamp map[int64][]backtest.OptionContract,
+) error {
 	rows, err := conn.Query(ctx, query,
 		clickhouse.Named("underlying", underlying),
-		clickhouse.Named("from", fromParam),
-		clickhouse.Named("to", toParam),
+		clickhouse.Named("from", backtestTimeParam(chunkStart)),
+		clickhouse.Named("to", backtestTimeParam(chunkEnd)),
 	)
 	if err != nil {
-		return nil, fmt.Errorf("load US options chain for %s: %w", underlying, err)
+		return fmt.Errorf("load US options chain for %s [%s,%s): %w", underlying, backtestTimeParam(chunkStart), backtestTimeParam(chunkEnd), err)
 	}
 	defer rows.Close()
 
-	byTimestamp := make(map[int64][]backtest.OptionContract, numTimestamps)
 	for rows.Next() {
 		var (
 			ts              time.Time
@@ -276,7 +331,7 @@ WHERE underlying = {underlying:String}
 			&ts, &symbol, &optionType, &expiration, &strike, &close, &underlyingClose, &iv,
 			&delta, &gamma, &vega, &theta, &rho, &volume, &transactions,
 		); err != nil {
-			return nil, fmt.Errorf("scan US chain row: %w", err)
+			return fmt.Errorf("scan US chain row: %w", err)
 		}
 
 		key := ts.UTC().Truncate(resolution).Unix()
@@ -286,9 +341,9 @@ WHERE underlying = {underlying:String}
 		))
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate US chain rows for %s: %w", underlying, err)
+		return fmt.Errorf("iterate US chain rows for %s [%s,%s): %w", underlying, backtestTimeParam(chunkStart), backtestTimeParam(chunkEnd), err)
 	}
-	return byTimestamp, nil
+	return nil
 }
 
 func resolveUSOptionTableName(interval string) (string, error) {

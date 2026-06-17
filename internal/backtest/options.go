@@ -157,6 +157,24 @@ func ChainLookupKey(market, underlying string) string {
 	return strings.ToLower(strings.TrimSpace(market)) + "|" + strings.ToUpper(strings.TrimSpace(underlying))
 }
 
+func chainMarketMatches(providerMarket, requestedMarket string) bool {
+	providerMarket = strings.ToLower(strings.TrimSpace(providerMarket))
+	requestedMarket = strings.ToLower(strings.TrimSpace(requestedMarket))
+	if requestedMarket == "" || providerMarket == requestedMarket {
+		return true
+	}
+	return isUSChainMarket(providerMarket) && isUSChainMarket(requestedMarket)
+}
+
+func isUSChainMarket(market string) bool {
+	switch strings.ToLower(strings.TrimSpace(market)) {
+	case "us", "us-stocks", "us-stock", "us-underlying", "stocks":
+		return true
+	default:
+		return false
+	}
+}
+
 // ContractLookupKey builds a stable key for contract snapshots inside a
 // specific underlying option chain.
 func ContractLookupKey(market, underlying, symbol string) string {
@@ -356,6 +374,74 @@ type OptionsChainLookupProvider interface {
 	AvailableContractsFor(t time.Time, market, underlying string) []OptionContract
 }
 
+// OptionsChainSnapshot stores a compact per-underlying, per-timestamp artifact
+// that can be replayed without retaining the raw chain loader/provider.
+type OptionsChainSnapshot struct {
+	Market      string
+	Underlying  string
+	ByTimestamp map[int64][]OptionContract
+}
+
+// NewOptionsChainSnapshot copies all contracts served by provider for the given
+// timestamps. The resulting artifact is independent from provider ownership.
+func NewOptionsChainSnapshot(provider OptionsChainProvider, market, underlying string, timestamps []time.Time) *OptionsChainSnapshot {
+	snapshot := &OptionsChainSnapshot{
+		Market:      strings.TrimSpace(market),
+		Underlying:  strings.ToUpper(strings.TrimSpace(underlying)),
+		ByTimestamp: make(map[int64][]OptionContract, len(timestamps)),
+	}
+	for _, ts := range timestamps {
+		key := ts.UTC().Unix()
+		contracts := AvailableContractsFor(provider, ts, market, underlying)
+		if len(contracts) == 0 {
+			continue
+		}
+		cloned := make([]OptionContract, len(contracts))
+		copy(cloned, contracts)
+		snapshot.ByTimestamp[key] = cloned
+	}
+	return snapshot
+}
+
+// SnapshotOptionsChainProvider serves precomputed option chain snapshots. It is
+// intentionally lightweight and does not keep any raw data loader state alive.
+type SnapshotOptionsChainProvider struct {
+	market      string
+	underlying  string
+	byTimestamp map[int64][]OptionContract
+}
+
+func NewSnapshotOptionsChainProvider(snapshot *OptionsChainSnapshot) *SnapshotOptionsChainProvider {
+	if snapshot == nil {
+		return &SnapshotOptionsChainProvider{}
+	}
+	return &SnapshotOptionsChainProvider{
+		market:      strings.TrimSpace(snapshot.Market),
+		underlying:  strings.ToUpper(strings.TrimSpace(snapshot.Underlying)),
+		byTimestamp: snapshot.ByTimestamp,
+	}
+}
+
+func (p *SnapshotOptionsChainProvider) AvailableContracts(t time.Time) []OptionContract {
+	if p == nil || p.byTimestamp == nil {
+		return nil
+	}
+	return p.byTimestamp[t.UTC().Unix()]
+}
+
+func (p *SnapshotOptionsChainProvider) AvailableContractsFor(t time.Time, market, underlying string) []OptionContract {
+	if p == nil {
+		return nil
+	}
+	if !chainMarketMatches(p.market, market) {
+		return nil
+	}
+	if strings.TrimSpace(underlying) != "" && !strings.EqualFold(p.underlying, underlying) {
+		return nil
+	}
+	return p.AvailableContracts(t)
+}
+
 // MultiOptionsChainProvider aggregates multiple underlying-scoped providers
 // into a single replay-facing provider.
 type MultiOptionsChainProvider struct {
@@ -390,11 +476,19 @@ func (p *MultiOptionsChainProvider) AvailableContractsFor(t time.Time, market, u
 	if p == nil || len(p.providers) == 0 {
 		return nil
 	}
-	provider, ok := p.providers[ChainLookupKey(market, underlying)]
-	if !ok {
-		return nil
+	if provider, ok := p.providers[ChainLookupKey(market, underlying)]; ok {
+		return AvailableContractsFor(provider, t, market, underlying)
 	}
-	return AvailableContractsFor(provider, t, market, underlying)
+	if isUSChainMarket(market) {
+		for providerKey, provider := range p.providers {
+			parts := strings.SplitN(providerKey, "|", 2)
+			if len(parts) != 2 || !isUSChainMarket(parts[0]) || !strings.EqualFold(parts[1], underlying) {
+				continue
+			}
+			return AvailableContractsFor(provider, t, market, underlying)
+		}
+	}
+	return nil
 }
 
 // AvailableContractsFor returns the contracts for the requested market and
@@ -418,7 +512,7 @@ func AvailableContractsFor(provider OptionsChainProvider, t time.Time, market, u
 		if contract.ChainMarket() != "" || contract.ChainUnderlying() != "" {
 			hasScopedContracts = true
 		}
-		if strings.TrimSpace(market) != "" && !strings.EqualFold(contract.ChainMarket(), market) {
+		if strings.TrimSpace(market) != "" && !chainMarketMatches(contract.ChainMarket(), market) {
 			continue
 		}
 		if strings.TrimSpace(underlying) != "" && !strings.EqualFold(contract.ChainUnderlying(), underlying) {

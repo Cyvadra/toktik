@@ -35,6 +35,7 @@ const (
 	marketForex             = "forex"
 	cryptoUnderlyingFeed    = "crypto-underlying"
 	usUnderlyingFeed        = "us-underlying"
+	usStocksFeed            = "us-stocks"
 	forexUnderlyingFeed     = "forex-underlying"
 	defaultChainProviderTTL = 55 * time.Minute
 	maxChainProviderEntries = 8
@@ -202,7 +203,41 @@ func (s *PortfolioBacktestService) loadOptionsChainProvider(ctx context.Context,
 	})
 }
 
-func (s *PortfolioBacktestService) loadOptionChainUniverse(ctx context.Context, interval string, from, to time.Time, targets []optionChainTarget) (backtest.OptionsChainProvider, error) {
+func (s *PortfolioBacktestService) loadOptionChainUniverse(ctx context.Context, run *portfolioBacktestRun, interval string, from, to time.Time, targets []optionChainTarget) (backtest.OptionsChainProvider, error) {
+	if len(targets) == 0 {
+		return nil, nil
+	}
+	if s.repo == nil || s.repo.Conn == nil {
+		return s.loadEagerOptionChainUniverse(ctx, interval, from, to, targets)
+	}
+	providers := make(map[string]backtest.OptionsChainProvider, len(targets))
+	for index, target := range targets {
+		if run != nil {
+			run.setProgress(&dto.StrategyBacktestProgress{
+				Phase:     string(backtest.ProgressPhasePrepare),
+				Current:   index,
+				Total:     maxInt(len(targets), 1),
+				Percent:   float64(index) / float64(maxInt(len(targets), 1)) * 100,
+				Message:   fmt.Sprintf("precomputing options for %s [%s/%s]", target.asset, target.market, interval),
+				StartedAt: derefTime(run.startedAt),
+				Timestamp: s.now().UTC(),
+			})
+		}
+		timestamps, err := s.loadOptionPrecomputeTimestamps(ctx, target.market, target.asset, interval, from, to)
+		if err != nil {
+			return nil, err
+		}
+		rawProvider, err := s.loadOptionsChainProvider(ctx, target.market, target.asset, interval, from, to)
+		if err != nil {
+			return nil, err
+		}
+		snapshot := backtest.NewOptionsChainSnapshot(rawProvider, target.market, target.asset, timestamps)
+		providers[backtest.ChainLookupKey(target.market, target.asset)] = backtest.NewSnapshotOptionsChainProvider(snapshot)
+	}
+	return backtest.NewMultiOptionsChainProvider(providers), nil
+}
+
+func (s *PortfolioBacktestService) loadEagerOptionChainUniverse(ctx context.Context, interval string, from, to time.Time, targets []optionChainTarget) (backtest.OptionsChainProvider, error) {
 	if len(targets) == 0 {
 		return nil, nil
 	}
@@ -219,6 +254,35 @@ func (s *PortfolioBacktestService) loadOptionChainUniverse(ctx context.Context, 
 		providers[backtest.ChainLookupKey(target.market, target.asset)] = provider
 	}
 	return backtest.NewMultiOptionsChainProvider(providers), nil
+}
+
+func (s *PortfolioBacktestService) loadOptionPrecomputeTimestamps(ctx context.Context, marketName, asset, interval string, from, to time.Time) ([]time.Time, error) {
+	marketSpec, err := parsePrimaryMarket(marketName)
+	if err != nil {
+		return nil, err
+	}
+	if s.repo == nil || s.repo.Conn == nil {
+		return nil, fmt.Errorf("option precompute timestamps require ClickHouse repo")
+	}
+	var feed backtest.DataFeed
+	switch marketSpec.name {
+	case marketUS:
+		feed = datafeed.NewUSUnderlyingDataFeed(s.repo.Conn)
+	case marketCrypto:
+		feed = datafeed.NewCryptoUnderlyingDataFeed(s.repo.Conn)
+	case marketForex:
+		feed = datafeed.NewForexUnderlyingDataFeed(s.repo.Conn)
+	default:
+		return nil, dto.NewValidationError("market %q does not support option precompute", marketName)
+	}
+	ds, err := feed.Load(ctx, backtest.DataRequest{Market: marketSpec.underlyingFeed, Symbol: asset, Interval: interval, From: from, To: to})
+	if err != nil {
+		return nil, fmt.Errorf("load option precompute timestamps for %s/%s: %w", marketName, asset, err)
+	}
+	if ds == nil || len(ds.Timestamps) == 0 {
+		return nil, fmt.Errorf("load option precompute timestamps for %s/%s: no data", marketName, asset)
+	}
+	return append([]time.Time(nil), ds.Timestamps...), nil
 }
 
 func (c *optionsChainProviderCache) GetOrLoad(ctx context.Context, key string, loader func(context.Context) (backtest.OptionsChainProvider, error)) (backtest.OptionsChainProvider, error) {
@@ -388,7 +452,7 @@ func (s *PortfolioBacktestService) executeRun(run *portfolioBacktestRun) {
 }
 
 func (s *PortfolioBacktestService) ValidateStrategyBacktest(ctx context.Context, req dto.StrategyBacktestRunRequest) (*dto.StrategyBacktestValidationResponse, error) {
-	plan, err := s.resolveBacktestPlan(ctx, nil, req)
+	plan, err := s.resolveBacktestPlan(ctx, nil, req, false)
 	if err != nil {
 		return nil, err
 	}
@@ -399,7 +463,7 @@ func (s *PortfolioBacktestService) ValidateStrategyBacktest(ctx context.Context,
 }
 
 func (s *PortfolioBacktestService) runBacktest(ctx context.Context, run *portfolioBacktestRun, req dto.StrategyBacktestRunRequest) (*dto.StrategyBacktestRunResult, error) {
-	plan, err := s.resolveBacktestPlan(ctx, run, req)
+	plan, err := s.resolveBacktestPlan(ctx, run, req, true)
 	if err != nil {
 		return nil, err
 	}
@@ -467,7 +531,10 @@ func (s *PortfolioBacktestService) runBacktest(ctx context.Context, run *portfol
 func newPortfolioBacktestEngine(cfg backtest.Config, conn driver.Conn, factorStore *feeds.Store, chainProvider backtest.OptionsChainProvider, usesOptions bool) *backtest.Engine {
 	engine := backtest.NewEngine(cfg)
 	engine.RegisterDataFeed(cryptoUnderlyingFeed, datafeed.NewCryptoUnderlyingDataFeed(conn))
-	engine.RegisterDataFeed(usUnderlyingFeed, datafeed.NewUSUnderlyingDataFeed(conn))
+	usFeed := datafeed.NewUSUnderlyingDataFeed(conn)
+	engine.RegisterDataFeed(marketUS, usFeed)
+	engine.RegisterDataFeed(usUnderlyingFeed, usFeed)
+	engine.RegisterDataFeed(usStocksFeed, usFeed)
 	engine.RegisterDataFeed(forexUnderlyingFeed, datafeed.NewForexUnderlyingDataFeed(conn))
 	if factorStore != nil {
 		engine.RegisterFactorFeed("dvol", datafeed.NewFeedFactorBridge("dvol", factorStore))
@@ -681,7 +748,7 @@ func parsePrimaryMarket(raw string) (marketSpec, error) {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
 	case "", marketCrypto, cryptoUnderlyingFeed:
 		return marketSpec{name: marketCrypto, underlyingFeed: cryptoUnderlyingFeed}, nil
-	case marketUS, usUnderlyingFeed:
+	case marketUS, usUnderlyingFeed, usStocksFeed:
 		return marketSpec{name: marketUS, underlyingFeed: usUnderlyingFeed}, nil
 	case marketForex, forexUnderlyingFeed:
 		return marketSpec{name: marketForex, underlyingFeed: forexUnderlyingFeed}, nil

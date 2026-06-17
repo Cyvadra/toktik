@@ -270,6 +270,32 @@ func TestBuildHTMLViewSummarizesMixedRegularAndOptionActivity(t *testing.T) {
 	if len(view.SecurityMix) != 2 {
 		t.Fatalf("len(view.SecurityMix) = %d, want 2", len(view.SecurityMix))
 	}
+	if len(view.PortfolioAttribution.InstrumentRows) != 2 {
+		t.Fatalf("len(view.PortfolioAttribution.InstrumentRows) = %d, want 2", len(view.PortfolioAttribution.InstrumentRows))
+	}
+	if view.PortfolioAttribution.RegularNetCash != "-$1000.0000" {
+		t.Fatalf("RegularNetCash = %q", view.PortfolioAttribution.RegularNetCash)
+	}
+	if view.PortfolioAttribution.OptionRealizedPnL != "+$250.0000" {
+		t.Fatalf("OptionRealizedPnL = %q", view.PortfolioAttribution.OptionRealizedPnL)
+	}
+	if len(view.PortfolioAttribution.UnderlyingRows) != 1 || view.PortfolioAttribution.UnderlyingRows[0].Name != "AAPL" || view.PortfolioAttribution.UnderlyingRows[0].Family != "混合" {
+		t.Fatalf("unexpected underlying attribution rows: %#v", view.PortfolioAttribution.UnderlyingRows)
+	}
+}
+
+func TestOptionUnderlyingFromSymbolSupportsCommonFormats(t *testing.T) {
+	cases := map[string]string{
+		"AAPL240119P00100000": "AAPL",
+		"SPY_240119C00450000": "SPY",
+		"BTC-29MAR24-70000-C": "BTC",
+		"ETH 240329 P 3000":   "ETH",
+	}
+	for input, want := range cases {
+		if got := optionUnderlyingFromSymbol(input); got != want {
+			t.Fatalf("optionUnderlyingFromSymbol(%q) = %q, want %q", input, got, want)
+		}
+	}
 }
 
 func TestBuildHTMLViewIncludesCalmarRatio(t *testing.T) {
@@ -635,6 +661,49 @@ func TestBuildOverviewViewIncludesCalmarRatio(t *testing.T) {
 	}
 	if len(view.Strategies) != 2 || view.Strategies[0].Calmar == "" {
 		t.Fatalf("overview strategies missing calmar values: %#v", view.Strategies)
+	}
+}
+
+func TestBuildOverviewViewIncludesInstrumentMix(t *testing.T) {
+	closeTime := time.Date(2024, time.January, 5, 0, 0, 0, 0, time.UTC)
+	items := []OverviewItem{{
+		Result: &backtest.Result{
+			StrategyName:   "overlay",
+			StartTime:      time.Date(2024, time.January, 1, 0, 0, 0, 0, time.UTC),
+			EndTime:        closeTime,
+			InitialCapital: 100000,
+			FinalEquity:    101000,
+			AccountUnit:    "USD",
+			TotalReturn:    0.01,
+			EquityCurve:    []float64{100000, 101000},
+			Trades: []backtest.Trade{{
+				Security:  backtest.SecurityRef{Market: "us-underlying", Symbol: "MSFT", Interval: "1d"},
+				Side:      backtest.Buy,
+				Qty:       5,
+				FillPrice: 300,
+			}},
+			SpreadSummary: &backtest.SpreadSummary{TotalSpreads: 1, ClosedSpreads: 1, TotalPnL: 120, WinRate: 1},
+			SpreadPositions: []backtest.SpreadPositionReport{{
+				ID:          1,
+				Status:      "closed",
+				RealizedPnL: 120,
+				Legs: []backtest.SpreadLegReport{{
+					Symbol:     "MSFT240119P00300000",
+					Qty:        1,
+					EntryPrice: 1.2,
+				}},
+			}},
+		},
+		HTMLPath: "/tmp/overlay.html",
+	}}
+
+	view := buildOverviewView("/tmp/overview.html", items, HTMLMeta{Asset: "MSFT", Interval: "1d"})
+	if len(view.Strategies) != 1 {
+		t.Fatalf("len(view.Strategies) = %d, want 1", len(view.Strategies))
+	}
+	strategy := view.Strategies[0]
+	if strategy.InstrumentMix != "Mixed" || strategy.OptionLegs != "1" || strategy.Securities != "2" || strategy.Underlyings != "1" {
+		t.Fatalf("unexpected overview instrument stats: %#v", strategy)
 	}
 }
 

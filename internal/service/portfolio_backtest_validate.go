@@ -27,6 +27,7 @@ type resolvedBacktestPlan struct {
 	resolved         []strategies.ResolvedStrategy
 	commissionModel  backtest.CommissionModel
 	chainProvider    backtest.OptionsChainProvider
+	chainTargets     []optionChainTarget
 }
 
 type optionChainTarget struct {
@@ -35,7 +36,7 @@ type optionChainTarget struct {
 	weight float64
 }
 
-func (s *PortfolioBacktestService) resolveBacktestPlan(ctx context.Context, run *portfolioBacktestRun, req dto.StrategyBacktestRunRequest) (*resolvedBacktestPlan, error) {
+func (s *PortfolioBacktestService) resolveBacktestPlan(ctx context.Context, run *portfolioBacktestRun, req dto.StrategyBacktestRunRequest, loadChains bool) (*resolvedBacktestPlan, error) {
 	from, to, err := dto.ParseTimeRange(req.From, req.To)
 	if err != nil {
 		return nil, err
@@ -106,12 +107,14 @@ func (s *PortfolioBacktestService) resolveBacktestPlan(ctx context.Context, run 
 	}
 
 	var chainProvider backtest.OptionsChainProvider
+	var targets []optionChainTarget
 	if shouldLoadOptionChain(tradeScope, resolved) {
-		targets, targetSymbols, err := collectOptionChainTargets(req, primaryMarket.name, asset, resolved)
+		var targetSymbols []string
+		targets, targetSymbols, err = collectOptionChainTargets(req, primaryMarket.name, asset, resolved)
 		if err != nil {
 			return nil, err
 		}
-		if run != nil {
+		if loadChains && run != nil {
 			run.setProgress(&dto.StrategyBacktestProgress{
 				Phase:     string(backtest.ProgressPhasePrepare),
 				Current:   0,
@@ -122,9 +125,11 @@ func (s *PortfolioBacktestService) resolveBacktestPlan(ctx context.Context, run 
 				Timestamp: s.now().UTC(),
 			})
 		}
-		chainProvider, err = s.loadOptionChainUniverse(ctx, interval, from, to, targets)
-		if err != nil {
-			return nil, fmt.Errorf("load options chain: %w", err)
+		if loadChains {
+			chainProvider, err = s.loadOptionChainUniverse(ctx, run, interval, from, to, targets)
+			if err != nil {
+				return nil, fmt.Errorf("load options chain: %w", err)
+			}
 		}
 	}
 
@@ -142,6 +147,7 @@ func (s *PortfolioBacktestService) resolveBacktestPlan(ctx context.Context, run 
 		resolved:         resolved,
 		commissionModel:  commissionModel,
 		chainProvider:    chainProvider,
+		chainTargets:     targets,
 	}, nil
 }
 

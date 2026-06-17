@@ -7,7 +7,7 @@
 - Source Swagger: `docs/swagger.json`
 - API title: `Toktik Options Platform API`
 - API version: `1.0`
-- Generated at: `2026-06-17T09:29:17Z`
+- Generated at: `2026-06-17T12:51:58Z`
 
 ## Scope
 
@@ -916,6 +916,10 @@ curl -N "http://127.0.0.1:9010/api/v1/backtests/runs/${run_id}/events"
 | p_threshold | number | no | - |
 | portfolio | array<[StrategyBacktestPortfolioLeg](#strategybacktestportfolioleg)> | no | - |
 | position_size | number | no | - |
+| report_chart_interval | string | no | - |
+| report_chart_market | string | no | - |
+| report_chart_prefix | string | no | - |
+| report_chart_symbol | string | no | - |
 | short_delta_max | number | no | - |
 | short_delta_min | number | no | - |
 | signal_source | string | no | - |

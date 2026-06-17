@@ -5,6 +5,35 @@ import (
 	"time"
 )
 
+type testSnapshotSourceProvider struct {
+	byTime map[int64][]OptionContract
+}
+
+func (p *testSnapshotSourceProvider) AvailableContracts(t time.Time) []OptionContract {
+	return p.byTime[t.UTC().Unix()]
+}
+
+func TestSnapshotOptionsChainProviderCopiesContractsAndMatchesUSAliases(t *testing.T) {
+	ts := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	sourceContracts := []OptionContract{{Symbol: "AAPL-P-100", Underlying: "AAPL", UnderlyingMarket: "us", MarkPrice: 1.25}}
+	source := &testSnapshotSourceProvider{byTime: map[int64][]OptionContract{ts.Unix(): sourceContracts}}
+
+	snapshot := NewOptionsChainSnapshot(source, "us", "AAPL", []time.Time{ts})
+	sourceContracts[0].MarkPrice = 9.99
+
+	provider := NewSnapshotOptionsChainProvider(snapshot)
+	contracts := provider.AvailableContractsFor(ts, "us-stocks", "AAPL")
+	if len(contracts) != 1 {
+		t.Fatalf("expected one contract, got %d", len(contracts))
+	}
+	if contracts[0].MarkPrice != 1.25 {
+		t.Fatalf("snapshot contract was not independent from source: mark=%v", contracts[0].MarkPrice)
+	}
+	if got := provider.AvailableContractsFor(ts, "crypto", "AAPL"); len(got) != 0 {
+		t.Fatalf("expected crypto market alias mismatch to return no contracts, got %d", len(got))
+	}
+}
+
 func TestOptionsChainExpiryNextMonth(t *testing.T) {
 	tests := []struct {
 		name        string

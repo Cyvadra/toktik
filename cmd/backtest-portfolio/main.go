@@ -44,6 +44,7 @@ const (
 	marketForex          = "forex"
 	cryptoUnderlyingFeed = "crypto-underlying"
 	usUnderlyingFeed     = "us-underlying"
+	usStocksFeed         = "us-stocks"
 	forexUnderlyingFeed  = "forex-underlying"
 
 	instrumentAuto     instrumentScope = "auto"
@@ -360,7 +361,10 @@ func main() {
 func newEngine(cfg backtest.Config, conn driver.Conn, factorStore *feeds.Store, chainProvider backtest.OptionsChainProvider, usesOptions bool) *backtest.Engine {
 	engine := backtest.NewEngine(cfg)
 	engine.RegisterDataFeed(cryptoUnderlyingFeed, datafeed.NewCryptoUnderlyingDataFeed(conn))
-	engine.RegisterDataFeed(usUnderlyingFeed, datafeed.NewUSUnderlyingDataFeed(conn))
+	usFeed := datafeed.NewUSUnderlyingDataFeed(conn)
+	engine.RegisterDataFeed(marketUS, usFeed)
+	engine.RegisterDataFeed(usUnderlyingFeed, usFeed)
+	engine.RegisterDataFeed(usStocksFeed, usFeed)
 	engine.RegisterDataFeed(forexUnderlyingFeed, datafeed.NewForexUnderlyingDataFeed(conn))
 	engine.RegisterFactorFeed("dvol", datafeed.NewFeedFactorBridge("dvol", factorStore))
 	engine.RegisterFactorFeed("volatility", datafeed.NewFeatureVolatilityFactorFeed(conn))
@@ -374,7 +378,7 @@ func parsePrimaryMarket(raw string) (marketSpec, error) {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
 	case "", marketCrypto, cryptoUnderlyingFeed:
 		return marketSpec{name: marketCrypto, underlyingFeed: cryptoUnderlyingFeed}, nil
-	case marketUS, usUnderlyingFeed:
+	case marketUS, usUnderlyingFeed, usStocksFeed:
 		return marketSpec{name: marketUS, underlyingFeed: usUnderlyingFeed}, nil
 	case marketForex, forexUnderlyingFeed:
 		return marketSpec{name: marketForex, underlyingFeed: forexUnderlyingFeed}, nil

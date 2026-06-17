@@ -49,6 +49,10 @@ type overviewStrategyView struct {
 	Drawdown       string
 	Trades         string
 	Spreads        string
+	InstrumentMix  string
+	Securities     string
+	Underlyings    string
+	OptionLegs     string
 	SpreadWinRate  string
 	SpreadPnL      string
 	BadgeClass     string
@@ -139,6 +143,7 @@ func buildOverviewView(outputPath string, items []OverviewItem, meta HTMLMeta) o
 			spreadPnL = signedAmount(result.SpreadSummary.TotalPnL, result.AccountUnit)
 			spreads = integer(result.SpreadSummary.TotalSpreads)
 		}
+		stats := buildPortfolioAttributionStats(result)
 
 		link := item.HTMLPath
 		if rel, err := filepath.Rel(filepath.Dir(outputPath), item.HTMLPath); err == nil {
@@ -159,6 +164,10 @@ func buildOverviewView(outputPath string, items []OverviewItem, meta HTMLMeta) o
 			Drawdown:       pct(result.MaxDrawdown),
 			Trades:         integer(len(result.Trades)),
 			Spreads:        spreads,
+			InstrumentMix:  overviewInstrumentMix(stats),
+			Securities:     integer(stats.SecurityCount),
+			Underlyings:    integer(stats.UnderlyingCount),
+			OptionLegs:     integer(stats.OptionLegs),
 			SpreadWinRate:  spreadWinRate,
 			SpreadPnL:      spreadPnL,
 			BadgeClass:     overviewBadgeClass(result.TotalReturn),
@@ -175,6 +184,19 @@ func buildOverviewView(outputPath string, items []OverviewItem, meta HTMLMeta) o
 	view.LowestDrawdown = fmt.Sprintf("%s · %s", lowestDrawdown.StrategyName, pct(lowestDrawdown.MaxDrawdown))
 	view.TotalSpreads = integer(totalSpreads)
 	return view
+}
+
+func overviewInstrumentMix(stats portfolioAttributionStats) string {
+	switch {
+	case stats.HasRegular && stats.HasOptions:
+		return "Mixed"
+	case stats.HasOptions:
+		return "Options"
+	case stats.HasRegular:
+		return "Regular"
+	default:
+		return "No fills"
+	}
 }
 
 func normalizedCurve(equity []float64, initial float64) []float64 {
@@ -384,7 +406,11 @@ const overviewHTMLTemplate = `<!DOCTYPE html>
                   <th class="px-4 py-3 font-medium">Sharpe</th>
 				  <th class="px-4 py-3 font-medium">Calmar</th>
                   <th class="px-4 py-3 font-medium">Drawdown</th>
+				  <th class="px-4 py-3 font-medium">Mix</th>
+				  <th class="px-4 py-3 font-medium">Securities</th>
+				  <th class="px-4 py-3 font-medium">Underlyings</th>
                   <th class="px-4 py-3 font-medium">Fills</th>
+				  <th class="px-4 py-3 font-medium">Option Legs</th>
                   <th class="px-4 py-3 font-medium">Spreads</th>
                   <th class="px-4 py-3 font-medium">Spread Win Rate</th>
                   <th class="px-4 py-3 font-medium">Spread PnL</th>
@@ -404,7 +430,11 @@ const overviewHTMLTemplate = `<!DOCTYPE html>
                   <td class="px-4 py-3 font-mono text-slate-200">{{ .Sharpe }}</td>
 				  <td class="px-4 py-3 font-mono text-slate-200">{{ .Calmar }}</td>
                   <td class="px-4 py-3 font-mono {{ .DrawdownClass }}">{{ .Drawdown }}</td>
+				  <td class="px-4 py-3 font-mono text-slate-200">{{ .InstrumentMix }}</td>
+				  <td class="px-4 py-3 font-mono text-slate-200">{{ .Securities }}</td>
+				  <td class="px-4 py-3 font-mono text-slate-200">{{ .Underlyings }}</td>
                   <td class="px-4 py-3 font-mono text-slate-200">{{ .Trades }}</td>
+				  <td class="px-4 py-3 font-mono text-slate-200">{{ .OptionLegs }}</td>
                   <td class="px-4 py-3 font-mono text-slate-200">{{ .Spreads }}</td>
                   <td class="px-4 py-3 font-mono text-slate-200">{{ .SpreadWinRate }}</td>
                   <td class="px-4 py-3 font-mono text-slate-200">{{ .SpreadPnL }}</td>

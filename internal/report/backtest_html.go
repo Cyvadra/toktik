@@ -108,6 +108,7 @@ type htmlReportView struct {
 	TradeOverview                tradeOverviewView
 	MarketMix                    marketMixView
 	SecurityMix                  []securityMixRowView
+	PortfolioAttribution         portfolioAttributionView
 	SpreadSummary                *spreadSummaryView
 	SpreadGroups                 []spreadGroupView
 	TopDrawdownGroups            []spreadGroupDrawdownView
@@ -164,6 +165,36 @@ type securityMixRowView struct {
 	Trades   string
 	Notional string
 	NetCash  string
+}
+
+type portfolioAttributionView struct {
+	Description       string
+	RegularNetCash    string
+	OptionRealizedPnL string
+	InstrumentRows    []portfolioAttributionRowView
+	UnderlyingRows    []portfolioAttributionRowView
+}
+
+type portfolioAttributionRowView struct {
+	Name     string
+	Family   string
+	Events   string
+	Notional string
+	PnL      string
+	Details  string
+	PnLClass string
+}
+
+type portfolioAttributionStats struct {
+	RegularFills      int
+	OptionLegs        int
+	OptionSpreads     int
+	SecurityCount     int
+	UnderlyingCount   int
+	RegularNetCash    float64
+	OptionRealizedPnL float64
+	HasRegular        bool
+	HasOptions        bool
 }
 
 type equityAnalysisView struct {
@@ -812,6 +843,7 @@ func buildHTMLView(result *backtest.Result, meta HTMLMeta) htmlReportView {
 	view.TradeOverview = buildTradeOverviewView(result.TradeOverview, result.AccountUnit)
 	view.EquityAnalysis = buildEquityAnalysisView(result.EquityAnalysis, result.AccountUnit)
 	view.MarketMix, view.SecurityMix = buildMarketMixView(result, result.AccountUnit)
+	view.PortfolioAttribution = buildPortfolioAttributionView(result, result.AccountUnit)
 	view.Trades = buildTradeRows(result.Trades, result.AccountUnit)
 	metricResolver := newSpreadMetricResolver(result)
 	priceResolver := newUnderlyingPriceResolver(result, chartSource)
@@ -1112,6 +1144,267 @@ func buildMarketMixView(result *backtest.Result, unit string) (marketMixView, []
 		view.Description = "本次运行未记录成交或期权腿，图表仅展示可用的行情与权益序列。"
 	}
 	return view, rows
+}
+
+func buildPortfolioAttributionView(result *backtest.Result, unit string) portfolioAttributionView {
+	view := portfolioAttributionView{
+		Description: "组合归因按报告已记录事件派生：普通成交展示成交净现金流，期权展示价差已实现盈亏；账户权益仍是最终组合口径。",
+	}
+	if result == nil {
+		return view
+	}
+	type aggregate struct {
+		family   string
+		events   int
+		notional float64
+		pnl      float64
+		details  map[string]struct{}
+	}
+	newAgg := func(family string) *aggregate { return &aggregate{family: family, details: map[string]struct{}{}} }
+	underlyings := map[string]*aggregate{}
+	regularNotional := 0.0
+	regularNetCash := 0.0
+	optionNotional := 0.0
+	optionRealizedPnL := 0.0
+	optionLegs := 0
+	closedSpreads := 0
+	openSpreads := 0
+	groups := map[int]struct{}{}
+
+	for _, trade := range result.Trades {
+		notional := math.Abs(trade.Qty * trade.FillPrice)
+		netCash := trade.NetAmount()
+		regularNotional += notional
+		regularNetCash += netCash
+		name := normalizeAttributionName(trade.Security.Symbol, "regular")
+		agg := underlyings[name]
+		if agg == nil {
+			agg = newAgg("普通成交")
+			underlyings[name] = agg
+		}
+		agg.events++
+		agg.notional += notional
+		agg.pnl += netCash
+		if market := strings.TrimSpace(trade.Security.Market); market != "" {
+			agg.details[market] = struct{}{}
+		}
+	}
+	for _, spread := range result.SpreadPositions {
+		if strings.EqualFold(strings.TrimSpace(spread.Status), "closed") {
+			closedSpreads++
+		} else {
+			openSpreads++
+		}
+		if spread.GroupID != 0 {
+			groups[spread.GroupID] = struct{}{}
+		}
+		underlying := spreadUnderlying(spread)
+		if underlying == "" {
+			underlying = fmt.Sprintf("spread #%d", spread.ID)
+		}
+		agg := underlyings[underlying]
+		if agg == nil {
+			agg = newAgg("期权价差")
+			underlyings[underlying] = agg
+		} else if agg.family != "期权价差" {
+			agg.family = "混合"
+		}
+		agg.pnl += spread.RealizedPnL
+		optionRealizedPnL += spread.RealizedPnL
+		for _, leg := range spread.Legs {
+			optionLegs++
+			agg.events++
+			notional := math.Abs(leg.Qty * leg.EntryPrice)
+			agg.notional += notional
+			optionNotional += notional
+			if tag := strings.TrimSpace(spread.Tag); tag != "" {
+				agg.details[tag] = struct{}{}
+			}
+		}
+	}
+
+	if len(result.Trades) > 0 {
+		view.InstrumentRows = append(view.InstrumentRows, portfolioAttributionRowView{
+			Name:     "普通股票/现货成交",
+			Family:   "Regular",
+			Events:   integer(len(result.Trades)),
+			Notional: amount4(regularNotional, unit),
+			PnL:      signedAmount(regularNetCash, unit),
+			Details:  fmt.Sprintf("%s 个成交标的", integer(countRegularSecurities(result.Trades))),
+			PnLClass: signedClass(regularNetCash),
+		})
+	}
+	if len(result.SpreadPositions) > 0 {
+		details := []string{fmt.Sprintf("%s 条期权腿", integer(optionLegs)), fmt.Sprintf("%s 已平仓", integer(closedSpreads)), fmt.Sprintf("%s 未平仓", integer(openSpreads))}
+		if len(groups) > 0 {
+			details = append(details, fmt.Sprintf("%s 个订单组", integer(len(groups))))
+		}
+		view.InstrumentRows = append(view.InstrumentRows, portfolioAttributionRowView{
+			Name:     "期权价差/合约生命周期",
+			Family:   "Options",
+			Events:   integer(len(result.SpreadPositions)),
+			Notional: amount4(optionNotional, unit),
+			PnL:      signedAmount(optionRealizedPnL, unit),
+			Details:  strings.Join(details, " · "),
+			PnLClass: signedClass(optionRealizedPnL),
+		})
+	}
+
+	keys := make([]string, 0, len(underlyings))
+	for key := range underlyings {
+		keys = append(keys, key)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		left := underlyings[keys[i]]
+		right := underlyings[keys[j]]
+		if math.Abs(left.pnl) != math.Abs(right.pnl) {
+			return math.Abs(left.pnl) > math.Abs(right.pnl)
+		}
+		if left.events != right.events {
+			return left.events > right.events
+		}
+		return keys[i] < keys[j]
+	})
+	if len(keys) > 10 {
+		keys = keys[:10]
+	}
+	for _, key := range keys {
+		agg := underlyings[key]
+		view.UnderlyingRows = append(view.UnderlyingRows, portfolioAttributionRowView{
+			Name:     key,
+			Family:   agg.family,
+			Events:   integer(agg.events),
+			Notional: amount4(agg.notional, unit),
+			PnL:      signedAmount(agg.pnl, unit),
+			Details:  joinTopDetails(agg.details, 3),
+			PnLClass: signedClass(agg.pnl),
+		})
+	}
+	view.RegularNetCash = signedAmount(regularNetCash, unit)
+	view.OptionRealizedPnL = signedAmount(optionRealizedPnL, unit)
+	return view
+}
+
+func buildPortfolioAttributionStats(result *backtest.Result) portfolioAttributionStats {
+	if result == nil {
+		return portfolioAttributionStats{}
+	}
+	securities := map[string]struct{}{}
+	underlyings := map[string]struct{}{}
+	stats := portfolioAttributionStats{RegularFills: len(result.Trades), OptionSpreads: len(result.SpreadPositions), HasRegular: len(result.Trades) > 0, HasOptions: len(result.SpreadPositions) > 0}
+	for _, trade := range result.Trades {
+		key := normalizeAttributionName(strings.Join([]string{trade.Security.Market, trade.Security.Symbol, trade.Security.Interval}, "/"), "regular")
+		securities[key] = struct{}{}
+		underlyings[normalizeAttributionName(trade.Security.Symbol, "regular")] = struct{}{}
+		stats.RegularNetCash += trade.NetAmount()
+	}
+	for _, spread := range result.SpreadPositions {
+		underlying := spreadUnderlying(spread)
+		if underlying != "" {
+			underlyings[underlying] = struct{}{}
+		}
+		stats.OptionRealizedPnL += spread.RealizedPnL
+		for _, leg := range spread.Legs {
+			stats.OptionLegs++
+			securities[normalizeAttributionName(leg.Symbol, fmt.Sprintf("spread-%d", spread.ID))] = struct{}{}
+		}
+	}
+	stats.SecurityCount = len(securities)
+	stats.UnderlyingCount = len(underlyings)
+	return stats
+}
+
+func countRegularSecurities(trades []backtest.Trade) int {
+	seen := map[string]struct{}{}
+	for _, trade := range trades {
+		key := strings.Join([]string{trade.Security.Market, trade.Security.Symbol, trade.Security.Interval}, "/")
+		seen[normalizeAttributionName(key, "regular")] = struct{}{}
+	}
+	return len(seen)
+}
+
+func spreadUnderlying(spread backtest.SpreadPositionReport) string {
+	for _, leg := range spread.Legs {
+		if underlying := optionUnderlyingFromSymbol(leg.Symbol); underlying != "" {
+			return underlying
+		}
+	}
+	return normalizeAttributionName(stripExecDeltaTagSuffix(spread.Tag), "")
+}
+
+func optionUnderlyingFromSymbol(symbol string) string {
+	symbol = strings.ToUpper(strings.TrimSpace(symbol))
+	if symbol == "" {
+		return ""
+	}
+	for index := 0; index+6 < len(symbol); index++ {
+		chunk := symbol[index : index+6]
+		if isDigits(chunk) && index+6 < len(symbol) {
+			right := symbol[index+6]
+			if right == 'C' || right == 'P' {
+				return strings.TrimRight(symbol[:index], " _-")
+			}
+		}
+	}
+	if cut := strings.IndexAny(symbol, "-_ "); cut > 0 {
+		return symbol[:cut]
+	}
+	return symbol
+}
+
+func isDigits(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, r := range value {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func normalizeAttributionName(value, fallback string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		value = strings.TrimSpace(fallback)
+	}
+	if value == "" {
+		return "unknown"
+	}
+	return value
+}
+
+func joinTopDetails(details map[string]struct{}, limit int) string {
+	if len(details) == 0 {
+		return "-"
+	}
+	values := make([]string, 0, len(details))
+	for value := range details {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			values = append(values, value)
+		}
+	}
+	sort.Strings(values)
+	if limit > 0 && len(values) > limit {
+		values = append(values[:limit], fmt.Sprintf("+%d", len(values)-limit))
+	}
+	if len(values) == 0 {
+		return "-"
+	}
+	return strings.Join(values, " · ")
+}
+
+func signedClass(value float64) string {
+	switch {
+	case value > 0:
+		return "text-up"
+	case value < 0:
+		return "text-down"
+	default:
+		return "text-slate-300"
+	}
 }
 
 func buildSpreadRows(spreads []backtest.SpreadPositionReport, unit string, metricResolver spreadMetricResolver, priceResolver underlyingPriceResolver) []spreadRowView {
@@ -3572,6 +3865,41 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
 	  </div>
 	  {{ end }}
 	</div>
+
+	{{ if .PortfolioAttribution.InstrumentRows }}
+	<div class="section">
+	  <div class="flex flex-wrap items-start justify-between gap-4 mb-4">
+		<div>
+		  <h2 class="!mb-1">组合归因</h2>
+		  <p class="text-xs text-slate-400">{{ .PortfolioAttribution.Description }}</p>
+		</div>
+		<div class="grid grid-cols-1 gap-2 sm:grid-cols-2 text-xs">
+		  <div class="rounded-md border border-white/10 bg-white/[0.03] px-3 py-2"><div class="text-slate-500">普通成交净现金</div><div class="mt-1 mono text-slate-100">{{ .PortfolioAttribution.RegularNetCash }}</div></div>
+		  <div class="rounded-md border border-white/10 bg-white/[0.03] px-3 py-2"><div class="text-slate-500">期权已实现盈亏</div><div class="mt-1 mono text-slate-100">{{ .PortfolioAttribution.OptionRealizedPnL }}</div></div>
+		</div>
+	  </div>
+	  <div class="grid gap-4 xl:grid-cols-2">
+		<div class="overflow-x-auto border border-white/8 rounded-lg">
+		  <table class="w-full text-sm">
+			<thead><tr class="text-left text-slate-500 text-xs uppercase border-b border-white/5"><th class="px-4 py-2 font-medium">工具族</th><th class="px-4 py-2 font-medium">事件</th><th class="px-4 py-2 font-medium">名义金额</th><th class="px-4 py-2 font-medium">归因</th><th class="px-4 py-2 font-medium">细节</th></tr></thead>
+			<tbody>
+			  {{ range .PortfolioAttribution.InstrumentRows }}<tr class="border-b border-white/[0.03]"><td class="px-4 py-2"><div class="font-medium text-slate-100">{{ .Name }}</div><div class="mt-0.5 mono text-xs text-slate-500">{{ .Family }}</div></td><td class="px-4 py-2 mono text-slate-300">{{ .Events }}</td><td class="px-4 py-2 mono text-slate-300">{{ .Notional }}</td><td class="px-4 py-2 mono {{ .PnLClass }}">{{ .PnL }}</td><td class="px-4 py-2 text-slate-400">{{ .Details }}</td></tr>{{ end }}
+			</tbody>
+		  </table>
+		</div>
+		{{ if .PortfolioAttribution.UnderlyingRows }}
+		<div class="overflow-x-auto border border-white/8 rounded-lg">
+		  <table class="w-full text-sm">
+			<thead><tr class="text-left text-slate-500 text-xs uppercase border-b border-white/5"><th class="px-4 py-2 font-medium">Underlying / 标的</th><th class="px-4 py-2 font-medium">类型</th><th class="px-4 py-2 font-medium">事件</th><th class="px-4 py-2 font-medium">名义金额</th><th class="px-4 py-2 font-medium">归因</th></tr></thead>
+			<tbody>
+			  {{ range .PortfolioAttribution.UnderlyingRows }}<tr class="border-b border-white/[0.03]"><td class="px-4 py-2"><div class="mono text-slate-200">{{ .Name }}</div><div class="mt-0.5 text-xs text-slate-500">{{ .Details }}</div></td><td class="px-4 py-2 text-slate-400">{{ .Family }}</td><td class="px-4 py-2 mono text-slate-300">{{ .Events }}</td><td class="px-4 py-2 mono text-slate-300">{{ .Notional }}</td><td class="px-4 py-2 mono {{ .PnLClass }}">{{ .PnL }}</td></tr>{{ end }}
+			</tbody>
+		  </table>
+		</div>
+		{{ end }}
+	  </div>
+	</div>
+	{{ end }}
 
 	<div class="section">
 	  <div class="flex flex-wrap items-center justify-between gap-3">

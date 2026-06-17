@@ -359,7 +359,7 @@ func TestResolveBacktestPlanLoadsMultipleOptionChainTargets(t *testing.T) {
 		return &stubOptionsChainProvider{}, nil
 	}
 
-	_, err := svc.resolveBacktestPlan(context.Background(), nil, dto.StrategyBacktestRunRequest{
+	req := dto.StrategyBacktestRunRequest{
 		Market:  "us",
 		Asset:   "QQQ",
 		Symbols: []string{"MSFT", "AAPL"},
@@ -372,7 +372,17 @@ qqq = options.chain("us", "QQQ")
 msft = options.chain("us", "MSFT")
 plot(close, title="Close")`,
 		DSLProfile: &dto.StrategyBacktestDSLProfile{UsesOptions: ptrBool(true), RegularTrade: "none"},
-	})
+	}
+
+	_, err := svc.resolveBacktestPlan(context.Background(), nil, req, false)
+	if err != nil {
+		t.Fatalf("validation resolveBacktestPlan returned error: %v", err)
+	}
+	if len(loaded) != 0 {
+		t.Fatalf("validation plan should not load option chains, got %v", loaded)
+	}
+
+	_, err = svc.resolveBacktestPlan(context.Background(), nil, req, true)
 	if err != nil {
 		t.Fatalf("resolveBacktestPlan returned error: %v", err)
 	}
@@ -404,7 +414,7 @@ symbol = config.string("target_symbol", "MSFT")
 chain = options.chain("us", symbol)
 plot(close, title="Close")`,
 		DSLProfile: &dto.StrategyBacktestDSLProfile{UsesOptions: ptrBool(true), RegularTrade: "none"},
-	})
+	}, false)
 	if err == nil {
 		t.Fatal("expected dynamic option chain without symbols/portfolio to fail validation")
 	}
@@ -440,7 +450,7 @@ for symbol in portfolio.symbols() {
 }
 plot(close, title="Close")`,
 		DSLProfile: &dto.StrategyBacktestDSLProfile{UsesOptions: ptrBool(true), RegularTrade: "none"},
-	})
+	}, true)
 	if err != nil {
 		t.Fatalf("resolveBacktestPlan returned error: %v", err)
 	}
