@@ -56,15 +56,17 @@ type SignalMetadata struct {
 }
 
 type RequestSpec struct {
-	Kind     string
-	Market   string
-	Symbol   string
-	Name     string
-	Interval string
-	Mode     string
-	Field    string
-	Key      string
-	Dynamic  bool
+	Kind           string
+	Market         string
+	Symbol         string
+	Name           string
+	Interval       string
+	Mode           string
+	Field          string
+	Key            string
+	Dynamic        bool
+	ExpressionMode bool
+	Expression     ast.Expr
 }
 
 type ChainRequestSpec struct {
@@ -353,21 +355,27 @@ func parseRequestSpec(call *ast.CallExpr) (RequestSpec, bool) {
 	if !ok {
 		return RequestSpec{}, false
 	}
-	get := func(name string, idx int) (string, bool) {
+	argExpr := func(name string, idx int) ast.Expr {
 		for _, arg := range call.Args {
 			if arg.Name == name {
-				value := literalString(arg.Value)
-				return value, value == ""
+				return arg.Value
 			}
 		}
 		if idx >= 0 && idx < len(call.Args) {
 			arg := call.Args[idx]
 			if arg.Name == "" {
-				value := literalString(arg.Value)
-				return value, value == ""
+				return arg.Value
 			}
 		}
-		return "", true
+		return nil
+	}
+	get := func(name string, idx int) (string, bool) {
+		expr := argExpr(name, idx)
+		if expr == nil {
+			return "", true
+		}
+		value := literalString(expr)
+		return value, value == ""
 	}
 	switch dot.Field {
 	case "security":
@@ -377,7 +385,15 @@ func parseRequestSpec(call *ast.CallExpr) (RequestSpec, bool) {
 		market, dynMarket := get("market", 0)
 		symbol, dynSymbol := get("symbol", 1)
 		interval, dynInterval := get("interval", 2)
-		field, dynField := get("field", 3)
+		fieldExpr := argExpr("field", 3)
+		field, dynField := "", true
+		if fieldExpr != nil {
+			field = literalString(fieldExpr)
+			dynField = field == ""
+		}
+		if fieldExpr != nil && dynField && !(dynMarket || dynSymbol || dynInterval) {
+			return RequestSpec{Kind: "security", Market: market, Symbol: symbol, Interval: interval, Key: RequestSecurityKey(market, symbol, interval), ExpressionMode: true, Expression: fieldExpr}, true
+		}
 		dynamic := dynMarket || dynSymbol || dynInterval || dynField
 		if dynamic {
 			return RequestSpec{Kind: "security", Dynamic: true}, true

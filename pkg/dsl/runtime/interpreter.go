@@ -102,6 +102,13 @@ type Bridge interface {
 	IndAt(name string, offset int) float64
 }
 
+// SpecialFormBridge can evaluate selected calls before the interpreter eagerly
+// evaluates all arguments. This is used for context-switching calls such as
+// request.security(..., expr), where expr must remain an AST template.
+type SpecialFormBridge interface {
+	EvalSpecialForm(ip *Interpreter, call *ast.CallExpr, scope *Scope) (Value, bool)
+}
+
 // NewInterpreter creates a new interpreter for the given program.
 func NewInterpreter(prog *ast.Program) *Interpreter {
 	ip := &Interpreter{
@@ -678,6 +685,13 @@ func (ip *Interpreter) evalExpr(expr ast.Expr, scope *Scope) Value {
 	}
 }
 
+// EvalExpression evaluates an AST expression in the provided scope. It is
+// intended for bridge special forms that need to evaluate a deferred expression
+// under a temporary context.
+func (ip *Interpreter) EvalExpression(expr ast.Expr, scope *Scope) Value {
+	return ip.evalExpr(expr, scope)
+}
+
 func snapshotContainerValue(v Value) Value {
 	switch v.tag {
 	case TagSeries:
@@ -769,6 +783,11 @@ func (ip *Interpreter) evalUnary(e *ast.UnaryExpr, scope *Scope) Value {
 }
 
 func (ip *Interpreter) evalCall(e *ast.CallExpr, scope *Scope) Value {
+	if bridge, ok := ip.Bridge.(SpecialFormBridge); ok {
+		if value, handled := bridge.EvalSpecialForm(ip, e, scope); handled {
+			return value
+		}
+	}
 	callee := ip.evalExpr(e.Callee, scope)
 	if callee.tag != TagFn || callee.fn == nil {
 		return NaVal()

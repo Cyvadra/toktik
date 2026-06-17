@@ -7,7 +7,7 @@
 - Source Swagger: `docs/swagger.json`
 - API title: `Toktik Options Platform API`
 - API version: `1.0`
-- Generated at: `2026-06-17T07:38:00Z`
+- Generated at: `2026-06-17T09:29:17Z`
 
 ## Scope
 
@@ -164,7 +164,8 @@ first = arr[0]
 
 ### 因子、組合與配置
 
-- `request.security(market, symbol, interval, field)`、`request.factor(name, interval, field)`
+- `request.security(market, symbol, interval, field_or_expression)`、`request.factor(name, interval, field)`
+- `request.security(...)` 的第四個參數若是字串字面量，會沿用既有欄位讀取模式；若是表達式，會在指定 market/symbol/interval 的上下文中計算，再以已確認 bar 對齊回主時間軸。
 - `request.factor("volatility", "1d", field)` 會綁定目前回測主標的，讀取與 `/features/volatility-history` 相同上游的日頻波動率特徵。
 - `volatility` 支援欄位：`iv`/`current_iv`、`hv10`、`hv20`、`hv30`、`iv_percentile`、`iv_rank`、`price_observations`、`iv_observations`。
 
@@ -176,10 +177,16 @@ high_iv = iv_rank > 80
 plot(iv, title="IV", precision=4)
 ```
 
+```pine
+iv_rank_base = request.factor("volatility", "1d", "iv_rank")
+aapl_close = request.security("us", "AAPL", "1d", close)
+aapl_iv_rank = request.security("us", "AAPL", "1d", iv_rank_base)
+```
+
 - `alpha.rank`、`alpha.zscore`、`alpha.decay_linear`、`alpha.ts_rank`、`alpha.ts_corr`、`alpha.ts_delta`、`alpha.ts_mean`、`alpha.log_return` 等時序因子函數
 - `portfolio.symbols()`、`portfolio.weights()`、`portfolio.items()`、`portfolio.weight(symbol, defval)`
 - `portfolio.*` 讀取的是回測請求中的 `portfolio` / `symbols` / `weights` 配置。這些符號會用於策略配置與期權鏈預載，但一般股票訂單函數（`strategy.entry`、`buy/sell`、`order.*`）目前仍下在 primary asset；若要交易不同 underlying 的期權，請使用 `options.chain(market, symbol)` 搭配 `spread.open_on(...)`。
-- `request.security(...)`、`request.factor(...)`、`request.fundamental(...)` 的 market/symbol/interval/field 參數需使用字面量，validate 階段才能預先註冊依賴；動態 `request.security("us", portfolio.symbol(0), ...)` 不會自動載入額外資料。
+- `request.security(...)` 的 market/symbol/interval 參數，以及 `request.factor(...)`、`request.fundamental(...)` 的識別參數需使用字面量，validate 階段才能預先註冊依賴；動態 `request.security("us", portfolio.symbol(0), ...)` 不會自動載入額外資料。`request.security` 表達式模式目前支援純表達式與簡單 request.factor 別名；下單等副作用應留在主上下文。
 - `config.get(name, defval)`、`config.string(name, defval)`、`ref.set/get/has/clear/inc/dec`
 
 ### 期權與價差
@@ -422,7 +429,7 @@ plot(iv, title="IV", precision=4)
 | --- | --- | --- | --- | --- | --- |
 | `request.factor` | `request.factor(name, interval, field)` | `函數` | `series` | `iv_rank = request.factor("volatility", "1d", "iv_rank")` | 用於讀取預載因子資料；內建 volatility 因子會綁定目前回測主標的，提供 iv/current_iv、hv10、hv20、hv30、iv_percentile、iv_rank、price_observations、iv_observations 等 1d 欄位。 |
 | `request.fundamental` | `request.fundamental(market, symbol, factor, mode)` | `函數` | `series` | `pe = request.fundamental("us-stocks", "AAPL", "pe")` | 用於讀取標的綁定的基本面序列，例如 PE、PB、market_cap 等；美股的 PE/PB 會依 bar close 以 point-in-time 方式動態重估。 |
-| `request.security` | `request.security(market, symbol, interval, field)` | `函數` | `series` | `spy_close = request.security("us-stocks", "SPY", "1d", "close")` | 用於讀取其他市場、標的或週期的預載欄位，例如用 SPY 趨勢過濾個股策略。 |
+| `request.security` | `request.security(market, symbol, interval, field)` | `函數` | `series` | `spy_close = request.security("us-stocks", "SPY", "1d", "close")` | 用於讀取其他市場、標的或週期的預載欄位；第四參數也可為純表達式，會在指定標的/週期上下文中計算後對齊回主時間軸。 |
 
 ### schedule
 
@@ -662,17 +669,6 @@ curl -sS "http://127.0.0.1:9010/api/v1/backtests/runs/${run_id}" | jq
 curl -sS "http://127.0.0.1:9010/api/v1/backtests/runs/${run_id}/report" -o report.html
 curl -sS "http://127.0.0.1:9010/api/v1/backtests/runs/${run_id}/reports/overview" -o overview.html
 ```
-
-#### HTML 報告主圖品種覆蓋
-
-多品種 DSL、期權輪動、或股票與期權混合策略的交易範圍可能大於請求中的 `asset`。HTML 報告會把收益、回撤、成交與價差活動視為整個組合，但價格 K 線只作為「參考價格圖」。如需明確指定報告中顯示的 K 線品種，可在建立 run 時加入下列欄位：
-
-- `report_chart_symbol`: 要顯示在 HTML 主圖的品種，例如 `MSFT`。
-- `report_chart_market`: 可選；例如 `us-underlying`。省略時使用本次回測的主市場 underlying feed。
-- `report_chart_interval`: 可選；省略時使用 `interval`。
-- `report_chart_prefix`: 進階用法，直接指定已存在於結果 series 的前綴，例如 `request.security.us-underlying|MSFT|1d`。不可與前三個欄位混用。
-
-使用 `report_chart_symbol` 時，DSL 也需要透過 `request.security(report_chart_market, report_chart_symbol, report_chart_interval, "open/high/low/close")` 或等價邏輯讓這些欄位進入結果 series；否則報告會回退到 primary OHLC，並在圖表來源中標明回退原因。
 
 #### curl 範例：串流即時進度事件
 

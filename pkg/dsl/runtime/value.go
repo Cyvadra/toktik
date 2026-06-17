@@ -3,6 +3,8 @@ package runtime
 import (
 	"fmt"
 	"math"
+
+	"github.com/Cyvadra/toktik/pkg/dsl/ast"
 )
 
 // Tag discriminates runtime value types.
@@ -16,6 +18,7 @@ const (
 	TagSeries
 	TagArray
 	TagFn
+	TagExpr
 )
 
 // Value is the universal runtime type.
@@ -27,17 +30,19 @@ type Value struct {
 	series *Series
 	array  []Value
 	fn     *Fn
+	expr   ast.Expr
 	obj    interface{} // opaque Go object (e.g. OptionsChain, OptionContract)
 }
 
-func NaVal() Value               { return Value{tag: TagNa} }
-func FloatVal(f float64) Value   { return Value{tag: TagFloat, fval: f} }
-func BoolVal(b bool) Value       { return Value{tag: TagBool, bval: b} }
-func StringVal(s string) Value   { return Value{tag: TagString, sval: s} }
-func SeriesVal(s *Series) Value  { return Value{tag: TagSeries, series: s} }
-func ArrayVal(vs []Value) Value  { return Value{tag: TagArray, array: vs} }
-func FnVal(fn *Fn) Value         { return Value{tag: TagFn, fn: fn} }
-func ObjVal(o interface{}) Value { return Value{tag: TagArray, obj: o} }
+func NaVal() Value                { return Value{tag: TagNa} }
+func FloatVal(f float64) Value    { return Value{tag: TagFloat, fval: f} }
+func BoolVal(b bool) Value        { return Value{tag: TagBool, bval: b} }
+func StringVal(s string) Value    { return Value{tag: TagString, sval: s} }
+func SeriesVal(s *Series) Value   { return Value{tag: TagSeries, series: s} }
+func ArrayVal(vs []Value) Value   { return Value{tag: TagArray, array: vs} }
+func FnVal(fn *Fn) Value          { return Value{tag: TagFn, fn: fn} }
+func ExprVal(expr ast.Expr) Value { return Value{tag: TagExpr, expr: expr} }
+func ObjVal(o interface{}) Value  { return Value{tag: TagArray, obj: o} }
 
 func (v Value) Tag() Tag   { return v.tag }
 func (v Value) IsNa() bool { return v.tag == TagNa }
@@ -99,6 +104,8 @@ func (v Value) String() string {
 		return fmt.Sprintf("array[%d]", len(v.array))
 	case TagFn:
 		return fmt.Sprintf("fn(%s)", v.fn.Name)
+	case TagExpr:
+		return "expr"
 	default:
 		return "?"
 	}
@@ -108,4 +115,5 @@ func (v Value) Str() string        { return v.sval }
 func (v Value) SeriesPtr() *Series { return v.series }
 func (v Value) Array() []Value     { return v.array }
 func (v Value) FnPtr() *Fn         { return v.fn }
+func (v Value) Expr() ast.Expr     { return v.expr }
 func (v Value) Obj() interface{}   { return v.obj }

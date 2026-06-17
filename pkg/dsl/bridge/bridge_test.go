@@ -53,7 +53,9 @@ func (f *testDataFeed) Load(_ context.Context, req backtest.DataRequest) (*backt
 	return ds, nil
 }
 
-type testFactorFeed struct{}
+type testFactorFeed struct {
+	lastReq backtest.FactorRequest
+}
 
 type testFundamentalFactorFeed struct {
 	lastReq backtest.FactorRequest
@@ -81,6 +83,7 @@ func (p *testOptionsChainProvider) AvailableContractsFor(t time.Time, market, un
 func (f *testFactorFeed) Fields() []string { return []string{"dvol"} }
 
 func (f *testFactorFeed) Load(_ context.Context, req backtest.FactorRequest) (*backtest.DataSet, error) {
+	f.lastReq = req
 	nBars := 12
 	ds := backtest.NewDataSet(nBars)
 	ts := make([]time.Time, nBars)
@@ -812,6 +815,56 @@ plot(dvol, title="DVOL", precision=1)
 	series := result.Series[result.ReportColumns[0].Source]
 	if series[0] != 50 || series[1] != 51 {
 		t.Fatalf("unexpected request.factor plot series: first=%v second=%v", series[0], series[1])
+	}
+}
+
+func TestDslStrategyRequestSecurityExpressionUsesRemoteClose(t *testing.T) {
+	src := `strategy("Security Expression Request")
+alt_close = request.security("test", "ALT", "1h", close)
+plot(alt_close, title="ALT Expr Close", precision=1)
+`
+
+	engine := backtest.NewEngine(backtest.Config{InitialCapital: 10000})
+	engine.RegisterDataFeed("test", &testDataFeed{fields: []string{"open", "high", "low", "close", "volume"}})
+
+	from := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	to := from.Add(6 * time.Hour)
+
+	result, err := engine.Run(context.Background(), "test", "TEST", "1h", from, to, New(src), nil)
+	if err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+	series := result.Series[result.ReportColumns[0].Source]
+	if series[0] != 200.5 || series[1] != 201.5 {
+		t.Fatalf("unexpected request.security expression series: first=%v second=%v", series[0], series[1])
+	}
+}
+
+func TestDslStrategyRequestSecurityExpressionBindsFactorToRemoteSymbol(t *testing.T) {
+	src := `strategy("Security Factor Expression Request")
+iv_rank_base = request.factor("dvol", "1h", "dvol")
+alt_dvol = request.security("test", "ALT", "1h", iv_rank_base)
+plot(alt_dvol, title="ALT DVOL", precision=1)
+`
+
+	engine := backtest.NewEngine(backtest.Config{InitialCapital: 10000})
+	engine.RegisterDataFeed("test", &testDataFeed{fields: []string{"open", "high", "low", "close", "volume"}})
+	factorFeed := &testFactorFeed{}
+	engine.RegisterFactorFeed("dvol", factorFeed)
+
+	from := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	to := from.Add(6 * time.Hour)
+
+	result, err := engine.Run(context.Background(), "test", "TEST", "1h", from, to, New(src), nil)
+	if err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+	series := result.Series[result.ReportColumns[0].Source]
+	if series[0] != 50 || series[1] != 51 {
+		t.Fatalf("unexpected remote factor expression series: first=%v second=%v", series[0], series[1])
+	}
+	if factorFeed.lastReq.Market != "test" || factorFeed.lastReq.Symbol != "ALT" {
+		t.Fatalf("expected remote symbol-bound factor request for test/ALT, got %+v", factorFeed.lastReq)
 	}
 }
 
