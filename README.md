@@ -222,23 +222,6 @@ bin/crypto-options-import \
 The importer automatically initializes the ClickHouse schema (tables + materialized views) and performs deduplication sampling to skip already-imported files.
 Default generated windows are: `1m`, `5m`, `15m`, `30m`, `1h`, `2h`, `3h`, `4h`, `6h`, `8h`, `12h`, `1d`.
 
-Import spot bars from a Julia-exported minute JSON plus a 1-hour CSV volume file:
-
-```bash
-go run ./cmd/crypto-spot-import-julia \
-  --json-file btc2023_2025.json \
-  --csv-file BTCUSDT_1h.csv \
-  --symbol BTC \
-  --json-time-offset=-8h \
-  --clickhouse-dsn "clickhouse://default:@localhost:9000/default"
-```
-
-Notes:
-- `crypto-spot-import-julia` uses JSON minute `OHLC` as the price source.
-- Hourly volume comes from the CSV file and is redistributed to each minute using normalized JSON minute volume weights within the same hour.
-- `--json-time-offset` is required when the JSON timestamps and CSV timestamps are expressed in different time bases. For the checked-in `btc2023_2025.json` plus `BTCUSDT_1h.csv` pair, use `--json-time-offset=-8h`.
-- The imported `1m` spot bars feed the higher spot windows through ClickHouse aggregation tables and views.
-
 ### 2. Start the API Server
 
 Shared runtime defaults now live in `toktik.yaml`:
@@ -1235,7 +1218,6 @@ cmd/
   crypto-options-import/       Parquet → ClickHouse importer (auto-DDL + dedup)
   market-missing-days/          Data gap scanner
   crypto-options-kline-migrate-utc/ K-line timezone migration utility
-  crypto-spot-import-julia/    Julia-exported JSON+CSV spot → ClickHouse
   crypto-spot-import-15m/      Binance 15m spot CSV → ClickHouse
   deribit/dvol/                DVOL index tooling
   feature-store-backfill/      Precompute volatility/liquidity/panel snapshots
