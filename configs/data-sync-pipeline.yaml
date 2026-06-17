@@ -5,6 +5,9 @@ runner:
   audit_lookback_days: 7
   audit_max_findings: 50
   lock_ttl: 2h
+  db_retry_max_attempts: 5
+  db_retry_initial_delay: 10s
+  db_retry_max_delay: 2m
   default_per_job_timeout: ""
   default_per_source_timeout: ""
 

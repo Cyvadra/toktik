@@ -2,6 +2,7 @@ package syncpipeline
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -163,6 +164,43 @@ func TestParseDependencyMode(t *testing.T) {
 	}
 	if _, err := ParseDependencyMode("required"); err == nil {
 		t.Fatal("expected invalid dependency mode to fail")
+	}
+}
+
+func TestRetryRetriesTransientDatabaseErrors(t *testing.T) {
+	attempts := 0
+	err := Retry(context.Background(), RetryOptions{MaxAttempts: 3, InitialDelay: time.Nanosecond, MaxDelay: time.Nanosecond}, nil, "test retry", func(context.Context) error {
+		attempts++
+		if attempts < 3 {
+			return fmt.Errorf("query import ledger: dial tcp 127.0.0.1:9000: connect: connection refused")
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("Retry() returned error: %v", err)
+	}
+	if attempts != 3 {
+		t.Fatalf("expected 3 attempts, got %d", attempts)
+	}
+}
+
+func TestRetryDoesNotRetryContextCancellation(t *testing.T) {
+	attempts := 0
+	err := Retry(context.Background(), RetryOptions{MaxAttempts: 3, InitialDelay: time.Nanosecond, MaxDelay: time.Nanosecond}, nil, "test cancel", func(context.Context) error {
+		attempts++
+		return context.Canceled
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled, got %v", err)
+	}
+	if attempts != 1 {
+		t.Fatalf("expected one attempt, got %d", attempts)
+	}
+}
+
+func TestIsTransientDatabaseErrorRejectsBusinessErrors(t *testing.T) {
+	if IsTransientDatabaseError(fmt.Errorf("import already running")) {
+		t.Fatal("expected business error not to be transient")
 	}
 }
 

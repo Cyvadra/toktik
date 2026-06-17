@@ -207,6 +207,26 @@ func TestMissingSelectedDependencyWarningsKeepsLegacySelectionBehavior(t *testin
 	}
 }
 
+func TestResolveDBRetryOptionsUsesConfig(t *testing.T) {
+	opts, err := resolveDBRetryOptions(runnerConfig{DBRetryMaxAttempts: 5, DBRetryInitialDelay: "10s", DBRetryMaxDelay: "2m"}, 0, 0, 0)
+	if err != nil {
+		t.Fatalf("resolveDBRetryOptions() returned error: %v", err)
+	}
+	if opts.MaxAttempts != 5 || opts.InitialDelay != 10*time.Second || opts.MaxDelay != 2*time.Minute {
+		t.Fatalf("unexpected retry options: %#v", opts)
+	}
+}
+
+func TestResolveDBRetryOptionsPrefersOverrides(t *testing.T) {
+	opts, err := resolveDBRetryOptions(runnerConfig{DBRetryMaxAttempts: 5, DBRetryInitialDelay: "10s", DBRetryMaxDelay: "2m"}, 2, time.Second, 3*time.Second)
+	if err != nil {
+		t.Fatalf("resolveDBRetryOptions() returned error: %v", err)
+	}
+	if opts.MaxAttempts != 2 || opts.InitialDelay != time.Second || opts.MaxDelay != 3*time.Second {
+		t.Fatalf("unexpected retry options: %#v", opts)
+	}
+}
+
 func TestResolveSchemaRequirementsIncludesFeatureStoreDependencies(t *testing.T) {
 	requirements := resolveSchemaRequirements(pipelineConfig{Jobs: map[string]jobConfig{
 		"feature_store_backfill": {Enabled: true, Markets: []string{"us-options", "crypto-options"}},

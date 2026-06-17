@@ -50,6 +50,9 @@ type runnerConfig struct {
 	AuditLookbackDays       int    `yaml:"audit_lookback_days"`
 	AuditMaxFindings        int    `yaml:"audit_max_findings"`
 	LockTTL                 string `yaml:"lock_ttl"`
+	DBRetryMaxAttempts      int    `yaml:"db_retry_max_attempts"`
+	DBRetryInitialDelay     string `yaml:"db_retry_initial_delay"`
+	DBRetryMaxDelay         string `yaml:"db_retry_max_delay"`
 	DefaultPerJobTimeout    string `yaml:"default_per_job_timeout"`
 	DefaultPerSourceTimeout string `yaml:"default_per_source_timeout"`
 }
@@ -223,8 +226,12 @@ func integrityCommand(args []string) error {
 	if err != nil {
 		return err
 	}
+	retryOpts, err := resolveDBRetryOptions(cmdCtx.Config.Runner, 0, 0, 0)
+	if err != nil {
+		return err
+	}
 	ctx := context.Background()
-	conn, err := connectPipelineClickHouse(ctx, cmdCtx.ClickHouseDSN)
+	conn, err := connectPipelineClickHouse(ctx, cmdCtx.ClickHouseDSN, retryOpts)
 	if err != nil {
 		return err
 	}
@@ -298,6 +305,9 @@ func runCommand(args []string) error {
 	force := fs.Bool("force", false, "Ignore successful ledger short-circuit")
 	forceUnlock := fs.Bool("force-unlock", false, "Clear stale pending ledger rows older than lock TTL and ignore the lock")
 	initSchema := fs.Bool("init-schema", true, "Initialize selected job schemas before running")
+	dbRetryAttempts := fs.Int("db-retry-attempts", 0, "Override retry attempts for transient ClickHouse errors")
+	dbRetryInitialDelay := fs.Duration("db-retry-initial-delay", 0, "Override initial delay for transient ClickHouse retries")
+	dbRetryMaxDelay := fs.Duration("db-retry-max-delay", 0, "Override maximum delay for transient ClickHouse retries")
 	var auditFlag optionalBoolFlag
 	fs.Var(&auditFlag, "audit", "Run post-sync duplicate audit; defaults to runner.audit_enabled")
 	auditReportDir := fs.String("audit-report-dir", "reports", "Directory to write the audit CSV report into when findings are non-empty")
@@ -319,12 +329,16 @@ func runCommand(args []string) error {
 	selected := selectedSet(*jobsCSV)
 	printMissingSelectedDependencyWarnings(cfg, selected)
 	ctx := context.Background()
-	conn, err := connectPipelineClickHouse(ctx, cmdCtx.ClickHouseDSN)
+	retryOpts, err := resolveDBRetryOptions(cfg.Runner, *dbRetryAttempts, *dbRetryInitialDelay, *dbRetryMaxDelay)
+	if err != nil {
+		return err
+	}
+	conn, err := connectPipelineClickHouse(ctx, cmdCtx.ClickHouseDSN, retryOpts)
 	if err != nil {
 		return err
 	}
 	defer conn.Close()
-	sessions, err := initSelectedSchemas(ctx, conn, cfg, selected, *initSchema)
+	sessions, err := initSelectedSchemas(ctx, conn, cfg, selected, *initSchema, retryOpts)
 	if err != nil {
 		return err
 	}
@@ -353,7 +367,7 @@ func runCommand(args []string) error {
 		return err
 	}
 	if *forceUnlock {
-		cleared, err := syncpipeline.NewLedgerHooks(conn, syncpipeline.LockOptions{TTL: lockTTL, ForceUnlock: true}).ClearStaleLocks(ctx)
+		cleared, err := syncpipeline.NewLedgerHooksWithRetry(conn, syncpipeline.LockOptions{TTL: lockTTL, ForceUnlock: true}, retryOpts, slog.Default()).ClearStaleLocks(ctx)
 		if err != nil {
 			return fmt.Errorf("clear stale locks: %w", err)
 		}
@@ -362,7 +376,7 @@ func runCommand(args []string) error {
 		}
 	}
 	if !*dryRun {
-		if err := printPreRunSnapshotAndWait(ctx, conn, specs, 5*time.Second); err != nil {
+		if err := printPreRunSnapshotAndWait(ctx, conn, specs, 5*time.Second, retryOpts); err != nil {
 			return err
 		}
 	}
@@ -375,6 +389,7 @@ func runCommand(args []string) error {
 		FromOverride:         from,
 		ToOverride:           to,
 		LockOptions:          syncpipeline.LockOptions{TTL: lockTTL, ForceUnlock: *forceUnlock},
+		DBRetry:              retryOpts,
 		AuditEnabled:         auditEnabled,
 		AuditOptions: syncpipeline.AuditOptions{
 			LookbackDays:         cfg.Runner.AuditLookbackDays,
@@ -388,7 +403,7 @@ func runCommand(args []string) error {
 	if err := writeRunAuditReport(report, *auditReportPath, *auditReportDir); err != nil {
 		return err
 	}
-	if err := printPostRunOptionCoverageWarnings(ctx, conn, specs); err != nil {
+	if err := printPostRunOptionCoverageWarnings(ctx, conn, specs, retryOpts); err != nil {
 		return err
 	}
 	return nil
@@ -409,8 +424,12 @@ func statusCommand(args []string) error {
 	if err != nil {
 		return err
 	}
+	retryOpts, err := resolveDBRetryOptions(cmdCtx.Config.Runner, 0, 0, 0)
+	if err != nil {
+		return err
+	}
 	ctx := context.Background()
-	conn, err := connectPipelineClickHouse(ctx, cmdCtx.ClickHouseDSN)
+	conn, err := connectPipelineClickHouse(ctx, cmdCtx.ClickHouseDSN, retryOpts)
 	if err != nil {
 		return err
 	}
@@ -446,14 +465,18 @@ func auditCommand(args []string) error {
 	if err != nil {
 		return err
 	}
+	retryOpts, err := resolveDBRetryOptions(cfg.Runner, 0, 0, 0)
+	if err != nil {
+		return err
+	}
 	ctx := context.Background()
-	conn, err := connectPipelineClickHouse(ctx, cmdCtx.ClickHouseDSN)
+	conn, err := connectPipelineClickHouse(ctx, cmdCtx.ClickHouseDSN, retryOpts)
 	if err != nil {
 		return err
 	}
 	defer conn.Close()
 	selected := selectedSet(*jobsCSV)
-	sessions, err := initSelectedSchemas(ctx, conn, cfg, selected, true)
+	sessions, err := initSelectedSchemas(ctx, conn, cfg, selected, true, retryOpts)
 	if err != nil {
 		return err
 	}
@@ -772,8 +795,10 @@ func resolveRuntimeClickHouseDSN(rawDSN string) (config.Runtime, string) {
 	return runtimeCfg, runtimeCfg.ClickHouse.DSN
 }
 
-func connectPipelineClickHouse(ctx context.Context, dsn string) (driver.Conn, error) {
-	conn, err := usmarket.ConnectClickHouse(ctx, dsn)
+func connectPipelineClickHouse(ctx context.Context, dsn string, retry syncpipeline.RetryOptions) (driver.Conn, error) {
+	conn, err := syncpipeline.RetryValue(ctx, retry, slog.Default(), "connect ClickHouse", func(ctx context.Context) (driver.Conn, error) {
+		return usmarket.ConnectClickHouse(ctx, dsn)
+	})
 	if err != nil {
 		return nil, fmt.Errorf("connect ClickHouse: %w", err)
 	}
@@ -982,12 +1007,14 @@ func makeJobSpec(name string, job jobConfig, runner runnerConfig, syncer syncpip
 	return syncpipeline.JobSpec{Name: name, Syncer: syncer, DependsOn: job.DependsOn, OverlapDays: overlap, PerJobTimeout: perJobTimeout, PerSourceTimeout: perSourceTimeout}, nil
 }
 
-func initSelectedSchemas(ctx context.Context, conn driver.Conn, cfg pipelineConfig, selected map[string]bool, enabled bool) (usmarket.SessionMap, error) {
+func initSelectedSchemas(ctx context.Context, conn driver.Conn, cfg pipelineConfig, selected map[string]bool, enabled bool, retry syncpipeline.RetryOptions) (usmarket.SessionMap, error) {
 	if !enabled {
 		return nil, nil
 	}
 	requirements := resolveSchemaRequirements(cfg, selected)
-	return initializeSelectedSchemas(ctx, conn, requirements)
+	return syncpipeline.RetryValue(ctx, retry, slog.Default(), "initialize selected schemas", func(ctx context.Context) (usmarket.SessionMap, error) {
+		return initializeSelectedSchemas(ctx, conn, requirements)
+	})
 }
 
 type schemaRequirements struct {
@@ -1239,8 +1266,10 @@ type preRunSnapshotRow struct {
 	Qualifier string
 }
 
-func printPreRunSnapshotAndWait(ctx context.Context, conn driver.Conn, specs []syncpipeline.JobSpec, wait time.Duration) error {
-	rows, err := collectPreRunSnapshot(ctx, conn, specs)
+func printPreRunSnapshotAndWait(ctx context.Context, conn driver.Conn, specs []syncpipeline.JobSpec, wait time.Duration, retry syncpipeline.RetryOptions) error {
+	rows, err := syncpipeline.RetryValue(ctx, retry, slog.Default(), "pre-run snapshot", func(ctx context.Context) ([]preRunSnapshotRow, error) {
+		return collectPreRunSnapshot(ctx, conn, specs)
+	})
 	if err != nil {
 		return err
 	}
@@ -1386,11 +1415,13 @@ func printAuditFindings(findings []syncpipeline.DuplicateFinding) {
 	}
 }
 
-func printPostRunOptionCoverageWarnings(ctx context.Context, conn driver.Conn, specs []syncpipeline.JobSpec) error {
+func printPostRunOptionCoverageWarnings(ctx context.Context, conn driver.Conn, specs []syncpipeline.JobSpec, retry syncpipeline.RetryOptions) error {
 	if !needsOptionCoverageWarning(specs) {
 		return nil
 	}
-	missing, err := usmarket.ListUSOptionUnderlyingsMissingStockCoverage(ctx, conn)
+	missing, err := syncpipeline.RetryValue(ctx, retry, slog.Default(), "option underlying stock coverage check", func(ctx context.Context) ([]string, error) {
+		return usmarket.ListUSOptionUnderlyingsMissingStockCoverage(ctx, conn)
+	})
 	if err != nil {
 		return fmt.Errorf("check option underlying stock coverage: %w", err)
 	}
@@ -1492,6 +1523,27 @@ func parseDurationDefault(value string, fallback time.Duration) (time.Duration, 
 		return fallback, nil
 	}
 	return time.ParseDuration(strings.TrimSpace(value))
+}
+
+func resolveDBRetryOptions(cfg runnerConfig, attemptsOverride int, initialDelayOverride, maxDelayOverride time.Duration) (syncpipeline.RetryOptions, error) {
+	initialDelay, err := parseDurationDefault(cfg.DBRetryInitialDelay, 0)
+	if err != nil {
+		return syncpipeline.RetryOptions{}, fmt.Errorf("runner.db_retry_initial_delay: %w", err)
+	}
+	maxDelay, err := parseDurationDefault(cfg.DBRetryMaxDelay, 0)
+	if err != nil {
+		return syncpipeline.RetryOptions{}, fmt.Errorf("runner.db_retry_max_delay: %w", err)
+	}
+	if attemptsOverride > 0 {
+		cfg.DBRetryMaxAttempts = attemptsOverride
+	}
+	if initialDelayOverride > 0 {
+		initialDelay = initialDelayOverride
+	}
+	if maxDelayOverride > 0 {
+		maxDelay = maxDelayOverride
+	}
+	return syncpipeline.RetryOptions{MaxAttempts: cfg.DBRetryMaxAttempts, InitialDelay: initialDelay, MaxDelay: maxDelay}, nil
 }
 
 func firstNonEmpty(values ...string) string {

@@ -104,6 +104,7 @@ type RunnerOptions struct {
 	FromOverride         time.Time
 	ToOverride           time.Time
 	LockOptions          LockOptions
+	DBRetry              RetryOptions
 	AuditEnabled         bool
 	AuditOptions         AuditOptions
 }
@@ -171,24 +172,35 @@ type ClearedLock struct {
 }
 
 type LedgerHooks struct {
-	conn driver.Conn
-	opts LockOptions
+	conn   driver.Conn
+	opts   LockOptions
+	retry  RetryOptions
+	logger *slog.Logger
 }
 
 func NewLedgerHooks(conn driver.Conn, opts LockOptions) *LedgerHooks {
+	return NewLedgerHooksWithRetry(conn, opts, RetryOptions{}, slog.Default())
+}
+
+func NewLedgerHooksWithRetry(conn driver.Conn, opts LockOptions, retry RetryOptions, logger *slog.Logger) *LedgerHooks {
 	if opts.TTL <= 0 {
 		opts.TTL = defaultLockTTL
 	}
-	return &LedgerHooks{conn: conn, opts: opts}
+	if logger == nil {
+		logger = slog.Default()
+	}
+	return &LedgerHooks{conn: conn, opts: opts, retry: retry, logger: logger}
 }
 
 func (h *LedgerHooks) ClearStaleLocks(ctx context.Context) ([]ClearedLock, error) {
 	cutoff := time.Now().UTC().Add(-h.opts.TTL)
-	rows, err := h.conn.Query(ctx, `SELECT importer_name, source_key, scope_key, started_at
+	rows, err := RetryValue(ctx, h.retry, h.logger, "import_ledger clear stale locks query", func(ctx context.Context) (driver.Rows, error) {
+		return h.conn.Query(ctx, `SELECT importer_name, source_key, scope_key, started_at
 FROM import_ledger FINAL
 WHERE status = 'pending' AND started_at < parseDateTimeBestEffortOrNull({cutoff:String})`,
-		clickhouse.Named("cutoff", cutoff.Format("2006-01-02 15:04:05")),
-	)
+			clickhouse.Named("cutoff", cutoff.Format("2006-01-02 15:04:05")),
+		)
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -206,13 +218,16 @@ WHERE status = 'pending' AND started_at < parseDateTimeBestEffortOrNull({cutoff:
 	}
 	var markErr error
 	for _, lock := range locks {
-		if err := importledger.New(h.conn).MarkFailed(ctx, importledger.CompletionRequest{
-			ImporterName: lock.ImporterName,
-			SourceKey:    lock.SourceKey,
-			ScopeKey:     lock.ScopeKey,
-			ImportID:     "force-unlock",
-			ErrorMessage: "force-unlock stale pending row",
-			CompletedAt:  time.Now().UTC(),
+		lock := lock
+		if err := Retry(ctx, h.retry, h.logger, "import_ledger clear stale lock mark failed", func(ctx context.Context) error {
+			return importledger.New(h.conn).MarkFailed(ctx, importledger.CompletionRequest{
+				ImporterName: lock.ImporterName,
+				SourceKey:    lock.SourceKey,
+				ScopeKey:     lock.ScopeKey,
+				ImportID:     "force-unlock",
+				ErrorMessage: "force-unlock stale pending row",
+				CompletedAt:  time.Now().UTC(),
+			})
 		}); err != nil {
 			markErr = errors.Join(markErr, fmt.Errorf("mark stale lock failed for %s/%s/%s: %w", lock.ImporterName, lock.SourceKey, lock.ScopeKey, err))
 		}
@@ -226,7 +241,9 @@ func (r *Runner) Run(ctx context.Context, specs []JobSpec) (RunReport, error) {
 	if err != nil {
 		return RunReport{}, err
 	}
-	if err := importledger.EnsureSchema(ctx, r.conn); err != nil {
+	if err := r.retry(ctx, "import_ledger ensure schema", func(ctx context.Context) error {
+		return importledger.EnsureSchema(ctx, r.conn)
+	}); err != nil {
 		return RunReport{}, err
 	}
 	r.opts.Logger.Info("sync pipeline started", "jobs", len(ordered), "dry_run", r.opts.DryRun, "force", r.opts.Force, "dependency_mode", r.opts.DependencyMode)
@@ -281,7 +298,9 @@ func (r *Runner) runJob(ctx context.Context, spec JobSpec) JobReport {
 		jobCtx, cancel = context.WithTimeout(ctx, spec.PerJobTimeout)
 		defer cancel()
 	}
-	keys, err := spec.Syncer.SourceKeys(jobCtx, r.conn)
+	keys, err := RetryValue(jobCtx, r.opts.DBRetry, r.opts.Logger, spec.Name+" source keys", func(ctx context.Context) ([]string, error) {
+		return spec.Syncer.SourceKeys(ctx, r.conn)
+	})
 	if err != nil {
 		r.opts.Logger.Error("sync job source resolution failed", "job", spec.Name, "err", err)
 		return JobReport{Job: spec.Name, Status: JobStatusFailed, Err: err.Error()}
@@ -366,7 +385,9 @@ func (r *Runner) runJob(ctx context.Context, spec JobSpec) JobReport {
 		}
 	}
 	if r.opts.AuditEnabled {
-		findings, err := NewAuditor(r.conn, r.opts.Logger).AuditJob(jobCtx, spec, report.Sources, r.opts.AuditOptions)
+		findings, err := RetryValue(jobCtx, r.opts.DBRetry, r.opts.Logger, spec.Name+" audit", func(ctx context.Context) ([]DuplicateFinding, error) {
+			return NewAuditor(r.conn, r.opts.Logger).AuditJob(ctx, spec, report.Sources, r.opts.AuditOptions)
+		})
 		if err != nil {
 			r.opts.Logger.Warn("audit failed", "job", spec.Name, "err", err)
 		} else {
@@ -401,7 +422,9 @@ func (r *Runner) runSource(ctx context.Context, spec JobSpec, ledger *importledg
 		sourceCtx, cancel = context.WithTimeout(ctx, spec.PerSourceTimeout)
 		defer cancel()
 	}
-	window, err := r.resolveWindow(sourceCtx, spec, sourceKey)
+	window, err := RetryValue(sourceCtx, r.opts.DBRetry, r.opts.Logger, spec.Name+" resolve window", func(ctx context.Context) (resolvedWindow, error) {
+		return r.resolveWindow(ctx, spec, sourceKey)
+	})
 	if err != nil {
 		r.opts.Logger.Error("sync source window failed", "job", spec.Name, "source", sourceKey, "err", err)
 		return SourceReport{SourceKey: sourceKey, Status: JobStatusFailed, Err: err.Error()}
@@ -415,7 +438,9 @@ func (r *Runner) runSource(ctx context.Context, spec JobSpec, ledger *importledg
 	sourceStarted := time.Now().UTC()
 	r.opts.Logger.Info("sync source started", "job", spec.Name, "source", sourceKey, "scope", scope, "from", formatLogDate(from), "to", formatLogDate(to), "dry_run", r.opts.DryRun, "force", r.opts.Force)
 	if !r.opts.Force {
-		ok, err := ledger.AlreadySucceeded(sourceCtx, spec.Name, sourceKey, scope)
+		ok, err := RetryValue(sourceCtx, r.opts.DBRetry, r.opts.Logger, spec.Name+" ledger check", func(ctx context.Context) (bool, error) {
+			return ledger.AlreadySucceeded(ctx, spec.Name, sourceKey, scope)
+		})
 		if err != nil {
 			r.opts.Logger.Error("sync source ledger check failed", "job", spec.Name, "source", sourceKey, "scope", scope, "err", err)
 			return SourceReport{SourceKey: sourceKey, From: from, To: to, Status: JobStatusFailed, Err: err.Error()}
@@ -429,7 +454,9 @@ func (r *Runner) runSource(ctx context.Context, spec JobSpec, ledger *importledg
 	sourceHash := SourceHashFor(spec.Name, sourceKey, scope)
 	if !r.opts.DryRun {
 		var err error
-		importID, err = ledger.Start(sourceCtx, importledger.StartRequest{ImporterName: spec.Name, SourceKey: sourceKey, ScopeKey: scope, SourceHash: sourceHash, StartedAt: time.Now().UTC(), PendingTTL: r.opts.LockOptions.TTL, IgnorePending: r.opts.LockOptions.ForceUnlock})
+		importID, err = RetryValue(sourceCtx, r.opts.DBRetry, r.opts.Logger, spec.Name+" ledger start", func(ctx context.Context) (string, error) {
+			return ledger.Start(ctx, importledger.StartRequest{ImporterName: spec.Name, SourceKey: sourceKey, ScopeKey: scope, SourceHash: sourceHash, StartedAt: time.Now().UTC(), PendingTTL: r.opts.LockOptions.TTL, IgnorePending: r.opts.LockOptions.ForceUnlock})
+		})
 		if err != nil {
 			r.opts.Logger.Error("sync source ledger start failed", "job", spec.Name, "source", sourceKey, "scope", scope, "err", err)
 			return SourceReport{SourceKey: sourceKey, From: from, To: to, Status: JobStatusFailed, Err: err.Error()}
@@ -438,19 +465,39 @@ func (r *Runner) runSource(ctx context.Context, spec JobSpec, ledger *importledg
 	res, err := spec.Syncer.Sync(sourceCtx, r.conn, SyncRequest{SourceKey: sourceKey, From: from, To: to, DryRun: r.opts.DryRun})
 	if err != nil {
 		if !r.opts.DryRun {
-			err = importledger.RecordFailure(context.Background(), ledger, importledger.CompletionRequest{ImporterName: spec.Name, SourceKey: sourceKey, ScopeKey: scope, ImportID: importID, SourceHash: sourceHash, RowsInserted: importledger.NonNegativeRows(res.RowsInserted), ErrorMessage: err.Error(), CompletedAt: time.Now().UTC()}, err)
+			syncErr := err
+			err = importledger.RecordFailure(context.Background(), retryFailureRecorder{recorder: ledger, retry: r.opts.DBRetry, logger: r.opts.Logger, operation: spec.Name + " ledger failure"}, importledger.CompletionRequest{ImporterName: spec.Name, SourceKey: sourceKey, ScopeKey: scope, ImportID: importID, SourceHash: sourceHash, RowsInserted: importledger.NonNegativeRows(res.RowsInserted), ErrorMessage: syncErr.Error(), CompletedAt: time.Now().UTC()}, syncErr)
 		}
 		r.opts.Logger.Error("sync source failed", "job", spec.Name, "source", sourceKey, "scope", scope, "rows", res.RowsInserted, "elapsed", time.Since(sourceStarted).Round(time.Second), "err", err)
 		return SourceReport{SourceKey: sourceKey, From: from, To: to, Status: JobStatusFailed, RowsInserted: res.RowsInserted, Err: err.Error(), Notes: res.Notes}
 	}
 	if !r.opts.DryRun {
-		if err := ledger.MarkSuccess(sourceCtx, importledger.CompletionRequest{ImporterName: spec.Name, SourceKey: sourceKey, ScopeKey: scope, ImportID: importID, SourceHash: sourceHash, RowsInserted: importledger.NonNegativeRows(res.RowsInserted), CompletedAt: time.Now().UTC()}); err != nil {
+		if err := Retry(sourceCtx, r.opts.DBRetry, r.opts.Logger, spec.Name+" ledger success", func(ctx context.Context) error {
+			return ledger.MarkSuccess(ctx, importledger.CompletionRequest{ImporterName: spec.Name, SourceKey: sourceKey, ScopeKey: scope, ImportID: importID, SourceHash: sourceHash, RowsInserted: importledger.NonNegativeRows(res.RowsInserted), CompletedAt: time.Now().UTC()})
+		}); err != nil {
 			r.opts.Logger.Error("sync source ledger success failed", "job", spec.Name, "source", sourceKey, "scope", scope, "rows", res.RowsInserted, "err", err)
 			return SourceReport{SourceKey: sourceKey, From: from, To: to, Status: JobStatusFailed, RowsInserted: res.RowsInserted, Err: err.Error(), Notes: res.Notes}
 		}
 	}
 	r.opts.Logger.Info("sync source finished", "job", spec.Name, "source", sourceKey, "scope", scope, "rows", res.RowsInserted, "notes", len(res.Notes), "elapsed", time.Since(sourceStarted).Round(time.Second))
 	return SourceReport{SourceKey: sourceKey, From: from, To: to, Status: JobStatusSuccess, RowsInserted: res.RowsInserted, Notes: res.Notes}
+}
+
+func (r *Runner) retry(ctx context.Context, operation string, fn func(context.Context) error) error {
+	return Retry(ctx, r.opts.DBRetry, r.opts.Logger, operation, fn)
+}
+
+type retryFailureRecorder struct {
+	recorder  importledger.FailureRecorder
+	retry     RetryOptions
+	logger    *slog.Logger
+	operation string
+}
+
+func (r retryFailureRecorder) MarkFailed(ctx context.Context, req importledger.CompletionRequest) error {
+	return Retry(ctx, r.retry, r.logger, r.operation, func(ctx context.Context) error {
+		return r.recorder.MarkFailed(ctx, req)
+	})
 }
 
 func formatLogDate(value time.Time) string {
