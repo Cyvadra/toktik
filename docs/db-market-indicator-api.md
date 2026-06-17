@@ -7,7 +7,7 @@
 - Source Swagger: `docs/swagger.json`
 - API title: `Toktik Options Platform API`
 - API version: `1.0`
-- Generated at: `2026-06-11T12:33:02Z`
+- Generated at: `2026-06-17T07:04:39Z`
 
 ## Scope
 
@@ -881,8 +881,6 @@ Returns latest known values per (symbol, factor) at as_of. For us-stocks, price-
 | to | query | string | no | Snapshot window end (RFC3339 or YYYY-MM-DD); defaults to latest available snapshot |
 | interval | query | string | no | Chain interval (default 1d) |
 | include_latest | query | boolean | no | Merge Redis-cached provisional latest option-chain snapshot when interval=1d. This never calls upstream providers and defaults to false. |
-
-Latest-market overlays are best-effort Redis reads. Refresh jobs track per-stage results, so a provider failure can leave the cache partially refreshed while still preserving successfully written symbols. Configure `latest_market_data.always_refresh_symbols` for underlyings that must be present in the cache regardless of turnover-pool membership; `smoke_symbols` is reserved for closed-market change detection.
 | limit | query | integer | no | Max contracts (default 100) |
 | cursor | query | string | no | Pagination cursor |
 
