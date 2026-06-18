@@ -428,12 +428,58 @@ func TestProfitFactorBreakEven(t *testing.T) {
 	if r.ProfitFactor != 1.0 {
 		t.Fatalf("expected ProfitFactor 1.0 for break-even round trips, got %v", r.ProfitFactor)
 	}
-
 	// ApplyTradeSummary should be consistent.
 	r2 := &Result{Trades: trades}
 	ApplyTradeSummary(r2)
 	if r2.ProfitFactor != 1.0 {
 		t.Fatalf("ApplyTradeSummary: expected ProfitFactor 1.0, got %v", r2.ProfitFactor)
+	}
+}
+
+func TestSpreadValuationCarryForwardWarnsOnMissingMark(t *testing.T) {
+	warnings := &replayWarningSink{}
+	valuation := newSpreadValuationState(ValuationMissingCarryForward, warnings)
+	barTime := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	leg := SpreadLeg{Contract: OptionContract{Symbol: "C-100", MarkPrice: 5}, Side: Buy, Qty: 2, EntryPrice: 4.5}
+
+	first := valuation.markPrice(1, 0, leg, leg.Contract, OptionPriceMarkClose, 0, barTime)
+	if first != 5 {
+		t.Fatalf("first mark = %v, want 5", first)
+	}
+	missing := OptionContract{Symbol: "C-100"}
+	second := valuation.markPrice(1, 0, leg, missing, OptionPriceMarkClose, 1, barTime.Add(time.Hour))
+	if second != 5 {
+		t.Fatalf("carry-forward mark = %v, want 5", second)
+	}
+	if len(warnings.warnings) != 1 || warnings.warnings[0].Code != WarningValuationCarryForward {
+		t.Fatalf("warnings = %+v, want one carry-forward warning", warnings.warnings)
+	}
+}
+
+func TestForceCloseExpiredOptionLegUsesIntrinsicFallback(t *testing.T) {
+	warnings := &replayWarningSink{}
+	valuation := newSpreadValuationState(ValuationMissingCarryForward, warnings)
+	broker := NewBroker(Config{InitialCapital: 1000})
+	tracker := NewSpreadTracker()
+	now := time.Date(2024, 1, 2, 0, 0, 0, 0, time.UTC)
+	bc := &BarContext{barTime: now, broker: broker, spreadTracker: tracker}
+	contract := OptionContract{Symbol: "C-100", Type: Call, StrikePrice: 100, UnderlyingPrice: 112, Expiration: now.Add(-time.Minute)}
+	spreadID := bc.OpenSpread([]SpreadLeg{{Contract: contract, Side: Buy, Qty: 1, EntryPrice: 3}}, "expiry-test")
+
+	forceCloseExpiredOptionLegs(bc, tracker, nil, DefaultSpreadPricingConfig(), valuation, 1, now)
+
+	sp := tracker.Get(spreadID)
+	if sp == nil || !sp.Legs[0].Closed {
+		t.Fatalf("expired leg was not force-closed: %+v", sp)
+	}
+	if sp.Legs[0].ClosePrice != 12 {
+		t.Fatalf("close price = %v, want intrinsic 12", sp.Legs[0].ClosePrice)
+	}
+	if len(warnings.warnings) != 2 {
+		t.Fatalf("warnings = %+v, want intrinsic fallback and expiry close", warnings.warnings)
+	}
+	if warnings.warnings[0].Code != WarningOptionsIntrinsicValue || warnings.warnings[1].Code != WarningOptionsExpiryClose {
+		t.Fatalf("unexpected warning codes: %+v", warnings.warnings)
 	}
 }
 

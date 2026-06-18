@@ -77,6 +77,19 @@ type StrategyBacktestDSLDiagnostic struct {
 	Hint     string `json:"hint,omitempty"`
 }
 
+type StrategyBacktestRuntimeWarning struct {
+	Severity  string            `json:"severity"`
+	Code      string            `json:"code,omitempty"`
+	Message   string            `json:"message"`
+	BarIndex  *int              `json:"bar_index,omitempty"`
+	Timestamp *time.Time        `json:"timestamp,omitempty"`
+	Symbol    string            `json:"symbol,omitempty"`
+	Policy    string            `json:"policy,omitempty"`
+	SpreadID  *int              `json:"spread_id,omitempty"`
+	LegIndex  *int              `json:"leg_index,omitempty"`
+	Details   map[string]string `json:"details,omitempty"`
+}
+
 type StrategyBacktestValidationRuntime struct {
 	Market               string `json:"market,omitempty"`
 	Instrument           string `json:"instrument,omitempty"`
@@ -138,39 +151,41 @@ type StrategyBacktestSpreadSummary struct {
 }
 
 type StrategyBacktestSummary struct {
-	StrategyName     string                         `json:"strategy_name"`
-	StartTime        time.Time                      `json:"start_time"`
-	EndTime          time.Time                      `json:"end_time"`
-	BarsCount        int                            `json:"bars_count"`
-	InitialCapital   float64                        `json:"initial_capital"`
-	FinalEquity      float64                        `json:"final_equity"`
-	AccountUnit      string                         `json:"account_unit,omitempty"`
-	CapitalMode      string                         `json:"capital_mode,omitempty"`
-	CapitalProfile   string                         `json:"capital_profile,omitempty"`
-	CapitalNote      string                         `json:"capital_note,omitempty"`
-	TotalReturn      float64                        `json:"total_return"`
-	AnnualizedReturn float64                        `json:"annualized_return"`
-	SharpeRatio      float64                        `json:"sharpe_ratio"`
-	CalmarRatio      float64                        `json:"calmar_ratio"`
-	MaxDrawdown      float64                        `json:"max_drawdown"`
-	TotalTrades      int                            `json:"total_trades"`
-	WinningTrades    int                            `json:"winning_trades"`
-	LosingTrades     int                            `json:"losing_trades"`
-	WinRate          float64                        `json:"win_rate"`
-	ProfitFactor     float64                        `json:"profit_factor"`
-	AvgWin           float64                        `json:"avg_win"`
-	AvgLoss          float64                        `json:"avg_loss"`
-	TotalFees        float64                        `json:"total_fees"`
-	HTMLPath         string                         `json:"html_path,omitempty"`
-	ReportURL        string                         `json:"report_url,omitempty"`
-	SpreadSummary    *StrategyBacktestSpreadSummary `json:"spread_summary,omitempty"`
+	StrategyName     string                           `json:"strategy_name"`
+	StartTime        time.Time                        `json:"start_time"`
+	EndTime          time.Time                        `json:"end_time"`
+	BarsCount        int                              `json:"bars_count"`
+	InitialCapital   float64                          `json:"initial_capital"`
+	FinalEquity      float64                          `json:"final_equity"`
+	AccountUnit      string                           `json:"account_unit,omitempty"`
+	CapitalMode      string                           `json:"capital_mode,omitempty"`
+	CapitalProfile   string                           `json:"capital_profile,omitempty"`
+	CapitalNote      string                           `json:"capital_note,omitempty"`
+	TotalReturn      float64                          `json:"total_return"`
+	AnnualizedReturn float64                          `json:"annualized_return"`
+	SharpeRatio      float64                          `json:"sharpe_ratio"`
+	CalmarRatio      float64                          `json:"calmar_ratio"`
+	MaxDrawdown      float64                          `json:"max_drawdown"`
+	TotalTrades      int                              `json:"total_trades"`
+	WinningTrades    int                              `json:"winning_trades"`
+	LosingTrades     int                              `json:"losing_trades"`
+	WinRate          float64                          `json:"win_rate"`
+	ProfitFactor     float64                          `json:"profit_factor"`
+	AvgWin           float64                          `json:"avg_win"`
+	AvgLoss          float64                          `json:"avg_loss"`
+	TotalFees        float64                          `json:"total_fees"`
+	HTMLPath         string                           `json:"html_path,omitempty"`
+	ReportURL        string                           `json:"report_url,omitempty"`
+	SpreadSummary    *StrategyBacktestSpreadSummary   `json:"spread_summary,omitempty"`
+	Warnings         []StrategyBacktestRuntimeWarning `json:"warnings,omitempty"`
 }
 
 type StrategyBacktestRunResult struct {
-	Summaries         []StrategyBacktestSummary `json:"summaries"`
-	OverviewHTMLPath  string                    `json:"overview_html_path,omitempty"`
-	ReportURL         string                    `json:"report_url,omitempty"`
-	OverviewReportURL string                    `json:"overview_report_url,omitempty"`
+	Summaries         []StrategyBacktestSummary        `json:"summaries"`
+	Warnings          []StrategyBacktestRuntimeWarning `json:"warnings,omitempty"`
+	OverviewHTMLPath  string                           `json:"overview_html_path,omitempty"`
+	ReportURL         string                           `json:"report_url,omitempty"`
+	OverviewReportURL string                           `json:"overview_report_url,omitempty"`
 }
 
 type StrategyBacktestRunStatus struct {

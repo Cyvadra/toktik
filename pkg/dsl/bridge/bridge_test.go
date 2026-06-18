@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -54,7 +55,9 @@ func (f *testDataFeed) Load(_ context.Context, req backtest.DataRequest) (*backt
 }
 
 type testFactorFeed struct {
+	mu      sync.Mutex
 	lastReq backtest.FactorRequest
+	reqs    []backtest.FactorRequest
 }
 
 type testFundamentalFactorFeed struct {
@@ -83,7 +86,10 @@ func (p *testOptionsChainProvider) AvailableContractsFor(t time.Time, market, un
 func (f *testFactorFeed) Fields() []string { return []string{"dvol"} }
 
 func (f *testFactorFeed) Load(_ context.Context, req backtest.FactorRequest) (*backtest.DataSet, error) {
+	f.mu.Lock()
 	f.lastReq = req
+	f.reqs = append(f.reqs, req)
+	f.mu.Unlock()
 	nBars := 12
 	ds := backtest.NewDataSet(nBars)
 	ts := make([]time.Time, nBars)
@@ -863,8 +869,15 @@ plot(alt_dvol, title="ALT DVOL", precision=1)
 	if series[0] != 50 || series[1] != 51 {
 		t.Fatalf("unexpected remote factor expression series: first=%v second=%v", series[0], series[1])
 	}
-	if factorFeed.lastReq.Market != "test" || factorFeed.lastReq.Symbol != "ALT" {
-		t.Fatalf("expected remote symbol-bound factor request for test/ALT, got %+v", factorFeed.lastReq)
+	foundRemote := false
+	for _, req := range factorFeed.reqs {
+		if req.Market == "test" && req.Symbol == "ALT" {
+			foundRemote = true
+			break
+		}
+	}
+	if !foundRemote {
+		t.Fatalf("expected remote symbol-bound factor request for test/ALT, got %+v", factorFeed.reqs)
 	}
 }
 

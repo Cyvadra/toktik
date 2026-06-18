@@ -64,9 +64,25 @@ type RequestSpec struct {
 	Mode           string
 	Field          string
 	Key            string
+	Tier           RequestTier
 	Dynamic        bool
 	ExpressionMode bool
 	Expression     ast.Expr
+}
+
+type RequestTier string
+
+const (
+	RequestTierStatic         RequestTier = "static"
+	RequestTierSemiDynamic    RequestTier = "semi_dynamic"
+	RequestTierRuntimeDynamic RequestTier = "runtime_dynamic"
+)
+
+func requestTier(dynamic bool) RequestTier {
+	if dynamic {
+		return RequestTierRuntimeDynamic
+	}
+	return RequestTierStatic
 }
 
 type ChainRequestSpec struct {
@@ -310,13 +326,22 @@ func walkExpr(expr ast.Expr, m *Manifest) {
 		}
 		if spec, ok := parseRequestSpec(node); ok {
 			m.Requests = append(m.Requests, spec)
+			if spec.Tier == RequestTierRuntimeDynamic && spec.Kind != "option_chain" {
+				m.Diagnostics.Add(diagnostics.Diagnostic{
+					Severity: diagnostics.SeverityWarning,
+					Code:     "dsl.runtime_dynamic_request",
+					Function: requestDiagnosticFunction(spec.Kind),
+					Message:  "request uses runtime-dynamic arguments and will require a runtime request provider/cache instead of the static preload path",
+					Hint:     "Prefer literals, input/config-resolvable values, or top-level constants when possible so requests can be preloaded before replay.",
+				})
+			}
 			if spec.Dynamic && spec.Kind == "option_chain" {
 				m.Diagnostics.Add(diagnostics.Diagnostic{
 					Severity: diagnostics.SeverityWarning,
 					Code:     "dsl.dynamic_option_chain",
 					Function: "options.chain",
-					Message:  "options.chain uses non-literal market or symbol arguments and must be backed by request-level symbols or portfolio scope",
-					Hint:     "Provide symbols, weights, or portfolio in the backtest request so option chains can be preloaded deterministically.",
+					Message:  "options.chain uses runtime-dynamic market or symbol arguments and must be backed by request-level symbols, portfolio scope, or a runtime chain provider/cache",
+					Hint:     "Prefer literal or input/config-resolvable chain arguments so option chains can be preloaded deterministically.",
 				})
 			}
 		}
@@ -392,13 +417,13 @@ func parseRequestSpec(call *ast.CallExpr) (RequestSpec, bool) {
 			dynField = field == ""
 		}
 		if fieldExpr != nil && dynField && !(dynMarket || dynSymbol || dynInterval) {
-			return RequestSpec{Kind: "security", Market: market, Symbol: symbol, Interval: interval, Key: RequestSecurityKey(market, symbol, interval), ExpressionMode: true, Expression: fieldExpr}, true
+			return RequestSpec{Kind: "security", Market: market, Symbol: symbol, Interval: interval, Key: RequestSecurityKey(market, symbol, interval), Tier: RequestTierStatic, ExpressionMode: true, Expression: fieldExpr}, true
 		}
 		dynamic := dynMarket || dynSymbol || dynInterval || dynField
 		if dynamic {
-			return RequestSpec{Kind: "security", Dynamic: true}, true
+			return RequestSpec{Kind: "security", Tier: requestTier(true), Dynamic: true}, true
 		}
-		return RequestSpec{Kind: "security", Market: market, Symbol: symbol, Interval: interval, Field: field, Key: RequestSecurityKey(market, symbol, interval)}, true
+		return RequestSpec{Kind: "security", Market: market, Symbol: symbol, Interval: interval, Field: field, Key: RequestSecurityKey(market, symbol, interval), Tier: RequestTierStatic}, true
 	case "chain":
 		if obj.Name != "options" {
 			return RequestSpec{}, false
@@ -409,9 +434,9 @@ func parseRequestSpec(call *ast.CallExpr) (RequestSpec, bool) {
 			return RequestSpec{}, true
 		}
 		if dynMarket || dynSymbol || market == "" || symbol == "" {
-			return RequestSpec{Kind: "option_chain", Dynamic: true}, true
+			return RequestSpec{Kind: "option_chain", Tier: requestTier(true), Dynamic: true}, true
 		}
-		return RequestSpec{Kind: "option_chain", Market: market, Symbol: symbol, Key: backtest.ChainLookupKey(market, symbol)}, true
+		return RequestSpec{Kind: "option_chain", Market: market, Symbol: symbol, Key: backtest.ChainLookupKey(market, symbol), Tier: RequestTierStatic}, true
 	case "factor":
 		if obj.Name != "request" {
 			return RequestSpec{}, false
@@ -420,9 +445,9 @@ func parseRequestSpec(call *ast.CallExpr) (RequestSpec, bool) {
 		interval, dynInterval := get("interval", 1)
 		field, dynField := get("field", 2)
 		if dynName || dynInterval || dynField {
-			return RequestSpec{Kind: "factor", Dynamic: true}, true
+			return RequestSpec{Kind: "factor", Tier: requestTier(true), Dynamic: true}, true
 		}
-		return RequestSpec{Kind: "factor", Name: name, Interval: interval, Field: field, Key: RequestFactorKey(name, interval)}, true
+		return RequestSpec{Kind: "factor", Name: name, Interval: interval, Field: field, Key: RequestFactorKey(name, interval), Tier: RequestTierStatic}, true
 	case "fundamental":
 		if obj.Name != "request" {
 			return RequestSpec{}, false
@@ -432,14 +457,29 @@ func parseRequestSpec(call *ast.CallExpr) (RequestSpec, bool) {
 		factor, dynFactor := get("factor", 2)
 		mode, dynMode := get("mode", 3)
 		if dynMarket || dynSymbol || dynFactor {
-			return RequestSpec{Kind: "fundamental", Dynamic: true}, true
+			return RequestSpec{Kind: "fundamental", Tier: requestTier(true), Dynamic: true}, true
 		}
 		if dynMode || mode == "" {
 			mode = "filled"
 		}
-		return RequestSpec{Kind: "fundamental", Market: market, Symbol: symbol, Name: factor, Interval: "primary", Mode: mode, Field: "value", Key: RequestFundamentalKey(market, symbol, factor, mode)}, true
+		return RequestSpec{Kind: "fundamental", Market: market, Symbol: symbol, Name: factor, Interval: "primary", Mode: mode, Field: "value", Key: RequestFundamentalKey(market, symbol, factor, mode), Tier: RequestTierStatic}, true
 	default:
 		return RequestSpec{}, false
+	}
+}
+
+func requestDiagnosticFunction(kind string) string {
+	switch kind {
+	case "security":
+		return "request.security"
+	case "factor":
+		return "request.factor"
+	case "fundamental":
+		return "request.fundamental"
+	case "option_chain":
+		return "options.chain"
+	default:
+		return "request"
 	}
 }
 

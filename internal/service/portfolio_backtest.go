@@ -482,6 +482,7 @@ func (s *PortfolioBacktestService) runBacktest(ctx context.Context, run *portfol
 	htmlBase := ""
 	htmlMeta := buildBacktestReportHTMLMeta(req, plan, s.now())
 	resultSet := make([]dto.StrategyBacktestSummary, 0, len(plan.resolved))
+	runWarnings := make([]dto.StrategyBacktestRuntimeWarning, 0)
 	overviewItems := make([]report.OverviewItem, 0, len(plan.resolved))
 
 	for index, item := range plan.resolved {
@@ -513,10 +514,12 @@ func (s *PortfolioBacktestService) runBacktest(ctx context.Context, run *portfol
 			return nil, fmt.Errorf("write html report for %s: %w", result.StrategyName, err)
 		}
 		overviewItems = append(overviewItems, report.OverviewItem{Result: result, HTMLPath: htmlPath})
-		resultSet = append(resultSet, buildStrategyBacktestSummary(result, htmlPath))
+		summary := buildStrategyBacktestSummary(result, htmlPath)
+		runWarnings = append(runWarnings, summary.Warnings...)
+		resultSet = append(resultSet, summary)
 	}
 
-	resp := &dto.StrategyBacktestRunResult{Summaries: resultSet}
+	resp := &dto.StrategyBacktestRunResult{Summaries: resultSet, Warnings: runWarnings}
 	if len(resultSet) > 1 {
 		overviewPath := resolveAPIOverviewHTMLOutputPath(htmlBase, runDir, describeResolvedStrategies(plan.resolved, plan.strategyLabel), plan.asset, plan.interval, plan.from, plan.to)
 		if err := report.WriteBacktestOverviewHTML(overviewPath, overviewItems, htmlMeta); err != nil {
@@ -709,7 +712,32 @@ func buildStrategyBacktestSummary(result *backtest.Result, htmlPath string) dto.
 			WinRate:        result.SpreadSummary.WinRate,
 		}
 	}
+	if len(result.Warnings) > 0 {
+		summary.Warnings = backtestWarningsToDTO(result.Warnings)
+	}
 	return summary
+}
+
+func backtestWarningsToDTO(warnings []backtest.BacktestWarning) []dto.StrategyBacktestRuntimeWarning {
+	if len(warnings) == 0 {
+		return nil
+	}
+	out := make([]dto.StrategyBacktestRuntimeWarning, 0, len(warnings))
+	for _, warning := range warnings {
+		out = append(out, dto.StrategyBacktestRuntimeWarning{
+			Severity:  string(warning.Severity),
+			Code:      warning.Code,
+			Message:   warning.Message,
+			BarIndex:  warning.BarIndex,
+			Timestamp: warning.Timestamp,
+			Symbol:    warning.Symbol,
+			Policy:    warning.Policy,
+			SpreadID:  warning.SpreadID,
+			LegIndex:  warning.LegIndex,
+			Details:   warning.Details,
+		})
+	}
+	return out
 }
 
 func buildBacktestReportHTMLMeta(req dto.StrategyBacktestRunRequest, plan *resolvedBacktestPlan, generatedAt time.Time) report.HTMLMeta {

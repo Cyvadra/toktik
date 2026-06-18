@@ -47,6 +47,7 @@ type Result struct {
 	Timestamps         []time.Time            `json:"timestamps"`
 	Series             map[string][]float64   `json:"series,omitempty"` // indicator series
 	ReportColumns      []ReportColumn         `json:"report_columns,omitempty"`
+	Warnings           []BacktestWarning      `json:"warnings,omitempty"`
 	TradeOverview      *TradeOverview         `json:"trade_overview,omitempty"`
 	EquityAnalysis     *EquityAnalysis        `json:"equity_analysis,omitempty"`
 	AccountPerformance *PerformanceSnapshot   `json:"account_performance,omitempty"`
@@ -60,6 +61,50 @@ type Result struct {
 
 	// Options spread summary
 	SpreadSummary *SpreadSummary `json:"spread_summary,omitempty"`
+}
+
+// WarningSeverity describes how serious a runtime backtest warning is.
+type WarningSeverity string
+
+const (
+	WarningSeverityInfo    WarningSeverity = "info"
+	WarningSeverityWarning WarningSeverity = "warning"
+	WarningSeverityError   WarningSeverity = "error"
+)
+
+// BacktestWarning is a structured runtime warning emitted while replaying a
+// backtest. It is returned with the result so valuation fallbacks, forced
+// expiry closes, and runtime data gaps are visible to API/report consumers.
+type BacktestWarning struct {
+	Severity  WarningSeverity   `json:"severity"`
+	Code      string            `json:"code,omitempty"`
+	Message   string            `json:"message"`
+	BarIndex  *int              `json:"bar_index,omitempty"`
+	Timestamp *time.Time        `json:"timestamp,omitempty"`
+	Security  *SecurityRef      `json:"security,omitempty"`
+	SpreadID  *int              `json:"spread_id,omitempty"`
+	LegIndex  *int              `json:"leg_index,omitempty"`
+	Symbol    string            `json:"symbol,omitempty"`
+	Policy    string            `json:"policy,omitempty"`
+	Details   map[string]string `json:"details,omitempty"`
+}
+
+// ValuationMissingPolicy controls valuation behavior when the current mark is
+// unavailable. Carry-forward is the default: reuse the last valid mark and emit
+// a warning; if no carried mark exists, seed from entry price and warn.
+type ValuationMissingPolicy string
+
+const (
+	ValuationMissingCarryForward ValuationMissingPolicy = "carry_forward"
+)
+
+func (p ValuationMissingPolicy) normalized() ValuationMissingPolicy {
+	switch p {
+	case "", ValuationMissingCarryForward:
+		return ValuationMissingCarryForward
+	default:
+		return ValuationMissingCarryForward
+	}
 }
 
 // TradeOverview aggregates raw fill and round-trip level trade metrics.

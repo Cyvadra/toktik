@@ -7,6 +7,10 @@ import (
 )
 
 // Config controls engine behavior.
+// Toktik's backtest engine intentionally does not model margin calls or forced
+// liquidation from negative equity. Equity curves preserve negative values so
+// reports can show the true observed max/min equity under the configured
+// execution and valuation policies.
 type Config struct {
 	InitialCapital  float64
 	AccountUnit     string
@@ -16,6 +20,9 @@ type Config struct {
 	ExecutionMode   ExecutionPriceModel
 	ValuationMode   ValuationPriceModel
 	TriggerMode     TriggerPriceMode
+	// ValuationMissingPolicy controls how open positions are valued when the
+	// current bar cannot provide a valid mark. The zero value uses carry-forward.
+	ValuationMissingPolicy ValuationMissingPolicy
 }
 
 // Engine orchestrates backtests by delegating data loading to a DataPreparer

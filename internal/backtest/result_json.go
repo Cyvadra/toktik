@@ -39,6 +39,7 @@ type resultJSONExport struct {
 	Timestamps      []time.Time                      `json:"timestamps"`
 	Series          map[string][]*float64            `json:"series,omitempty"`
 	ReportColumns   []ReportColumn                   `json:"report_columns,omitempty"`
+	Warnings        []BacktestWarning                `json:"warnings,omitempty"`
 	TradeOverview   *tradeOverviewJSONExport         `json:"trade_overview,omitempty"`
 	EquityAnalysis  *equityAnalysisJSONExport        `json:"equity_analysis,omitempty"`
 	SpreadPositions []spreadPositionReportJSONExport `json:"spread_positions,omitempty"`
@@ -193,6 +194,10 @@ func (r *Result) jsonExport() resultJSONExport {
 
 	if len(r.ReportColumns) > 0 {
 		out.ReportColumns = append([]ReportColumn(nil), r.ReportColumns...)
+	}
+
+	if len(r.Warnings) > 0 {
+		out.Warnings = append([]BacktestWarning(nil), r.Warnings...)
 	}
 
 	if r.TradeOverview != nil {

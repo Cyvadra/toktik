@@ -175,6 +175,8 @@ func (r *Replayer) Replay(prepared *PreparedData, strategy Strategy, params map[
 	if provider, ok := strategy.(SpreadPricingProvider); ok {
 		spreadPricing = provider.SpreadPricingConfig().WithDefaults()
 	}
+	warningSink := &replayWarningSink{}
+	valuationState := newSpreadValuationState(r.config.ValuationMissingPolicy, warningSink)
 
 	barCtx := &BarContext{
 		barTimes:           prepared.PrimaryDS.Timestamps,
@@ -275,6 +277,15 @@ func (r *Replayer) Replay(prepared *PreparedData, strategy Strategy, params map[
 									"entryPrice", entryPrice,
 									"barTime", prepared.PrimaryDS.Timestamps[i],
 								)
+								warningSink.add(BacktestWarning{
+									Severity:  WarningSeverityWarning,
+									Code:      "spread.open_invalid_entry_price",
+									Message:   "scheduled spread leg open skipped because entry price was invalid",
+									BarIndex:  &i,
+									Timestamp: &barCtx.barTime,
+									LegIndex:  &legIndex,
+									Symbol:    contract.Symbol,
+								})
 								legs = nil
 								break
 							}
@@ -344,22 +355,9 @@ func (r *Replayer) Replay(prepared *PreparedData, strategy Strategy, params map[
 		}
 
 		strategy.OnBar(barCtx)
+		forceCloseExpiredOptionLegs(barCtx, spreadTracker, contractMap, spreadPricing, valuationState, i, prepared.PrimaryDS.Timestamps[i])
 
-		spreadMarketValue := 0.0
-		for _, sp := range spreadTracker.OpenSpreads() {
-			for _, leg := range sp.Legs {
-				if leg.Closed {
-					continue
-				}
-				contract := resolveSpreadContract(leg.Contract, contractMap)
-				markPrice := spreadPricing.ValuationMode.ExitPrice(leg.Side, contract)
-				if leg.Side == Buy {
-					spreadMarketValue += leg.Qty * markPrice
-				} else {
-					spreadMarketValue -= leg.Qty * markPrice
-				}
-			}
-		}
+		spreadMarketValue := calculateSpreadMarketValue(spreadTracker, contractMap, spreadPricing, valuationState, i, prepared.PrimaryDS.Timestamps[i])
 		equityCurve[i] = broker.Equity() + spreadMarketValue
 		spreadGroupEquity.Observe(spreadGroupTracker, spreadTracker, contractMap, spreadPricing, prepared.PrimaryDS.Timestamps[i])
 
@@ -408,6 +406,7 @@ func (r *Replayer) Replay(prepared *PreparedData, strategy Strategy, params map[
 	result.SpreadPositions = buildSpreadPositionReports(spreadTracker, result.EndTime)
 	result.SpreadGroups = buildSpreadGroupReports(spreadGroupTracker, spreadTracker, result.EndTime)
 	result.SpreadGroups = applySpreadGroupEquityStats(result.SpreadGroups, spreadGroupEquity.Snapshot())
+	result.Warnings = warningSink.all()
 
 	return result, nil
 }
