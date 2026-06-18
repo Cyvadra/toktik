@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/Cyvadra/toktik/internal/backtest"
 	"github.com/Cyvadra/toktik/internal/dto"
 	"github.com/Cyvadra/toktik/pkg/dsl/bridge"
 	"github.com/Cyvadra/toktik/pkg/dsl/configmap"
@@ -37,9 +38,11 @@ func buildDynamicDSLResolvedStrategy(req dto.StrategyBacktestRunRequest, cfg str
 		return strategies.ResolvedStrategy{}, err
 	}
 
+	config := backtestDSLConfigMap(cfg, req)
+	signalSource := strings.TrimSpace(req.SignalSource)
 	baseOpts := bridge.Options{
-		SignalSource: strings.TrimSpace(req.SignalSource),
-		Config:       backtestDSLConfigMap(cfg, req),
+		SignalSource: signalSource,
+		Config:       config,
 	}
 	parsed := bridge.NewWithOptions(dslSource, baseOpts)
 	if errs := parsed.ParseErrors(); len(errs) > 0 {
@@ -56,13 +59,21 @@ func buildDynamicDSLResolvedStrategy(req dto.StrategyBacktestRunRequest, cfg str
 		return strategies.ResolvedStrategy{}, err
 	}
 
-	strategy := bridge.NewWithOptions(dslSource, bridge.Options{
-		SignalSource: strings.TrimSpace(req.SignalSource),
-		Params:       validatedParams,
-		Config:       backtestDSLConfigMap(cfg, req),
-	})
-	if errs := strategy.ParseErrors(); len(errs) > 0 {
-		return strategies.ResolvedStrategy{}, dto.NewValidationError("invalid dsl: %s", strings.Join(errs, "; "))
+	newStrategy := func() (*bridge.DslStrategy, error) {
+		strategy := bridge.NewWithOptions(dslSource, bridge.Options{
+			SignalSource: signalSource,
+			Params:       validatedParams,
+			Config:       config,
+		})
+		if errs := strategy.ParseErrors(); len(errs) > 0 {
+			return nil, dto.NewValidationError("invalid dsl: %s", strings.Join(errs, "; "))
+		}
+		return strategy, nil
+	}
+
+	strategy, err := newStrategy()
+	if err != nil {
+		return strategies.ResolvedStrategy{}, err
 	}
 
 	canonicalName := slugify(strategy.Name())
@@ -72,7 +83,10 @@ func buildDynamicDSLResolvedStrategy(req dto.StrategyBacktestRunRequest, cfg str
 	return strategies.ResolvedStrategy{
 		CanonicalName: canonicalName,
 		Strategy:      strategy,
-		Profile:       profile,
+		Factory: func() (backtest.Strategy, error) {
+			return newStrategy()
+		},
+		Profile: profile,
 		Runtime: strategies.StrategyRuntimeProfile{
 			CanonicalName: canonicalName,
 			DisplayName:   strategy.Name(),
@@ -324,7 +338,7 @@ func backtestDSLPortfolioItems(req dto.StrategyBacktestRunRequest) []configmap.P
 
 func describeResolvedStrategies(items []strategies.ResolvedStrategy, fallback string) string {
 	if len(items) == 1 {
-		name := strings.TrimSpace(items[0].Strategy.Name())
+		name := resolvedStrategyName(items[0])
 		if name != "" {
 			return name
 		}
@@ -333,4 +347,16 @@ func describeResolvedStrategies(items []strategies.ResolvedStrategy, fallback st
 		return fallback
 	}
 	return fmt.Sprintf("%d strategies", len(items))
+}
+
+func resolvedStrategyName(item strategies.ResolvedStrategy) string {
+	if name := strings.TrimSpace(item.Runtime.DisplayName); name != "" {
+		return name
+	}
+	if item.Strategy != nil {
+		if name := strings.TrimSpace(item.Strategy.Name()); name != "" {
+			return name
+		}
+	}
+	return strings.TrimSpace(item.CanonicalName)
 }

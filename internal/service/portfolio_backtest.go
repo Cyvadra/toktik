@@ -360,13 +360,7 @@ func (c *optionsChainProviderCache) evictOldestLocked() {
 }
 
 func (s *PortfolioBacktestService) StartStrategyBacktest(_ context.Context, req dto.StrategyBacktestRunRequest) (*dto.StrategyBacktestRunAccepted, error) {
-	if strings.TrimSpace(resolvePrimaryBacktestAsset(req)) == "" {
-		return nil, dto.NewValidationError("asset is required unless portfolio or symbols are provided")
-	}
-	if req.Capital <= 0 {
-		return nil, dto.NewValidationError("capital must be > 0")
-	}
-	if _, err := s.ValidateStrategyBacktest(context.Background(), req); err != nil {
+	if err := s.validateBacktestSubmission(req); err != nil {
 		return nil, err
 	}
 
@@ -399,6 +393,42 @@ func (s *PortfolioBacktestService) StartStrategyBacktest(_ context.Context, req 
 		StatusURL: fmt.Sprintf("/api/v1/backtests/runs/%s", runID),
 		EventsURL: fmt.Sprintf("/api/v1/backtests/runs/%s/events", runID),
 	}, nil
+}
+
+func (s *PortfolioBacktestService) validateBacktestSubmission(req dto.StrategyBacktestRunRequest) error {
+	if err := validateStrategyBacktestRunRequest(req); err != nil {
+		return err
+	}
+	if _, _, err := dto.ParseTimeRange(req.From, req.To); err != nil {
+		return err
+	}
+	strategyCfg, err := buildBacktestStrategyConfig(req)
+	if err != nil {
+		return err
+	}
+	primaryMarket, err := parsePrimaryMarket(defaultString(req.Market, marketCrypto))
+	if err != nil {
+		return err
+	}
+	tradeScope, err := parseInstrumentScope(defaultString(req.Instrument, string(instrumentAuto)))
+	if err != nil {
+		return err
+	}
+	if _, err := parseCommissionModel(defaultString(req.CommissionModel, "none")); err != nil {
+		return err
+	}
+	asset := resolvePrimaryBacktestAsset(req)
+	resolved, _, err := resolveRequestedStrategies(req, strategyCfg, asset)
+	if err != nil {
+		return err
+	}
+	if err := validateInstrumentScope(tradeScope, resolved); err != nil {
+		return err
+	}
+	if err := validateMarketStrategyCompatibility(primaryMarket, resolved); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (s *PortfolioBacktestService) GetStrategyBacktestRun(_ context.Context, runID string) (*dto.StrategyBacktestRunStatus, error) {
@@ -487,6 +517,10 @@ func (s *PortfolioBacktestService) runBacktest(ctx context.Context, run *portfol
 
 	for index, item := range plan.resolved {
 		capitalProfile := resolveCapitalProfile(plan.primaryMarket, item.Profile, plan.asset)
+		strategy, err := item.NewStrategy()
+		if err != nil {
+			return nil, fmt.Errorf("build strategy %s: %w", resolvedStrategyName(item), err)
+		}
 		engine := s.engineBuilder(backtest.Config{
 			InitialCapital:  req.Capital,
 			AccountUnit:     capitalProfile.unit,
@@ -501,9 +535,9 @@ func (s *PortfolioBacktestService) runBacktest(ctx context.Context, run *portfol
 			run.setProgress(progressFromUpdate(update))
 		})
 
-		result, runErr := engine.Run(ctx, plan.primaryMarket.underlyingFeed, plan.asset, plan.interval, plan.from, plan.to, item.Strategy, nil)
+		result, runErr := engine.Run(ctx, plan.primaryMarket.underlyingFeed, plan.asset, plan.interval, plan.from, plan.to, strategy, nil)
 		if runErr != nil {
-			return nil, fmt.Errorf("run strategy %s: %w", item.Strategy.Name(), runErr)
+			return nil, fmt.Errorf("run strategy %s: %w", strategy.Name(), runErr)
 		}
 		result.CapitalMode = strings.ToUpper(capitalProfile.unit)
 		result.CapitalProfile = item.Runtime.ProfileLabel

@@ -39,8 +39,12 @@ if bar_index == 0 {
 	if len(resolved) != 1 {
 		t.Fatalf("len(resolved) = %d, want 1", len(resolved))
 	}
-	if resolved[0].Strategy.Name() != "Runtime DSL" {
-		t.Fatalf("strategy name = %q, want Runtime DSL", resolved[0].Strategy.Name())
+	strategy, err := resolved[0].NewStrategy()
+	if err != nil {
+		t.Fatalf("NewStrategy returned error: %v", err)
+	}
+	if strategy.Name() != "Runtime DSL" {
+		t.Fatalf("strategy name = %q, want Runtime DSL", strategy.Name())
 	}
 	if resolved[0].Profile.UsesOptions {
 		t.Fatalf("expected spot profile, got %+v", resolved[0].Profile)
@@ -52,12 +56,41 @@ if bar_index == 0 {
 		t.Fatal("expected runtime profile label to be populated")
 	}
 
-	dslStrategy, ok := resolved[0].Strategy.(*bridge.DslStrategy)
+	dslStrategy, ok := strategy.(*bridge.DslStrategy)
 	if !ok {
-		t.Fatalf("strategy type = %T, want *bridge.DslStrategy", resolved[0].Strategy)
+		t.Fatalf("strategy type = %T, want *bridge.DslStrategy", strategy)
 	}
 	if len(dslStrategy.ParamSchema()) != 1 {
 		t.Fatalf("len(param schema) = %d, want 1", len(dslStrategy.ParamSchema()))
+	}
+}
+
+func TestResolveRequestedStrategiesDynamicDSLFactoryReturnsFreshInstances(t *testing.T) {
+	req := dto.StrategyBacktestRunRequest{
+		Asset:   "BTC",
+		From:    "2026-01-01",
+		To:      "2026-02-01",
+		Capital: 5,
+		DSL: `strategy("Fresh Runtime DSL")
+var count = 0
+count := count + 1
+plot(count, title="Count")`,
+	}
+
+	resolved, _, err := resolveRequestedStrategies(req, strategies.DefaultConfig(), "BTC")
+	if err != nil {
+		t.Fatalf("resolveRequestedStrategies returned error: %v", err)
+	}
+	first, err := resolved[0].NewStrategy()
+	if err != nil {
+		t.Fatalf("NewStrategy first returned error: %v", err)
+	}
+	second, err := resolved[0].NewStrategy()
+	if err != nil {
+		t.Fatalf("NewStrategy second returned error: %v", err)
+	}
+	if first == second {
+		t.Fatal("NewStrategy returned the same DSL strategy instance twice")
 	}
 }
 
@@ -247,6 +280,36 @@ plot(ta.sma(close, length), title="SMA")`,
 	}
 	if feed.loads == 0 {
 		t.Fatal("expected prepare preflight to load market data")
+	}
+}
+
+func TestStartStrategyBacktestSkipsSubmissionPreflightDataLoad(t *testing.T) {
+	feed := &validationTestFeed{}
+	svc := NewPortfolioBacktestService(nil, nil)
+	svc.engineBuilder = func(cfg backtest.Config, chainProvider backtest.OptionsChainProvider, usesOptions bool) *backtest.Engine {
+		engine := backtest.NewEngine(cfg)
+		engine.RegisterDataFeed(cryptoUnderlyingFeed, feed)
+		return engine
+	}
+
+	accepted, err := svc.StartStrategyBacktest(context.Background(), dto.StrategyBacktestRunRequest{
+		Asset:   "BTC",
+		From:    "2026-01-01",
+		To:      "2026-01-02",
+		Capital: 5,
+		DSL: `strategy("Runtime DSL")
+length = input.int(5, title="Length", minval=1, maxval=10)
+plot(ta.sma(close, length), title="SMA")`,
+		DSLParams: map[string]interface{}{"Length": 6.0},
+	})
+	if err != nil {
+		t.Fatalf("StartStrategyBacktest returned error: %v", err)
+	}
+	if accepted.RunID == "" {
+		t.Fatal("expected run id")
+	}
+	if feed.loads != 0 {
+		t.Fatalf("StartStrategyBacktest should accept without preflight data loads, got %d", feed.loads)
 	}
 }
 

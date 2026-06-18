@@ -1,6 +1,7 @@
 package catalog
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/Cyvadra/toktik/internal/backtest"
@@ -63,3 +64,48 @@ func TestTryRegister_Success(t *testing.T) {
 		t.Errorf("strategy %q not in Available() after TryRegister", name)
 	}
 }
+
+func TestResolveDetailedProvidesFreshStrategyInstances(t *testing.T) {
+	name := "fresh-instance-test"
+	counter := 0
+	err := TryRegister(Registration{
+		Name: name,
+		Factory: func(Config) (backtest.Strategy, error) {
+			counter++
+			return &namedTestStrategy{name: fmt.Sprintf("fresh-%d", counter)}, nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("TryRegister failed: %v", err)
+	}
+
+	resolved, err := ResolveDetailed(name, DefaultConfig(), "")
+	if err != nil {
+		t.Fatalf("ResolveDetailed failed: %v", err)
+	}
+	if len(resolved) != 1 {
+		t.Fatalf("len(resolved) = %d, want 1", len(resolved))
+	}
+	first, err := resolved[0].NewStrategy()
+	if err != nil {
+		t.Fatalf("NewStrategy first failed: %v", err)
+	}
+	second, err := resolved[0].NewStrategy()
+	if err != nil {
+		t.Fatalf("NewStrategy second failed: %v", err)
+	}
+	if first == second {
+		t.Fatal("NewStrategy returned the same strategy instance twice")
+	}
+	if first.Name() == second.Name() {
+		t.Fatalf("strategy names should reflect distinct factory calls, got %q", first.Name())
+	}
+}
+
+type namedTestStrategy struct{ name string }
+
+func (s *namedTestStrategy) Name() string { return s.name }
+
+func (s *namedTestStrategy) Init(*backtest.SetupContext) error { return nil }
+
+func (s *namedTestStrategy) OnBar(*backtest.BarContext) {}

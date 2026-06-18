@@ -26,12 +26,27 @@ type strategySpec struct {
 	factory func(Config) (backtest.Strategy, error)
 }
 
-// ResolvedStrategy keeps the built strategy alongside its registration profile.
+// ResolvedStrategy keeps strategy metadata alongside a factory for fresh
+// strategy instances. Strategy is retained as a display/prototype instance for
+// compatibility; execution paths should call NewStrategy because strategies are
+// stateful across Init/OnBar cycles.
 type ResolvedStrategy struct {
 	CanonicalName string
 	Strategy      backtest.Strategy
+	Factory       func() (backtest.Strategy, error)
 	Profile       StrategyProfile
 	Runtime       StrategyRuntimeProfile
+}
+
+// NewStrategy returns a fresh strategy instance for validation or execution.
+func (r ResolvedStrategy) NewStrategy() (backtest.Strategy, error) {
+	if r.Factory != nil {
+		return r.Factory()
+	}
+	if r.Strategy != nil {
+		return r.Strategy, nil
+	}
+	return nil, fmt.Errorf("resolved strategy %q has no strategy factory", r.CanonicalName)
 }
 
 var (
@@ -223,8 +238,11 @@ func resolveOneLocked(name string, cfg Config, baseAsset string) ([]ResolvedStra
 	return []ResolvedStrategy{{
 		CanonicalName: mapped,
 		Strategy:      built,
-		Profile:       spec.profile,
-		Runtime:       runtime,
+		Factory: func() (backtest.Strategy, error) {
+			return spec.factory(cfg)
+		},
+		Profile: spec.profile,
+		Runtime: runtime,
 	}}, nil
 }
 
@@ -252,8 +270,11 @@ func buildGroupLocked(groupName string, cfg Config, baseAsset string) ([]Resolve
 		out = append(out, ResolvedStrategy{
 			CanonicalName: name,
 			Strategy:      built,
-			Profile:       spec.profile,
-			Runtime:       runtime,
+			Factory: func() (backtest.Strategy, error) {
+				return spec.factory(cfg)
+			},
+			Profile: spec.profile,
+			Runtime: runtime,
 		})
 	}
 

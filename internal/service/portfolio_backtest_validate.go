@@ -45,37 +45,10 @@ func (s *PortfolioBacktestService) resolveBacktestPlan(ctx context.Context, run 
 		return nil, err
 	}
 
-	strategyCfg := strategies.DefaultConfig()
-	strategyCfg.PositionSize = req.PositionSize
-	strategyCfg.MaxHoldTime = time.Duration(req.MaxHoldHours * float64(time.Hour))
-	strategyCfg.TargetExpiryDays = req.TargetExpiryDays
-	strategyCfg.MinExpiryDays = req.MinExpiryDays
-	strategyCfg.MinPremium = req.MinPremium
-	strategyCfg.ShortDeltaMin = req.ShortDeltaMin
-	strategyCfg.ShortDeltaMax = req.ShortDeltaMax
-	strategyCfg.LongDeltaMin = req.LongDeltaMin
-	strategyCfg.LongDeltaMax = req.LongDeltaMax
-	strategyCfg.SignalSource = strings.TrimSpace(req.SignalSource)
-	strategyCfg.EntryPriceMode, err = parseOptionPriceMode(defaultString(req.SpreadEntryPriceMode, "mark_close"), "spread_entry_price_mode")
+	strategyCfg, err := buildBacktestStrategyConfig(req)
 	if err != nil {
 		return nil, err
 	}
-	strategyCfg.ExitPriceMode, err = parseOptionPriceMode(defaultString(req.SpreadExitPriceMode, "mark_close"), "spread_exit_price_mode")
-	if err != nil {
-		return nil, err
-	}
-	strategyCfg.ValuationPriceMode, err = parseOptionPriceMode(defaultString(req.SpreadValuationPriceMode, "mark_close"), "spread_valuation_price_mode")
-	if err != nil {
-		return nil, err
-	}
-	strategyCfg.MAPeriod = req.MAPeriod
-	strategyCfg.PThreshold = req.PThreshold
-
-	tradeDirection, err := parseTradeDirection(defaultString(req.Direction, "both"))
-	if err != nil {
-		return nil, err
-	}
-	strategyCfg.Direction = tradeDirection
 
 	primaryMarket, err := parsePrimaryMarket(defaultString(req.Market, marketCrypto))
 	if err != nil {
@@ -149,6 +122,40 @@ func (s *PortfolioBacktestService) resolveBacktestPlan(ctx context.Context, run 
 		chainProvider:    chainProvider,
 		chainTargets:     targets,
 	}, nil
+}
+
+func buildBacktestStrategyConfig(req dto.StrategyBacktestRunRequest) (strategies.Config, error) {
+	strategyCfg := strategies.DefaultConfig()
+	strategyCfg.PositionSize = req.PositionSize
+	strategyCfg.MaxHoldTime = time.Duration(req.MaxHoldHours * float64(time.Hour))
+	strategyCfg.TargetExpiryDays = req.TargetExpiryDays
+	strategyCfg.MinExpiryDays = req.MinExpiryDays
+	strategyCfg.MinPremium = req.MinPremium
+	strategyCfg.ShortDeltaMin = req.ShortDeltaMin
+	strategyCfg.ShortDeltaMax = req.ShortDeltaMax
+	strategyCfg.LongDeltaMin = req.LongDeltaMin
+	strategyCfg.LongDeltaMax = req.LongDeltaMax
+	strategyCfg.SignalSource = strings.TrimSpace(req.SignalSource)
+	var err error
+	strategyCfg.EntryPriceMode, err = parseOptionPriceMode(defaultString(req.SpreadEntryPriceMode, "mark_close"), "spread_entry_price_mode")
+	if err != nil {
+		return strategies.Config{}, err
+	}
+	strategyCfg.ExitPriceMode, err = parseOptionPriceMode(defaultString(req.SpreadExitPriceMode, "mark_close"), "spread_exit_price_mode")
+	if err != nil {
+		return strategies.Config{}, err
+	}
+	strategyCfg.ValuationPriceMode, err = parseOptionPriceMode(defaultString(req.SpreadValuationPriceMode, "mark_close"), "spread_valuation_price_mode")
+	if err != nil {
+		return strategies.Config{}, err
+	}
+	strategyCfg.MAPeriod = req.MAPeriod
+	strategyCfg.PThreshold = req.PThreshold
+	strategyCfg.Direction, err = parseTradeDirection(defaultString(req.Direction, "both"))
+	if err != nil {
+		return strategies.Config{}, err
+	}
+	return strategyCfg, nil
 }
 
 func resolvePrimaryBacktestAsset(req dto.StrategyBacktestRunRequest) string {
@@ -275,6 +282,10 @@ func (s *PortfolioBacktestService) preflightBacktestPlan(ctx context.Context, ru
 			})
 		}
 		capitalProfile := resolveCapitalProfile(plan.primaryMarket, item.Profile, plan.asset)
+		strategy, err := item.NewStrategy()
+		if err != nil {
+			return fmt.Errorf("build strategy %s: %w", resolvedStrategyName(item), err)
+		}
 		engine := s.engineBuilder(backtest.Config{
 			InitialCapital:  1,
 			AccountUnit:     capitalProfile.unit,
@@ -285,8 +296,8 @@ func (s *PortfolioBacktestService) preflightBacktestPlan(ctx context.Context, ru
 			ValuationMode:   backtest.ValuationPriceClose,
 			TriggerMode:     backtest.TriggerPriceCanonical,
 		}, plan.chainProvider, item.Profile.UsesOptions)
-		if _, err := engine.Prepare(ctx, plan.primaryMarket.underlyingFeed, plan.asset, plan.interval, plan.from, plan.to, item.Strategy, nil); err != nil {
-			return fmt.Errorf("prepare strategy %s: %w", item.Strategy.Name(), err)
+		if _, err := engine.Prepare(ctx, plan.primaryMarket.underlyingFeed, plan.asset, plan.interval, plan.from, plan.to, strategy, nil); err != nil {
+			return fmt.Errorf("prepare strategy %s: %w", strategy.Name(), err)
 		}
 	}
 	return nil
