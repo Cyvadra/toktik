@@ -34,16 +34,11 @@ func (g *GroupMixin) CloseGroup(ctx *backtest.BarContext, groupID int) {
 	}
 }
 
-// OpenSpreadInGroup opens a spread inside a position group, automatically
-// registering it with the group tracker. Falls back to a plain OpenSpread
-// when groupID is zero.
+// OpenSpreadInGroup opens a spread inside a position group. Falls back to a
+// plain OpenSpread when groupID is zero.
 func (g *GroupMixin) OpenSpreadInGroup(ctx *backtest.BarContext, legs []backtest.SpreadLeg, tag string, groupID int) int {
 	if groupID > 0 && ctx.SpreadGroups() != nil {
-		spreadID := ctx.OpenSpreadInGroup(legs, tag, groupID)
-		if spreadID > 0 {
-			ctx.SpreadGroups().AddSpread(groupID, spreadID)
-		}
-		return spreadID
+		return ctx.OpenSpreadInGroup(legs, tag, groupID)
 	}
 	return ctx.OpenSpread(legs, tag)
 }

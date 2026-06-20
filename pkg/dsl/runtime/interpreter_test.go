@@ -591,3 +591,122 @@ func TestOrderSubmitBuildsStructuredIntent(t *testing.T) {
 		t.Fatalf("expected oid=1, got %#v (exists=%v)", v, ok)
 	}
 }
+
+func TestBuiltinDocsIncludeCoreBacktestEntries(t *testing.T) {
+	docs := BuiltinDocs(ProfileBacktest)
+	byName := make(map[string]BuiltinDoc, len(docs))
+	for _, doc := range docs {
+		byName[doc.Name] = doc
+	}
+
+	for _, name := range []string{"strategy.entry", "order.submit", "request.security", "ta.sma", "strategy.long"} {
+		doc, ok := byName[name]
+		if !ok {
+			t.Fatalf("expected builtin docs to include %q", name)
+		}
+		if doc.Summary == "" || doc.Example == "" || doc.ReturnValue == "" {
+			t.Fatalf("expected complete doc metadata for %q, got %#v", name, doc)
+		}
+	}
+}
+
+func TestProfileBuiltinBoundaries(t *testing.T) {
+	tests := []struct {
+		name    string
+		profile Profile
+		want    []string
+		deny    []string
+	}{
+		{
+			name:    "indicator",
+			profile: ProfileIndicator,
+			want:    []string{"ta.sma", "math.abs", "strategy.entry", "input"},
+			deny:    []string{"request.security", "order.submit", "options.chain", "portfolio.symbols"},
+		},
+		{
+			name:    "backtest",
+			profile: ProfileBacktest,
+			want:    []string{"order.submit", "options.chain", "portfolio.symbols"},
+			deny:    []string{"request.security"},
+		},
+		{
+			name:    "alert",
+			profile: ProfileAlert,
+			want:    []string{"order.submit", "signal.active", "config.get"},
+			deny:    []string{"request.security", "options.chain", "portfolio.symbols"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ip := NewInterpreter(nil)
+			RegisterProfile(ip, tt.profile)
+			for _, name := range tt.want {
+				if _, ok := ip.builtins[name]; !ok {
+					t.Fatalf("expected %s profile to include %q", tt.profile, name)
+				}
+			}
+			for _, name := range tt.deny {
+				if _, ok := ip.builtins[name]; ok {
+					t.Fatalf("expected %s profile to exclude %q", tt.profile, name)
+				}
+			}
+		})
+	}
+}
+
+func TestBacktestProfileWithRequestProvidersIncludesRequestBuiltins(t *testing.T) {
+	stub := func(args []Value) Value { return NaVal() }
+	ip := NewInterpreter(nil)
+	RegisterBacktestProfile(ip, stub, stub, stub)
+	for _, name := range []string{"request.security", "request.factor", "request.fundamental"} {
+		if _, ok := ip.builtins[name]; !ok {
+			t.Fatalf("expected injected backtest profile to include %q", name)
+		}
+	}
+}
+
+func TestStrategyEntrySubmitsStructuredIntent(t *testing.T) {
+	src := "strategy.entry(id=\"long\", direction=strategy.long, qty=3, note=\"pine\")"
+	prog, errs := parser.Parse(src)
+	if len(errs) > 0 {
+		t.Fatal(errs)
+	}
+	bridge := &mockBridge{}
+	ip := NewInterpreter(prog)
+	ip.Bridge = bridge
+	RegisterStrategyBuiltins(ip)
+	ip.Init()
+	ip.OnBar()
+	if len(bridge.orders) != 1 {
+		t.Fatalf("expected 1 submitted order, got %d", len(bridge.orders))
+	}
+	got := bridge.orders[0]
+	if got.ID != "long" || got.Note != "pine" || got.Side != SideBuy || got.Type != OrderMarket || got.Qty != 3 {
+		t.Fatalf("unexpected strategy.entry order intent: %#v", got)
+	}
+}
+
+func TestStrategyEntryShortStopLimitIntent(t *testing.T) {
+	src := "strategy.entry(id=\"short\", direction=strategy.short, qty=2, limit=90, stop=95, immediate=true, note=\"risk\")"
+	prog, errs := parser.Parse(src)
+	if len(errs) > 0 {
+		t.Fatal(errs)
+	}
+	bridge := &mockBridge{}
+	ip := NewInterpreter(prog)
+	ip.Bridge = bridge
+	RegisterStrategyBuiltins(ip)
+	ip.Init()
+	ip.OnBar()
+	if len(bridge.orders) != 1 {
+		t.Fatalf("expected 1 submitted order, got %d", len(bridge.orders))
+	}
+	got := bridge.orders[0]
+	if got.ID != "short" || got.Side != SideSell || got.Type != OrderStopLimit || got.Qty != 2 {
+		t.Fatalf("unexpected strategy.entry identity: %#v", got)
+	}
+	if got.LimitPrice != 90 || got.StopPrice != 95 || !got.Immediate || got.Note != "risk" {
+		t.Fatalf("unexpected strategy.entry advanced fields: %#v", got)
+	}
+}

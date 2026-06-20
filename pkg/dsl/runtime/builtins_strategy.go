@@ -21,45 +21,30 @@ func RegisterStrategyBuiltins(ip *Interpreter) {
 		immediate := len(args) >= 7 && args[6].Bool()
 		note := argStr(args, 7, id)
 
-		hasAdvanced := limitPrice > 0 || stopPrice > 0 || twapBars > 0 || immediate
-
-		if hasAdvanced {
-			if ob, ok := ip.Bridge.(OrderBridge); ok {
-				intent := OrderIntent{ID: id, Note: note, Qty: qty}
-				if dir >= 0 {
-					intent.Side = SideBuy
-				} else {
-					intent.Side = SideSell
-				}
-				switch {
-				case stopPrice > 0 && limitPrice > 0:
-					intent.Type = OrderStopLimit
-					intent.StopPrice = stopPrice
-					intent.LimitPrice = limitPrice
-				case limitPrice > 0:
-					intent.Type = OrderLimit
-					intent.LimitPrice = limitPrice
-				case stopPrice > 0:
-					intent.Type = OrderStop
-					intent.StopPrice = stopPrice
-				case twapBars > 0:
-					intent.Type = OrderTWAP
-					intent.TWAPBars = twapBars
-				default:
-					intent.Type = OrderMarket
-				}
-				intent.Immediate = immediate
-				ob.SubmitOrder(intent)
-				return NaVal()
-			}
-		}
-
-		// Fallback: basic entry through Bridge.
+		intent := OrderIntent{ID: id, Note: note, Qty: qty, Immediate: immediate}
 		if dir >= 0 {
-			ip.Bridge.EntryLong(id, qty)
+			intent.Side = SideBuy
 		} else {
-			ip.Bridge.EntryShort(id, qty)
+			intent.Side = SideSell
 		}
+		switch {
+		case stopPrice > 0 && limitPrice > 0:
+			intent.Type = OrderStopLimit
+			intent.StopPrice = stopPrice
+			intent.LimitPrice = limitPrice
+		case limitPrice > 0:
+			intent.Type = OrderLimit
+			intent.LimitPrice = limitPrice
+		case stopPrice > 0:
+			intent.Type = OrderStop
+			intent.StopPrice = stopPrice
+		case twapBars > 0:
+			intent.Type = OrderTWAP
+			intent.TWAPBars = twapBars
+		default:
+			intent.Type = OrderMarket
+		}
+		submitIntent(ip, intent)
 		return NaVal()
 	})
 

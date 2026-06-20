@@ -307,15 +307,7 @@ func (bc *BarContext) Buy(ref SecurityRef, qty float64) {
 
 // BuyWithNote submits a market buy order with a short note.
 func (bc *BarContext) BuyWithNote(ref SecurityRef, qty float64, note string) {
-	bc.broker.SubmitOrder(Order{
-		Security:   ref,
-		Side:       Buy,
-		Type:       MarketOrder,
-		Note:       note,
-		Qty:        qty,
-		SubmitBar:  bc.barIndex,
-		SubmitTime: bc.barTime,
-	})
+	bc.Order(ref).Buy().Qty(qty).Note(note).Submit()
 }
 
 // Sell submits a market sell order for the given security.
@@ -325,15 +317,7 @@ func (bc *BarContext) Sell(ref SecurityRef, qty float64) {
 
 // SellWithNote submits a market sell order with a short note.
 func (bc *BarContext) SellWithNote(ref SecurityRef, qty float64, note string) {
-	bc.broker.SubmitOrder(Order{
-		Security:   ref,
-		Side:       Sell,
-		Type:       MarketOrder,
-		Note:       note,
-		Qty:        qty,
-		SubmitBar:  bc.barIndex,
-		SubmitTime: bc.barTime,
-	})
+	bc.Order(ref).Sell().Qty(qty).Note(note).Submit()
 }
 
 // BuyNowWithNote executes a market buy on the current bar.
@@ -341,16 +325,7 @@ func (bc *BarContext) BuyNowWithNote(ref SecurityRef, qty float64, note string) 
 	if qty <= 0 {
 		return false
 	}
-	_, ok := bc.broker.ExecuteOrderAtCloseNow(Order{
-		Security:   ref,
-		Side:       Buy,
-		Type:       MarketOrder,
-		Note:       note,
-		Qty:        qty,
-		SubmitBar:  bc.barIndex,
-		SubmitTime: bc.barTime,
-	}, bc.barIndex, bc.barTime)
-	return ok
+	return bc.Order(ref).Buy().Qty(qty).Note(note).SubmitNow()
 }
 
 // SellNowWithNote executes a market sell on the current bar.
@@ -358,16 +333,7 @@ func (bc *BarContext) SellNowWithNote(ref SecurityRef, qty float64, note string)
 	if qty <= 0 {
 		return false
 	}
-	_, ok := bc.broker.ExecuteOrderAtCloseNow(Order{
-		Security:   ref,
-		Side:       Sell,
-		Type:       MarketOrder,
-		Note:       note,
-		Qty:        qty,
-		SubmitBar:  bc.barIndex,
-		SubmitTime: bc.barTime,
-	}, bc.barIndex, bc.barTime)
-	return ok
+	return bc.Order(ref).Sell().Qty(qty).Note(note).SubmitNow()
 }
 
 // ScheduleBuyWithNote executes a market buy on the first primary bar at/after triggerTime.
@@ -429,20 +395,7 @@ func (bc *BarContext) BuyTWAP(ref SecurityRef, qty float64, bars int) {
 
 // BuyTWAPWithNote submits a market buy order sliced evenly across the next N bars with a short note.
 func (bc *BarContext) BuyTWAPWithNote(ref SecurityRef, qty float64, bars int, note string) {
-	if bars <= 1 {
-		bc.BuyWithNote(ref, qty, note)
-		return
-	}
-	bc.broker.SubmitOrder(Order{
-		Security:   ref,
-		Side:       Buy,
-		Type:       TWAPMarketOrder,
-		Note:       note,
-		Qty:        qty,
-		TWAPBars:   bars,
-		SubmitBar:  bc.barIndex,
-		SubmitTime: bc.barTime,
-	})
+	bc.Order(ref).Buy().Qty(qty).Note(note).TWAP(bars).Submit()
 }
 
 // SellTWAP submits a market sell order sliced evenly across the next N bars.
@@ -452,20 +405,7 @@ func (bc *BarContext) SellTWAP(ref SecurityRef, qty float64, bars int) {
 
 // SellTWAPWithNote submits a market sell order sliced evenly across the next N bars with a short note.
 func (bc *BarContext) SellTWAPWithNote(ref SecurityRef, qty float64, bars int, note string) {
-	if bars <= 1 {
-		bc.SellWithNote(ref, qty, note)
-		return
-	}
-	bc.broker.SubmitOrder(Order{
-		Security:   ref,
-		Side:       Sell,
-		Type:       TWAPMarketOrder,
-		Note:       note,
-		Qty:        qty,
-		TWAPBars:   bars,
-		SubmitBar:  bc.barIndex,
-		SubmitTime: bc.barTime,
-	})
+	bc.Order(ref).Sell().Qty(qty).Note(note).TWAP(bars).Submit()
 }
 
 // BuyLimit submits a limit buy order.
@@ -475,16 +415,7 @@ func (bc *BarContext) BuyLimit(ref SecurityRef, qty, price float64) {
 
 // BuyLimitWithNote submits a limit buy order with a short note.
 func (bc *BarContext) BuyLimitWithNote(ref SecurityRef, qty, price float64, note string) {
-	bc.broker.SubmitOrder(Order{
-		Security:   ref,
-		Side:       Buy,
-		Type:       LimitOrder,
-		Note:       note,
-		Qty:        qty,
-		Price:      price,
-		SubmitBar:  bc.barIndex,
-		SubmitTime: bc.barTime,
-	})
+	bc.Order(ref).Buy().Qty(qty).Note(note).Limit(price).Submit()
 }
 
 // SellLimit submits a limit sell order.
@@ -494,16 +425,7 @@ func (bc *BarContext) SellLimit(ref SecurityRef, qty, price float64) {
 
 // SellLimitWithNote submits a limit sell order with a short note.
 func (bc *BarContext) SellLimitWithNote(ref SecurityRef, qty, price float64, note string) {
-	bc.broker.SubmitOrder(Order{
-		Security:   ref,
-		Side:       Sell,
-		Type:       LimitOrder,
-		Note:       note,
-		Qty:        qty,
-		Price:      price,
-		SubmitBar:  bc.barIndex,
-		SubmitTime: bc.barTime,
-	})
+	bc.Order(ref).Sell().Qty(qty).Note(note).Limit(price).Submit()
 }
 
 // BuyStop submits a stop buy order.
@@ -513,16 +435,7 @@ func (bc *BarContext) BuyStop(ref SecurityRef, qty, stopPrice float64) {
 
 // BuyStopWithNote submits a stop buy order with a short note.
 func (bc *BarContext) BuyStopWithNote(ref SecurityRef, qty, stopPrice float64, note string) {
-	bc.broker.SubmitOrder(Order{
-		Security:   ref,
-		Side:       Buy,
-		Type:       StopOrder,
-		Note:       note,
-		Qty:        qty,
-		StopPrice:  stopPrice,
-		SubmitBar:  bc.barIndex,
-		SubmitTime: bc.barTime,
-	})
+	bc.Order(ref).Buy().Qty(qty).Note(note).Stop(stopPrice).Submit()
 }
 
 // SellStop submits a stop sell order.
@@ -532,16 +445,7 @@ func (bc *BarContext) SellStop(ref SecurityRef, qty, stopPrice float64) {
 
 // SellStopWithNote submits a stop sell order with a short note.
 func (bc *BarContext) SellStopWithNote(ref SecurityRef, qty, stopPrice float64, note string) {
-	bc.broker.SubmitOrder(Order{
-		Security:   ref,
-		Side:       Sell,
-		Type:       StopOrder,
-		Note:       note,
-		Qty:        qty,
-		StopPrice:  stopPrice,
-		SubmitBar:  bc.barIndex,
-		SubmitTime: bc.barTime,
-	})
+	bc.Order(ref).Sell().Qty(qty).Note(note).Stop(stopPrice).Submit()
 }
 
 // ClosePosition submits an order to flatten the position for a security.
@@ -727,23 +631,8 @@ func (bc *BarContext) OpenSpreadWithRef(legs []SpreadLeg, tag, ref string) int {
 	if bc.spreadTracker == nil {
 		return 0
 	}
-	// Work on a copy so the caller's slice is never mutated.
-	legsCopy := make([]SpreadLeg, len(legs))
-	copy(legsCopy, legs)
-	// Fill entry time on the copy
-	for i := range legsCopy {
-		legsCopy[i].EntryTime = bc.barTime
-		legsCopy[i].EntryCustomData = withEntryDelta(legsCopy[i].EntryCustomData, legsCopy[i].Contract)
-	}
-	// Record cash impact: selling = cash inflow, buying = cash outflow
-	for i := range legsCopy {
-		amount := legsCopy[i].Qty * legsCopy[i].EntryPrice
-		if legsCopy[i].Side == Sell {
-			bc.broker.AdjustCash(amount)
-		} else {
-			bc.broker.AdjustCash(-amount)
-		}
-	}
+	legsCopy := bc.prepareOpenSpreadLegs(legs)
+	bc.applyOpenSpreadCashImpact(legsCopy)
 	return bc.spreadTracker.OpenWithRef(legsCopy, bc.barTime, bc.barIndex, tag, ref)
 }
 
@@ -758,25 +647,15 @@ func (bc *BarContext) AppendSpreadLegs(spreadID int, legs []SpreadLeg) bool {
 	if sp == nil || sp.IsFullyClosed() {
 		return false
 	}
-	legsCopy := make([]SpreadLeg, len(legs))
-	copy(legsCopy, legs)
+	legsCopy := bc.prepareOpenSpreadLegs(legs)
 	for i := range legsCopy {
-		legsCopy[i].EntryTime = bc.barTime
-		legsCopy[i].EntryCustomData = withEntryDelta(legsCopy[i].EntryCustomData, legsCopy[i].Contract)
 		legsCopy[i].Closed = false
 		legsCopy[i].ClosePrice = 0
 		legsCopy[i].CloseTime = time.Time{}
 		legsCopy[i].CloseReason = ""
 		legsCopy[i].CloseCustomData = nil
 	}
-	for i := range legsCopy {
-		amount := legsCopy[i].Qty * legsCopy[i].EntryPrice
-		if legsCopy[i].Side == Sell {
-			bc.broker.AdjustCash(amount)
-		} else {
-			bc.broker.AdjustCash(-amount)
-		}
-	}
+	bc.applyOpenSpreadCashImpact(legsCopy)
 	sp.Legs = append(sp.Legs, legsCopy...)
 	return true
 }
@@ -805,17 +684,39 @@ func (bc *BarContext) CloseSpreadLegWithReasonAndData(spreadID, legIndex int, cl
 	if leg.Closed {
 		return false
 	}
-	// Cash impact of closing
-	amount := leg.Qty * closePrice
-	if leg.Side == Sell {
-		// Closing a short: buy to close = cash outflow
-		bc.broker.AdjustCash(-amount)
-	} else {
-		// Closing a long: sell to close = cash inflow
-		bc.broker.AdjustCash(amount)
-	}
+	bc.applyCloseSpreadCashImpact(*leg, closePrice)
 	closeCustomData = bc.withCurrentCloseDelta(leg, closeCustomData)
 	return bc.spreadTracker.CloseLegWithReasonAndData(spreadID, legIndex, closePrice, bc.barTime, closeReason, closeCustomData)
+}
+
+func (bc *BarContext) prepareOpenSpreadLegs(legs []SpreadLeg) []SpreadLeg {
+	legsCopy := make([]SpreadLeg, len(legs))
+	copy(legsCopy, legs)
+	for i := range legsCopy {
+		legsCopy[i].EntryTime = bc.barTime
+		legsCopy[i].EntryCustomData = withEntryDelta(legsCopy[i].EntryCustomData, legsCopy[i].Contract)
+	}
+	return legsCopy
+}
+
+func (bc *BarContext) applyOpenSpreadCashImpact(legs []SpreadLeg) {
+	for i := range legs {
+		amount := legs[i].Qty * legs[i].EntryPrice
+		if legs[i].Side == Sell {
+			bc.broker.AdjustCash(amount)
+		} else {
+			bc.broker.AdjustCash(-amount)
+		}
+	}
+}
+
+func (bc *BarContext) applyCloseSpreadCashImpact(leg SpreadLeg, closePrice float64) {
+	amount := leg.Qty * closePrice
+	if leg.Side == Sell {
+		bc.broker.AdjustCash(-amount)
+		return
+	}
+	bc.broker.AdjustCash(amount)
 }
 
 // CloseSpreadLegStopNowWithReason attempts to stop out a spread leg inside the current bar.
@@ -917,20 +818,8 @@ func (bc *BarContext) OpenSpreadInGroupWithRef(legs []SpreadLeg, tag, ref string
 	if bc.spreadTracker == nil {
 		return 0
 	}
-	legsCopy := make([]SpreadLeg, len(legs))
-	copy(legsCopy, legs)
-	for i := range legsCopy {
-		legsCopy[i].EntryTime = bc.barTime
-		legsCopy[i].EntryCustomData = withEntryDelta(legsCopy[i].EntryCustomData, legsCopy[i].Contract)
-	}
-	for i := range legsCopy {
-		amount := legsCopy[i].Qty * legsCopy[i].EntryPrice
-		if legsCopy[i].Side == Sell {
-			bc.broker.AdjustCash(amount)
-		} else {
-			bc.broker.AdjustCash(-amount)
-		}
-	}
+	legsCopy := bc.prepareOpenSpreadLegs(legs)
+	bc.applyOpenSpreadCashImpact(legsCopy)
 	spreadID := bc.spreadTracker.OpenFull(legsCopy, bc.barTime, bc.barIndex, tag, ref, groupID)
 	if spreadID > 0 && groupID > 0 && bc.spreadGroupTracker != nil {
 		bc.spreadGroupTracker.AddSpread(groupID, spreadID)

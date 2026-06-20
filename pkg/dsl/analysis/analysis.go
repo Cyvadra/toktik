@@ -4,7 +4,6 @@ import (
 	"math"
 	"strings"
 
-	"github.com/Cyvadra/toktik/internal/backtest"
 	"github.com/Cyvadra/toktik/pkg/dsl/ast"
 	"github.com/Cyvadra/toktik/pkg/dsl/diagnostics"
 )
@@ -436,7 +435,7 @@ func parseRequestSpec(call *ast.CallExpr) (RequestSpec, bool) {
 		if dynMarket || dynSymbol || market == "" || symbol == "" {
 			return RequestSpec{Kind: "option_chain", Tier: requestTier(true), Dynamic: true}, true
 		}
-		return RequestSpec{Kind: "option_chain", Market: market, Symbol: symbol, Key: backtest.ChainLookupKey(market, symbol), Tier: RequestTierStatic}, true
+		return RequestSpec{Kind: "option_chain", Market: market, Symbol: symbol, Key: ChainLookupKey(market, symbol), Tier: RequestTierStatic}, true
 	case "factor":
 		if obj.Name != "request" {
 			return RequestSpec{}, false
@@ -489,6 +488,10 @@ func RequestFundamentalKey(market, symbol, factor, mode string) string {
 	factor = strings.TrimSpace(strings.ToLower(factor))
 	mode = strings.TrimSpace(strings.ToLower(mode))
 	return market + "|" + symbol + "|" + factor + "|" + mode
+}
+
+func ChainLookupKey(market, underlying string) string {
+	return strings.ToLower(strings.TrimSpace(market)) + "|" + strings.ToUpper(strings.TrimSpace(underlying))
 }
 
 func qualifiedName(expr ast.Expr) string {

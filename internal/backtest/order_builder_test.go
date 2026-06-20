@@ -188,3 +188,36 @@ func TestSpreadOrderBuilder(t *testing.T) {
 		}
 	})
 }
+
+func TestOpenSpreadInGroupAddsGroupMembershipOnce(t *testing.T) {
+	broker := NewBroker(Config{InitialCapital: 10000})
+	groupTracker := NewSpreadGroupTracker()
+	ctx := &BarContext{
+		barIndex:           5,
+		barTime:            time.Date(2024, 1, 1, 10, 0, 0, 0, time.UTC),
+		broker:             broker,
+		spreadTracker:      NewSpreadTracker(),
+		spreadGroupTracker: groupTracker,
+	}
+	groupID := groupTracker.Open("test-group", 1, 1, ctx.barTime)
+	spreadID := ctx.OpenSpreadInGroupWithRef([]SpreadLeg{{
+		Contract:   OptionContract{Symbol: "TEST-C-100"},
+		Side:       Sell,
+		Qty:        1,
+		EntryPrice: 2,
+	}}, "test-spread", "ref", groupID)
+
+	if spreadID == 0 {
+		t.Fatal("expected spread to open")
+	}
+	group := groupTracker.Get(groupID)
+	if group == nil {
+		t.Fatal("expected group to exist")
+	}
+	if len(group.SpreadIDs) != 1 {
+		t.Fatalf("expected one group spread ID, got %v", group.SpreadIDs)
+	}
+	if group.SpreadIDs[0] != spreadID {
+		t.Fatalf("group spread ID = %d, want %d", group.SpreadIDs[0], spreadID)
+	}
+}

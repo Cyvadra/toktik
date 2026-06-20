@@ -299,10 +299,7 @@ func (r *Replayer) Replay(prepared *PreparedData, strategy Strategy, params map[
 						}
 						if len(legs) > 0 {
 							if sa.OpenGroupID > 0 {
-								spreadID := barCtx.OpenSpreadInGroupWithRef(legs, tag, sa.OpenRef, sa.OpenGroupID)
-								if spreadID > 0 && barCtx.SpreadGroups() != nil {
-									barCtx.SpreadGroups().AddSpread(sa.OpenGroupID, spreadID)
-								}
+								barCtx.OpenSpreadInGroupWithRef(legs, tag, sa.OpenRef, sa.OpenGroupID)
 							} else {
 								barCtx.OpenSpreadWithRef(legs, tag, sa.OpenRef)
 							}
@@ -314,16 +311,7 @@ func (r *Replayer) Replay(prepared *PreparedData, strategy Strategy, params map[
 					case ScheduleCloseLeg:
 						sp := spreadTracker.Get(sa.SpreadID)
 						if sp != nil && sa.LegIndex >= 0 && sa.LegIndex < len(sp.Legs) && !sp.Legs[sa.LegIndex].Closed {
-							contract := resolveSpreadContract(sp.Legs[sa.LegIndex].Contract, contractMap)
-							entrySide := sp.Legs[sa.LegIndex].Side
-							closePrice := spreadPricing.ExitMode.ExitPrice(entrySide, contract)
-							exitSide := Sell
-							if entrySide == Sell {
-								exitSide = Buy
-							}
-							closePrice = applySlippage(closePrice, exitSide, sa.SlippagePct, defaultSlipPct)
-							reason := appendDeltaNote(sa.CloseReason, "exec_", contract.Delta)
-							closeCustomData := upsertTradeCustomData(sa.CloseCustomData, TradeCustomDataKeyCloseTriggerTime, sa.TriggerTime.UTC().Format(time.RFC3339Nano))
+							closePrice, reason, closeCustomData := scheduledCloseLegFill(sa, sp.Legs[sa.LegIndex], contractMap, spreadPricing, defaultSlipPct)
 							barCtx.CloseSpreadLegWithReasonAndData(sa.SpreadID, sa.LegIndex, closePrice, reason, closeCustomData)
 						}
 					case ScheduleCloseSpread:
@@ -333,16 +321,7 @@ func (r *Replayer) Replay(prepared *PreparedData, strategy Strategy, params map[
 								if sp.Legs[legIndex].Closed {
 									continue
 								}
-								contract := resolveSpreadContract(sp.Legs[legIndex].Contract, contractMap)
-								entrySide := sp.Legs[legIndex].Side
-								closePrice := spreadPricing.ExitMode.ExitPrice(entrySide, contract)
-								exitSide := Sell
-								if entrySide == Sell {
-									exitSide = Buy
-								}
-								closePrice = applySlippage(closePrice, exitSide, sa.SlippagePct, defaultSlipPct)
-								reason := appendDeltaNote(sa.CloseReason, "exec_", contract.Delta)
-								closeCustomData := upsertTradeCustomData(sa.CloseCustomData, TradeCustomDataKeyCloseTriggerTime, sa.TriggerTime.UTC().Format(time.RFC3339Nano))
+								closePrice, reason, closeCustomData := scheduledCloseLegFill(sa, sp.Legs[legIndex], contractMap, spreadPricing, defaultSlipPct)
 								barCtx.CloseSpreadLegWithReasonAndData(sa.SpreadID, legIndex, closePrice, reason, closeCustomData)
 							}
 						}
@@ -409,6 +388,19 @@ func (r *Replayer) Replay(prepared *PreparedData, strategy Strategy, params map[
 	result.Warnings = warningSink.all()
 
 	return result, nil
+}
+
+func scheduledCloseLegFill(sa ScheduledAction, leg SpreadLeg, contractMap map[string]OptionContract, spreadPricing SpreadPricingConfig, defaultSlipPct float64) (float64, string, []TradeCustomData) {
+	contract := resolveSpreadContract(leg.Contract, contractMap)
+	closePrice := spreadPricing.ExitMode.ExitPrice(leg.Side, contract)
+	exitSide := Sell
+	if leg.Side == Sell {
+		exitSide = Buy
+	}
+	closePrice = applySlippage(closePrice, exitSide, sa.SlippagePct, defaultSlipPct)
+	reason := appendDeltaNote(sa.CloseReason, "exec_", contract.Delta)
+	customData := upsertTradeCustomData(sa.CloseCustomData, TradeCustomDataKeyCloseTriggerTime, sa.TriggerTime.UTC().Format(time.RFC3339Nano))
+	return closePrice, reason, customData
 }
 
 // resolveSpreadContract returns the updated contract from the map if available.

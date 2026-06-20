@@ -104,6 +104,11 @@ func (ob *OrderBuilder) StopLimit(stopPrice, limitPrice float64) *OrderBuilder {
 
 // TWAP converts the order to a TWAP market order spread over N bars.
 func (ob *OrderBuilder) TWAP(bars int) *OrderBuilder {
+	if bars <= 1 {
+		ob.orderType = MarketOrder
+		ob.twapBars = 0
+		return ob
+	}
 	ob.orderType = TWAPMarketOrder
 	ob.twapBars = bars
 	return ob
@@ -134,15 +139,23 @@ func (ob *OrderBuilder) Submit() int {
 	}
 
 	if ob.immediate {
-		// Execute immediately at current bar close
-		_, ok := ob.ctx.broker.ExecuteOrderAtCloseNow(order, ob.ctx.barIndex, ob.ctx.barTime)
-		if ok {
-			return order.ID
+		if ob.submitNow(order) {
+			return 1
 		}
 		return 0
 	}
 
 	return ob.ctx.broker.SubmitOrder(order)
+}
+
+func (ob *OrderBuilder) SubmitNow() bool {
+	ob.immediate = true
+	return ob.Submit() != 0
+}
+
+func (ob *OrderBuilder) submitNow(order Order) bool {
+	_, ok := ob.ctx.broker.ExecuteOrderAtCloseNow(order, ob.ctx.barIndex, ob.ctx.barTime)
+	return ok
 }
 
 // SpreadOrderBuilder provides a fluent interface for scheduling spread actions.
