@@ -7,7 +7,6 @@
 - Source Swagger: `docs/swagger.json`
 - API title: `Toktik Options Platform API`
 - API version: `1.0`
-- Generated at: `2026-06-17T12:51:58Z`
 
 ## Scope
 
@@ -37,7 +36,21 @@
 5. 若需要即時進度，使用 `GET /api/v1/backtests/runs/{runID}/events` 讀取 SSE。斷線重連後仍應再查一次 status endpoint。
 6. 若需要視覺化報告，回測完成後呼叫 `/report` 或 `/reports/{reportID}` 取得 HTML。
 
-`StrategyBacktestRunStatus.status` 常見狀態包含 `pending`、`running`、`completed`、`failed`。當 `status=completed` 時，`result.summaries` 會包含 `final_equity`、`total_return`、`max_drawdown`、`total_trades`、`win_rate`、`report_url` 等欄位；當 `status=failed` 時，請讀取 `error`。
+`StrategyBacktestRunStatus.status` 目前包含 `queued`、`running`、`completed`、`failed`。當 `status=completed` 時，`result.summaries` 會包含 `final_equity`、`total_return`、`max_drawdown`、`total_trades`、`win_rate`、`report_url` 等欄位；當 `status=failed` 時，請讀取 `error`。報告 endpoint 在 `queued` 或 `running` 時會回傳 `202` 與目前狀態 JSON，在 `completed` 時回傳 HTML，在 `failed` 時回傳 `409`。
+
+### 請求欄位契約
+
+最小請求需要 `from`、`to`、`capital`，以及可解析出的 primary asset：直接傳 `asset`，或透過 `portfolio[].asset` / `symbols[]` 提供。`strategy` 和 `dsl` 二選一；`dsl_params`、`dsl_profile` 只適用於自訂 DSL。常用預設值：`market=crypto`、`instrument=auto`、`interval=1h`、`commission_model=none`、`direction=both`、spread pricing mode 為 `mark_close`。完整欄位語義見 [StrategyBacktestRunRequest](#strategybacktestrunrequest)。
+
+### 客戶端處理矩陣
+
+| Endpoint | 成功狀態 | 客戶端下一步 |
+| --- | --- | --- |
+| `POST /api/v1/backtests/validate` | `200` | 讀取 `strategies[].dsl_params` 建表單，處理 `dsl_diagnostics` 和 `warnings`。 |
+| `POST /api/v1/backtests/runs` | `202` | 保存 `run_id`，輪詢 `status_url` 或連接 `events_url`。 |
+| `GET /api/v1/backtests/runs/{runID}` | `200` | `queued/running` 繼續等待；`completed` 讀 `result`；`failed` 顯示 `error`。 |
+| `GET /api/v1/backtests/runs/{runID}/events` | `200` | 解析 SSE 的 `event:` 和 `data:`；斷線後再查一次 status endpoint。 |
+| `GET /api/v1/backtests/runs/{runID}/report` | `200/202/409` | `200` 是 HTML；`202` 表示尚未完成；`409` 表示 run 失敗或報告不可用。 |
 
 ## DSL 快速教學
 
@@ -546,6 +559,35 @@ curl -sS -X POST "http://127.0.0.1:9010/api/v1/backtests/validate" \
   }' | jq
 ```
 
+成功回應會包含可直接用來建立表單的 `dsl_params`。若 `dsl_diagnostics` 非空，客戶端應顯示 `severity`、`message` 與 `hint`，並阻止提交或要求使用者確認。
+
+```json
+{
+  "strategy_label": "Demo",
+  "strategy_count": 1,
+  "strategies": [
+    {
+      "display_name": "Demo",
+      "profile_source": "dsl",
+      "uses_options": false,
+      "regular_trade": "material",
+      "runtime": {
+        "market": "us",
+        "instrument": "auto",
+        "capital_mode": "usd",
+        "capital_unit": "USD",
+        "options_chain_required": false
+      },
+      "dsl_params": [
+        {"name": "length", "title": "Length", "type": "int", "default": 20}
+      ],
+      "dsl_diagnostics": [],
+      "warnings": []
+    }
+  ]
+}
+```
+
 ### 使用 `dsl_params` 覆蓋輸入參數
 
 ```json
@@ -588,6 +630,43 @@ curl -sS -X POST "http://127.0.0.1:9010/api/v1/backtests/validate" \
 - `result.summaries[].report_url`：單策略 HTML 報告 URL。
 - `result.overview_report_url`：總覽 HTML 報告 URL。
 
+`completed` 狀態範例：
+
+```json
+{
+  "run_id": "c40505f1a16f02f33380b4ccbe4f74db",
+  "status": "completed",
+  "report_url": "/api/v1/backtests/runs/c40505f1a16f02f33380b4ccbe4f74db/report",
+  "result": {
+    "report_url": "/api/v1/backtests/runs/c40505f1a16f02f33380b4ccbe4f74db/report",
+    "overview_report_url": "/api/v1/backtests/runs/c40505f1a16f02f33380b4ccbe4f74db/reports/overview",
+    "summaries": [
+      {
+        "strategy_name": "GoldenCross",
+        "initial_capital": 100000,
+        "final_equity": 112430.5,
+        "total_return": 0.124305,
+        "max_drawdown": 0.082,
+        "total_trades": 18,
+        "win_rate": 0.5556,
+        "report_url": "/api/v1/backtests/runs/c40505f1a16f02f33380b4ccbe4f74db/reports/1"
+      }
+    ]
+  }
+}
+```
+
+`failed` 狀態範例：
+
+```json
+{
+  "run_id": "c40505f1a16f02f33380b4ccbe4f74db",
+  "status": "failed",
+  "error": "load option chain: no data",
+  "report_url": "/api/v1/backtests/runs/c40505f1a16f02f33380b4ccbe4f74db/report"
+}
+```
+
 ### 限制與注意事項
 
 Toktik DSL 不是完整 TradingView Pine Script v6 實作；語法風格接近 Pine，但內建函數和交易模型以 Toktik 回測引擎為準。型別標註目前主要用於相容和可讀性，runtime 仍採動態值模型。期權、合約、spread、group 是 handle，應透過內建函數操作。
@@ -620,6 +699,7 @@ Toktik DSL 不是完整 TradingView Pine Script v6 實作；語法風格接近 P
 | 200 | [StrategyBacktestValidationResponse](#strategybacktestvalidationresponse) | OK |
 | 400 | [ErrorResponse](#errorresponse) | Bad Request |
 | 500 | [ErrorResponse](#errorresponse) | Internal Server Error |
+| 501 | [ErrorResponse](#errorresponse) | Not Implemented |
 
 ### 發起非同步回測
 
@@ -643,8 +723,9 @@ Toktik DSL 不是完整 TradingView Pine Script v6 實作；語法風格接近 P
 | 202 | [StrategyBacktestRunAccepted](#strategybacktestrunaccepted) | Accepted |
 | 400 | [ErrorResponse](#errorresponse) | Bad Request |
 | 500 | [ErrorResponse](#errorresponse) | Internal Server Error |
+| 501 | [ErrorResponse](#errorresponse) | Not Implemented |
 
-#### curl 範例：發起並輪詢內建 DSL 策略
+#### curl 範例：發起並輪詢內建策略
 
 ```bash
 accepted=$(curl -sS -X POST "http://127.0.0.1:9010/api/v1/backtests/runs" \
@@ -656,11 +737,24 @@ accepted=$(curl -sS -X POST "http://127.0.0.1:9010/api/v1/backtests/runs" \
     "from": "2024-01-01",
     "to": "2024-12-31",
     "capital": 100000,
-    "strategy": "golden-cross-dsl"
+    "strategy": "golden-cross"
   }')
 
 run_id=$(printf '%s' "$accepted" | jq -r '.run_id')
 curl -sS "http://127.0.0.1:9010/api/v1/backtests/runs/${run_id}" | jq
+```
+
+#### 202 回應範例
+
+```json
+{
+  "run_id": "c40505f1a16f02f33380b4ccbe4f74db",
+  "status": "queued",
+  "created_at": "2026-04-07T09:45:08Z",
+  "status_url": "/api/v1/backtests/runs/c40505f1a16f02f33380b4ccbe4f74db",
+  "events_url": "/api/v1/backtests/runs/c40505f1a16f02f33380b4ccbe4f74db/events",
+  "report_url": "/api/v1/backtests/runs/c40505f1a16f02f33380b4ccbe4f74db/report"
+}
 ```
 
 #### curl 範例：取得完成後的 HTML 報告
@@ -674,6 +768,15 @@ curl -sS "http://127.0.0.1:9010/api/v1/backtests/runs/${run_id}/reports/overview
 
 ```bash
 curl -N "http://127.0.0.1:9010/api/v1/backtests/runs/${run_id}/events"
+```
+
+SSE message body uses standard `event:` / `data:` frames. The `data` value is a `StrategyBacktestRunStatus` JSON object.
+
+```text
+event: progress
+data: {"run_id":"c40505f1a16f02f33380b4ccbe4f74db","status":"running","progress":{"phase":"run","current":120,"total":252,"percent":47.62,"message":"running backtest","completed":false}}
+
+: keepalive
 ```
 
 ### 查詢回測狀態與結果
@@ -697,6 +800,7 @@ curl -N "http://127.0.0.1:9010/api/v1/backtests/runs/${run_id}/events"
 | 200 | [StrategyBacktestRunStatus](#strategybacktestrunstatus) | OK |
 | 404 | [ErrorResponse](#errorresponse) | Not Found |
 | 500 | [ErrorResponse](#errorresponse) | Internal Server Error |
+| 501 | [ErrorResponse](#errorresponse) | Not Implemented |
 
 ### 串流回測進度事件
 
@@ -719,6 +823,7 @@ curl -N "http://127.0.0.1:9010/api/v1/backtests/runs/${run_id}/events"
 | 200 | - | SSE stream of backtest events |
 | 404 | [ErrorResponse](#errorresponse) | Not Found |
 | 500 | [ErrorResponse](#errorresponse) | Internal Server Error |
+| 501 | [ErrorResponse](#errorresponse) | Not Implemented |
 
 ### 取得主要 HTML 報告
 
@@ -726,7 +831,7 @@ curl -N "http://127.0.0.1:9010/api/v1/backtests/runs/${run_id}/events"
 - Tags: `Backtests`
 - Produces: `text/html`, `application/json`
 - Summary: Get primary backtest report
-- Description: Returns the primary HTML report for a completed backtest run. If the run is still pending or running, the endpoint returns 202 with the current StrategyBacktestRunStatus JSON so clients can continue polling. If no report is available for the completed run, it returns 409.
+- Description: Returns the primary HTML report for a completed backtest run. If the run is still queued or running, the endpoint returns 202 with the current StrategyBacktestRunStatus JSON so clients can continue polling. If no report is available for the completed run, it returns 409.
 
 #### Parameters
 
@@ -743,6 +848,7 @@ curl -N "http://127.0.0.1:9010/api/v1/backtests/runs/${run_id}/events"
 | 404 | [ErrorResponse](#errorresponse) | Not Found |
 | 409 | [ErrorResponse](#errorresponse) | Conflict |
 | 500 | [ErrorResponse](#errorresponse) | Internal Server Error |
+| 501 | [ErrorResponse](#errorresponse) | Not Implemented |
 
 ### 取得指定 HTML 報告
 
@@ -768,6 +874,7 @@ curl -N "http://127.0.0.1:9010/api/v1/backtests/runs/${run_id}/events"
 | 404 | [ErrorResponse](#errorresponse) | Not Found |
 | 409 | [ErrorResponse](#errorresponse) | Conflict |
 | 500 | [ErrorResponse](#errorresponse) | Internal Server Error |
+| 501 | [ErrorResponse](#errorresponse) | Not Implemented |
 
 ## 策略目錄 API
 
@@ -813,12 +920,12 @@ curl -N "http://127.0.0.1:9010/api/v1/backtests/runs/${run_id}/events"
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
-| bar_index | integer | no | - |
-| code | string | no | - |
-| function | string | no | - |
-| hint | string | no | - |
-| message | string | no | - |
-| severity | string | no | - |
+| bar_index | integer | no | Zero-based bar index related to a runtime diagnostic, when available. |
+| code | string | no | Stable diagnostic code when available. |
+| function | string | no | DSL builtin/function related to the diagnostic, when known. |
+| hint | string | no | Suggested fix or next step for the DSL author. |
+| message | string | no | Human-readable validation or runtime message. |
+| severity | string | no | Diagnostic severity, for example error or warning. |
 
 ### StrategyBacktestDSLParam
 
@@ -827,14 +934,14 @@ curl -N "http://127.0.0.1:9010/api/v1/backtests/runs/${run_id}/events"
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
-| default | object | no | - |
-| max | number | no | - |
-| min | number | no | - |
-| name | string | no | - |
-| options | array<string> | no | - |
-| step | number | no | - |
-| title | string | no | - |
-| type | string | no | - |
+| default | object | no | Default value inferred from the DSL input declaration. |
+| max | number | no | Maximum numeric value declared by the DSL input, when present. |
+| min | number | no | Minimum numeric value declared by the DSL input, when present. |
+| name | string | no | DSL input variable name. Clients may use this key in dsl_params. |
+| options | array<string> | no | Allowed string options declared by the DSL input, when present. |
+| step | number | no | Suggested numeric step declared by the DSL input, when present. |
+| title | string | no | User-facing DSL input title. Clients may also use this key in dsl_params. |
+| type | string | no | Input type: int, float, bool, string, or option-like string. |
 
 ### StrategyBacktestDSLProfile
 
@@ -843,8 +950,8 @@ curl -N "http://127.0.0.1:9010/api/v1/backtests/runs/${run_id}/events"
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
-| regular_trade | string | no | - |
-| uses_options | boolean | no | - |
+| regular_trade | string | no | Override regular asset trade behavior: material or signal_only. |
+| uses_options | boolean | no | Override whether the DSL needs option-chain data. Normally inferred by validation. |
 
 ### StrategyBacktestPortfolioLeg
 
@@ -853,9 +960,9 @@ curl -N "http://127.0.0.1:9010/api/v1/backtests/runs/${run_id}/events"
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
-| asset | string | no | - |
-| market | string | no | - |
-| weight | number | no | - |
+| asset | string | no | Asset/symbol for this portfolio leg. The first non-empty leg can become the primary asset when asset is omitted. |
+| market | string | no | Per-leg market. Defaults to the request market when omitted. |
+| weight | number | no | Portfolio weight used by portfolio.* DSL helpers and option-chain preloading. |
 
 ### StrategyBacktestProgress
 
@@ -864,14 +971,14 @@ curl -N "http://127.0.0.1:9010/api/v1/backtests/runs/${run_id}/events"
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
-| completed | boolean | no | - |
-| current | integer | no | - |
-| message | string | no | - |
-| percent | number | no | - |
-| phase | string | no | - |
-| started_at | string | no | - |
-| timestamp | string | no | - |
-| total | integer | no | - |
+| completed | boolean | no | True when the run reached completed or failed. |
+| current | integer | no | Current completed unit within the phase. |
+| message | string | no | Human-readable progress message. |
+| percent | number | no | Progress percent from 0 to 100. |
+| phase | string | no | Current engine phase, such as prepare or run. |
+| started_at | string | no | Run start timestamp in RFC3339 format. |
+| timestamp | string | no | Timestamp for this progress update in RFC3339 format. |
+| total | integer | no | Total units within the phase when known. |
 
 ### StrategyBacktestRunAccepted
 
@@ -880,12 +987,12 @@ curl -N "http://127.0.0.1:9010/api/v1/backtests/runs/${run_id}/events"
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
-| created_at | string | no | - |
-| events_url | string | no | - |
-| report_url | string | no | - |
-| run_id | string | no | - |
-| status | string | no | - |
-| status_url | string | no | - |
+| created_at | string | no | Run creation timestamp in RFC3339 format. |
+| events_url | string | no | Relative URL for SSE progress streaming. |
+| report_url | string | no | Relative URL for the primary HTML report endpoint. |
+| run_id | string | no | Opaque run identifier used by status, SSE, and report endpoints. |
+| status | string | no | Initial status. Currently queued. |
+| status_url | string | no | Relative URL for GET status polling. |
 
 ### StrategyBacktestRunRequest
 
@@ -894,44 +1001,44 @@ curl -N "http://127.0.0.1:9010/api/v1/backtests/runs/${run_id}/events"
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
-| asset | string | no | - |
-| capital | number | yes | - |
-| commission_model | string | no | - |
-| commission_value | number | no | - |
-| direction | string | no | - |
-| dsl | string | no | - |
-| dsl_params | object | no | - |
-| dsl_profile | [StrategyBacktestDSLProfile](#strategybacktestdslprofile) | no | - |
-| from | string | yes | - |
-| html_output | string | no | - |
-| instrument | string | no | - |
-| interval | string | no | - |
-| long_delta_max | number | no | - |
-| long_delta_min | number | no | - |
-| ma_period | integer | no | - |
-| market | string | no | - |
-| max_hold_hours | number | no | - |
-| min_expiry_days | integer | no | - |
-| min_premium | number | no | - |
-| p_threshold | number | no | - |
-| portfolio | array<[StrategyBacktestPortfolioLeg](#strategybacktestportfolioleg)> | no | - |
-| position_size | number | no | - |
-| report_chart_interval | string | no | - |
-| report_chart_market | string | no | - |
-| report_chart_prefix | string | no | - |
-| report_chart_symbol | string | no | - |
-| short_delta_max | number | no | - |
-| short_delta_min | number | no | - |
-| signal_source | string | no | - |
-| slippage_pct | number | no | - |
-| spread_entry_price_mode | string | no | - |
-| spread_exit_price_mode | string | no | - |
-| spread_valuation_price_mode | string | no | - |
-| strategy | string | no | - |
-| symbols | array<string> | no | - |
-| target_expiry_days | integer | no | - |
-| to | string | yes | - |
-| weights | array<number> | no | - |
+| asset | string | no | Primary asset/symbol, for example SPY or BTC. Required unless portfolio or symbols provides at least one asset. |
+| capital | number | yes | Initial capital. Required. Unit depends on market/instrument and validation runtime.capital_unit. |
+| commission_model | string | no | Commission model. Allowed values: none, flat, percent, per-unit. Default: none. |
+| commission_value | number | no | Commission amount interpreted by commission_model. |
+| direction | string | no | Trade direction filter. Allowed values: both, long_only, short_only. Default: both. |
+| dsl | string | no | Inline custom DSL strategy source. Do not combine with strategy. |
+| dsl_params | object | no | Runtime overrides for DSL input.* declarations, keyed by input title or variable name. |
+| dsl_profile | [StrategyBacktestDSLProfile](#strategybacktestdslprofile) | no | Optional profile override when automatic DSL analysis cannot infer option usage or regular trade behavior. |
+| from | string | yes | Inclusive backtest start date/time. Required. Use YYYY-MM-DD or RFC3339. |
+| html_output | string | no | Optional server-side report output path override. Most API clients should prefer report_url. |
+| instrument | string | no | Trade scope. Allowed values: auto, spot, contract, mixed. Default: auto. |
+| interval | string | no | Bar interval, for example 1d, 1h, 2h. Default: 1h. |
+| long_delta_max | number | no | Strategy-specific maximum long-leg delta filter. |
+| long_delta_min | number | no | Strategy-specific minimum long-leg delta filter. |
+| ma_period | integer | no | Strategy-specific moving-average period. |
+| market | string | no | Primary market. Allowed values: crypto, us, forex. Default: crypto. |
+| max_hold_hours | number | no | Strategy-specific maximum holding time in hours. |
+| min_expiry_days | integer | no | Strategy-specific minimum option expiry in days. |
+| min_premium | number | no | Strategy-specific minimum option premium filter. |
+| p_threshold | number | no | Strategy-specific probability or threshold parameter. |
+| portfolio | array<[StrategyBacktestPortfolioLeg](#strategybacktestportfolioleg)> | no | Optional weighted asset list for portfolio.* DSL helpers and multi-underlying option-chain preloading. |
+| position_size | number | no | Strategy-specific sizing parameter. For many spot strategies this is a fraction of equity. |
+| report_chart_interval | string | no | Optional interval override for the chart embedded in generated reports. |
+| report_chart_market | string | no | Optional market override for the chart embedded in generated reports. |
+| report_chart_prefix | string | no | Optional report chart series prefix. |
+| report_chart_symbol | string | no | Optional symbol override for the chart embedded in generated reports. |
+| short_delta_max | number | no | Strategy-specific maximum short-leg delta filter. |
+| short_delta_min | number | no | Strategy-specific minimum short-leg delta filter. |
+| signal_source | string | no | External signal source override for strategies that consume signal/event inputs. |
+| slippage_pct | number | no | Order slippage percentage applied by the backtest engine. |
+| spread_entry_price_mode | string | no | Option spread entry pricing mode. Default: mark_close. |
+| spread_exit_price_mode | string | no | Option spread exit pricing mode. Default: mark_close. |
+| spread_valuation_price_mode | string | no | Option spread mark-to-market pricing mode. Default: mark_close. |
+| strategy | string | no | Registered strategy name, alias, group alias, or comma-separated list. Do not combine with dsl. |
+| symbols | array<string> | no | Optional symbol universe. Used by portfolio helpers and dynamic option-chain preloading. |
+| target_expiry_days | integer | no | Strategy-specific target option expiry in days. |
+| to | string | yes | Inclusive backtest end date/time. Required. Use YYYY-MM-DD or RFC3339. |
+| weights | array<number> | no | Optional weights aligned with symbols. |
 
 ### StrategyBacktestRunResult
 
@@ -940,10 +1047,11 @@ curl -N "http://127.0.0.1:9010/api/v1/backtests/runs/${run_id}/events"
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
-| overview_html_path | string | no | - |
-| overview_report_url | string | no | - |
-| report_url | string | no | - |
-| summaries | array<[StrategyBacktestSummary](#strategybacktestsummary)> | no | - |
+| overview_html_path | string | no | Internal server-side overview report path. API clients should use overview_report_url. |
+| overview_report_url | string | no | URL for the portfolio/aggregate overview report when available. |
+| report_url | string | no | Primary report URL for this run. |
+| summaries | array<[StrategyBacktestSummary](#strategybacktestsummary)> | no | Per-strategy performance summaries. Multi-strategy runs produce one item per strategy. |
+| warnings | array<[StrategyBacktestRuntimeWarning](#strategybacktestruntimewarning)> | no | Run-level runtime warnings emitted by the engine or DSL runtime. |
 
 ### StrategyBacktestRunStatus
 
@@ -952,17 +1060,35 @@ curl -N "http://127.0.0.1:9010/api/v1/backtests/runs/${run_id}/events"
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
-| completed_at | string | no | - |
-| created_at | string | no | - |
-| error | string | no | - |
-| progress | [StrategyBacktestProgress](#strategybacktestprogress) | no | - |
-| report_url | string | no | - |
-| request | [StrategyBacktestRunRequest](#strategybacktestrunrequest) | no | - |
-| result | [StrategyBacktestRunResult](#strategybacktestrunresult) | no | - |
-| run_id | string | no | - |
-| started_at | string | no | - |
-| status | string | no | - |
-| updated_at | string | no | - |
+| completed_at | string | no | Terminal timestamp in RFC3339 format, present for completed or failed runs. |
+| created_at | string | no | Run creation timestamp in RFC3339 format. |
+| error | string | no | Failure reason. Present when status is failed. |
+| progress | [StrategyBacktestProgress](#strategybacktestprogress) | no | Latest progress snapshot while running or after completion. |
+| report_url | string | no | Primary HTML report endpoint for this run. |
+| request | [StrategyBacktestRunRequest](#strategybacktestrunrequest) | no | Original request payload accepted by the server. |
+| result | [StrategyBacktestRunResult](#strategybacktestrunresult) | no | Completed run result. Present when status is completed. |
+| run_id | string | no | Opaque run identifier. |
+| started_at | string | no | Execution start timestamp in RFC3339 format, present after the run starts. |
+| status | string | no | Run status. Values: queued, running, completed, failed. |
+| updated_at | string | no | Last status/progress update timestamp in RFC3339 format. |
+
+### StrategyBacktestRuntimeWarning
+
+- Schema: `github_com_Cyvadra_toktik_internal_dto.StrategyBacktestRuntimeWarning`
+- Type: `object`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| bar_index | integer | no | - |
+| code | string | no | - |
+| details | map<string,string> | no | - |
+| leg_index | integer | no | - |
+| message | string | no | - |
+| policy | string | no | - |
+| severity | string | no | - |
+| spread_id | integer | no | - |
+| symbol | string | no | - |
+| timestamp | string | no | - |
 
 ### StrategyBacktestSpreadSummary
 
@@ -971,13 +1097,13 @@ curl -N "http://127.0.0.1:9010/api/v1/backtests/runs/${run_id}/events"
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
-| closed_spreads | integer | no | - |
-| losing_spreads | integer | no | - |
-| open_spreads | integer | no | - |
-| total_pnl | number | no | - |
-| total_spreads | integer | no | - |
-| win_rate | number | no | - |
-| winning_spreads | integer | no | - |
+| closed_spreads | integer | no | Number of closed spread positions. |
+| losing_spreads | integer | no | Number of losing spread positions. |
+| open_spreads | integer | no | Number of spread positions still open at the end of the run. |
+| total_pnl | number | no | Total realized/unrealized spread PnL in account units. |
+| total_spreads | integer | no | Total option spread positions opened. |
+| win_rate | number | no | Winning spread ratio from 0 to 1. |
+| winning_spreads | integer | no | Number of profitable spread positions. |
 
 ### StrategyBacktestSummary
 
@@ -986,32 +1112,33 @@ curl -N "http://127.0.0.1:9010/api/v1/backtests/runs/${run_id}/events"
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
-| account_unit | string | no | - |
-| annualized_return | number | no | - |
-| avg_loss | number | no | - |
-| avg_win | number | no | - |
-| bars_count | integer | no | - |
-| calmar_ratio | number | no | - |
-| capital_mode | string | no | - |
-| capital_note | string | no | - |
-| capital_profile | string | no | - |
-| end_time | string | no | - |
-| final_equity | number | no | - |
-| html_path | string | no | - |
-| initial_capital | number | no | - |
-| losing_trades | integer | no | - |
-| max_drawdown | number | no | - |
-| profit_factor | number | no | - |
-| report_url | string | no | - |
-| sharpe_ratio | number | no | - |
-| spread_summary | [StrategyBacktestSpreadSummary](#strategybacktestspreadsummary) | no | - |
-| start_time | string | no | - |
-| strategy_name | string | no | - |
-| total_fees | number | no | - |
-| total_return | number | no | - |
-| total_trades | integer | no | - |
-| win_rate | number | no | - |
-| winning_trades | integer | no | - |
+| account_unit | string | no | Currency or asset unit for equity and PnL values. |
+| annualized_return | number | no | Annualized return as a decimal ratio. |
+| avg_loss | number | no | Average losing trade PnL. |
+| avg_win | number | no | Average winning trade PnL. |
+| bars_count | integer | no | Number of bars processed. |
+| calmar_ratio | number | no | Calmar ratio computed from annualized return and drawdown. |
+| capital_mode | string | no | Resolved capital accounting mode. |
+| capital_note | string | no | Human-readable explanation of the capital model. |
+| capital_profile | string | no | Resolved capital profile label. |
+| end_time | string | no | Last bar timestamp used by the run. |
+| final_equity | number | no | Final account equity in account_unit. |
+| html_path | string | no | Internal server-side report path. API clients should use report_url. |
+| initial_capital | number | no | Initial capital in account_unit. |
+| losing_trades | integer | no | Number of losing trades. |
+| max_drawdown | number | no | Maximum drawdown as a decimal ratio. |
+| profit_factor | number | no | Gross profit divided by gross loss. |
+| report_url | string | no | Per-strategy HTML report endpoint. |
+| sharpe_ratio | number | no | Sharpe ratio computed from the run equity curve. |
+| spread_summary | [StrategyBacktestSpreadSummary](#strategybacktestspreadsummary) | no | Option spread metrics when the strategy uses spreads. |
+| start_time | string | no | First bar timestamp used by the run. |
+| strategy_name | string | no | Strategy display name used by the engine. |
+| total_fees | number | no | Total commissions and fees charged by the simulation. |
+| total_return | number | no | Total return as a decimal ratio, for example 0.12 means 12%. |
+| total_trades | integer | no | Total trade count. |
+| warnings | array<[StrategyBacktestRuntimeWarning](#strategybacktestruntimewarning)> | no | Strategy-level runtime warnings. |
+| win_rate | number | no | Winning trade ratio from 0 to 1. |
+| winning_trades | integer | no | Number of profitable trades. |
 
 ### StrategyBacktestValidationItem
 
@@ -1020,16 +1147,16 @@ curl -N "http://127.0.0.1:9010/api/v1/backtests/runs/${run_id}/events"
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
-| canonical_name | string | no | - |
-| display_name | string | no | - |
-| dsl_diagnostics | array<[StrategyBacktestDSLDiagnostic](#strategybacktestdsldiagnostic)> | no | - |
-| dsl_params | array<[StrategyBacktestDSLParam](#strategybacktestdslparam)> | no | - |
-| profile_label | string | no | - |
-| profile_source | string | no | - |
-| regular_trade | string | no | - |
-| runtime | [StrategyBacktestValidationRuntime](#strategybacktestvalidationruntime) | no | - |
-| uses_options | boolean | no | - |
-| warnings | array<string> | no | - |
+| canonical_name | string | no | Canonical registered strategy name, when validating a registered strategy. |
+| display_name | string | no | Display label for this strategy or DSL script. |
+| dsl_diagnostics | array<[StrategyBacktestDSLDiagnostic](#strategybacktestdsldiagnostic)> | no | DSL parse, analysis, or runtime diagnostics discovered during validation. |
+| dsl_params | array<[StrategyBacktestDSLParam](#strategybacktestdslparam)> | no | DSL input schema discovered from input.* declarations. |
+| profile_label | string | no | Resolved strategy profile label. |
+| profile_source | string | no | Where the profile came from: catalog, DSL analysis, or override. |
+| regular_trade | string | no | Regular asset trade behavior: material or signal_only. |
+| runtime | [StrategyBacktestValidationRuntime](#strategybacktestvalidationruntime) | no | Resolved runtime/capital/option-chain preparation details. |
+| uses_options | boolean | no | Whether this strategy needs option-chain data. |
+| warnings | array<string> | no | Validation warnings that do not block submission. |
 
 ### StrategyBacktestValidationResponse
 
@@ -1038,9 +1165,9 @@ curl -N "http://127.0.0.1:9010/api/v1/backtests/runs/${run_id}/events"
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
-| strategies | array<[StrategyBacktestValidationItem](#strategybacktestvalidationitem)> | no | - |
-| strategy_count | integer | no | - |
-| strategy_label | string | no | - |
+| strategies | array<[StrategyBacktestValidationItem](#strategybacktestvalidationitem)> | no | Per-strategy validation details. |
+| strategy_count | integer | no | Number of strategies that would run for this request. |
+| strategy_label | string | no | Resolved request label, for example a strategy name, group, or DSL title. |
 
 ### StrategyBacktestValidationRuntime
 
@@ -1049,14 +1176,14 @@ curl -N "http://127.0.0.1:9010/api/v1/backtests/runs/${run_id}/events"
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
-| capital_explanation | string | no | - |
-| capital_mode | string | no | - |
-| capital_unit | string | no | - |
-| instrument | string | no | - |
-| market | string | no | - |
-| options_chain_required | boolean | no | - |
-| options_unit | string | no | - |
-| regular_trade_summary | string | no | - |
+| capital_explanation | string | no | Human-readable explanation of the capital model. |
+| capital_mode | string | no | Resolved capital accounting mode. |
+| capital_unit | string | no | Unit used by capital/equity/PnL values. |
+| instrument | string | no | Resolved instrument scope. |
+| market | string | no | Resolved primary market. |
+| options_chain_required | boolean | no | Whether the server must load option-chain data before execution. |
+| options_unit | string | no | Unit used for option contracts when options are required. |
+| regular_trade_summary | string | no | Human-readable explanation of regular asset trade behavior. |
 
 ### StrategyCatalogEntry
 
@@ -1065,12 +1192,12 @@ curl -N "http://127.0.0.1:9010/api/v1/backtests/runs/${run_id}/events"
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
-| aliases | array<string> | no | - |
-| groups | array<string> | no | - |
-| name | string | no | - |
-| profile_label | string | no | - |
-| regular_trade | string | no | - |
-| uses_options | boolean | no | - |
+| aliases | array<string> | no | Additional accepted names for the strategy. |
+| groups | array<string> | no | Strategy groups. The strategies endpoint can filter by group. |
+| name | string | no | Canonical strategy name accepted by StrategyBacktestRunRequest.strategy. |
+| profile_label | string | no | Strategy profile label from the catalog. |
+| regular_trade | string | no | Regular asset trade behavior: material or signal_only. |
+| uses_options | boolean | no | Whether the strategy needs option-chain data. |
 
 ### StrategyCatalogResponse
 
@@ -1079,4 +1206,4 @@ curl -N "http://127.0.0.1:9010/api/v1/backtests/runs/${run_id}/events"
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
-| data | array<[StrategyCatalogEntry](#strategycatalogentry)> | no | - |
+| data | array<[StrategyCatalogEntry](#strategycatalogentry)> | no | Registered strategy catalog entries. |

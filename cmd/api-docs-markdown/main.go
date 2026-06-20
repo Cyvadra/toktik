@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"time"
 	"unicode"
 
 	"github.com/Cyvadra/toktik/pkg/dsl/lexer"
@@ -175,6 +174,190 @@ var backtestSections = []sectionSpec{
 	},
 }
 
+var backtestSchemaDocs = map[string]map[string]string{
+	"StrategyBacktestDSLDiagnostic": {
+		"severity":  "Diagnostic severity, for example error or warning.",
+		"code":      "Stable diagnostic code when available.",
+		"message":   "Human-readable validation or runtime message.",
+		"function":  "DSL builtin/function related to the diagnostic, when known.",
+		"bar_index": "Zero-based bar index related to a runtime diagnostic, when available.",
+		"hint":      "Suggested fix or next step for the DSL author.",
+	},
+	"StrategyBacktestDSLParam": {
+		"name":    "DSL input variable name. Clients may use this key in dsl_params.",
+		"title":   "User-facing DSL input title. Clients may also use this key in dsl_params.",
+		"type":    "Input type: int, float, bool, string, or option-like string.",
+		"default": "Default value inferred from the DSL input declaration.",
+		"min":     "Minimum numeric value declared by the DSL input, when present.",
+		"max":     "Maximum numeric value declared by the DSL input, when present.",
+		"step":    "Suggested numeric step declared by the DSL input, when present.",
+		"options": "Allowed string options declared by the DSL input, when present.",
+	},
+	"StrategyBacktestDSLProfile": {
+		"uses_options":  "Override whether the DSL needs option-chain data. Normally inferred by validation.",
+		"regular_trade": "Override regular asset trade behavior: material or signal_only.",
+	},
+	"StrategyBacktestPortfolioLeg": {
+		"market": "Per-leg market. Defaults to the request market when omitted.",
+		"asset":  "Asset/symbol for this portfolio leg. The first non-empty leg can become the primary asset when asset is omitted.",
+		"weight": "Portfolio weight used by portfolio.* DSL helpers and option-chain preloading.",
+	},
+	"StrategyBacktestProgress": {
+		"phase":      "Current engine phase, such as prepare or run.",
+		"current":    "Current completed unit within the phase.",
+		"total":      "Total units within the phase when known.",
+		"percent":    "Progress percent from 0 to 100.",
+		"message":    "Human-readable progress message.",
+		"started_at": "Run start timestamp in RFC3339 format.",
+		"timestamp":  "Timestamp for this progress update in RFC3339 format.",
+		"completed":  "True when the run reached completed or failed.",
+	},
+	"StrategyBacktestRunAccepted": {
+		"run_id":     "Opaque run identifier used by status, SSE, and report endpoints.",
+		"status":     "Initial status. Currently queued.",
+		"created_at": "Run creation timestamp in RFC3339 format.",
+		"status_url": "Relative URL for GET status polling.",
+		"events_url": "Relative URL for SSE progress streaming.",
+		"report_url": "Relative URL for the primary HTML report endpoint.",
+	},
+	"StrategyBacktestRunRequest": {
+		"market":                      "Primary market. Allowed values: crypto, us, forex. Default: crypto.",
+		"instrument":                  "Trade scope. Allowed values: auto, spot, contract, mixed. Default: auto.",
+		"asset":                       "Primary asset/symbol, for example SPY or BTC. Required unless portfolio or symbols provides at least one asset.",
+		"portfolio":                   "Optional weighted asset list for portfolio.* DSL helpers and multi-underlying option-chain preloading.",
+		"symbols":                     "Optional symbol universe. Used by portfolio helpers and dynamic option-chain preloading.",
+		"weights":                     "Optional weights aligned with symbols.",
+		"interval":                    "Bar interval, for example 1d, 1h, 2h. Default: 1h.",
+		"from":                        "Inclusive backtest start date/time. Required. Use YYYY-MM-DD or RFC3339.",
+		"to":                          "Inclusive backtest end date/time. Required. Use YYYY-MM-DD or RFC3339.",
+		"capital":                     "Initial capital. Required. Unit depends on market/instrument and validation runtime.capital_unit.",
+		"strategy":                    "Registered strategy name, alias, group alias, or comma-separated list. Do not combine with dsl.",
+		"dsl":                         "Inline custom DSL strategy source. Do not combine with strategy.",
+		"dsl_params":                  "Runtime overrides for DSL input.* declarations, keyed by input title or variable name.",
+		"dsl_profile":                 "Optional profile override when automatic DSL analysis cannot infer option usage or regular trade behavior.",
+		"signal_source":               "External signal source override for strategies that consume signal/event inputs.",
+		"report_chart_market":         "Optional market override for the chart embedded in generated reports.",
+		"report_chart_symbol":         "Optional symbol override for the chart embedded in generated reports.",
+		"report_chart_interval":       "Optional interval override for the chart embedded in generated reports.",
+		"report_chart_prefix":         "Optional report chart series prefix.",
+		"commission_model":            "Commission model. Allowed values: none, flat, percent, per-unit. Default: none.",
+		"commission_value":            "Commission amount interpreted by commission_model.",
+		"slippage_pct":                "Order slippage percentage applied by the backtest engine.",
+		"html_output":                 "Optional server-side report output path override. Most API clients should prefer report_url.",
+		"position_size":               "Strategy-specific sizing parameter. For many spot strategies this is a fraction of equity.",
+		"max_hold_hours":              "Strategy-specific maximum holding time in hours.",
+		"target_expiry_days":          "Strategy-specific target option expiry in days.",
+		"min_expiry_days":             "Strategy-specific minimum option expiry in days.",
+		"min_premium":                 "Strategy-specific minimum option premium filter.",
+		"short_delta_min":             "Strategy-specific minimum short-leg delta filter.",
+		"short_delta_max":             "Strategy-specific maximum short-leg delta filter.",
+		"long_delta_min":              "Strategy-specific minimum long-leg delta filter.",
+		"long_delta_max":              "Strategy-specific maximum long-leg delta filter.",
+		"spread_entry_price_mode":     "Option spread entry pricing mode. Default: mark_close.",
+		"spread_exit_price_mode":      "Option spread exit pricing mode. Default: mark_close.",
+		"spread_valuation_price_mode": "Option spread mark-to-market pricing mode. Default: mark_close.",
+		"ma_period":                   "Strategy-specific moving-average period.",
+		"p_threshold":                 "Strategy-specific probability or threshold parameter.",
+		"direction":                   "Trade direction filter. Allowed values: both, long_only, short_only. Default: both.",
+	},
+	"StrategyBacktestRunResult": {
+		"summaries":           "Per-strategy performance summaries. Multi-strategy runs produce one item per strategy.",
+		"warnings":            "Run-level runtime warnings emitted by the engine or DSL runtime.",
+		"overview_html_path":  "Internal server-side overview report path. API clients should use overview_report_url.",
+		"report_url":          "Primary report URL for this run.",
+		"overview_report_url": "URL for the portfolio/aggregate overview report when available.",
+	},
+	"StrategyBacktestRunStatus": {
+		"run_id":       "Opaque run identifier.",
+		"status":       "Run status. Values: queued, running, completed, failed.",
+		"request":      "Original request payload accepted by the server.",
+		"created_at":   "Run creation timestamp in RFC3339 format.",
+		"updated_at":   "Last status/progress update timestamp in RFC3339 format.",
+		"started_at":   "Execution start timestamp in RFC3339 format, present after the run starts.",
+		"completed_at": "Terminal timestamp in RFC3339 format, present for completed or failed runs.",
+		"progress":     "Latest progress snapshot while running or after completion.",
+		"result":       "Completed run result. Present when status is completed.",
+		"error":        "Failure reason. Present when status is failed.",
+		"report_url":   "Primary HTML report endpoint for this run.",
+	},
+	"StrategyBacktestSpreadSummary": {
+		"total_spreads":   "Total option spread positions opened.",
+		"closed_spreads":  "Number of closed spread positions.",
+		"open_spreads":    "Number of spread positions still open at the end of the run.",
+		"total_pnl":       "Total realized/unrealized spread PnL in account units.",
+		"winning_spreads": "Number of profitable spread positions.",
+		"losing_spreads":  "Number of losing spread positions.",
+		"win_rate":        "Winning spread ratio from 0 to 1.",
+	},
+	"StrategyBacktestSummary": {
+		"strategy_name":     "Strategy display name used by the engine.",
+		"start_time":        "First bar timestamp used by the run.",
+		"end_time":          "Last bar timestamp used by the run.",
+		"bars_count":        "Number of bars processed.",
+		"initial_capital":   "Initial capital in account_unit.",
+		"final_equity":      "Final account equity in account_unit.",
+		"account_unit":      "Currency or asset unit for equity and PnL values.",
+		"capital_mode":      "Resolved capital accounting mode.",
+		"capital_profile":   "Resolved capital profile label.",
+		"capital_note":      "Human-readable explanation of the capital model.",
+		"total_return":      "Total return as a decimal ratio, for example 0.12 means 12%.",
+		"annualized_return": "Annualized return as a decimal ratio.",
+		"sharpe_ratio":      "Sharpe ratio computed from the run equity curve.",
+		"calmar_ratio":      "Calmar ratio computed from annualized return and drawdown.",
+		"max_drawdown":      "Maximum drawdown as a decimal ratio.",
+		"total_trades":      "Total trade count.",
+		"winning_trades":    "Number of profitable trades.",
+		"losing_trades":     "Number of losing trades.",
+		"win_rate":          "Winning trade ratio from 0 to 1.",
+		"profit_factor":     "Gross profit divided by gross loss.",
+		"avg_win":           "Average winning trade PnL.",
+		"avg_loss":          "Average losing trade PnL.",
+		"total_fees":        "Total commissions and fees charged by the simulation.",
+		"html_path":         "Internal server-side report path. API clients should use report_url.",
+		"report_url":        "Per-strategy HTML report endpoint.",
+		"spread_summary":    "Option spread metrics when the strategy uses spreads.",
+		"warnings":          "Strategy-level runtime warnings.",
+	},
+	"StrategyBacktestValidationItem": {
+		"canonical_name":  "Canonical registered strategy name, when validating a registered strategy.",
+		"display_name":    "Display label for this strategy or DSL script.",
+		"profile_label":   "Resolved strategy profile label.",
+		"profile_source":  "Where the profile came from: catalog, DSL analysis, or override.",
+		"uses_options":    "Whether this strategy needs option-chain data.",
+		"regular_trade":   "Regular asset trade behavior: material or signal_only.",
+		"runtime":         "Resolved runtime/capital/option-chain preparation details.",
+		"dsl_params":      "DSL input schema discovered from input.* declarations.",
+		"dsl_diagnostics": "DSL parse, analysis, or runtime diagnostics discovered during validation.",
+		"warnings":        "Validation warnings that do not block submission.",
+	},
+	"StrategyBacktestValidationResponse": {
+		"strategy_label": "Resolved request label, for example a strategy name, group, or DSL title.",
+		"strategy_count": "Number of strategies that would run for this request.",
+		"strategies":     "Per-strategy validation details.",
+	},
+	"StrategyBacktestValidationRuntime": {
+		"market":                 "Resolved primary market.",
+		"instrument":             "Resolved instrument scope.",
+		"capital_mode":           "Resolved capital accounting mode.",
+		"capital_unit":           "Unit used by capital/equity/PnL values.",
+		"capital_explanation":    "Human-readable explanation of the capital model.",
+		"options_chain_required": "Whether the server must load option-chain data before execution.",
+		"options_unit":           "Unit used for option contracts when options are required.",
+		"regular_trade_summary":  "Human-readable explanation of regular asset trade behavior.",
+	},
+	"StrategyCatalogEntry": {
+		"name":          "Canonical strategy name accepted by StrategyBacktestRunRequest.strategy.",
+		"aliases":       "Additional accepted names for the strategy.",
+		"groups":        "Strategy groups. The strategies endpoint can filter by group.",
+		"uses_options":  "Whether the strategy needs option-chain data.",
+		"regular_trade": "Regular asset trade behavior: material or signal_only.",
+		"profile_label": "Strategy profile label from the catalog.",
+	},
+	"StrategyCatalogResponse": {
+		"data": "Registered strategy catalog entries.",
+	},
+}
+
 func main() {
 	input := flag.String("input", "docs/swagger.json", "Path to Swagger JSON")
 	output := flag.String("output", "docs/db-market-indicator-api.md", "Path to output Markdown")
@@ -214,6 +397,7 @@ type renderSpec struct {
 	Scope       string
 	Kind        string
 	SchemaIntro string
+	SchemaDocs  map[string]map[string]string
 }
 
 func renderConfig(scope string) (renderSpec, error) {
@@ -231,6 +415,7 @@ func renderConfig(scope string) (renderSpec, error) {
 			Kind:        "backtests",
 			Scope:       "本文檔匯出策略回測與 DSL 工作流 API。內容包含請求驗證、非同步回測建立、狀態輪詢、SSE 進度串流、HTML 報告取得、策略目錄查詢，以及讀取完成回測結果所需的 response schema。API 摘要與欄位描述來自 Swagger 註釋；教學、範例與使用建議由本生成器模板輸出。",
 			SchemaIntro: "本節展開上方 API 使用到的 request/response schema。巢狀 DTO 也會被納入，方便客戶不打開 Swagger 也能檢查完整 JSON 結構。",
+			SchemaDocs:  backtestSchemaDocs,
 		}, nil
 	default:
 		return renderSpec{}, fmt.Errorf("unknown scope %q", scope)
@@ -265,9 +450,6 @@ func renderMarkdown(doc *swaggerDoc, inputPath string, title string, config rend
 	builder.WriteString("`\n")
 	builder.WriteString("- API version: `")
 	builder.WriteString(doc.Info.Version)
-	builder.WriteString("`\n")
-	builder.WriteString("- Generated at: `")
-	builder.WriteString(time.Now().UTC().Format(time.RFC3339))
 	builder.WriteString("`\n\n")
 	builder.WriteString("## Scope\n\n")
 	builder.WriteString(config.Scope)
@@ -320,7 +502,7 @@ func renderMarkdown(doc *swaggerDoc, inputPath string, title string, config rend
 		}
 	}
 
-	writeSchemas(&builder, doc, referencedSchemas, config.SchemaIntro)
+	writeSchemas(&builder, doc, referencedSchemas, config.SchemaIntro, config.SchemaDocs)
 
 	return builder.String(), nil
 }
@@ -348,7 +530,7 @@ func collectReferencedSchemas(doc *swaggerDoc, sections []sectionSpec) ([]string
 }
 
 func writeBacktestExamples(builder *strings.Builder) {
-	builder.WriteString("#### curl 範例：發起並輪詢內建 DSL 策略\n\n")
+	builder.WriteString("#### curl 範例：發起並輪詢內建策略\n\n")
 	builder.WriteString("```bash\n")
 	builder.WriteString("accepted=$(curl -sS -X POST \"http://127.0.0.1:9010/api/v1/backtests/runs\" \\\n")
 	builder.WriteString("  -H \"Content-Type: application/json\" \\\n")
@@ -359,13 +541,24 @@ func writeBacktestExamples(builder *strings.Builder) {
 	builder.WriteString("    \"from\": \"2024-01-01\",\n")
 	builder.WriteString("    \"to\": \"2024-12-31\",\n")
 	builder.WriteString("    \"capital\": 100000,\n")
-	builder.WriteString("    \"strategy\": \"golden-cross-dsl\"\n")
+	builder.WriteString("    \"strategy\": \"golden-cross\"\n")
 	builder.WriteString("  }')\n")
 	builder.WriteString("\n")
 	builder.WriteString("run_id=$(printf '%s' \"$accepted\" | jq -r '.run_id')\n")
 	builder.WriteString("curl -sS \"http://127.0.0.1:9010/api/v1/backtests/runs/${run_id}\" | jq\n")
 	builder.WriteString("```")
 	builder.WriteString("\n\n")
+	builder.WriteString("#### 202 回應範例\n\n")
+	builder.WriteString("```json\n")
+	builder.WriteString("{\n")
+	builder.WriteString("  \"run_id\": \"c40505f1a16f02f33380b4ccbe4f74db\",\n")
+	builder.WriteString("  \"status\": \"queued\",\n")
+	builder.WriteString("  \"created_at\": \"2026-04-07T09:45:08Z\",\n")
+	builder.WriteString("  \"status_url\": \"/api/v1/backtests/runs/c40505f1a16f02f33380b4ccbe4f74db\",\n")
+	builder.WriteString("  \"events_url\": \"/api/v1/backtests/runs/c40505f1a16f02f33380b4ccbe4f74db/events\",\n")
+	builder.WriteString("  \"report_url\": \"/api/v1/backtests/runs/c40505f1a16f02f33380b4ccbe4f74db/report\"\n")
+	builder.WriteString("}\n")
+	builder.WriteString("```\n\n")
 	builder.WriteString("#### curl 範例：取得完成後的 HTML 報告\n\n")
 	builder.WriteString("```bash\n")
 	builder.WriteString("curl -sS \"http://127.0.0.1:9010/api/v1/backtests/runs/${run_id}/report\" -o report.html\n")
@@ -377,6 +570,13 @@ func writeBacktestExamples(builder *strings.Builder) {
 	builder.WriteString("curl -N \"http://127.0.0.1:9010/api/v1/backtests/runs/${run_id}/events\"\n")
 	builder.WriteString("```")
 	builder.WriteString("\n\n")
+	builder.WriteString("SSE message body uses standard `event:` / `data:` frames. The `data` value is a `StrategyBacktestRunStatus` JSON object.\n\n")
+	builder.WriteString("```text\n")
+	builder.WriteString("event: progress\n")
+	builder.WriteString("data: {\"run_id\":\"c40505f1a16f02f33380b4ccbe4f74db\",\"status\":\"running\",\"progress\":{\"phase\":\"run\",\"current\":120,\"total\":252,\"percent\":47.62,\"message\":\"running backtest\",\"completed\":false}}\n")
+	builder.WriteString("\n")
+	builder.WriteString(": keepalive\n")
+	builder.WriteString("```\n\n")
 }
 
 func writeBacktestTutorial(builder *strings.Builder) {
@@ -388,7 +588,17 @@ func writeBacktestTutorial(builder *strings.Builder) {
 	builder.WriteString("4. 使用 `GET /api/v1/backtests/runs/{runID}` 輪詢狀態。完成後在 `result.summaries` 讀取核心績效結果。\n")
 	builder.WriteString("5. 若需要即時進度，使用 `GET /api/v1/backtests/runs/{runID}/events` 讀取 SSE。斷線重連後仍應再查一次 status endpoint。\n")
 	builder.WriteString("6. 若需要視覺化報告，回測完成後呼叫 `/report` 或 `/reports/{reportID}` 取得 HTML。\n\n")
-	builder.WriteString("`StrategyBacktestRunStatus.status` 常見狀態包含 `pending`、`running`、`completed`、`failed`。當 `status=completed` 時，`result.summaries` 會包含 `final_equity`、`total_return`、`max_drawdown`、`total_trades`、`win_rate`、`report_url` 等欄位；當 `status=failed` 時，請讀取 `error`。\n\n")
+	builder.WriteString("`StrategyBacktestRunStatus.status` 目前包含 `queued`、`running`、`completed`、`failed`。當 `status=completed` 時，`result.summaries` 會包含 `final_equity`、`total_return`、`max_drawdown`、`total_trades`、`win_rate`、`report_url` 等欄位；當 `status=failed` 時，請讀取 `error`。報告 endpoint 在 `queued` 或 `running` 時會回傳 `202` 與目前狀態 JSON，在 `completed` 時回傳 HTML，在 `failed` 時回傳 `409`。\n\n")
+	builder.WriteString("### 請求欄位契約\n\n")
+	builder.WriteString("最小請求需要 `from`、`to`、`capital`，以及可解析出的 primary asset：直接傳 `asset`，或透過 `portfolio[].asset` / `symbols[]` 提供。`strategy` 和 `dsl` 二選一；`dsl_params`、`dsl_profile` 只適用於自訂 DSL。常用預設值：`market=crypto`、`instrument=auto`、`interval=1h`、`commission_model=none`、`direction=both`、spread pricing mode 為 `mark_close`。完整欄位語義見 [StrategyBacktestRunRequest](#strategybacktestrunrequest)。\n\n")
+	builder.WriteString("### 客戶端處理矩陣\n\n")
+	builder.WriteString("| Endpoint | 成功狀態 | 客戶端下一步 |\n")
+	builder.WriteString("| --- | --- | --- |\n")
+	builder.WriteString("| `POST /api/v1/backtests/validate` | `200` | 讀取 `strategies[].dsl_params` 建表單，處理 `dsl_diagnostics` 和 `warnings`。 |\n")
+	builder.WriteString("| `POST /api/v1/backtests/runs` | `202` | 保存 `run_id`，輪詢 `status_url` 或連接 `events_url`。 |\n")
+	builder.WriteString("| `GET /api/v1/backtests/runs/{runID}` | `200` | `queued/running` 繼續等待；`completed` 讀 `result`；`failed` 顯示 `error`。 |\n")
+	builder.WriteString("| `GET /api/v1/backtests/runs/{runID}/events` | `200` | 解析 SSE 的 `event:` 和 `data:`；斷線後再查一次 status endpoint。 |\n")
+	builder.WriteString("| `GET /api/v1/backtests/runs/{runID}/report` | `200/202/409` | `200` 是 HTML；`202` 表示尚未完成；`409` 表示 run 失敗或報告不可用。 |\n\n")
 
 	builder.WriteString("## DSL 快速教學\n\n")
 	builder.WriteString("Toktik DSL 是接近 Pine Script v6 風格的策略語言，並接到 Toktik 回測引擎。建議使用 `//@version=6`、`strategy(...)`、4 空格縮排區塊，以及 `input.*` 宣告可調參數。\n\n")
@@ -521,6 +731,33 @@ func writeBacktestTutorial(builder *strings.Builder) {
 	builder.WriteString("    \"dsl\": \"//@version=6\\nstrategy(\\\"Demo\\\")\\nlength = input.int(20, title=\\\"Length\\\")\\nplot(ta.sma(close, length), title=\\\"SMA\\\")\"\n")
 	builder.WriteString("  }' | jq\n")
 	builder.WriteString("```\n\n")
+	builder.WriteString("成功回應會包含可直接用來建立表單的 `dsl_params`。若 `dsl_diagnostics` 非空，客戶端應顯示 `severity`、`message` 與 `hint`，並阻止提交或要求使用者確認。\n\n")
+	builder.WriteString("```json\n")
+	builder.WriteString("{\n")
+	builder.WriteString("  \"strategy_label\": \"Demo\",\n")
+	builder.WriteString("  \"strategy_count\": 1,\n")
+	builder.WriteString("  \"strategies\": [\n")
+	builder.WriteString("    {\n")
+	builder.WriteString("      \"display_name\": \"Demo\",\n")
+	builder.WriteString("      \"profile_source\": \"dsl\",\n")
+	builder.WriteString("      \"uses_options\": false,\n")
+	builder.WriteString("      \"regular_trade\": \"material\",\n")
+	builder.WriteString("      \"runtime\": {\n")
+	builder.WriteString("        \"market\": \"us\",\n")
+	builder.WriteString("        \"instrument\": \"auto\",\n")
+	builder.WriteString("        \"capital_mode\": \"usd\",\n")
+	builder.WriteString("        \"capital_unit\": \"USD\",\n")
+	builder.WriteString("        \"options_chain_required\": false\n")
+	builder.WriteString("      },\n")
+	builder.WriteString("      \"dsl_params\": [\n")
+	builder.WriteString("        {\"name\": \"length\", \"title\": \"Length\", \"type\": \"int\", \"default\": 20}\n")
+	builder.WriteString("      ],\n")
+	builder.WriteString("      \"dsl_diagnostics\": [],\n")
+	builder.WriteString("      \"warnings\": []\n")
+	builder.WriteString("    }\n")
+	builder.WriteString("  ]\n")
+	builder.WriteString("}\n")
+	builder.WriteString("```\n\n")
 	builder.WriteString("### 使用 `dsl_params` 覆蓋輸入參數\n\n")
 	builder.WriteString("```json\n")
 	builder.WriteString("{\n")
@@ -555,6 +792,39 @@ func writeBacktestTutorial(builder *strings.Builder) {
 	builder.WriteString("- `result.summaries[].total_trades`：交易次數。\n")
 	builder.WriteString("- `result.summaries[].report_url`：單策略 HTML 報告 URL。\n")
 	builder.WriteString("- `result.overview_report_url`：總覽 HTML 報告 URL。\n\n")
+	builder.WriteString("`completed` 狀態範例：\n\n")
+	builder.WriteString("```json\n")
+	builder.WriteString("{\n")
+	builder.WriteString("  \"run_id\": \"c40505f1a16f02f33380b4ccbe4f74db\",\n")
+	builder.WriteString("  \"status\": \"completed\",\n")
+	builder.WriteString("  \"report_url\": \"/api/v1/backtests/runs/c40505f1a16f02f33380b4ccbe4f74db/report\",\n")
+	builder.WriteString("  \"result\": {\n")
+	builder.WriteString("    \"report_url\": \"/api/v1/backtests/runs/c40505f1a16f02f33380b4ccbe4f74db/report\",\n")
+	builder.WriteString("    \"overview_report_url\": \"/api/v1/backtests/runs/c40505f1a16f02f33380b4ccbe4f74db/reports/overview\",\n")
+	builder.WriteString("    \"summaries\": [\n")
+	builder.WriteString("      {\n")
+	builder.WriteString("        \"strategy_name\": \"GoldenCross\",\n")
+	builder.WriteString("        \"initial_capital\": 100000,\n")
+	builder.WriteString("        \"final_equity\": 112430.5,\n")
+	builder.WriteString("        \"total_return\": 0.124305,\n")
+	builder.WriteString("        \"max_drawdown\": 0.082,\n")
+	builder.WriteString("        \"total_trades\": 18,\n")
+	builder.WriteString("        \"win_rate\": 0.5556,\n")
+	builder.WriteString("        \"report_url\": \"/api/v1/backtests/runs/c40505f1a16f02f33380b4ccbe4f74db/reports/1\"\n")
+	builder.WriteString("      }\n")
+	builder.WriteString("    ]\n")
+	builder.WriteString("  }\n")
+	builder.WriteString("}\n")
+	builder.WriteString("```\n\n")
+	builder.WriteString("`failed` 狀態範例：\n\n")
+	builder.WriteString("```json\n")
+	builder.WriteString("{\n")
+	builder.WriteString("  \"run_id\": \"c40505f1a16f02f33380b4ccbe4f74db\",\n")
+	builder.WriteString("  \"status\": \"failed\",\n")
+	builder.WriteString("  \"error\": \"load option chain: no data\",\n")
+	builder.WriteString("  \"report_url\": \"/api/v1/backtests/runs/c40505f1a16f02f33380b4ccbe4f74db/report\"\n")
+	builder.WriteString("}\n")
+	builder.WriteString("```\n\n")
 	builder.WriteString("### 限制與注意事項\n\n")
 	builder.WriteString("Toktik DSL 不是完整 TradingView Pine Script v6 實作；語法風格接近 Pine，但內建函數和交易模型以 Toktik 回測引擎為準。型別標註目前主要用於相容和可讀性，runtime 仍採動態值模型。期權、合約、spread、group 是 handle，應透過內建函數操作。\n\n")
 	builder.WriteString("目前普通股票/現貨交易指令只針對 primary asset 建倉與平倉；`portfolio` / `symbols` 主要用於策略配置與可枚舉的期權鏈預載。若要在同一策略中交易多個股票 underlying 的期權，請用 `options.chain(market, symbol)` 取得各 underlying 的合約，再用 `spread.open_on(market, underlying, legs, tag)` 或 `spread.open_in_group_on(...)` 建立期權部位。\n\n")
@@ -777,7 +1047,7 @@ func writeEndpoint(builder *strings.Builder, doc *swaggerDoc, spec endpointSpec,
 	builder.WriteString("\n")
 }
 
-func writeSchemas(builder *strings.Builder, doc *swaggerDoc, schemaNames []string, intro string) {
+func writeSchemas(builder *strings.Builder, doc *swaggerDoc, schemaNames []string, intro string, schemaDocs map[string]map[string]string) {
 	if len(schemaNames) == 0 {
 		return
 	}
@@ -818,11 +1088,23 @@ func writeSchemas(builder *strings.Builder, doc *swaggerDoc, schemaNames []strin
 			builder.WriteString(" | ")
 			builder.WriteString(boolWord(isRequired(field, definition.Required)))
 			builder.WriteString(" | ")
-			builder.WriteString(escapePipes(strings.TrimSpace(prop.Description)))
+			builder.WriteString(escapePipes(schemaFieldDescription(name, field, prop.Description, schemaDocs)))
 			builder.WriteString(" |\n")
 		}
 		builder.WriteString("\n")
 	}
+}
+
+func schemaFieldDescription(schemaName, field, fallback string, schemaDocs map[string]map[string]string) string {
+	if docs, ok := schemaDocs[schemaDisplayName(schemaName)]; ok {
+		if description := strings.TrimSpace(docs[field]); description != "" {
+			return description
+		}
+	}
+	if description := strings.TrimSpace(fallback); description != "" {
+		return description
+	}
+	return "-"
 }
 
 func writeIndicatorExamples(builder *strings.Builder) {

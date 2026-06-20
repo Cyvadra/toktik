@@ -103,6 +103,7 @@ func (h *Handler) RunBacktest(c *gin.Context) {
 //	@Param			body	body		dto.StrategyBacktestRunRequest	true	"Backtest validation configuration"
 //	@Success		200		{object}	dto.StrategyBacktestValidationResponse
 //	@Failure		400		{object}	dto.ErrorResponse
+//	@Failure		501		{object}	dto.ErrorResponse
 //	@Failure		500		{object}	dto.ErrorResponse
 //	@Router			/backtests/validate [post]
 func (h *Handler) ValidateStrategyBacktest(c *gin.Context) {
@@ -135,6 +136,7 @@ func (h *Handler) ValidateStrategyBacktest(c *gin.Context) {
 //	@Param			body	body		dto.StrategyBacktestRunRequest	true	"Backtest run configuration"
 //	@Success		202		{object}	dto.StrategyBacktestRunAccepted
 //	@Failure		400		{object}	dto.ErrorResponse
+//	@Failure		501		{object}	dto.ErrorResponse
 //	@Failure		500		{object}	dto.ErrorResponse
 //	@Router			/backtests/runs [post]
 func (h *Handler) StartStrategyBacktest(c *gin.Context) {
@@ -166,6 +168,7 @@ func (h *Handler) StartStrategyBacktest(c *gin.Context) {
 //	@Param			runID	path		string	true	"Backtest run ID"
 //	@Success		200		{object}	dto.StrategyBacktestRunStatus
 //	@Failure		404		{object}	dto.ErrorResponse
+//	@Failure		501		{object}	dto.ErrorResponse
 //	@Failure		500		{object}	dto.ErrorResponse
 //	@Router			/backtests/runs/{runID} [get]
 func (h *Handler) GetStrategyBacktestRun(c *gin.Context) {
@@ -186,7 +189,7 @@ func (h *Handler) GetStrategyBacktestRun(c *gin.Context) {
 // GetStrategyBacktestReport handles GET /api/v1/backtests/runs/:runID/report.
 //
 //	@Summary		Get primary backtest report
-//	@Description	Returns the primary HTML report for a completed backtest run. If the run is still pending or running, the endpoint returns 202 with the current StrategyBacktestRunStatus JSON so clients can continue polling. If no report is available for the completed run, it returns 409.
+//	@Description	Returns the primary HTML report for a completed backtest run. If the run is still queued or running, the endpoint returns 202 with the current StrategyBacktestRunStatus JSON so clients can continue polling. If no report is available for the completed run, it returns 409.
 //	@Tags			Backtests
 //	@Produce		html
 //	@Produce		json
@@ -195,6 +198,7 @@ func (h *Handler) GetStrategyBacktestRun(c *gin.Context) {
 //	@Success		202		{object}	dto.StrategyBacktestRunStatus
 //	@Failure		404		{object}	dto.ErrorResponse
 //	@Failure		409		{object}	dto.ErrorResponse
+//	@Failure		501		{object}	dto.ErrorResponse
 //	@Failure		500		{object}	dto.ErrorResponse
 //	@Router			/backtests/runs/{runID}/report [get]
 func (h *Handler) GetStrategyBacktestReport(c *gin.Context) {
@@ -223,6 +227,7 @@ func (h *Handler) GetStrategyBacktestReport(c *gin.Context) {
 //	@Success		202			{object}	dto.StrategyBacktestRunStatus
 //	@Failure		404			{object}	dto.ErrorResponse
 //	@Failure		409			{object}	dto.ErrorResponse
+//	@Failure		501		{object}	dto.ErrorResponse
 //	@Failure		500			{object}	dto.ErrorResponse
 //	@Router			/backtests/runs/{runID}/reports/{reportID} [get]
 func (h *Handler) GetStrategyBacktestNamedReport(c *gin.Context) {
@@ -247,6 +252,7 @@ func (h *Handler) GetStrategyBacktestNamedReport(c *gin.Context) {
 //	@Param			runID	path	string	true	"Backtest run ID"
 //	@Success		200		"SSE stream of backtest events"
 //	@Failure		404		{object}	dto.ErrorResponse
+//	@Failure		501		{object}	dto.ErrorResponse
 //	@Failure		500		{object}	dto.ErrorResponse
 //	@Router			/backtests/runs/{runID}/events [get]
 func (h *Handler) StreamStrategyBacktestEvents(c *gin.Context) {
