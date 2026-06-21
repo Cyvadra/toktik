@@ -221,7 +221,7 @@ func decorateBacktestRunStatus(resp *dto.StrategyBacktestRunStatus) *dto.Strateg
 	}
 	resultCopy := *resp.Result
 	resultCopy.ReportURL = strategyBacktestPrimaryReportURL(resp.RunID)
-	if strings.TrimSpace(resp.Result.OverviewHTMLPath) != "" {
+	if strings.TrimSpace(resp.Result.OverviewHTMLPath) != "" || singleStrategyReportPath(resp.Result) != "" {
 		resultCopy.OverviewReportURL = strategyBacktestNamedReportURL(resp.RunID, "overview")
 	}
 	if len(resp.Result.Summaries) > 0 {
@@ -258,6 +258,9 @@ func (h *Handler) resolveStrategyBacktestReportPath(status *dto.StrategyBacktest
 	case strings.EqualFold(trimmed, "overview"):
 		candidate = strings.TrimSpace(status.Result.OverviewHTMLPath)
 		if candidate == "" {
+			candidate = singleStrategyReportPath(status.Result)
+		}
+		if candidate == "" {
 			return "", dto.NewNotFoundError("overview report is not available")
 		}
 	default:
@@ -271,6 +274,13 @@ func (h *Handler) resolveStrategyBacktestReportPath(status *dto.StrategyBacktest
 		}
 	}
 	return h.containReportPath(candidate)
+}
+
+func singleStrategyReportPath(result *dto.StrategyBacktestRunResult) string {
+	if result == nil || len(result.Summaries) != 1 {
+		return ""
+	}
+	return strings.TrimSpace(result.Summaries[0].HTMLPath)
 }
 
 // containReportPath returns an absolute path that is guaranteed to live

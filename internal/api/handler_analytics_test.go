@@ -371,6 +371,26 @@ func TestGetStrategyBacktestReportRoutePending(t *testing.T) {
 	}
 }
 
+func TestSwaggerDocJSONRoute(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := NewRouterFromDeps(Deps{Config: config.DefaultRuntime()})
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/swagger/doc.json", nil)
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var doc map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &doc); err != nil {
+		t.Fatalf("unmarshal swagger doc: %v", err)
+	}
+	if doc["swagger"] == "" || doc["paths"] == nil {
+		t.Fatalf("swagger doc missing required fields: %#v", doc)
+	}
+}
+
 func TestGetStrategyBacktestReportRouteCompleted(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	tempDir := t.TempDir()
@@ -417,6 +437,66 @@ func TestGetStrategyBacktestReportRouteCompleted(t *testing.T) {
 	}
 	if w.Body.String() != html {
 		t.Fatalf("unexpected html body: %q", w.Body.String())
+	}
+}
+
+func TestGetStrategyBacktestNamedReportRouteOverviewFallsBackToSingleReport(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	tempDir := t.TempDir()
+	tempFile, err := os.CreateTemp(tempDir, "report-*.html")
+	if err != nil {
+		t.Fatalf("create temp file: %v", err)
+	}
+	html := "<html><body>single</body></html>"
+	if _, err := tempFile.WriteString(html); err != nil {
+		t.Fatalf("write temp file: %v", err)
+	}
+	if err := tempFile.Close(); err != nil {
+		t.Fatalf("close temp file: %v", err)
+	}
+
+	cfg := config.DefaultRuntime()
+	cfg.Paths.ReportsRoot = tempDir
+	r := NewRouterFromDeps(Deps{
+		Config:        cfg,
+		CryptoOptions: &mockQuerier{},
+		USStocks:      &mockUSStocksQuerier{},
+		USOptions:     &mockUSOptionsQuerier{},
+		Infra:         &mockInfra{},
+		Features:      &mockFeature{},
+		StrategyBacktests: &mockStrategyBacktests{statusResp: &dto.StrategyBacktestRunStatus{
+			RunID:     "run-123",
+			Status:    "completed",
+			Request:   dto.StrategyBacktestRunRequest{Asset: "BTC", From: "2026-01-01", To: "2026-02-01", Capital: 5},
+			CreatedAt: time.Date(2026, 4, 7, 8, 0, 0, 0, time.UTC),
+			UpdatedAt: time.Date(2026, 4, 7, 8, 0, 1, 0, time.UTC),
+			Result:    &dto.StrategyBacktestRunResult{Summaries: []dto.StrategyBacktestSummary{{StrategyName: "demo", HTMLPath: tempFile.Name()}}},
+		}},
+	})
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/api/v1/backtests/runs/run-123/reports/overview", nil)
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if w.Body.String() != html {
+		t.Fatalf("unexpected html body: %q", w.Body.String())
+	}
+
+	w = httptest.NewRecorder()
+	req, _ = http.NewRequest("GET", "/api/v1/backtests/runs/run-123", nil)
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var status dto.StrategyBacktestRunStatus
+	if err := json.Unmarshal(w.Body.Bytes(), &status); err != nil {
+		t.Fatalf("unmarshal status: %v", err)
+	}
+	if status.Result == nil || status.Result.OverviewReportURL != "/api/v1/backtests/runs/run-123/reports/overview" {
+		t.Fatalf("expected overview report url, got %+v", status.Result)
 	}
 }
 

@@ -725,7 +725,7 @@ func buildStrategyBacktestSummary(result *backtest.Result, htmlPath string) dto.
 		SharpeRatio:      result.SharpeRatio,
 		CalmarRatio:      result.CalmarRatio,
 		MaxDrawdown:      result.MaxDrawdown,
-		TotalTrades:      result.TotalTrades,
+		TotalTrades:      summaryTotalTrades(result),
 		WinningTrades:    result.WinningTrades,
 		LosingTrades:     result.LosingTrades,
 		WinRate:          result.WinRate,
@@ -750,6 +750,19 @@ func buildStrategyBacktestSummary(result *backtest.Result, htmlPath string) dto.
 		summary.Warnings = backtestWarningsToDTO(result.Warnings)
 	}
 	return summary
+}
+
+func summaryTotalTrades(result *backtest.Result) int {
+	if result == nil {
+		return 0
+	}
+	if result.TotalTrades > 0 {
+		return result.TotalTrades
+	}
+	if result.SpreadSummary != nil && result.SpreadSummary.TotalSpreads > 0 {
+		return result.SpreadSummary.TotalSpreads
+	}
+	return 0
 }
 
 func backtestWarningsToDTO(warnings []backtest.BacktestWarning) []dto.StrategyBacktestRuntimeWarning {

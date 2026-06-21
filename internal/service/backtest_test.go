@@ -88,6 +88,42 @@ func TestParseEnum(t *testing.T) {
 	testParseEnum(t, "trigger mode", triggerModeMap, backtest.TriggerPriceCanonical, "trigger_mode", triggerTests)
 }
 
+func TestBuildStrategyBacktestSummaryUsesSpreadCountForSpreadOnlyRuns(t *testing.T) {
+	result := &backtest.Result{
+		StrategyName: "spread-only",
+		SpreadSummary: &backtest.SpreadSummary{
+			TotalSpreads:  11,
+			ClosedSpreads: 11,
+			TotalPnL:      8.6,
+		},
+	}
+
+	summary := buildStrategyBacktestSummary(result, "/tmp/report.html")
+
+	if summary.TotalTrades != 11 {
+		t.Fatalf("expected spread count as total trades, got %d", summary.TotalTrades)
+	}
+	if summary.SpreadSummary == nil || summary.SpreadSummary.TotalSpreads != 11 {
+		t.Fatalf("unexpected spread summary: %+v", summary.SpreadSummary)
+	}
+}
+
+func TestBuildStrategyBacktestSummaryKeepsRegularTradeCount(t *testing.T) {
+	result := &backtest.Result{
+		StrategyName: "mixed",
+		TotalTrades:  3,
+		SpreadSummary: &backtest.SpreadSummary{
+			TotalSpreads: 11,
+		},
+	}
+
+	summary := buildStrategyBacktestSummary(result, "/tmp/report.html")
+
+	if summary.TotalTrades != 3 {
+		t.Fatalf("expected regular trade count, got %d", summary.TotalTrades)
+	}
+}
+
 // --- validateBacktestRequest ---
 
 func ptrFloat(v float64) *float64 { return &v }

@@ -4,10 +4,12 @@ import (
 	"net/http"
 	"strings"
 
+	_ "github.com/Cyvadra/toktik/docs"
 	"github.com/Cyvadra/toktik/internal/config"
 	"github.com/gin-gonic/gin"
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
+	"github.com/swaggo/swag"
 )
 
 // Deps bundles every dependency the API layer needs. Optional providers
@@ -65,7 +67,7 @@ func NewRouterFromDeps(d Deps) *gin.Engine {
 
 	h := NewHandler(d)
 
-	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
+	r.GET("/swagger/*any", swaggerHandler())
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
@@ -74,6 +76,26 @@ func NewRouterFromDeps(d Deps) *gin.Engine {
 	v1 := r.Group("/api/v1")
 	registerRoutes(v1, h)
 	return r
+}
+
+func swaggerHandler() gin.HandlerFunc {
+	ui := ginSwagger.WrapHandler(swaggerFiles.Handler)
+	return func(c *gin.Context) {
+		if strings.Trim(c.Param("any"), "/") == "doc.json" {
+			serveSwaggerDocJSON(c)
+			return
+		}
+		ui(c)
+	}
+}
+
+func serveSwaggerDocJSON(c *gin.Context) {
+	doc, err := swag.ReadDoc(swag.Name)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.Data(http.StatusOK, "application/json; charset=utf-8", []byte(doc))
 }
 
 // NewRouter is kept for backward compatibility with existing tests and

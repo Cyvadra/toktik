@@ -461,7 +461,8 @@ var (
 	_ = combinedHTMLTemplate
 )
 
-// WriteBacktestHTML renders a self-contained static HTML report for a backtest result.
+// WriteBacktestHTML renders a static HTML report for a backtest result.
+// Result data is embedded; chart and style assets are loaded from CDNs.
 func WriteBacktestHTML(path string, result *backtest.Result, meta HTMLMeta) error {
 	view := buildHTMLView(result, meta)
 	tmpl, err := template.New("backtest-report").Parse(htmlTemplate)
@@ -481,7 +482,7 @@ func WriteBacktestHTML(path string, result *backtest.Result, meta HTMLMeta) erro
 	return nil
 }
 
-// WriteCombinedBacktestHTML renders multiple backtest results into one self-contained HTML report.
+// WriteCombinedBacktestHTML renders multiple backtest results into one static HTML report.
 func WriteCombinedBacktestHTML(path string, results []*backtest.Result, meta HTMLMeta) error {
 	if len(results) == 0 {
 		return nil
