@@ -360,8 +360,8 @@ aapl_iv_rank = request.security("us", "AAPL", "1d", iv_rank_base)
 
 | 名稱 | 簽名 | 種類 | 回傳 | 範例 | 用途 |
 | --- | --- | --- | --- | --- | --- |
-| `leg.buy` | `leg.buy(contract, qty)` | `函數` | `leg` | `long_leg = leg.buy(contract, 1)` | 用於建立買方 leg，提交 debit spread 或保護腿時使用。 |
-| `leg.sell` | `leg.sell(contract, qty)` | `函數` | `leg` | `short_leg = leg.sell(contract, 1)` | 用於建立賣方 leg，提交 short put、covered call 或 credit spread 時使用。 |
+| `leg.buy` | `leg.buy(contract, qty)` | `函數` | `leg` | `long_leg = leg.buy(contract, 1)` | 用於建立買方 leg，qty 表示期權合約張數；US options 的現金流與 PnL 會按 100 contract multiplier 計算。 |
+| `leg.sell` | `leg.sell(contract, qty)` | `函數` | `leg` | `short_leg = leg.sell(contract, 1)` | 用於建立賣方 leg，qty 表示期權合約張數；US options 的現金流與 PnL 會按 100 contract multiplier 計算。 |
 
 ### math
 
@@ -1003,8 +1003,8 @@ data: {"run_id":"c40505f1a16f02f33380b4ccbe4f74db","status":"running","progress"
 | --- | --- | --- | --- |
 | asset | string | no | Primary asset/symbol, for example SPY or BTC. Required unless portfolio or symbols provides at least one asset. |
 | capital | number | yes | Initial capital. Required. Unit depends on market/instrument and validation runtime.capital_unit. |
-| commission_model | string | no | Commission model. Allowed values: none, flat, percent, per-unit. Default: none. |
-| commission_value | number | no | Commission amount interpreted by commission_model. |
+| commission_model | string | no | Commission model. Allowed values: none, flat, percent, per-unit. Default: none. Applies to regular trades and option spread leg opens/closes. |
+| commission_value | number | no | Commission amount interpreted by commission_model. For percent commissions on US option spreads, the notional includes the 100 contract multiplier. |
 | direction | string | no | Trade direction filter. Allowed values: both, long_only, short_only. Default: both. |
 | dsl | string | no | Inline custom DSL strategy source. Do not combine with strategy. |
 | dsl_params | object | no | Runtime overrides for DSL input.* declarations, keyed by input title or variable name. |
@@ -1133,7 +1133,7 @@ data: {"run_id":"c40505f1a16f02f33380b4ccbe4f74db","status":"running","progress"
 | spread_summary | [StrategyBacktestSpreadSummary](#strategybacktestspreadsummary) | no | Option spread metrics when the strategy uses spreads. |
 | start_time | string | no | First bar timestamp used by the run. |
 | strategy_name | string | no | Strategy display name used by the engine. |
-| total_fees | number | no | Total commissions and fees charged by the simulation. |
+| total_fees | number | no | Total commissions and fees charged by the simulation, including option spread leg entry and exit commissions. |
 | total_return | number | no | Total return as a decimal ratio, for example 0.12 means 12%. |
 | total_trades | integer | no | Total trade count. |
 | warnings | array<[StrategyBacktestRuntimeWarning](#strategybacktestruntimewarning)> | no | Strategy-level runtime warnings. |

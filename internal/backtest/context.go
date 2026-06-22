@@ -684,9 +684,10 @@ func (bc *BarContext) CloseSpreadLegWithReasonAndData(spreadID, legIndex int, cl
 	if leg.Closed {
 		return false
 	}
+	closeCommission := bc.spreadLegCommission(*leg, closePrice)
 	bc.applyCloseSpreadCashImpact(*leg, closePrice)
 	closeCustomData = bc.withCurrentCloseDelta(leg, closeCustomData)
-	return bc.spreadTracker.CloseLegWithReasonAndData(spreadID, legIndex, closePrice, bc.barTime, closeReason, closeCustomData)
+	return bc.spreadTracker.CloseLegFull(spreadID, legIndex, closePrice, closeCommission, bc.barTime, closeReason, closeCustomData)
 }
 
 func (bc *BarContext) prepareOpenSpreadLegs(legs []SpreadLeg) []SpreadLeg {
@@ -694,29 +695,35 @@ func (bc *BarContext) prepareOpenSpreadLegs(legs []SpreadLeg) []SpreadLeg {
 	copy(legsCopy, legs)
 	for i := range legsCopy {
 		legsCopy[i].EntryTime = bc.barTime
+		legsCopy[i].EntryCommission = bc.spreadLegCommission(legsCopy[i], legsCopy[i].EntryPrice)
 		legsCopy[i].EntryCustomData = withEntryDelta(legsCopy[i].EntryCustomData, legsCopy[i].Contract)
 	}
 	return legsCopy
 }
 
+func (bc *BarContext) spreadLegCommission(leg SpreadLeg, price float64) float64 {
+	return bc.broker.calcCommissionForNotional(leg.Qty, price, leg.notional(price))
+}
+
 func (bc *BarContext) applyOpenSpreadCashImpact(legs []SpreadLeg) {
 	for i := range legs {
-		amount := legs[i].Qty * legs[i].EntryPrice
+		amount := legs[i].notional(legs[i].EntryPrice)
 		if legs[i].Side == Sell {
-			bc.broker.AdjustCash(amount)
+			bc.broker.AdjustCash(amount - legs[i].EntryCommission)
 		} else {
-			bc.broker.AdjustCash(-amount)
+			bc.broker.AdjustCash(-(amount + legs[i].EntryCommission))
 		}
 	}
 }
 
 func (bc *BarContext) applyCloseSpreadCashImpact(leg SpreadLeg, closePrice float64) {
-	amount := leg.Qty * closePrice
+	amount := leg.notional(closePrice)
+	commission := bc.spreadLegCommission(leg, closePrice)
 	if leg.Side == Sell {
-		bc.broker.AdjustCash(-amount)
+		bc.broker.AdjustCash(-(amount + commission))
 		return
 	}
-	bc.broker.AdjustCash(amount)
+	bc.broker.AdjustCash(amount - commission)
 }
 
 // CloseSpreadLegStopNowWithReason attempts to stop out a spread leg inside the current bar.
@@ -989,10 +996,11 @@ func (bc *BarContext) spreadUnrealizedEquity() float64 {
 				continue
 			}
 
+			notional := leg.Qty * markPrice * contract.Multiplier()
 			if leg.Side == Buy {
-				spreadMarketValue += leg.Qty * markPrice
+				spreadMarketValue += notional
 			} else {
-				spreadMarketValue -= leg.Qty * markPrice
+				spreadMarketValue -= notional
 			}
 		}
 	}

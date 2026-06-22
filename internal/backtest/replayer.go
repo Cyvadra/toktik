@@ -383,11 +383,26 @@ func (r *Replayer) Replay(prepared *PreparedData, strategy Strategy, params map[
 
 	result.SpreadSummary = computeSpreadSummary(spreadTracker)
 	result.SpreadPositions = buildSpreadPositionReports(spreadTracker, result.EndTime)
+	result.TotalFees += totalSpreadFees(spreadTracker)
 	result.SpreadGroups = buildSpreadGroupReports(spreadGroupTracker, spreadTracker, result.EndTime)
 	result.SpreadGroups = applySpreadGroupEquityStats(result.SpreadGroups, spreadGroupEquity.Snapshot())
 	result.Warnings = warningSink.all()
 
 	return result, nil
+}
+
+func totalSpreadFees(tracker *SpreadTracker) float64 {
+	if tracker == nil {
+		return 0
+	}
+	total := 0.0
+	for _, spread := range tracker.All() {
+		if spread == nil {
+			continue
+		}
+		total += spread.TotalFees()
+	}
+	return total
 }
 
 func scheduledCloseLegFill(sa ScheduledAction, leg SpreadLeg, contractMap map[string]OptionContract, spreadPricing SpreadPricingConfig, defaultSlipPct float64) (float64, string, []TradeCustomData) {

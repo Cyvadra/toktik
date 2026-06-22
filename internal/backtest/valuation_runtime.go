@@ -182,10 +182,11 @@ func calculateSpreadMarketValue(tracker *SpreadTracker, contractMap map[string]O
 			}
 			contract := resolveSpreadContract(leg.Contract, contractMap)
 			markPrice := valuation.markPrice(sp.ID, legIndex, leg, contract, pricing.ValuationMode, barIndex, barTime)
+			notional := leg.Qty * markPrice * contract.Multiplier()
 			if leg.Side == Buy {
-				spreadMarketValue += leg.Qty * markPrice
+				spreadMarketValue += notional
 			} else {
-				spreadMarketValue -= leg.Qty * markPrice
+				spreadMarketValue -= notional
 			}
 		}
 	}

@@ -27,7 +27,7 @@ for item in portfolio.items()
     if ref.has(state_key)
         sid = ref.get(state_key)
         short_put = spread.leg_contract(sid, 0)
-        premium_base = spread.leg_entry_price(sid, 0) * spread.leg_qty(sid, 0)
+        premium_base = spread.leg_entry_price(sid, 0) * spread.leg_qty(sid, 0) * 100
         profit_ratio = premium_base > 0 ? spread.pnl(sid) / premium_base : 0
 
         if contract.dte(short_put) <= roll_dte or profit_ratio >= profit_take

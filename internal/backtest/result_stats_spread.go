@@ -43,23 +43,25 @@ func buildSpreadPositionReports(tracker *SpreadTracker, endTime time.Time) []Spr
 
 		for _, leg := range spread.Legs {
 			legReport := SpreadLegReport{
-				Symbol:      leg.Contract.Symbol,
-				Side:        leg.Side.String(),
-				Type:        leg.Contract.Type,
-				StrikePrice: leg.Contract.StrikePrice,
-				Expiration:  leg.Contract.Expiration,
-				EntryDelta:  tradeCustomDataFloat(leg.EntryCustomData, TradeCustomDataKeyEntryDelta),
-				Delta:       leg.Contract.Delta,
-				Qty:         leg.Qty,
-				EntryPrice:  leg.EntryPrice,
-				EntryTime:   leg.EntryTime,
-				Closed:      leg.Closed,
-				CloseReason: leg.CloseReason,
-				RealizedPnL: leg.RealizedPnL(),
+				Symbol:          leg.Contract.Symbol,
+				Side:            leg.Side.String(),
+				Type:            leg.Contract.Type,
+				StrikePrice:     leg.Contract.StrikePrice,
+				Expiration:      leg.Contract.Expiration,
+				EntryDelta:      tradeCustomDataFloat(leg.EntryCustomData, TradeCustomDataKeyEntryDelta),
+				Delta:           leg.Contract.Delta,
+				Qty:             leg.Qty,
+				EntryPrice:      leg.EntryPrice,
+				EntryCommission: leg.EntryCommission,
+				EntryTime:       leg.EntryTime,
+				Closed:          leg.Closed,
+				CloseReason:     leg.CloseReason,
+				RealizedPnL:     leg.RealizedPnL(),
 			}
 			if leg.Closed {
 				closeAt := leg.CloseTime
 				legReport.ClosePrice = leg.ClosePrice
+				legReport.CloseCommission = leg.CloseCommission
 				legReport.CloseTriggerTime = tradeCustomDataTime(leg.CloseCustomData, TradeCustomDataKeyCloseTriggerTime)
 				legReport.CloseTime = &closeAt
 				legReport.CloseDelta = tradeCustomDataFloat(leg.CloseCustomData, TradeCustomDataKeyCloseDelta)

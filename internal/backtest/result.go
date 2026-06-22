@@ -196,9 +196,11 @@ type SpreadLegReport struct {
 	Delta            float64    `json:"delta"`
 	Qty              float64    `json:"qty"`
 	EntryPrice       float64    `json:"entry_price"`
+	EntryCommission  float64    `json:"entry_commission,omitempty"`
 	EntryTime        time.Time  `json:"entry_time"`
 	Closed           bool       `json:"closed"`
 	ClosePrice       float64    `json:"close_price,omitempty"`
+	CloseCommission  float64    `json:"close_commission,omitempty"`
 	CloseTriggerTime *time.Time `json:"close_trigger_time,omitempty"`
 	CloseTime        *time.Time `json:"close_time,omitempty"`
 	CloseDelta       *float64   `json:"close_delta,omitempty"`

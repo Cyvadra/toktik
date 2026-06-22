@@ -134,6 +134,14 @@ type OptionContract struct {
 	OpenInterest    float64
 }
 
+func (c OptionContract) Multiplier() float64 {
+	market := strings.ToLower(strings.TrimSpace(c.ChainMarket()))
+	if isUSChainMarket(market) || strings.HasPrefix(strings.ToUpper(strings.TrimSpace(c.Symbol)), "O:") {
+		return 100
+	}
+	return 1
+}
+
 // ChainUnderlying returns the best available logical underlying symbol for the
 // contract. Empty strings are normalized away so callers can reliably use the
 // result as a lookup key.
@@ -563,13 +571,23 @@ type SpreadLeg struct {
 	Side            Side
 	Qty             float64
 	EntryPrice      float64
+	EntryCommission float64
 	EntryTime       time.Time
 	EntryCustomData []TradeCustomData
 	Closed          bool
 	ClosePrice      float64
+	CloseCommission float64
 	CloseTime       time.Time
 	CloseReason     string
 	CloseCustomData []TradeCustomData
+}
+
+func (sl *SpreadLeg) notional(price float64) float64 {
+	return sl.Qty * price * sl.Contract.Multiplier()
+}
+
+func (sl *SpreadLeg) TotalCommission() float64 {
+	return sl.EntryCommission + sl.CloseCommission
 }
 
 // UnrealizedPnL returns the unrealized PnL for this leg at the given mark price.
@@ -578,9 +596,9 @@ func (sl *SpreadLeg) UnrealizedPnL(markPrice float64) float64 {
 		return 0
 	}
 	if sl.Side == Sell {
-		return sl.Qty * (sl.EntryPrice - markPrice)
+		return sl.Qty*(sl.EntryPrice-markPrice)*sl.Contract.Multiplier() - sl.EntryCommission
 	}
-	return sl.Qty * (markPrice - sl.EntryPrice)
+	return sl.Qty*(markPrice-sl.EntryPrice)*sl.Contract.Multiplier() - sl.EntryCommission
 }
 
 // RealizedPnL returns the realized PnL if the leg is closed.
@@ -589,9 +607,9 @@ func (sl *SpreadLeg) RealizedPnL() float64 {
 		return 0
 	}
 	if sl.Side == Sell {
-		return sl.Qty * (sl.EntryPrice - sl.ClosePrice)
+		return sl.Qty*(sl.EntryPrice-sl.ClosePrice)*sl.Contract.Multiplier() - sl.TotalCommission()
 	}
-	return sl.Qty * (sl.ClosePrice - sl.EntryPrice)
+	return sl.Qty*(sl.ClosePrice-sl.EntryPrice)*sl.Contract.Multiplier() - sl.TotalCommission()
 }
 
 // SpreadPosition tracks a multi-leg options position as a single unit.
@@ -631,6 +649,14 @@ func (sp *SpreadPosition) TotalRealizedPnL() float64 {
 	total := 0.0
 	for i := range sp.Legs {
 		total += sp.Legs[i].RealizedPnL()
+	}
+	return total
+}
+
+func (sp *SpreadPosition) TotalFees() float64 {
+	total := 0.0
+	for i := range sp.Legs {
+		total += sp.Legs[i].TotalCommission()
 	}
 	return total
 }
@@ -748,6 +774,10 @@ func (st *SpreadTracker) CloseLegWithReason(spreadID, legIndex int, closePrice f
 
 // CloseLegWithReasonAndData marks a specific leg of a spread as closed with custom report data.
 func (st *SpreadTracker) CloseLegWithReasonAndData(spreadID, legIndex int, closePrice float64, closeTime time.Time, closeReason string, closeCustomData []TradeCustomData) bool {
+	return st.CloseLegFull(spreadID, legIndex, closePrice, 0, closeTime, closeReason, closeCustomData)
+}
+
+func (st *SpreadTracker) CloseLegFull(spreadID, legIndex int, closePrice, closeCommission float64, closeTime time.Time, closeReason string, closeCustomData []TradeCustomData) bool {
 	sp := st.Get(spreadID)
 	if sp == nil || legIndex < 0 || legIndex >= len(sp.Legs) {
 		return false
@@ -757,6 +787,7 @@ func (st *SpreadTracker) CloseLegWithReasonAndData(spreadID, legIndex int, close
 	}
 	sp.Legs[legIndex].Closed = true
 	sp.Legs[legIndex].ClosePrice = closePrice
+	sp.Legs[legIndex].CloseCommission = closeCommission
 	sp.Legs[legIndex].CloseTime = closeTime
 	sp.Legs[legIndex].CloseReason = closeReason
 	sp.Legs[legIndex].CloseCustomData = cloneTradeCustomData(closeCustomData)

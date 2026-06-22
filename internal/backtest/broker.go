@@ -558,11 +558,18 @@ func (b *Broker) calcCommission(qty, price float64) float64 {
 	if !isValidQuantity(qty) || !isValidPrice(price) {
 		return 0
 	}
+	return b.calcCommissionForNotional(qty, price, qty*price)
+}
+
+func (b *Broker) calcCommissionForNotional(qty, price, notional float64) float64 {
+	if !isValidQuantity(qty) || !isValidPrice(price) {
+		return 0
+	}
 	switch b.config.CommissionModel {
 	case CommissionFlat:
 		return b.config.CommissionValue
 	case CommissionPercent:
-		return qty * price * b.config.CommissionValue
+		return notional * b.config.CommissionValue
 	case CommissionPerUnit:
 		return qty * b.config.CommissionValue
 	default:

@@ -59,6 +59,65 @@ func TestBarContextTotalPnLIncludesOpenSpreadMark(t *testing.T) {
 	}
 }
 
+func TestUSOptionSpreadRealizedPnLUsesContractMultiplier(t *testing.T) {
+	broker := NewBroker(Config{InitialCapital: 10000})
+	tracker := NewSpreadTracker()
+	now := time.Unix(0, 0)
+	bc := &BarContext{barTime: now, broker: broker, spreadTracker: tracker}
+
+	contract := OptionContract{Symbol: "O:SPY260120C00500000", UnderlyingMarket: "us", Type: Call, MarkPrice: 1.25}
+	spreadID := bc.OpenSpread([]SpreadLeg{{Contract: contract, Side: Buy, Qty: 1, EntryPrice: 1.00}}, "long-call")
+	if spreadID <= 0 {
+		t.Fatal("OpenSpread() failed")
+	}
+	bc.barTime = now.Add(time.Hour)
+	if !bc.CloseSpreadLeg(spreadID, 0, 1.25) {
+		t.Fatal("CloseSpreadLeg() failed")
+	}
+
+	spread := tracker.Get(spreadID)
+	if spread == nil {
+		t.Fatal("spread not found")
+	}
+	if pnl := spread.TotalRealizedPnL(); math.Abs(pnl-25) > 1e-9 {
+		t.Fatalf("spread realized pnl = %.12f, want 25", pnl)
+	}
+	if cash := broker.Cash(); math.Abs(cash-10025) > 1e-9 {
+		t.Fatalf("broker cash = %.12f, want 10025", cash)
+	}
+}
+
+func TestSpreadFlatCommissionAppliesOnOpenAndClose(t *testing.T) {
+	broker := NewBroker(Config{InitialCapital: 10000, CommissionModel: CommissionFlat, CommissionValue: 0.65})
+	tracker := NewSpreadTracker()
+	now := time.Unix(0, 0)
+	bc := &BarContext{barTime: now, broker: broker, spreadTracker: tracker}
+
+	contract := OptionContract{Symbol: "O:SPY260120C00500000", UnderlyingMarket: "us", Type: Call}
+	spreadID := bc.OpenSpread([]SpreadLeg{{Contract: contract, Side: Buy, Qty: 1, EntryPrice: 1.00}}, "long-call")
+	if spreadID <= 0 {
+		t.Fatal("OpenSpread() failed")
+	}
+	bc.barTime = now.Add(time.Hour)
+	if !bc.CloseSpreadLeg(spreadID, 0, 1.25) {
+		t.Fatal("CloseSpreadLeg() failed")
+	}
+
+	spread := tracker.Get(spreadID)
+	if spread == nil {
+		t.Fatal("spread not found")
+	}
+	if fees := spread.TotalFees(); math.Abs(fees-1.30) > 1e-9 {
+		t.Fatalf("spread fees = %.12f, want 1.30", fees)
+	}
+	if pnl := spread.TotalRealizedPnL(); math.Abs(pnl-23.70) > 1e-9 {
+		t.Fatalf("spread realized pnl = %.12f, want 23.70", pnl)
+	}
+	if cash := broker.Cash(); math.Abs(cash-10023.70) > 1e-9 {
+		t.Fatalf("broker cash = %.12f, want 10023.70", cash)
+	}
+}
+
 func TestBarContextTotalPnLUsesLastSeenSpreadContractWhenSnapshotMissing(t *testing.T) {
 	broker := NewBroker(Config{InitialCapital: 1000})
 	tracker := NewSpreadTracker()

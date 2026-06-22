@@ -52,7 +52,6 @@ func computeResult(
 			r.TotalFees += t.Commission
 		}
 	}
-
 	r.TradeOverview = ComputeTradeOverview(trades)
 	r.EquityAnalysis = ComputeEquityAnalysis(equityCurve, timestamps)
 

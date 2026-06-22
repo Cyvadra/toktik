@@ -15,7 +15,7 @@ Unified multi-market quantitative trading platform for crypto and US equity opti
 - **Strategy reuse helpers** — Shared `pkg/strategies/optutil` mixins and helpers for options strategy development
 - **US market flatfile import** — Import Polygon US options and stocks minute CSV flatfiles into ClickHouse with precomputed K-line views
 - **Feature-store backfill CLI** — Precompute supported daily feature snapshots and merged daily panels with incremental refresh, replacement, and failure reporting
-- **HTML reports** — Self-contained backtest reports with equity curves, drawdown charts, and trade markers
+- **HTML reports** — Static backtest reports with embedded result data, equity curves, drawdown charts, and trade markers; chart and style assets load from CDNs
 
 ## Architecture
 
@@ -65,7 +65,7 @@ Unified multi-market quantitative trading platform for crypto and US equity opti
 | `internal/usmarket` | Domain | US market: Polygon CSV import, session-aware K-line aggregation (DST + holidays), Black-Scholes greeks |
 | `internal/dto` | Schema | API request/response types with validation and time parsing |
 | `internal/optimization` | Engine | Grid search, parameter space definition, walk-forward optimization |
-| `internal/report` | Output | Self-contained HTML report generation (equity curves, drawdown charts, trade markers) |
+| `internal/report` | Output | Static HTML report generation with embedded result data and CDN-loaded chart/style assets |
 | `internal/cli` | Util | CLI bootstrap: env fallback, DSN resolution, ClickHouse connection helpers |
 | `internal/validation` | Util | Numeric sanity checks (NaN, Inf) |
 | `pkg/feeds` | Plugin | External data source interface (`Feed`) + registry; pluggable sources (DVOL) |
@@ -1233,7 +1233,7 @@ internal/
   datafeed/      DataFeed adapters (ClickHouse → columnar DataSet)
   dto/           API request/response types + validation
   optimization/  Grid search, walk-forward optimization
-  report/        Self-contained HTML report generation
+  report/        Static HTML report generation with embedded result data
   service/       Business logic layer (DTO-driven, no direct DB from handlers)
   usmarket/      US market domain: Polygon import, session calendar, Black-Scholes greeks
   validation/    Numeric sanity checks (NaN, Inf)
