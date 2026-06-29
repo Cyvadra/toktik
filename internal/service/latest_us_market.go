@@ -140,6 +140,17 @@ type LatestUSMarketRefresher struct {
 	done chan struct{}
 }
 
+type LatestUSMarketRefreshTrigger struct {
+	ctx         context.Context
+	cacheReader *LatestUSMarketCache
+	cfg         LatestUSMarketRefresherConfig
+	run         func(context.Context, *LatestUSMarketCache, LatestUSMarketRefresherConfig) (LatestUSMarketRefreshResult, error)
+
+	mu              sync.Mutex
+	running         bool
+	lastTriggeredAt time.Time
+}
+
 type latestUSMarketStatusProvider interface {
 	MarketStatusNow(ctx context.Context) (*polygonpkg.MarketStatus, error)
 }
@@ -283,6 +294,74 @@ func (r *LatestUSMarketRefresher) Wait() {
 		return
 	}
 	<-r.done
+}
+
+func NewLatestUSMarketRefreshTrigger(ctx context.Context, cacheReader *LatestUSMarketCache, cfg LatestUSMarketRefresherConfig) *LatestUSMarketRefreshTrigger {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if cfg.Now == nil {
+		cfg.Now = time.Now
+	}
+	return &LatestUSMarketRefreshTrigger{
+		ctx:         ctx,
+		cacheReader: cacheReader,
+		cfg:         cfg,
+		run:         RefreshLatestUSMarketCacheOnce,
+	}
+}
+
+func (t *LatestUSMarketRefreshTrigger) TriggerAppDataRefresh(_ context.Context) (*dto.AppDataRefreshResponse, error) {
+	if t == nil {
+		return nil, fmt.Errorf("latest market refresh trigger is required")
+	}
+	now := t.now().UTC()
+	t.mu.Lock()
+	if t.running {
+		previous := t.lastTriggeredAt
+		t.mu.Unlock()
+		return &dto.AppDataRefreshResponse{Status: "already_running", TriggeredAt: previous, PreviousTriggerAt: previous, AlreadyRunning: true}, nil
+	}
+	t.running = true
+	t.lastTriggeredAt = now
+	t.mu.Unlock()
+
+	go t.runRefresh()
+	return &dto.AppDataRefreshResponse{Status: "started", TriggeredAt: now}, nil
+}
+
+func (t *LatestUSMarketRefreshTrigger) now() time.Time {
+	if t.cfg.Now != nil {
+		return t.cfg.Now()
+	}
+	return time.Now()
+}
+
+func (t *LatestUSMarketRefreshTrigger) runRefresh() {
+	defer func() {
+		t.mu.Lock()
+		t.running = false
+		t.mu.Unlock()
+	}()
+	result, err := t.run(t.ctx, t.cacheReader, t.cfg)
+	if err != nil {
+		if t.cfg.Logger != nil {
+			t.cfg.Logger.Warn("manual latest us market refresh failed", "error", err)
+		}
+		return
+	}
+	if t.cfg.Logger != nil {
+		t.cfg.Logger.Info("manual latest us market refresh completed",
+			"pool_size", result.PoolSize,
+			"stock_symbols", result.StockSymbols,
+			"stock_bars", result.StockBars,
+			"option_chains", result.OptionChains,
+			"option_contracts", result.OptionContracts,
+			"option_bar_symbols", result.OptionBarSymbols,
+			"option_bars", result.OptionBars,
+			"partial", result.Partial,
+		)
+	}
 }
 
 func RefreshLatestUSMarketCacheOnce(ctx context.Context, cacheReader *LatestUSMarketCache, cfg LatestUSMarketRefresherConfig) (LatestUSMarketRefreshResult, error) {

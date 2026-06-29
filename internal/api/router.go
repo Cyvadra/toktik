@@ -20,6 +20,7 @@ type Deps struct {
 	USStocks          USStocksQuerier
 	USOptions         USOptionsQuerier
 	Infra             InfraProvider
+	AppDataRefresh    AppDataRefreshProvider
 	DataBrowser       DataBrowserProvider
 	Features          FeatureProvider
 	Indicators        IndicatorSeriesProvider
@@ -72,6 +73,7 @@ func NewRouterFromDeps(d Deps) *gin.Engine {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
 	r.GET("/ready", h.GetReadiness)
+	r.POST("/api/app-data/refresh", h.TriggerAppDataRefresh)
 
 	v1 := r.Group("/api/v1")
 	registerRoutes(v1, h)
@@ -152,6 +154,8 @@ func registerRoutes(v1 *gin.RouterGroup, h *Handler) {
 	infraGroup := v1.Group("/infra")
 	infraGroup.GET("/markets", h.GetMarkets)
 	infraGroup.GET("/datasets", h.GetDatasets)
+
+	v1.POST("/app-data/refresh", h.TriggerAppDataRefresh)
 
 	browserGroup := v1.Group("/browser")
 	browserGroup.GET("/presets", h.ListBrowserPresets)

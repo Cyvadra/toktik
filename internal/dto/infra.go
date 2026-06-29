@@ -7,6 +7,13 @@ type ReadinessResponse struct {
 	Status string `json:"status"`
 }
 
+type AppDataRefreshResponse struct {
+	Status            string    `json:"status"`
+	TriggeredAt       time.Time `json:"triggered_at"`
+	AlreadyRunning    bool      `json:"already_running,omitempty"`
+	PreviousTriggerAt time.Time `json:"previous_trigger_at,omitempty"`
+}
+
 // MarketDescriptor describes one market domain exposed by the infra layer.
 type MarketDescriptor struct {
 	Name         string   `json:"name"`

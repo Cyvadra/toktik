@@ -89,13 +89,23 @@ func buildAPICoreServices(runtimeCfg config.Runtime, repo *chrepo.Repo, calendar
 	}, nil
 }
 
-func buildAPIDeps(runtimeCfg config.Runtime, repo *chrepo.Repo, factorStore *feeds.Store, services *apiCoreServices, polygonSvc *service.PolygonService, cacheStore cache.Store, stop chan struct{}) api.Deps {
+func buildAPIDeps(ctx context.Context, runtimeCfg config.Runtime, repo *chrepo.Repo, factorStore *feeds.Store, services *apiCoreServices, polygonSvc *service.PolygonService, cacheStore cache.Store, stop chan struct{}) api.Deps {
+	latestMarketRefresh := service.NewLatestUSMarketRefreshTrigger(ctx, services.latestMarket, service.LatestUSMarketRefresherConfig{
+		Runtime:   runtimeCfg,
+		Logger:    slog.Default(),
+		Store:     cacheStore,
+		Screener:  services.screener,
+		FMPClient: services.fmpClient,
+		Polygon:   polygonSvc,
+		Now:       time.Now,
+	})
 	return api.Deps{
 		Config:            runtimeCfg,
 		CryptoOptions:     service.NewCryptoOptionsService(repo),
 		USStocks:          services.usStocks,
 		USOptions:         service.NewUSOptionsService(repo).WithPolygonClient(polygonSvc).WithCache(cacheStore).WithLatestMarketCache(services.latestMarket),
 		Infra:             service.NewInfraService(repo),
+		AppDataRefresh:    latestMarketRefresh,
 		DataBrowser:       service.NewDataBrowserService(repo),
 		Features:          service.NewFeatureService(repo),
 		Indicators:        service.NewIndicatorService(repo),
@@ -241,7 +251,7 @@ func run() error {
 
 	stop := make(chan struct{})
 	defer close(stop)
-	deps := buildAPIDeps(runtimeCfg, repo, factorStore, apiServices, polygonSvc, cacheStore, stop)
+	deps := buildAPIDeps(ctx, runtimeCfg, repo, factorStore, apiServices, polygonSvc, cacheStore, stop)
 
 	router := api.NewRouterFromDeps(deps)
 
