@@ -76,8 +76,8 @@ latest_market_data:
   workers: 4
   stock_provider: "fmp"
   option_provider: "polygon"
-  smoke_symbols: ["AAPL", "NVDA"]
-  always_refresh_symbols: ["AAPL", "NVDA"]
+  smoke_symbols: ["SPY", "QQQ", "AAPL", "NVDA"]
+  always_refresh_symbols: ["SPY", "QQQ", "AAPL", "NVDA", "HYG", "UUP", "CRED"]
   option_chain_limit: 250
   option_aggregate_limit: 180
 

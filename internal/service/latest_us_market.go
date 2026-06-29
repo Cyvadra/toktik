@@ -30,6 +30,7 @@ var latestUSMarketPoolLookbacks = []int{7, 20, 60, 120}
 
 type LatestUSMarketCacheReader interface {
 	MergeStockBars(ctx context.Context, symbol string, from, to time.Time, rows []dto.USStockBarRow) ([]dto.USStockBarRow, bool, error)
+	StockBarsDiagnostic(ctx context.Context, symbol string, from, to time.Time) (LatestUSStockDailyCache, bool, error)
 	MergeOptionBars(ctx context.Context, symbol string, from, to time.Time, rows []dto.USOptionBarRow) ([]dto.USOptionBarRow, bool, error)
 	MergeOptionChain(ctx context.Context, underlying string, expiration time.Time, from, to time.Time, rows []dto.USOptionChainSnapshot) ([]dto.USOptionChainSnapshot, bool, error)
 	LatestOptionChainSnapshot(ctx context.Context, underlying string, expiration time.Time) (dto.USOptionChainSnapshot, bool, error)
@@ -443,26 +444,28 @@ func ResolveLatestUSMarketPrewarmPool(ctx context.Context, screener latestUSMark
 		return nil, fmt.Errorf("latest market screener is required")
 	}
 	seen := make(map[string]struct{})
-	pool := make([]string, 0, latestUSMarketTurnoverTopLimit*len(latestUSMarketPoolLookbacks))
+	pool := make([]string, 0, latestUSMarketTurnoverTopLimit*len(latestUSMarketPoolLookbacks)*2)
 	for _, lookbackDays := range latestUSMarketPoolLookbacks {
-		resp, err := screener.ScreenUSTurnoverIntersection(ctx, dto.ScreenUSTurnoverIntersectionRequest{
-			Limit:        latestUSMarketTurnoverTopLimit,
-			LookbackDays: lookbackDays,
-			NonETFOnly:   true,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("resolve latest market prewarm pool for %d-day turnover: %w", lookbackDays, err)
-		}
-		for _, row := range resp.Data {
-			symbol := strings.ToUpper(strings.TrimSpace(row.Underlying))
-			if symbol == "" {
-				continue
+		for _, nonETFOnly := range []bool{true, false} {
+			resp, err := screener.ScreenUSTurnoverIntersection(ctx, dto.ScreenUSTurnoverIntersectionRequest{
+				Limit:        latestUSMarketTurnoverTopLimit,
+				LookbackDays: lookbackDays,
+				NonETFOnly:   nonETFOnly,
+			})
+			if err != nil {
+				return nil, fmt.Errorf("resolve latest market prewarm pool for %d-day turnover non_etf_only=%t: %w", lookbackDays, nonETFOnly, err)
 			}
-			if _, ok := seen[symbol]; ok {
-				continue
+			for _, row := range resp.Data {
+				symbol := strings.ToUpper(strings.TrimSpace(row.Underlying))
+				if symbol == "" {
+					continue
+				}
+				if _, ok := seen[symbol]; ok {
+					continue
+				}
+				seen[symbol] = struct{}{}
+				pool = append(pool, symbol)
 			}
-			seen[symbol] = struct{}{}
-			pool = append(pool, symbol)
 		}
 	}
 	return pool, nil
@@ -946,6 +949,21 @@ func (c *LatestUSMarketCache) MergeStockBars(ctx context.Context, symbol string,
 		return rows, false, nil
 	}
 	return mergeLatestBarsByDate(rows, latest, func(row dto.USStockBarRow) time.Time { return row.Timestamp }), true, nil
+}
+
+func (c *LatestUSMarketCache) StockBarsDiagnostic(ctx context.Context, symbol string, from, to time.Time) (LatestUSStockDailyCache, bool, error) {
+	var payload LatestUSStockDailyCache
+	if ok, err := c.getJSON(ctx, latestUSStockKey(symbol), &payload); err != nil || !ok {
+		return payload, false, err
+	}
+	filtered := payload.Bars[:0]
+	for _, bar := range payload.Bars {
+		if inTimeRange(bar.Timestamp, from, to) {
+			filtered = append(filtered, bar)
+		}
+	}
+	payload.Bars = filtered
+	return payload, true, nil
 }
 
 func (c *LatestUSMarketCache) MergeOptionBars(ctx context.Context, symbol string, from, to time.Time, rows []dto.USOptionBarRow) ([]dto.USOptionBarRow, bool, error) {

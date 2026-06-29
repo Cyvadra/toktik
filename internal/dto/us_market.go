@@ -93,7 +93,21 @@ type USStockFundamentalMetricsResponse struct {
 
 // USStockBarMeta wraps optional metadata returned alongside bars.
 type USStockBarMeta struct {
-	Profile *USStockCompanyProfile `json:"profile,omitempty"`
+	Profile   *USStockCompanyProfile   `json:"profile,omitempty"`
+	Freshness *USStockBarFreshnessMeta `json:"freshness,omitempty"`
+}
+
+// USStockBarFreshnessMeta describes whether include_latest overlaid cached latest bars.
+type USStockBarFreshnessMeta struct {
+	Symbol                 string     `json:"symbol"`
+	HistoricalLast         *time.Time `json:"historical_last,omitempty"`
+	LatestCacheLast        *time.Time `json:"latest_cache_last,omitempty"`
+	LatestCacheAsOf        *time.Time `json:"latest_cache_as_of,omitempty"`
+	LatestProvider         string     `json:"latest_provider,omitempty"`
+	IncludeLatestRequested bool       `json:"include_latest_requested"`
+	LatestMerged           bool       `json:"latest_merged"`
+	LatestCacheHit         bool       `json:"latest_cache_hit"`
+	Status                 string     `json:"status"`
 }
 
 // USStockBarResponse wraps paginated US stock bars.

@@ -66,6 +66,25 @@ func TestLatestUSMarketPrewarmPoolUnion(t *testing.T) {
 	}
 }
 
+func TestLatestUSMarketPrewarmPoolRequestsETFInclusiveCandidates(t *testing.T) {
+	screener := &fakeLatestPoolScreener{responses: map[int][]string{
+		7: {"AAPL", "SPY"},
+	}}
+	_, err := ResolveLatestUSMarketPrewarmPool(context.Background(), screener)
+	if err != nil {
+		t.Fatalf("ResolveLatestUSMarketPrewarmPool failed: %v", err)
+	}
+	seen := map[bool]bool{}
+	for _, req := range screener.requests {
+		if req.LookbackDays == 7 {
+			seen[req.NonETFOnly] = true
+		}
+	}
+	if !seen[true] || !seen[false] {
+		t.Fatalf("expected non-ETF and ETF-inclusive requests for latest pool, got %#v", screener.requests)
+	}
+}
+
 func TestPrioritizeLatestUSMarketPoolMovesSmokeSymbolsFirst(t *testing.T) {
 	pool := []string{"AAPL", "MSFT", "NVDA", "QQQ", "SPY"}
 	got := prioritizeLatestUSMarketPool(pool, []string{"SPY", "QQQ"})
@@ -193,9 +212,11 @@ func TestLatestUSMarketCacheLatestOptionChainSnapshotFiltersExpiration(t *testin
 
 type fakeLatestPoolScreener struct {
 	responses map[int][]string
+	requests  []dto.ScreenUSTurnoverIntersectionRequest
 }
 
 func (s *fakeLatestPoolScreener) ScreenUSTurnoverIntersection(_ context.Context, req dto.ScreenUSTurnoverIntersectionRequest) (*dto.ScreenUSTurnoverIntersectionResponse, error) {
+	s.requests = append(s.requests, req)
 	resp := &dto.ScreenUSTurnoverIntersectionResponse{Data: make([]dto.ScreenedUSTurnoverIntersectionRow, 0)}
 	for _, symbol := range s.responses[req.LookbackDays] {
 		resp.Data = append(resp.Data, dto.ScreenedUSTurnoverIntersectionRow{Underlying: symbol})

@@ -265,11 +265,16 @@ func (s *USStocksService) QueryBars(ctx context.Context, req dto.USStockBarReque
 			return nil, err
 		}
 	}
+	historicalLast := latestUSStockBarTimestamp(bars)
+	latestMerged := false
+	var latestDiagnostic *dto.USStockBarFreshnessMeta
 	if s.shouldMergeLatestStockBars(req) {
-		if merged, _, err := s.latest.MergeStockBars(ctx, req.Symbol, fromT, toT, bars); err != nil {
+		latestDiagnostic = s.stockBarFreshnessDiagnostic(ctx, req.Symbol, fromT, toT, historicalLast)
+		if merged, changed, err := s.latest.MergeStockBars(ctx, req.Symbol, fromT, toT, bars); err != nil {
 			return nil, err
 		} else {
 			bars = merged
+			latestMerged = changed
 		}
 	}
 
@@ -281,11 +286,72 @@ func (s *USStocksService) QueryBars(ctx context.Context, req dto.USStockBarReque
 		return nil, err
 	}
 	s.attachCompanyProfile(ctx, req.Symbol, resp)
+	if latestDiagnostic != nil {
+		latestDiagnostic.LatestMerged = latestMerged
+		latestDiagnostic.Status = latestUSStockFreshnessStatus(latestDiagnostic, historicalLast, latestUSStockBarTimestamp(resp.Data))
+		if resp.Meta == nil {
+			resp.Meta = &dto.USStockBarMeta{}
+		}
+		resp.Meta.Freshness = latestDiagnostic
+	}
 	return resp, nil
 }
 
 func (s *USStocksService) shouldMergeLatestStockBars(req dto.USStockBarRequest) bool {
 	return s != nil && s.latest != nil && req.IncludeLatest && req.Interval == "1d" && !isSyntheticVIXSymbol(req.Symbol)
+}
+
+func (s *USStocksService) stockBarFreshnessDiagnostic(ctx context.Context, symbol string, from, to time.Time, historicalLast *time.Time) *dto.USStockBarFreshnessMeta {
+	diagnostic := &dto.USStockBarFreshnessMeta{Symbol: strings.ToUpper(strings.TrimSpace(symbol)), HistoricalLast: historicalLast, IncludeLatestRequested: true, Status: "latest_cache_miss"}
+	payload, ok, err := s.latest.StockBarsDiagnostic(ctx, symbol, from, to)
+	if err != nil || !ok {
+		return diagnostic
+	}
+	diagnostic.LatestCacheHit = true
+	diagnostic.LatestProvider = payload.Provider
+	if !payload.AsOf.IsZero() {
+		asOf := payload.AsOf.UTC()
+		diagnostic.LatestCacheAsOf = &asOf
+	}
+	if last := latestUSStockDailyBarTimestamp(payload.Bars); last != nil {
+		diagnostic.LatestCacheLast = last
+	}
+	return diagnostic
+}
+
+func latestUSStockFreshnessStatus(diagnostic *dto.USStockBarFreshnessMeta, historicalLast, returnedLast *time.Time) string {
+	if diagnostic == nil {
+		return ""
+	}
+	if !diagnostic.LatestCacheHit {
+		return "latest_cache_miss"
+	}
+	if diagnostic.LatestCacheLast == nil {
+		return "latest_cache_empty_for_range"
+	}
+	if historicalLast == nil || diagnostic.LatestCacheLast.After(*historicalLast) {
+		if returnedLast != nil && !returnedLast.Before(*diagnostic.LatestCacheLast) {
+			return "latest_merged"
+		}
+		return "latest_merge_failed"
+	}
+	return "historical_current_or_newer"
+}
+
+func latestUSStockBarTimestamp(rows []dto.USStockBarRow) *time.Time {
+	if len(rows) == 0 {
+		return nil
+	}
+	last := rows[len(rows)-1].Timestamp.UTC()
+	return &last
+}
+
+func latestUSStockDailyBarTimestamp(rows []LatestUSStockDailyBar) *time.Time {
+	if len(rows) == 0 {
+		return nil
+	}
+	last := normalizeCalendarDate(rows[len(rows)-1].Timestamp)
+	return &last
 }
 
 func (s *USStocksService) queryBarRows(ctx context.Context, tableName, symbol string, fromT, toT time.Time, session string, limit int) ([]dto.USStockBarRow, error) {
