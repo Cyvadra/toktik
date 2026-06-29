@@ -103,3 +103,44 @@ func TestBuildExpandedMacroDailySeriesWithoutReferenceBarsKeepsEarlyCBOEVIXHisto
 		}
 	}
 }
+
+func TestBuildDeribitDVOLAggregateSeriesUsesOHLCRules(t *testing.T) {
+	from := time.Date(2026, 6, 29, 0, 0, 0, 0, time.UTC)
+	to := from.Add(2 * time.Hour)
+	observations := map[string][]macroObservation{
+		"open": {
+			{FactorCode: "open", EventTS: from, KnownAt: from, Value: 50, Source: "deribit", ReferenceMarket: "crypto", ReferenceSymbol: "BTC"},
+			{FactorCode: "open", EventTS: from.Add(time.Hour), KnownAt: from.Add(time.Hour), Value: 52, Source: "deribit", ReferenceMarket: "crypto", ReferenceSymbol: "BTC"},
+		},
+		"high": {
+			{FactorCode: "high", EventTS: from, KnownAt: from, Value: 55, Source: "deribit", ReferenceMarket: "crypto", ReferenceSymbol: "BTC"},
+			{FactorCode: "high", EventTS: from.Add(time.Hour), KnownAt: from.Add(time.Hour), Value: 58, Source: "deribit", ReferenceMarket: "crypto", ReferenceSymbol: "BTC"},
+		},
+		"low": {
+			{FactorCode: "low", EventTS: from, KnownAt: from, Value: 49, Source: "deribit", ReferenceMarket: "crypto", ReferenceSymbol: "BTC"},
+			{FactorCode: "low", EventTS: from.Add(time.Hour), KnownAt: from.Add(time.Hour), Value: 48, Source: "deribit", ReferenceMarket: "crypto", ReferenceSymbol: "BTC"},
+		},
+		"close": {
+			{FactorCode: "close", EventTS: from, KnownAt: from, Value: 53, Source: "deribit", ReferenceMarket: "crypto", ReferenceSymbol: "BTC"},
+			{FactorCode: "close", EventTS: from.Add(time.Hour), KnownAt: from.Add(time.Hour), Value: 57, Source: "deribit", ReferenceMarket: "crypto", ReferenceSymbol: "BTC"},
+		},
+	}
+
+	points := buildDeribitDVOLAggregateSeries([]string{"open", "high", "low", "close"}, observations, "2h", from, to)
+	if len(points) != 4 {
+		t.Fatalf("len(points)=%d want 4", len(points))
+	}
+	values := map[string]float64{}
+	for _, point := range points {
+		values[point.Factor] = point.Value
+		if !point.Timestamp.Equal(from) || !point.EventTS.Equal(from) {
+			t.Fatalf("unexpected timestamp for %+v", point)
+		}
+		if point.ReferenceMarket != "crypto" || point.ReferenceSymbol != "BTC" || !point.Filled {
+			t.Fatalf("unexpected metadata for %+v", point)
+		}
+	}
+	if values["open"] != 50 || values["high"] != 58 || values["low"] != 48 || values["close"] != 57 {
+		t.Fatalf("unexpected OHLC values: %#v", values)
+	}
+}

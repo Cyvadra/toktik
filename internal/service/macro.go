@@ -12,6 +12,8 @@ import (
 	"github.com/Cyvadra/toktik/internal/chquery"
 	"github.com/Cyvadra/toktik/internal/chrepo"
 	"github.com/Cyvadra/toktik/internal/dto"
+	usmacro "github.com/Cyvadra/toktik/internal/usmarket/macro"
+	"github.com/Cyvadra/toktik/pkg/feeds"
 )
 
 const (
@@ -19,6 +21,8 @@ const (
 	macroDatasetFMPSP500Shiller  = "fmp-sp500-shiller"
 	macroDatasetFMPNDXShiller    = "fmp-nasdaq100-shiller"
 	macroDatasetCBOEVIX          = "cboe-vix"
+	macroDatasetDeribitDVOLBTC   = usmacro.DefaultDeribitDVOLBTCDataset
+	macroDatasetDeribitDVOLETH   = usmacro.DefaultDeribitDVOLETHDataset
 	macroIntervalEvent           = "event"
 	macroRealtimeForwardFill     = "forward_fill"
 	macroRealtimePriceScaled     = "price_scaled"
@@ -33,6 +37,8 @@ var supportedMacroDatasets = map[string]struct{}{
 	macroDatasetFMPSP500Shiller:  {},
 	macroDatasetFMPNDXShiller:    {},
 	macroDatasetCBOEVIX:          {},
+	macroDatasetDeribitDVOLBTC:   {},
+	macroDatasetDeribitDVOLETH:   {},
 }
 
 type MacroService struct {
@@ -204,6 +210,21 @@ func (s *MacroService) QuerySeries(ctx context.Context, req dto.MacroSeriesReque
 
 	if interval == macroIntervalEvent {
 		resp.Data = buildMacroEventSeries(requestedFactors, observations, virtualByFactor, from, to)
+		if len(resp.Data) > limit {
+			resp.Data = resp.Data[:limit]
+		}
+		return resp, nil
+	}
+	if usmacro.IsDeribitDVOLDataset(dataset) {
+		resp.ReferenceMarket = usmacro.DefaultCryptoReferenceMarket
+		if symbol, ok := usmacro.DeribitDVOLSymbolForDataset(dataset); ok {
+			resp.ReferenceSymbol = symbol
+		}
+		if interval == "1h" {
+			resp.Data = buildMacroEventSeries(requestedFactors, observations, virtualByFactor, from, to)
+		} else {
+			resp.Data = buildDeribitDVOLAggregateSeries(requestedFactors, observations, interval, from, to)
+		}
 		if len(resp.Data) > limit {
 			resp.Data = resp.Data[:limit]
 		}
@@ -490,6 +511,83 @@ func buildMacroEventSeries(requestedFactors []string, observations map[string][]
 		return out[i].Timestamp.Before(out[j].Timestamp)
 	})
 	return out
+}
+
+func buildDeribitDVOLAggregateSeries(requestedFactors []string, observations map[string][]macroObservation, interval string, from, to time.Time) []dto.MacroSeriesPoint {
+	window, err := feeds.ParseWindow(interval)
+	if err != nil || window.Duration < time.Hour {
+		return nil
+	}
+	type bucket struct {
+		start           time.Time
+		open            *macroObservation
+		high            *macroObservation
+		low             *macroObservation
+		close           *macroObservation
+		referenceMarket string
+		referenceSymbol string
+	}
+	buckets := map[time.Time]*bucket{}
+	for factor, series := range observations {
+		for _, item := range series {
+			if item.EventTS.Before(from) || !item.EventTS.Before(to) {
+				continue
+			}
+			start := feeds.FloorTimestamp(item.EventTS, window)
+			if start.Before(from) || !start.Before(to) {
+				continue
+			}
+			current := buckets[start]
+			if current == nil {
+				current = &bucket{start: start, referenceMarket: item.ReferenceMarket, referenceSymbol: item.ReferenceSymbol}
+				buckets[start] = current
+			}
+			candidate := item
+			switch factor {
+			case "open":
+				if current.open == nil || candidate.EventTS.Before(current.open.EventTS) {
+					current.open = &candidate
+				}
+			case "high":
+				if current.high == nil || candidate.Value > current.high.Value {
+					current.high = &candidate
+				}
+			case "low":
+				if current.low == nil || candidate.Value < current.low.Value {
+					current.low = &candidate
+				}
+			case "close":
+				if current.close == nil || candidate.EventTS.After(current.close.EventTS) || candidate.EventTS.Equal(current.close.EventTS) {
+					current.close = &candidate
+				}
+			}
+		}
+	}
+	requested := make(map[string]struct{}, len(requestedFactors))
+	for _, factor := range requestedFactors {
+		requested[factor] = struct{}{}
+	}
+	out := make([]dto.MacroSeriesPoint, 0, len(buckets)*len(requestedFactors))
+	starts := make([]time.Time, 0, len(buckets))
+	for start := range buckets {
+		starts = append(starts, start)
+	}
+	sort.Slice(starts, func(i, j int) bool { return starts[i].Before(starts[j]) })
+	for _, start := range starts {
+		current := buckets[start]
+		out = appendDeribitDVOLAggregatePoint(out, requested, "open", current.open, start, current.referenceMarket, current.referenceSymbol)
+		out = appendDeribitDVOLAggregatePoint(out, requested, "high", current.high, start, current.referenceMarket, current.referenceSymbol)
+		out = appendDeribitDVOLAggregatePoint(out, requested, "low", current.low, start, current.referenceMarket, current.referenceSymbol)
+		out = appendDeribitDVOLAggregatePoint(out, requested, "close", current.close, start, current.referenceMarket, current.referenceSymbol)
+	}
+	return out
+}
+
+func appendDeribitDVOLAggregatePoint(out []dto.MacroSeriesPoint, requested map[string]struct{}, factor string, item *macroObservation, timestamp time.Time, referenceMarket, referenceSymbol string) []dto.MacroSeriesPoint {
+	if _, ok := requested[factor]; !ok || item == nil {
+		return out
+	}
+	return append(out, dto.MacroSeriesPoint{Factor: factor, Timestamp: timestamp, EventTS: timestamp, KnownAt: item.KnownAt, Value: item.Value, Source: item.Source, Filled: true, ReferenceMarket: referenceMarket, ReferenceSymbol: referenceSymbol})
 }
 
 func buildExpandedMacroSeries(requestedFactors []string, observations map[string][]macroObservation, metaByFactor map[string]macroFactorMeta, virtualByFactor map[string]macroVirtualFactor, bars []macroReferenceBar, anchorValues map[time.Time]float64, referenceMarket, referenceSymbol string) []dto.MacroSeriesPoint {

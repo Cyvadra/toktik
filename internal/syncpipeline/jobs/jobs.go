@@ -24,6 +24,7 @@ import (
 	"github.com/Cyvadra/toktik/internal/service"
 	"github.com/Cyvadra/toktik/internal/syncpipeline"
 	"github.com/Cyvadra/toktik/internal/usmarket"
+	"github.com/Cyvadra/toktik/internal/usmarket/macro"
 	"github.com/Cyvadra/toktik/pkg/fmp"
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
@@ -936,6 +937,45 @@ func (s *guruMacro) AuditTargets(string) []syncpipeline.AuditTarget {
 	return []syncpipeline.AuditTarget{{Table: "macro_observation", DateColumn: "toDate(event_ts)", KeyColumns: []string{"dataset", "factor_code", "event_ts", "known_at", "source", "revision"}, SourceFilter: fmt.Sprintf("dataset = '%s' AND source = '%s'", escapeStringLiteral(s.cfg.Dataset), escapeStringLiteral(s.cfg.Source))}}
 }
 func (s *guruMacro) MaxConcurrency() int { return 1 }
+
+type DeribitDVOLMacroConfig struct {
+	Symbols           []string
+	SourceTable       string
+	BatchSize         int
+	ColdStartFloorUTC time.Time
+}
+
+type deribitDVOLMacro struct{ cfg DeribitDVOLMacroConfig }
+
+func NewDeribitDVOLMacro(cfg DeribitDVOLMacroConfig) (syncpipeline.Syncer, error) {
+	if cfg.SourceTable == "" {
+		cfg.SourceTable = macro.DefaultDeribitDVOLTable
+	}
+	if cfg.ColdStartFloorUTC.IsZero() {
+		cfg.ColdStartFloorUTC = time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+	}
+	return &deribitDVOLMacro{cfg: cfg}, nil
+}
+
+func (s *deribitDVOLMacro) Name() string { return "deribit_dvol_macro" }
+func (s *deribitDVOLMacro) SourceKeys(context.Context, driver.Conn) ([]string, error) {
+	return []string{syncpipeline.SingletonSourceKey}, nil
+}
+func (s *deribitDVOLMacro) ResolveCursor(ctx context.Context, conn driver.Conn, _ string) (time.Time, bool, error) {
+	return queryLatestDate(ctx, conn, "macro_observation", "event_ts", "source = {source:String} AND dataset IN {datasets:Array(String)}",
+		clickhouse.Named("source", macro.DefaultDeribitDVOLSource),
+		clickhouse.Named("datasets", []string{macro.DefaultDeribitDVOLBTCDataset, macro.DefaultDeribitDVOLETHDataset}),
+	)
+}
+func (s *deribitDVOLMacro) ColdStartFloor(string) time.Time { return s.cfg.ColdStartFloorUTC }
+func (s *deribitDVOLMacro) Sync(ctx context.Context, conn driver.Conn, req syncpipeline.SyncRequest) (syncpipeline.SyncResult, error) {
+	res, err := macro.SyncDeribitDVOLFromFeedTables(ctx, conn, macro.DeribitDVOLConfig{Symbols: s.cfg.Symbols, SourceTable: s.cfg.SourceTable, BatchSize: s.cfg.BatchSize}, req.From, req.To, req.DryRun)
+	return syncResult(req, int64(res.ObservationRows)), err
+}
+func (s *deribitDVOLMacro) AuditTargets(string) []syncpipeline.AuditTarget {
+	return []syncpipeline.AuditTarget{{Table: "macro_observation", DateColumn: "toDate(event_ts)", KeyColumns: []string{"dataset", "factor_code", "event_ts", "known_at", "source", "revision"}, SourceFilter: fmt.Sprintf("source = '%s' AND dataset IN ('%s','%s')", macro.DefaultDeribitDVOLSource, macro.DefaultDeribitDVOLBTCDataset, macro.DefaultDeribitDVOLETHDataset)}}
+}
+func (s *deribitDVOLMacro) MaxConcurrency() int { return 1 }
 
 type FMPEconomicCalendarConfig struct {
 	APIKey            string

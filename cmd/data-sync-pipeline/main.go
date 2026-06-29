@@ -920,6 +920,9 @@ func buildMacroSyncer(buildCtx syncerBuildContext, name string, job jobConfig) (
 			return int64(res.ObservationRows), err
 		}})
 		return syncer, true, err
+	case "deribit_dvol_macro":
+		syncer, err := pipelinejobs.NewDeribitDVOLMacro(pipelinejobs.DeribitDVOLMacroConfig{Symbols: job.Symbols, SourceTable: job.SourceInterval, BatchSize: job.BatchSize, ColdStartFloorUTC: parseColdStart(job.ColdStartFloor)})
+		return syncer, true, err
 	case "fmp_sp500_macro", "fmp_nasdaq100_macro":
 		syncer, err := pipelinejobs.NewGuruMacro(pipelinejobs.GuruMacroConfig{Dataset: job.Dataset, Source: "fmp", ColdStartFloorUTC: parseColdStart(job.ColdStartFloor), SyncFunc: func(ctx context.Context, conn driver.Conn, from, to time.Time, dryRun bool) (int64, error) {
 			res, err := macro.SyncFMPIndexShiller(ctx, conn, macro.FMPIndexShillerConfig{APIKey: buildCtx.APIKey, Dataset: job.Dataset, ConstituentUniverse: job.ConstituentUniverse, PriceSymbol: job.PriceSymbol, ReferenceSymbol: job.ReferenceSymbol, BatchSize: job.BatchSize, Workers: job.Workers, RollingQuarters: job.RollingQuarters, MinQuarters: job.MinQuarters}, from, to, dryRun)
@@ -1350,6 +1353,8 @@ func snapshotTargetsForJob(spec syncpipeline.JobSpec) []snapshotTarget {
 		return []snapshotTarget{{Dataset: "macro", Table: "macro_observation", DateExpr: "event_ts", WhereSQL: "dataset = {dataset:String} AND source = {source:String}", Args: []any{clickhouse.Named("dataset", macro.DefaultGurufocusShillerDataset), clickhouse.Named("source", "gurufocus")}, Qualifier: "gurufocus-shiller"}}
 	case "cboe_vix_macro":
 		return []snapshotTarget{{Dataset: "macro", Table: "macro_observation", DateExpr: "event_ts", WhereSQL: "dataset = {dataset:String} AND source = {source:String}", Args: []any{clickhouse.Named("dataset", macro.DefaultCBOEVIXDataset), clickhouse.Named("source", macro.DefaultCBOEVIXSource)}, Qualifier: macro.DefaultCBOEVIXDataset}}
+	case "deribit_dvol_macro":
+		return []snapshotTarget{{Dataset: "macro", Table: "macro_observation", DateExpr: "event_ts", WhereSQL: "source = {source:String} AND dataset IN {datasets:Array(String)}", Args: []any{clickhouse.Named("source", macro.DefaultDeribitDVOLSource), clickhouse.Named("datasets", []string{macro.DefaultDeribitDVOLBTCDataset, macro.DefaultDeribitDVOLETHDataset})}, Qualifier: "deribit-dvol"}}
 	case "fmp_sp500_macro":
 		return []snapshotTarget{{Dataset: "macro", Table: "macro_observation", DateExpr: "event_ts", WhereSQL: "dataset = {dataset:String} AND source = {source:String}", Args: []any{clickhouse.Named("dataset", macro.DefaultFMPSP500Dataset), clickhouse.Named("source", "fmp")}, Qualifier: "fmp-sp500-shiller"}}
 	case "fmp_nasdaq100_macro":

@@ -28,6 +28,13 @@ jobs:
     batch_size: 1000
     cold_start_floor: 1990-01-01
 
+  deribit_dvol_macro:
+    enabled: true
+    symbols: [BTC, ETH]
+    source_interval: feed_dvol_1h
+    batch_size: 1000
+    cold_start_floor: 2022-01-01
+
   guru_macro:
     enabled: true
     dataset: gurufocus-shiller
