@@ -77,7 +77,7 @@ latest_market_data:
   stock_provider: "fmp"
   option_provider: "polygon"
   smoke_symbols: ["SPY", "QQQ", "AAPL", "NVDA"]
-  always_refresh_symbols: ["SPY", "QQQ", "AAPL", "NVDA", "HYG", "UUP", "CRED"]
+  always_refresh_symbols: ["SPY", "QQQ", "AAPL", "NVDA", "HYG", "UUP", "CRED", "IBIT", "TLT", "USO", "VTI", "DIA", "VGK", "EWU", "EWJ", "EWH", "FXI", "EWA", "EWZ", "BE", "SMCI", "CRM", "IBM", "JPM", "ETHU", "ETHA", "MSTR", "ASHR", "MCHI", "KWEB", "VIX", "SHOP", "MELI", "BRK.B", "SPOT", "NET", "SE", "BAC", "OXY", "TME", "TEM", "MCO", "PDD", "CRCL", "MCD", "CRWD", "PANW", "VST"]
   option_chain_limit: 250
   option_aggregate_limit: 180
 

@@ -104,6 +104,7 @@ type jobConfig struct {
 	RiskFreeRate             float64           `yaml:"risk_free_rate"`
 	ForceDownload            bool              `yaml:"force_download"`
 	SyncStocks               bool              `yaml:"sync_stocks"`
+	SyncOptions              *bool             `yaml:"sync_options"`
 	SourceInterval           string            `yaml:"source_interval"`
 	RebuildAggregates        bool              `yaml:"rebuild_aggregates"`
 	Replace                  bool              `yaml:"replace"`
@@ -712,6 +713,13 @@ func normalizeMarketDataSource(value string) string {
 	}
 }
 
+func resolveOptionalBool(value *bool, fallback bool) bool {
+	if value == nil {
+		return fallback
+	}
+	return *value
+}
+
 func applyGlobalOverlapOverride(cfg *pipelineConfig, overlapDays int) {
 	if cfg == nil || overlapDays < 0 {
 		return
@@ -947,7 +955,7 @@ func buildPolygonSyncer(buildCtx syncerBuildContext, name string, job jobConfig)
 		if err != nil {
 			return nil, true, err
 		}
-		syncer, err := pipelinejobs.NewPolygonUSFlatFiles(pipelinejobs.PolygonUSFlatFilesConfig{Downloader: polygonSvc, Sessions: buildCtx.Sessions, DSN: buildCtx.ClickHouseDSN, BatchSize: job.BatchSize, Workers: job.Workers, RiskFreeRate: job.RiskFreeRate, ForceDownload: job.ForceDownload, SyncStocks: job.SyncStocks, SourceInterval: job.SourceInterval, ColdStartFloorUTC: parseColdStart(job.ColdStartFloor)})
+		syncer, err := pipelinejobs.NewPolygonUSFlatFiles(pipelinejobs.PolygonUSFlatFilesConfig{Downloader: polygonSvc, Sessions: buildCtx.Sessions, DSN: buildCtx.ClickHouseDSN, BatchSize: job.BatchSize, Workers: job.Workers, RiskFreeRate: job.RiskFreeRate, ForceDownload: job.ForceDownload, SyncStocks: job.SyncStocks, SyncOptions: resolveOptionalBool(job.SyncOptions, true), SourceInterval: job.SourceInterval, ColdStartFloorUTC: parseColdStart(job.ColdStartFloor)})
 		return syncer, true, err
 	case "polygon_us_greeks":
 		syncer, err := pipelinejobs.NewPolygonUSGreeks(pipelinejobs.PolygonUSGreeksConfig{DSN: buildCtx.ClickHouseDSN, BatchSize: job.BatchSize, Workers: job.Workers, RiskFreeRate: job.RiskFreeRate, Underlyings: job.Underlyings, LimitTasks: job.LimitSymbols, RebuildAggregates: job.RebuildAggregates, ColdStartFloorUTC: parseColdStart(job.ColdStartFloor)})

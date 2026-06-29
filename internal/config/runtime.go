@@ -78,6 +78,15 @@ const (
 	maxLatestMarketDataOptionChainLimit      = 250
 )
 
+var defaultLatestMarketDataAlwaysRefreshSymbols = []string{
+	"SPY", "QQQ", "AAPL", "NVDA", "HYG", "UUP", "CRED",
+	"IBIT", "TLT", "USO", "VTI", "DIA",
+	"VGK", "EWU", "EWJ", "EWH", "FXI", "EWA", "EWZ",
+	"BE", "SMCI", "CRM", "IBM", "JPM", "ETHU", "ETHA", "MSTR", "ASHR", "MCHI", "KWEB", "VIX",
+	"SHOP", "MELI", "BRK.B", "SPOT", "NET", "SE", "BAC", "OXY", "TME", "TEM", "MCO", "PDD", "CRCL", "MCD", "CRWD",
+	"PANW", "VST",
+}
+
 type Runtime struct {
 	ClickHouse       ClickHouse       `yaml:"clickhouse"`
 	MySQL            MySQL            `yaml:"mysql"`
@@ -372,6 +381,7 @@ func DefaultRuntime() Runtime {
 			StockProvider:                "fmp",
 			OptionProvider:               "polygon",
 			SmokeSymbols:                 []string{"SPY", "AAPL"},
+			AlwaysRefreshSymbols:         slices.Clone(defaultLatestMarketDataAlwaysRefreshSymbols),
 			OptionChainLimit:             maxLatestMarketDataOptionChainLimit,
 			OptionAggregateLimit:         50,
 		},
@@ -766,7 +776,7 @@ func (c *Runtime) normalize() {
 	}
 	c.LatestMarketData.AlwaysRefreshSymbols = normalizeCSVList(c.LatestMarketData.AlwaysRefreshSymbols)
 	if len(c.LatestMarketData.AlwaysRefreshSymbols) == 0 {
-		c.LatestMarketData.AlwaysRefreshSymbols = slices.Clone(c.LatestMarketData.SmokeSymbols)
+		c.LatestMarketData.AlwaysRefreshSymbols = slices.Clone(defaultLatestMarketDataAlwaysRefreshSymbols)
 	}
 	if c.LatestMarketData.RedisTTLHours <= 0 {
 		c.LatestMarketData.RedisTTLHours = 72

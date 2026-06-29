@@ -173,6 +173,24 @@ func TestUSStocksQuerySplitsRequiresSymbol(t *testing.T) {
 	}
 }
 
+func TestLatestUSStockFreshnessStatusDistinguishesCacheMissAndMerge(t *testing.T) {
+	historicalLast := time.Date(2026, 6, 22, 0, 0, 0, 0, time.UTC)
+	latestLast := time.Date(2026, 6, 26, 0, 0, 0, 0, time.UTC)
+
+	if got := latestUSStockFreshnessStatus(&dto.USStockBarFreshnessMeta{LatestCacheHit: false}, &historicalLast, &historicalLast); got != "latest_cache_miss" {
+		t.Fatalf("expected cache miss status, got %q", got)
+	}
+	if got := latestUSStockFreshnessStatus(&dto.USStockBarFreshnessMeta{LatestCacheHit: true}, &historicalLast, &historicalLast); got != "latest_cache_empty_for_range" {
+		t.Fatalf("expected empty-for-range status, got %q", got)
+	}
+	if got := latestUSStockFreshnessStatus(&dto.USStockBarFreshnessMeta{LatestCacheHit: true, LatestCacheLast: &latestLast}, &historicalLast, &latestLast); got != "latest_merged" {
+		t.Fatalf("expected merged status, got %q", got)
+	}
+	if got := latestUSStockFreshnessStatus(&dto.USStockBarFreshnessMeta{LatestCacheHit: true, LatestCacheLast: &latestLast}, &historicalLast, &historicalLast); got != "latest_merge_failed" {
+		t.Fatalf("expected merge failed status, got %q", got)
+	}
+}
+
 func TestUSOptionsQuerySymbolsMergesLatestChainContracts(t *testing.T) {
 	rows := &fakeForexRows{data: [][]any{
 		{"O:AAPL260619C00190000", "AAPL", "C", time.Date(2026, 6, 19, 0, 0, 0, 0, time.UTC), 190.0},

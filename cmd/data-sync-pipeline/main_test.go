@@ -153,6 +153,28 @@ jobs:
 	}
 }
 
+func TestLoadPipelineConfigAllowsPolygonStockOnlyFlatfiles(t *testing.T) {
+	path := writeTempPipelineConfig(t, `
+market_data_sources:
+  us_stocks: polygon
+  us_options: polygon
+jobs:
+  polygon_us_flatfiles:
+    sync_options: false
+`)
+	cfg, err := loadPipelineConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	job := cfg.Jobs["polygon_us_flatfiles"]
+	if !job.Enabled || !job.SyncStocks {
+		t.Fatalf("expected polygon flatfiles enabled with stock sync, got %#v", job)
+	}
+	if job.SyncOptions == nil || *job.SyncOptions {
+		t.Fatalf("expected polygon flatfiles sync_options=false, got %#v", job.SyncOptions)
+	}
+}
+
 func TestLoadPipelineConfigRejectsUnsupportedUSStockSource(t *testing.T) {
 	path := writeTempPipelineConfig(t, `
 market_data_sources:

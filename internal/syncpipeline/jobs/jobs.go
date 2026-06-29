@@ -582,6 +582,7 @@ type PolygonUSFlatFilesConfig struct {
 	RiskFreeRate      float64
 	ForceDownload     bool
 	SyncStocks        bool
+	SyncOptions       bool
 	SourceInterval    string // "1m" (default, minute aggregates) or "1d" (day aggregates)
 	ColdStartFloorUTC time.Time
 }
@@ -654,6 +655,7 @@ func (s *polygonUSFlatFiles) Sync(ctx context.Context, conn driver.Conn, req syn
 		Sessions:       s.cfg.Sessions,
 		ForceDownload:  s.cfg.ForceDownload,
 		SkipStocks:     !s.cfg.SyncStocks,
+		SkipOptions:    !s.cfg.SyncOptions,
 		DryRun:         req.DryRun,
 		ColdStartDate:  s.cfg.ColdStartFloorUTC,
 		StartDate:      req.From,

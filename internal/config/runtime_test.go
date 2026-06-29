@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"testing"
 	"time"
 )
@@ -164,8 +165,10 @@ func TestLoadRuntimeFromPathYAML(t *testing.T) {
 	if !reflect.DeepEqual(cfg.LatestMarketData.SmokeSymbols, []string{"SPY", "QQQ"}) {
 		t.Fatalf("unexpected latest market smoke symbols: %#v", cfg.LatestMarketData.SmokeSymbols)
 	}
-	if !reflect.DeepEqual(cfg.LatestMarketData.AlwaysRefreshSymbols, []string{"SPY", "QQQ"}) {
-		t.Fatalf("unexpected latest market always-refresh symbols: %#v", cfg.LatestMarketData.AlwaysRefreshSymbols)
+	for _, symbol := range []string{"SPY", "QQQ", "IBIT", "TLT", "DIA"} {
+		if !slices.Contains(cfg.LatestMarketData.AlwaysRefreshSymbols, symbol) {
+			t.Fatalf("expected latest market always-refresh symbols to include %s, got %#v", symbol, cfg.LatestMarketData.AlwaysRefreshSymbols)
+		}
 	}
 }
 
@@ -293,6 +296,22 @@ func TestLatestMarketDataAlwaysRefreshSymbolsEnvOverride(t *testing.T) {
 	}
 	if !reflect.DeepEqual(cfg.LatestMarketData.AlwaysRefreshSymbols, []string{"SPY", "QQQ", "NVDA"}) {
 		t.Fatalf("unexpected always-refresh symbols: %#v", cfg.LatestMarketData.AlwaysRefreshSymbols)
+	}
+}
+
+func TestDefaultLatestMarketDataAlwaysRefreshSymbolsCoverOptoPickCriticalSymbols(t *testing.T) {
+	cfg, err := LoadRuntimeFromPath(filepath.Join(t.TempDir(), "missing.yaml"))
+	if err != nil {
+		t.Fatalf("LoadRuntimeFromPath(missing) failed: %v", err)
+	}
+	symbols := make(map[string]bool, len(cfg.LatestMarketData.AlwaysRefreshSymbols))
+	for _, symbol := range cfg.LatestMarketData.AlwaysRefreshSymbols {
+		symbols[symbol] = true
+	}
+	for _, symbol := range []string{"IBIT", "TLT", "USO", "VTI", "DIA", "VGK", "EWU", "EWH", "BE", "SMCI", "BRK.B", "PANW"} {
+		if !symbols[symbol] {
+			t.Fatalf("expected default latest market always-refresh symbols to include %s, got %#v", symbol, cfg.LatestMarketData.AlwaysRefreshSymbols)
+		}
 	}
 }
 
