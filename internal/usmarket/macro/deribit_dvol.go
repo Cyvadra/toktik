@@ -4,12 +4,10 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"regexp"
 	"sort"
 	"strings"
 	"time"
 
-	clickhouse "github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/Cyvadra/toktik/pkg/feeds/dvol"
 )
@@ -18,17 +16,13 @@ const (
 	DefaultDeribitDVOLBTCDataset = "deribit-dvol-btc"
 	DefaultDeribitDVOLETHDataset = "deribit-dvol-eth"
 	DefaultDeribitDVOLSource     = "deribit"
-	DefaultDeribitDVOLTable      = "feed_dvol_1h"
 	DefaultCryptoReferenceMarket = "crypto"
 	defaultHourlyFrequency       = "hourly"
 )
 
-var safeClickHouseIdentifier = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
-
 type DeribitDVOLConfig struct {
-	Symbols     []string
-	SourceTable string
-	BatchSize   int
+	Symbols   []string
+	BatchSize int
 }
 
 type DeribitDVOLResult struct {
@@ -44,47 +38,6 @@ type DeribitDVOLBar struct {
 	High      float64
 	Low       float64
 	Close     float64
-}
-
-func SyncDeribitDVOLFromFeedTables(ctx context.Context, conn driver.Conn, cfg DeribitDVOLConfig, from, to time.Time, dryRun bool) (DeribitDVOLResult, error) {
-	if cfg.BatchSize <= 0 {
-		cfg.BatchSize = 1000
-	}
-	sourceTable := strings.TrimSpace(cfg.SourceTable)
-	if sourceTable == "" {
-		sourceTable = DefaultDeribitDVOLTable
-	}
-	if !safeClickHouseIdentifier.MatchString(sourceTable) {
-		return DeribitDVOLResult{}, fmt.Errorf("invalid DVOL source table %q", sourceTable)
-	}
-
-	symbols := normalizeDeribitDVOLSymbols(cfg.Symbols)
-	result := DeribitDVOLResult{}
-	for _, symbol := range symbols {
-		dataset, ok := DeribitDVOLDatasetForSymbol(symbol)
-		if !ok {
-			return DeribitDVOLResult{}, fmt.Errorf("unsupported DVOL symbol %q", symbol)
-		}
-		bars, err := queryDeribitDVOLFeedBars(ctx, conn, sourceTable, symbol, from, to)
-		if err != nil {
-			return DeribitDVOLResult{}, err
-		}
-		catalogRows := BuildDeribitDVOLCatalogRows(dataset, symbol)
-		observationRows := BuildDeribitDVOLObservationRows(dataset, bars, symbol)
-		result.CatalogRows += len(catalogRows)
-		result.ObservationRows += len(observationRows)
-		result.Points += len(bars)
-		if dryRun {
-			continue
-		}
-		if err := UpsertCatalog(ctx, conn, catalogRows, cfg.BatchSize); err != nil {
-			return DeribitDVOLResult{}, err
-		}
-		if err := InsertObservations(ctx, conn, observationRows, cfg.BatchSize); err != nil {
-			return DeribitDVOLResult{}, err
-		}
-	}
-	return result, nil
 }
 
 func SyncDeribitDVOLFromDeribit(ctx context.Context, conn driver.Conn, cfg DeribitDVOLConfig, from, to time.Time, dryRun bool) (DeribitDVOLResult, error) {
@@ -211,41 +164,6 @@ func normalizeDeribitDVOLSymbols(symbols []string) []string {
 		return []string{"BTC", "ETH"}
 	}
 	return out
-}
-
-func queryDeribitDVOLFeedBars(ctx context.Context, conn driver.Conn, sourceTable, symbol string, from, to time.Time) ([]DeribitDVOLBar, error) {
-	query := fmt.Sprintf(`SELECT symbol, timestamp, open, high, low, close
-FROM %s FINAL
-WHERE symbol = {symbol:String}
-  AND timestamp >= parseDateTime64BestEffort({from:String}, 3, 'UTC')
-  AND timestamp < parseDateTime64BestEffort({to:String}, 3, 'UTC')
-ORDER BY timestamp`, sourceTable)
-	rows, err := conn.Query(ctx, query,
-		clickhouse.Named("symbol", symbol),
-		clickhouse.Named("from", from.UTC().Format(time.RFC3339Nano)),
-		clickhouse.Named("to", to.UTC().Format(time.RFC3339Nano)),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("query %s %s DVOL bars: %w", sourceTable, symbol, err)
-	}
-	defer rows.Close()
-
-	bars := make([]DeribitDVOLBar, 0)
-	for rows.Next() {
-		var bar DeribitDVOLBar
-		var openValue, highValue, lowValue, closeValue float32
-		if err := rows.Scan(&bar.Symbol, &bar.Timestamp, &openValue, &highValue, &lowValue, &closeValue); err != nil {
-			return nil, fmt.Errorf("scan %s %s DVOL bar: %w", sourceTable, symbol, err)
-		}
-		bar.Symbol = strings.ToUpper(bar.Symbol)
-		bar.Timestamp = bar.Timestamp.UTC()
-		bar.Open = float64(openValue)
-		bar.High = float64(highValue)
-		bar.Low = float64(lowValue)
-		bar.Close = float64(closeValue)
-		bars = append(bars, bar)
-	}
-	return bars, rows.Err()
 }
 
 func queryDeribitDVOLAPIBars(ctx context.Context, client *dvol.Client, symbol string, from, to time.Time) ([]DeribitDVOLBar, error) {

@@ -20,7 +20,7 @@
 - `internal/calendarrepo/`：MySQL/Gorm 的財經日曆 repository。
 - `internal/dto/`：API request/response 型別與 service error 型別。
 - `pkg/fmp/`、`pkg/polygon/`、`pkg/tigerapi/`：外部服務 client。
-- `pkg/feeds/`：factor feed registry/store，含 `pkg/feeds/dvol`。
+- `pkg/feeds/`：factor feed registry/store；DVOL 已改由 macro 查詢與 `pkg/feeds/dvol` Deribit client 寫入 macro。
 - `pkg/dsl/`：Toktik DSL lexer/parser/runtime/bridge/catalog。
 - `pkg/strategies/`：Go 策略與策略 catalog。
 - `schema/clickhouse/`：ClickHouse DDL。

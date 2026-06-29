@@ -100,19 +100,3 @@ func TestNormalizeResolution(t *testing.T) {
 		}
 	}
 }
-
-func TestSourceWindowsStartAtOneHour(t *testing.T) {
-	feed := &dvolFeed{client: NewClient(DefaultBaseURL)}
-	windows := feed.SourceWindows()
-	if len(windows) == 0 {
-		t.Fatalf("expected source windows")
-	}
-	if windows[0].Label != "1h" {
-		t.Fatalf("expected first DVOL source window to be 1h, got %s", windows[0].Label)
-	}
-	for _, window := range windows {
-		if window.Label == "1m" {
-			t.Fatalf("unexpected 1m source window in DVOL feed")
-		}
-	}
-}

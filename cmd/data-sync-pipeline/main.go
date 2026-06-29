@@ -921,7 +921,7 @@ func buildMacroSyncer(buildCtx syncerBuildContext, name string, job jobConfig) (
 		}})
 		return syncer, true, err
 	case "deribit_dvol_macro":
-		syncer, err := pipelinejobs.NewDeribitDVOLMacro(pipelinejobs.DeribitDVOLMacroConfig{Symbols: job.Symbols, SourceTable: job.SourceInterval, BatchSize: job.BatchSize, ColdStartFloorUTC: parseColdStart(job.ColdStartFloor)})
+		syncer, err := pipelinejobs.NewDeribitDVOLMacro(pipelinejobs.DeribitDVOLMacroConfig{Symbols: job.Symbols, BatchSize: job.BatchSize, ColdStartFloorUTC: parseColdStart(job.ColdStartFloor)})
 		return syncer, true, err
 	case "fmp_sp500_macro", "fmp_nasdaq100_macro":
 		syncer, err := pipelinejobs.NewGuruMacro(pipelinejobs.GuruMacroConfig{Dataset: job.Dataset, Source: "fmp", ColdStartFloorUTC: parseColdStart(job.ColdStartFloor), SyncFunc: func(ctx context.Context, conn driver.Conn, from, to time.Time, dryRun bool) (int64, error) {

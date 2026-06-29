@@ -21,7 +21,6 @@ import (
 	"github.com/Cyvadra/toktik/internal/service"
 	_ "github.com/Cyvadra/toktik/pkg/dsl/catalog"
 	"github.com/Cyvadra/toktik/pkg/feeds"
-	_ "github.com/Cyvadra/toktik/pkg/feeds/dvol"
 	"github.com/Cyvadra/toktik/pkg/strategies"
 )
 

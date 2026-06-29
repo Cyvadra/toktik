@@ -15,6 +15,13 @@ import (
 const defaultFactorBarLimit = 1000
 const maxFactorBarLimit = 10000
 
+var dvolFactorInfo = dto.FactorInfo{
+	Name:          "dvol",
+	Symbols:       []string{"BTC", "ETH"},
+	SourceWindows: []string{"1h", "12h", "1d"},
+	Fields:        []string{"open", "high", "low", "close"},
+}
+
 // FactorService exposes registered factor feeds for catalog and time-series queries.
 type FactorService struct {
 	store *feeds.Store
@@ -38,8 +45,12 @@ func (s *FactorService) ListFactors(_ context.Context) (*dto.FactorCatalogRespon
 	}
 	sort.Strings(names)
 
-	data := make([]dto.FactorInfo, 0, len(names))
+	data := make([]dto.FactorInfo, 0, len(names)+1)
+	data = append(data, dvolFactorInfo)
 	for _, name := range names {
+		if strings.EqualFold(name, dvolFactorInfo.Name) {
+			continue
+		}
 		f := all[name]
 		windows := make([]string, 0, len(f.SourceWindows()))
 		for _, w := range f.SourceWindows() {
@@ -57,6 +68,10 @@ func (s *FactorService) ListFactors(_ context.Context) (*dto.FactorCatalogRespon
 }
 
 func (s *FactorService) QueryFactorBars(ctx context.Context, req dto.FactorBarRequest) (*dto.FactorBarResponse, error) {
+	if strings.EqualFold(req.Name, "dvol") && s.macro != nil {
+		return s.queryDVOLFactorBars(ctx, req)
+	}
+
 	f := feeds.Get(req.Name)
 	if f == nil {
 		return nil, &dto.ValidationError{Message: fmt.Sprintf("unknown factor feed %q", req.Name)}
@@ -110,10 +125,6 @@ func (s *FactorService) QueryFactorBars(ctx context.Context, req dto.FactorBarRe
 		from = cursorTime.Add(time.Nanosecond)
 	}
 
-	if strings.EqualFold(req.Name, "dvol") && s.macro != nil {
-		return s.queryDVOLMacroBars(ctx, req, from, to, limit)
-	}
-
 	bars, err := s.store.QueryBars(ctx, req.Name, window, req.Symbol, from, to)
 	if err != nil {
 		return nil, fmt.Errorf("query factor bars: %w", err)
@@ -139,6 +150,34 @@ func (s *FactorService) QueryFactorBars(ctx context.Context, req dto.FactorBarRe
 		resp.Data = data
 	}
 	return resp, nil
+}
+
+func (s *FactorService) queryDVOLFactorBars(ctx context.Context, req dto.FactorBarRequest) (*dto.FactorBarResponse, error) {
+	if !containsString(dvolFactorInfo.SourceWindows, req.Window) {
+		return nil, &dto.ValidationError{Message: fmt.Sprintf("unsupported window %q for feed %q", req.Window, req.Name)}
+	}
+	if !containsString(dvolFactorInfo.Symbols, strings.ToUpper(strings.TrimSpace(req.Symbol))) {
+		return nil, &dto.ValidationError{Message: fmt.Sprintf("unsupported symbol %q for feed %q", req.Symbol, req.Name)}
+	}
+	from, to, err := dto.ParseTimeRange(req.From, req.To)
+	if err != nil {
+		return nil, &dto.ValidationError{Message: fmt.Sprintf("invalid time range: %v", err)}
+	}
+	limit := req.Limit
+	if limit <= 0 {
+		limit = defaultFactorBarLimit
+	}
+	if limit > maxFactorBarLimit {
+		limit = maxFactorBarLimit
+	}
+	if req.Cursor != "" {
+		cursorTime, cerr := decodeCursor(req.Cursor)
+		if cerr != nil {
+			return nil, invalidCursorError(cerr)
+		}
+		from = cursorTime.Add(time.Nanosecond)
+	}
+	return s.queryDVOLMacroBars(ctx, req, from, to, limit)
 }
 
 func (s *FactorService) queryDVOLMacroBars(ctx context.Context, req dto.FactorBarRequest, from, to time.Time, limit int) (*dto.FactorBarResponse, error) {
@@ -204,4 +243,13 @@ func macroSeriesFactorBars(symbol string, points []dto.MacroSeriesPoint) []dto.F
 		out = append(out, *byTimestamp[timestamp])
 	}
 	return out
+}
+
+func containsString(values []string, target string) bool {
+	for _, value := range values {
+		if strings.EqualFold(value, target) {
+			return true
+		}
+	}
+	return false
 }

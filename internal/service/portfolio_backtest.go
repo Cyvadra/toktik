@@ -19,7 +19,6 @@ import (
 	"github.com/Cyvadra/toktik/internal/dto"
 	"github.com/Cyvadra/toktik/internal/report"
 	"github.com/Cyvadra/toktik/pkg/feeds"
-	_ "github.com/Cyvadra/toktik/pkg/feeds/dvol"
 	"github.com/Cyvadra/toktik/pkg/strategies"
 )
 
