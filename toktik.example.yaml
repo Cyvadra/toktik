@@ -31,6 +31,7 @@ api:
 
 paths:
   schema_dir: "schema/clickhouse"
+  reports_root: "reports/backtests"
 
 deribit:
   base_url: "https://www.deribit.com"

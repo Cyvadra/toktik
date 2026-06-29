@@ -60,6 +60,21 @@ type testFactorFeed struct {
 	reqs    []backtest.FactorRequest
 }
 
+func reportSeriesByLabel(t *testing.T, result *backtest.Result, label string) []float64 {
+	t.Helper()
+	for _, col := range result.ReportColumns {
+		if col.Label == label {
+			series := result.Series[col.Source]
+			if len(series) == 0 {
+				t.Fatalf("report series %q is empty", label)
+			}
+			return series
+		}
+	}
+	t.Fatalf("report column %q not found", label)
+	return nil
+}
+
 type testFundamentalFactorFeed struct {
 	lastReq backtest.FactorRequest
 }
@@ -355,6 +370,56 @@ if bar_index == 0 {
 	}
 	if len(result.SpreadGroups[0].SpreadIDs) != 1 {
 		t.Fatalf("unexpected spread group contents: %#v", result.SpreadGroups[0])
+	}
+}
+
+func TestDslSpreadOpenUsesConfiguredEntryPricing(t *testing.T) {
+	src := `strategy("Spread Entry Pricing")
+varip tracked_spread = 0
+
+if bar_index == 0 {
+  chain = options.calls(options.chain())
+  contracts = options.sort_by_delta(chain, 0.5)
+  if len(contracts) >= 1 {
+    legs = [leg.sell(contracts[0], 1)]
+    tracked_spread = spread.open(legs, "entry-price")
+  }
+}
+
+entry_price = 0
+if tracked_spread > 0 {
+  entry_price = spread.leg_entry_price(tracked_spread, 0)
+}
+plot(entry_price, title="entry_price", precision=2)
+`
+
+	tests := []struct {
+		name    string
+		pricing backtest.SpreadPricingConfig
+		want    float64
+	}{
+		{name: "mark_close", pricing: backtest.SpreadPricingConfig{EntryMode: backtest.OptionPriceMarkClose}, want: 5.1},
+		{name: "bid_ask", pricing: backtest.SpreadPricingConfig{EntryMode: backtest.OptionPriceBidAsk}, want: 5.0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			engine := backtest.NewEngine(backtest.Config{InitialCapital: 10000})
+			engine.RegisterDataFeed("test", &testDataFeed{fields: []string{"open", "high", "low", "close", "volume"}})
+			engine.SetOptionsChainProvider(&testOptionsChainProvider{})
+
+			from := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+			to := from.Add(2 * time.Hour)
+
+			result, err := engine.Run(context.Background(), "test", "TEST", "1h", from, to, NewWithOptions(src, Options{SpreadPricing: tt.pricing}), nil)
+			if err != nil {
+				t.Fatalf("Run failed: %v", err)
+			}
+			series := reportSeriesByLabel(t, result, "entry_price")
+			if series[0] != tt.want {
+				t.Fatalf("entry_price = %v, want %v", series[0], tt.want)
+			}
+		})
 	}
 }
 

@@ -40,9 +40,11 @@ func buildDynamicDSLResolvedStrategy(req dto.StrategyBacktestRunRequest, cfg str
 
 	config := backtestDSLConfigMap(cfg, req)
 	signalSource := strings.TrimSpace(req.SignalSource)
+	spreadPricing := spreadPricingFromStrategyConfig(cfg)
 	baseOpts := bridge.Options{
-		SignalSource: signalSource,
-		Config:       config,
+		SignalSource:  signalSource,
+		SpreadPricing: spreadPricing,
+		Config:        config,
 	}
 	parsed := bridge.NewWithOptions(dslSource, baseOpts)
 	if errs := parsed.ParseErrors(); len(errs) > 0 {
@@ -61,16 +63,16 @@ func buildDynamicDSLResolvedStrategy(req dto.StrategyBacktestRunRequest, cfg str
 
 	newStrategy := func() (*bridge.DslStrategy, error) {
 		strategy := bridge.NewWithOptions(dslSource, bridge.Options{
-			SignalSource: signalSource,
-			Params:       validatedParams,
-			Config:       config,
+			SignalSource:  signalSource,
+			SpreadPricing: spreadPricing,
+			Params:        validatedParams,
+			Config:        config,
 		})
 		if errs := strategy.ParseErrors(); len(errs) > 0 {
 			return nil, dto.NewValidationError("invalid dsl: %s", strings.Join(errs, "; "))
 		}
 		return strategy, nil
 	}
-
 	strategy, err := newStrategy()
 	if err != nil {
 		return strategies.ResolvedStrategy{}, err
@@ -94,6 +96,14 @@ func buildDynamicDSLResolvedStrategy(req dto.StrategyBacktestRunRequest, cfg str
 			ProfileLabel:  profile.Label(),
 		},
 	}, nil
+}
+
+func spreadPricingFromStrategyConfig(cfg strategies.Config) backtest.SpreadPricingConfig {
+	return backtest.SpreadPricingConfig{
+		EntryMode:     cfg.EntryPriceMode,
+		ExitMode:      cfg.ExitPriceMode,
+		ValuationMode: cfg.ValuationPriceMode,
+	}.WithDefaults()
 }
 
 func normalizeBacktestDSLParams(params map[string]interface{}) (map[string]interface{}, error) {

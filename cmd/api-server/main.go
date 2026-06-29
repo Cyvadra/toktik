@@ -98,7 +98,7 @@ func buildAPIDeps(runtimeCfg config.Runtime, repo *chrepo.Repo, factorStore *fee
 		DataBrowser:       service.NewDataBrowserService(repo),
 		Features:          service.NewFeatureService(repo),
 		Indicators:        service.NewIndicatorService(repo),
-		StrategyBacktests: service.NewPortfolioBacktestService(repo, factorStore),
+		StrategyBacktests: service.NewPortfolioBacktestService(repo, factorStore).WithReportsRoot(runtimeCfg.Paths.ReportsRoot),
 		CryptoSpot:        service.NewCryptoSpotService(repo),
 		Forex:             service.NewForexService(repo),
 		Screener:          services.screener,

@@ -18,6 +18,8 @@ import (
 
 type Options struct {
 	SignalSource string
+	// SpreadPricing controls how DSL option spreads are opened, closed, and valued.
+	SpreadPricing backtest.SpreadPricingConfig
 	// Params provides mixed-type parameter overrides for DSL input.*() calls.
 	// Keys are matched against input titles. Values can be float64, int, bool, or string.
 	Params map[string]interface{}
@@ -113,6 +115,11 @@ func (ds *DslStrategy) Diagnostics() []diagnostics.Diagnostic { return ds.manife
 
 // Name implements backtest.Strategy.
 func (ds *DslStrategy) Name() string { return ds.name }
+
+// SpreadPricingConfig implements backtest.SpreadPricingProvider.
+func (ds *DslStrategy) SpreadPricingConfig() backtest.SpreadPricingConfig {
+	return ds.opts.SpreadPricing.WithDefaults()
+}
 
 // Init implements backtest.Strategy.
 func (ds *DslStrategy) Init(ctx *backtest.SetupContext) error {
@@ -233,7 +240,7 @@ func (ds *DslStrategy) Preload(ctx *backtest.PreloadContext) error {
 // OnBar implements backtest.Strategy.
 func (ds *DslStrategy) OnBar(ctx *backtest.BarContext) {
 	barEvents := signals.EventsAtTime(ds.events, ctx.Time())
-	ds.ip.Bridge = &barContextBridge{ctx: ctx, events: barEvents, config: ds.opts.Config, ds: ds}
+	ds.ip.Bridge = &barContextBridge{ctx: ctx, events: barEvents, config: ds.opts.Config, ds: ds, spreadPricing: ds.SpreadPricingConfig()}
 	for _, field := range ds.exposedFields() {
 		ds.ip.SetNamedField(field, ctx.Field(field))
 	}
@@ -283,10 +290,11 @@ func (ds *DslStrategy) Events() []signals.SignalEvent {
 
 // barContextBridge adapts backtest.BarContext to the runtime.Bridge interface.
 type barContextBridge struct {
-	ctx    *backtest.BarContext
-	events []signals.SignalEvent // events at current bar
-	config map[string]interface{}
-	ds     *DslStrategy
+	ctx           *backtest.BarContext
+	events        []signals.SignalEvent // events at current bar
+	config        map[string]interface{}
+	ds            *DslStrategy
+	spreadPricing backtest.SpreadPricingConfig
 }
 
 func (b *barContextBridge) BarIndex() int                   { return b.ctx.BarIndex() }

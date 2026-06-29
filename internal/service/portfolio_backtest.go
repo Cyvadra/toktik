@@ -70,6 +70,7 @@ type PortfolioBacktestService struct {
 	engineBuilder func(backtest.Config, backtest.OptionsChainProvider, bool) *backtest.Engine
 	chainCache    *optionsChainProviderCache
 	runTTL        time.Duration
+	reportsRoot   string
 
 	mu   sync.RWMutex
 	runs map[string]*portfolioBacktestRun
@@ -123,6 +124,7 @@ func NewPortfolioBacktestService(repo *chrepo.Repo, factorStore *feeds.Store) *P
 		now:         time.Now,
 		runs:        make(map[string]*portfolioBacktestRun),
 		runTTL:      defaultRunTTL,
+		reportsRoot: defaultBacktestHTMLDir,
 	}
 	svc.chainLoader = svc.defaultChainLoader
 	svc.engineBuilder = func(cfg backtest.Config, chainProvider backtest.OptionsChainProvider, usesOptions bool) *backtest.Engine {
@@ -131,6 +133,16 @@ func NewPortfolioBacktestService(repo *chrepo.Repo, factorStore *feeds.Store) *P
 	svc.chainCache = newOptionsChainProviderCache(svc.now, defaultChainProviderTTL, maxChainProviderEntries)
 	go svc.evictionLoop()
 	return svc
+}
+
+func (s *PortfolioBacktestService) WithReportsRoot(root string) *PortfolioBacktestService {
+	if s == nil {
+		return nil
+	}
+	if trimmed := strings.TrimSpace(root); trimmed != "" {
+		s.reportsRoot = trimmed
+	}
+	return s
 }
 
 // evictionLoop runs in the background and removes finished runs older than runTTL.
@@ -502,7 +514,7 @@ func (s *PortfolioBacktestService) runBacktest(ctx context.Context, run *portfol
 		}
 	}
 
-	runDir := filepath.Join(defaultBacktestHTMLDir, defaultAPIRunHTMLSubdir, run.id)
+	runDir := filepath.Join(defaultString(s.reportsRoot, defaultBacktestHTMLDir), defaultAPIRunHTMLSubdir, run.id)
 	// Intentionally ignore req.HTMLOutput for API runs: a user-controlled
 	// path would let the API write reports anywhere on disk and would
 	// later be served back by the report endpoint, opening a path

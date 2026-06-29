@@ -199,12 +199,12 @@ func contractFloat(c interface{}, read func(*backtest.OptionContract) float64) f
 }
 
 func (b *barContextBridge) OpenSpread(legs []runtime.SpreadLegInput, tag string) int {
-	btLegs := convertLegs(legs)
+	btLegs := convertLegs(legs, b.spreadPricing.EntryMode)
 	return b.ctx.OpenSpread(btLegs, tag)
 }
 
 func (b *barContextBridge) OpenSpreadInGroup(legs []runtime.SpreadLegInput, tag string, groupID int) int {
-	btLegs := convertLegs(legs)
+	btLegs := convertLegs(legs, b.spreadPricing.EntryMode)
 	return b.ctx.OpenSpreadInGroup(btLegs, tag, groupID)
 }
 
@@ -221,7 +221,7 @@ func (b *barContextBridge) CloseSpreadWithReason(spreadID int, reason string) {
 		if sp.Legs[i].Closed {
 			continue
 		}
-		price := backtest.OptionPriceMarkClose.EntryPrice(backtest.Buy, sp.Legs[i].Contract)
+		price := b.spreadPricing.ExitMode.ExitPrice(sp.Legs[i].Side, sp.Legs[i].Contract)
 		if reason != "" {
 			b.ctx.CloseSpreadLegWithReason(spreadID, i, price, reason)
 		} else {
@@ -276,7 +276,7 @@ func (b *barContextBridge) SpreadPnL(spreadID int) float64 {
 		return 0
 	}
 	return sp.TotalUnrealizedPnL(func(oc backtest.OptionContract) float64 {
-		return backtest.OptionPriceMarkClose.EntryPrice(backtest.Buy, oc)
+		return b.spreadPricing.ValuationMode.ExitPrice(backtest.Buy, oc)
 	})
 }
 
@@ -444,7 +444,7 @@ func (b *barContextBridge) barOffsetDuration(triggerBarOffset int) time.Duration
 	return time.Duration(triggerBarOffset) * barDur
 }
 
-func convertLegs(legs []runtime.SpreadLegInput) []backtest.SpreadLeg {
+func convertLegs(legs []runtime.SpreadLegInput, entryMode backtest.OptionPriceMode) []backtest.SpreadLeg {
 	out := make([]backtest.SpreadLeg, 0, len(legs))
 	for _, leg := range legs {
 		oc, ok := leg.Contract.(*backtest.OptionContract)
@@ -455,12 +455,7 @@ func convertLegs(legs []runtime.SpreadLegInput) []backtest.SpreadLeg {
 		if leg.Side == "sell" {
 			side = backtest.Sell
 		}
-		entryPrice := oc.MarkPrice
-		if side == backtest.Buy && oc.AskPrice > 0 {
-			entryPrice = oc.AskPrice
-		} else if side == backtest.Sell && oc.BidPrice > 0 {
-			entryPrice = oc.BidPrice
-		}
+		entryPrice := entryMode.EntryPrice(side, *oc)
 		out = append(out, backtest.SpreadLeg{
 			Contract:   *oc,
 			Side:       side,

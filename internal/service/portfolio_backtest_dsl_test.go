@@ -313,6 +313,41 @@ plot(ta.sma(close, length), title="SMA")`,
 	}
 }
 
+func TestRunBacktestWritesReportsUnderConfiguredRoot(t *testing.T) {
+	reportsRoot := t.TempDir()
+	feed := &validationTestFeed{}
+	svc := NewPortfolioBacktestService(nil, nil).WithReportsRoot(reportsRoot)
+	svc.engineBuilder = func(cfg backtest.Config, chainProvider backtest.OptionsChainProvider, usesOptions bool) *backtest.Engine {
+		engine := backtest.NewEngine(cfg)
+		engine.RegisterDataFeed(cryptoUnderlyingFeed, feed)
+		return engine
+	}
+	now := time.Date(2026, 6, 29, 12, 0, 0, 0, time.UTC)
+	run := &portfolioBacktestRun{id: "run-custom-root", startedAt: &now}
+
+	result, err := svc.runBacktest(context.Background(), run, dto.StrategyBacktestRunRequest{
+		Asset:   "BTC",
+		From:    "2026-01-01",
+		To:      "2026-01-02",
+		Capital: 5,
+		DSL: `strategy("Report Root DSL")
+plot(close, title="Close")`,
+	})
+	if err != nil {
+		t.Fatalf("runBacktest returned error: %v", err)
+	}
+	if len(result.Summaries) != 1 {
+		t.Fatalf("len(result.Summaries) = %d, want 1", len(result.Summaries))
+	}
+	reportPath := result.Summaries[0].HTMLPath
+	if !strings.HasPrefix(reportPath, reportsRoot+string(os.PathSeparator)) {
+		t.Fatalf("HTMLPath = %q, want under %q", reportPath, reportsRoot)
+	}
+	if _, err := os.Stat(reportPath); err != nil {
+		t.Fatalf("expected report file at %q: %v", reportPath, err)
+	}
+}
+
 func TestExampleWheelPortfolioRunPayloadIsValid(t *testing.T) {
 	dslPath := filepath.Join("..", "..", "docs", "examples", "wheel-portfolio-us-sell-put.dsl")
 	payloadPath := filepath.Join("..", "..", "docs", "examples", "wheel-portfolio-us-sell-put.run.json")
