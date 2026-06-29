@@ -276,17 +276,18 @@ func TestMergeLatestOptionScreenRowsAddsLatestContractsBeforePagination(t *testi
 	store := cache.NewMemoryStore()
 	latest := NewLatestUSMarketCache(store, time.Hour)
 	ctx := context.Background()
+	expiration := normalizeCalendarDate(time.Now().UTC()).AddDate(0, 0, 9)
 	if err := latest.StoreOptionChain(ctx, "SPY", "polygon", dto.USOptionChainSnapshot{
 		Timestamp:  time.Date(2026, 6, 10, 16, 0, 0, 0, time.UTC),
 		Underlying: "SPY",
 		Contracts: []dto.USOptionChainContract{
-			{Symbol: "O:SPY260620C00735000", OptionType: "C", Expiration: time.Date(2026, 6, 20, 0, 0, 0, 0, time.UTC), Strike: 735, Close: 3.68, ImpliedVolatility: 0.28, Delta: 0.55, Volume: 60962, UnderlyingClose: 737.21},
+			{Symbol: "O:SPY260620C00735000", OptionType: "C", Expiration: expiration, Strike: 735, Close: 3.68, ImpliedVolatility: 0.28, Delta: 0.55, Volume: 60962, UnderlyingClose: 737.21},
 		},
 	}); err != nil {
 		t.Fatalf("StoreOptionChain failed: %v", err)
 	}
 	svc := NewScreenerService(nil).WithLatestMarketCache(latest)
-	rows := []dto.ScreenedOption{{Symbol: "O:SPY260620C00750000", Underlying: "SPY", OptionType: "c", Expiration: time.Date(2026, 6, 20, 0, 0, 0, 0, time.UTC), DaysToExpiry: 9, Strike: 750, Volume: 100}}
+	rows := []dto.ScreenedOption{{Symbol: "O:SPY260620C00750000", Underlying: "SPY", OptionType: "c", Expiration: expiration, DaysToExpiry: 9, Strike: 750, Volume: 100}}
 
 	got, _ := svc.mergeLatestOptionScreenRows(ctx, dto.ScreenOptionRequest{Market: "us-options", Underlying: "SPY", SortBy: "volume"}, rows, "", 1)
 
