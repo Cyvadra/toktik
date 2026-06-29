@@ -14,9 +14,11 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 
 	"github.com/Cyvadra/toktik/internal/backtest"
+	"github.com/Cyvadra/toktik/internal/chrepo"
 	appCli "github.com/Cyvadra/toktik/internal/cli"
 	"github.com/Cyvadra/toktik/internal/datafeed"
 	"github.com/Cyvadra/toktik/internal/report"
+	"github.com/Cyvadra/toktik/internal/service"
 	_ "github.com/Cyvadra/toktik/pkg/dsl/catalog"
 	"github.com/Cyvadra/toktik/pkg/feeds"
 	_ "github.com/Cyvadra/toktik/pkg/feeds/dvol"
@@ -366,7 +368,9 @@ func newEngine(cfg backtest.Config, conn driver.Conn, factorStore *feeds.Store, 
 	engine.RegisterDataFeed(usUnderlyingFeed, usFeed)
 	engine.RegisterDataFeed(usStocksFeed, usFeed)
 	engine.RegisterDataFeed(forexUnderlyingFeed, datafeed.NewForexUnderlyingDataFeed(conn))
-	engine.RegisterFactorFeed("dvol", datafeed.NewFeedFactorBridge("dvol", factorStore))
+	dvolFeed := datafeed.NewDVOLMacroFactorFeed(service.NewMacroService(chrepo.NewRepo(conn)))
+	engine.RegisterFactorFeed("dvol", dvolFeed)
+	engine.RegisterFactorFeed("dvol_macro", dvolFeed)
 	engine.RegisterFactorFeed("volatility", datafeed.NewFeatureVolatilityFactorFeed(conn))
 	if usesOptions && chainProvider != nil {
 		engine.SetOptionsChainProvider(chainProvider)

@@ -11,6 +11,7 @@ import (
 
 	clickhouse "github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+	"github.com/Cyvadra/toktik/pkg/feeds/dvol"
 )
 
 const (
@@ -65,6 +66,40 @@ func SyncDeribitDVOLFromFeedTables(ctx context.Context, conn driver.Conn, cfg De
 			return DeribitDVOLResult{}, fmt.Errorf("unsupported DVOL symbol %q", symbol)
 		}
 		bars, err := queryDeribitDVOLFeedBars(ctx, conn, sourceTable, symbol, from, to)
+		if err != nil {
+			return DeribitDVOLResult{}, err
+		}
+		catalogRows := BuildDeribitDVOLCatalogRows(dataset, symbol)
+		observationRows := BuildDeribitDVOLObservationRows(dataset, bars, symbol)
+		result.CatalogRows += len(catalogRows)
+		result.ObservationRows += len(observationRows)
+		result.Points += len(bars)
+		if dryRun {
+			continue
+		}
+		if err := UpsertCatalog(ctx, conn, catalogRows, cfg.BatchSize); err != nil {
+			return DeribitDVOLResult{}, err
+		}
+		if err := InsertObservations(ctx, conn, observationRows, cfg.BatchSize); err != nil {
+			return DeribitDVOLResult{}, err
+		}
+	}
+	return result, nil
+}
+
+func SyncDeribitDVOLFromDeribit(ctx context.Context, conn driver.Conn, cfg DeribitDVOLConfig, from, to time.Time, dryRun bool) (DeribitDVOLResult, error) {
+	if cfg.BatchSize <= 0 {
+		cfg.BatchSize = 1000
+	}
+	client := dvol.NewClient(dvol.DefaultBaseURL)
+	symbols := normalizeDeribitDVOLSymbols(cfg.Symbols)
+	result := DeribitDVOLResult{}
+	for _, symbol := range symbols {
+		dataset, ok := DeribitDVOLDatasetForSymbol(symbol)
+		if !ok {
+			return DeribitDVOLResult{}, fmt.Errorf("unsupported DVOL symbol %q", symbol)
+		}
+		bars, err := queryDeribitDVOLAPIBars(ctx, client, symbol, from, to)
 		if err != nil {
 			return DeribitDVOLResult{}, err
 		}
@@ -182,13 +217,13 @@ func queryDeribitDVOLFeedBars(ctx context.Context, conn driver.Conn, sourceTable
 	query := fmt.Sprintf(`SELECT symbol, timestamp, open, high, low, close
 FROM %s FINAL
 WHERE symbol = {symbol:String}
-  AND timestamp >= {from:DateTime64(3, 'UTC')}
-  AND timestamp < {to:DateTime64(3, 'UTC')}
+  AND timestamp >= parseDateTime64BestEffort({from:String}, 3, 'UTC')
+  AND timestamp < parseDateTime64BestEffort({to:String}, 3, 'UTC')
 ORDER BY timestamp`, sourceTable)
 	rows, err := conn.Query(ctx, query,
 		clickhouse.Named("symbol", symbol),
-		clickhouse.Named("from", from.UTC()),
-		clickhouse.Named("to", to.UTC()),
+		clickhouse.Named("from", from.UTC().Format(time.RFC3339Nano)),
+		clickhouse.Named("to", to.UTC().Format(time.RFC3339Nano)),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("query %s %s DVOL bars: %w", sourceTable, symbol, err)
@@ -211,4 +246,16 @@ ORDER BY timestamp`, sourceTable)
 		bars = append(bars, bar)
 	}
 	return bars, rows.Err()
+}
+
+func queryDeribitDVOLAPIBars(ctx context.Context, client *dvol.Client, symbol string, from, to time.Time) ([]DeribitDVOLBar, error) {
+	rows, err := client.GetHistory(ctx, symbol, "3600", from, to)
+	if err != nil {
+		return nil, fmt.Errorf("fetch Deribit %s DVOL bars: %w", symbol, err)
+	}
+	bars := make([]DeribitDVOLBar, 0, len(rows))
+	for _, row := range rows {
+		bars = append(bars, DeribitDVOLBar{Symbol: strings.ToUpper(row.Symbol), Timestamp: row.Timestamp.UTC(), Open: row.Open, High: row.High, Low: row.Low, Close: row.Close})
+	}
+	return bars, nil
 }

@@ -573,10 +573,9 @@ func newPortfolioBacktestEngine(cfg backtest.Config, conn driver.Conn, factorSto
 	engine.RegisterDataFeed(usUnderlyingFeed, usFeed)
 	engine.RegisterDataFeed(usStocksFeed, usFeed)
 	engine.RegisterDataFeed(forexUnderlyingFeed, datafeed.NewForexUnderlyingDataFeed(conn))
-	if factorStore != nil {
-		engine.RegisterFactorFeed("dvol", datafeed.NewFeedFactorBridge("dvol", factorStore))
-	}
-	engine.RegisterFactorFeed("dvol_macro", datafeed.NewDVOLMacroFactorFeed(NewMacroService(chrepo.NewRepo(conn))))
+	dvolFeed := datafeed.NewDVOLMacroFactorFeed(NewMacroService(chrepo.NewRepo(conn)))
+	engine.RegisterFactorFeed("dvol", dvolFeed)
+	engine.RegisterFactorFeed("dvol_macro", dvolFeed)
 	engine.RegisterFactorFeed("volatility", datafeed.NewFeatureVolatilityFactorFeed(conn))
 	fundamentalsSvc := NewFundamentalsService(chrepo.NewRepo(conn))
 	registerFundamentalFactorFeeds(engine, fundamentalsSvc)

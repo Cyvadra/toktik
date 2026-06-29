@@ -948,9 +948,6 @@ type DeribitDVOLMacroConfig struct {
 type deribitDVOLMacro struct{ cfg DeribitDVOLMacroConfig }
 
 func NewDeribitDVOLMacro(cfg DeribitDVOLMacroConfig) (syncpipeline.Syncer, error) {
-	if cfg.SourceTable == "" {
-		cfg.SourceTable = macro.DefaultDeribitDVOLTable
-	}
 	if cfg.ColdStartFloorUTC.IsZero() {
 		cfg.ColdStartFloorUTC = time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
 	}
@@ -969,7 +966,16 @@ func (s *deribitDVOLMacro) ResolveCursor(ctx context.Context, conn driver.Conn, 
 }
 func (s *deribitDVOLMacro) ColdStartFloor(string) time.Time { return s.cfg.ColdStartFloorUTC }
 func (s *deribitDVOLMacro) Sync(ctx context.Context, conn driver.Conn, req syncpipeline.SyncRequest) (syncpipeline.SyncResult, error) {
-	res, err := macro.SyncDeribitDVOLFromFeedTables(ctx, conn, macro.DeribitDVOLConfig{Symbols: s.cfg.Symbols, SourceTable: s.cfg.SourceTable, BatchSize: s.cfg.BatchSize}, req.From, req.To, req.DryRun)
+	cfg := macro.DeribitDVOLConfig{Symbols: s.cfg.Symbols, SourceTable: s.cfg.SourceTable, BatchSize: s.cfg.BatchSize}
+	var (
+		res macro.DeribitDVOLResult
+		err error
+	)
+	if strings.TrimSpace(s.cfg.SourceTable) == "" {
+		res, err = macro.SyncDeribitDVOLFromDeribit(ctx, conn, cfg, req.From, req.To, req.DryRun)
+	} else {
+		res, err = macro.SyncDeribitDVOLFromFeedTables(ctx, conn, cfg, req.From, req.To, req.DryRun)
+	}
 	return syncResult(req, int64(res.ObservationRows)), err
 }
 func (s *deribitDVOLMacro) AuditTargets(string) []syncpipeline.AuditTarget {

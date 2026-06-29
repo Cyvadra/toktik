@@ -104,7 +104,7 @@ func buildAPIDeps(runtimeCfg config.Runtime, repo *chrepo.Repo, factorStore *fee
 		Forex:             service.NewForexService(repo),
 		Screener:          services.screener,
 		StrategyCatalog:   service.NewStrategyCatalogService(),
-		Factors:           service.NewFactorService(factorStore),
+		Factors:           service.NewFactorService(factorStore).WithMacroService(services.macro),
 		Fundamentals:      services.fundamentals,
 		Macro:             services.macro,
 		FinanceCalendar:   services.financeCalendar,
