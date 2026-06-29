@@ -49,10 +49,6 @@ type InfraProvider interface {
 	ListDatasets(ctx context.Context, req dto.DatasetQueryRequest) (*dto.DatasetCatalogResponse, error)
 }
 
-type AppDataRefreshProvider interface {
-	TriggerAppDataRefresh(ctx context.Context) (*dto.AppDataRefreshResponse, error)
-}
-
 // DataBrowserProvider exposes server-approved database inspection queries.
 type DataBrowserProvider interface {
 	ListBrowserPresets(ctx context.Context) (*dto.BrowserPresetResponse, error)

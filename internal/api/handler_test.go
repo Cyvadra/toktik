@@ -67,11 +67,6 @@ type mockInfra struct {
 	err          error
 }
 
-type mockAppDataRefresh struct {
-	resp *dto.AppDataRefreshResponse
-	err  error
-}
-
 type mockDataBrowser struct {
 	presetsResp    *dto.BrowserPresetResponse
 	schemaResp     *dto.BrowserSchemaResponse
@@ -225,10 +220,6 @@ func (m *mockInfra) ListMarkets(_ context.Context) (*dto.MarketCatalogResponse, 
 
 func (m *mockInfra) ListDatasets(_ context.Context, _ dto.DatasetQueryRequest) (*dto.DatasetCatalogResponse, error) {
 	return m.datasetsResp, m.err
-}
-
-func (m *mockAppDataRefresh) TriggerAppDataRefresh(_ context.Context) (*dto.AppDataRefreshResponse, error) {
-	return m.resp, m.err
 }
 
 func (m *mockDataBrowser) ListBrowserPresets(_ context.Context) (*dto.BrowserPresetResponse, error) {
@@ -681,46 +672,6 @@ func TestBrowserEndpointWithoutProvider(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest("GET", "/api/v1/browser/presets", nil)
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusNotImplemented {
-		t.Fatalf("expected 501, got %d: %s", w.Code, w.Body.String())
-	}
-}
-
-func TestAppDataRefreshRouteAccepted(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	triggeredAt := time.Date(2026, 6, 29, 12, 30, 0, 0, time.UTC)
-	r := NewRouterFromDeps(Deps{
-		Config: config.DefaultRuntime(),
-		AppDataRefresh: &mockAppDataRefresh{resp: &dto.AppDataRefreshResponse{
-			Status:      "started",
-			TriggeredAt: triggeredAt,
-		}},
-	})
-
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest(http.MethodPost, "/api/app-data/refresh", nil)
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusAccepted {
-		t.Fatalf("expected 202, got %d: %s", w.Code, w.Body.String())
-	}
-	var resp dto.AppDataRefreshResponse
-	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	if resp.Status != "started" || !resp.TriggeredAt.Equal(triggeredAt) {
-		t.Fatalf("unexpected refresh response: %+v", resp)
-	}
-}
-
-func TestAppDataRefreshRouteWithoutProvider(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	r := NewRouterFromDeps(Deps{Config: config.DefaultRuntime()})
-
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest(http.MethodPost, "/api/app-data/refresh", nil)
 	r.ServeHTTP(w, req)
 
 	if w.Code != http.StatusNotImplemented {

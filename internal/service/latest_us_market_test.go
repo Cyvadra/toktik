@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -181,41 +180,6 @@ func TestLatestUSMarketStageResultRecordsPartialSuccessAsRunSuccess(t *testing.T
 	stage := state.StageResults[latestUSMarketStageStockBars]
 	if stage.SuccessCount != 1 || stage.FailureCount != 1 || stage.LastError == "" {
 		t.Fatalf("unexpected stage result: %#v", stage)
-	}
-}
-
-func TestLatestUSMarketRefreshTriggerReturnsPreviousTriggerWhileRunning(t *testing.T) {
-	startedAt := time.Date(2026, 6, 29, 12, 30, 0, 0, time.UTC)
-	trigger := NewLatestUSMarketRefreshTrigger(context.Background(), nil, LatestUSMarketRefresherConfig{Now: func() time.Time { return startedAt }})
-	started := make(chan struct{})
-	release := make(chan struct{})
-	var runs int32
-	trigger.run = func(context.Context, *LatestUSMarketCache, LatestUSMarketRefresherConfig) (LatestUSMarketRefreshResult, error) {
-		atomic.AddInt32(&runs, 1)
-		close(started)
-		<-release
-		return LatestUSMarketRefreshResult{}, nil
-	}
-
-	first, err := trigger.TriggerAppDataRefresh(context.Background())
-	if err != nil {
-		t.Fatalf("first trigger failed: %v", err)
-	}
-	<-started
-	second, err := trigger.TriggerAppDataRefresh(context.Background())
-	if err != nil {
-		t.Fatalf("second trigger failed: %v", err)
-	}
-	close(release)
-
-	if first.Status != "started" || !first.TriggeredAt.Equal(startedAt) {
-		t.Fatalf("unexpected first response: %#v", first)
-	}
-	if second.Status != "already_running" || !second.AlreadyRunning || !second.PreviousTriggerAt.Equal(startedAt) {
-		t.Fatalf("unexpected second response: %#v", second)
-	}
-	if atomic.LoadInt32(&runs) != 1 {
-		t.Fatalf("expected one refresh run, got %d", runs)
 	}
 }
 
