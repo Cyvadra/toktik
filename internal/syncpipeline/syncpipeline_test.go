@@ -79,6 +79,28 @@ func TestRunSourceDoesNotSkipWhenFromOverrideProvided(t *testing.T) {
 	}
 }
 
+func TestFailureCleanupContextIgnoresParentCancelButHonorsTimeout(t *testing.T) {
+	parent, cancelParent := context.WithCancel(context.Background())
+	cancelParent()
+	ctx, cancel := failureCleanupContext(parent, 20*time.Millisecond)
+	defer cancel()
+
+	select {
+	case <-ctx.Done():
+		t.Fatalf("cleanup context should not be canceled immediately with parent")
+	default:
+	}
+
+	select {
+	case <-ctx.Done():
+		if !errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			t.Fatalf("cleanup context error = %v, want deadline exceeded", ctx.Err())
+		}
+	case <-time.After(time.Second):
+		t.Fatalf("cleanup context did not honor timeout")
+	}
+}
+
 func TestShouldAuditSourceIncludesPartialFailedWrites(t *testing.T) {
 	if !shouldAuditSource(SourceReport{Status: JobStatusSuccess}) {
 		t.Fatal("expected successful source to be audited")

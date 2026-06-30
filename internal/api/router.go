@@ -145,6 +145,7 @@ func registerRoutes(v1 *gin.RouterGroup, h *Handler) {
 	backtestsGroup.POST("/validate", h.ValidateStrategyBacktest)
 	backtestsGroup.POST("/runs", h.StartStrategyBacktest)
 	backtestsGroup.GET("/runs/:runID", h.GetStrategyBacktestRun)
+	backtestsGroup.DELETE("/runs/:runID", h.CancelStrategyBacktest)
 	backtestsGroup.GET("/runs/:runID/events", h.StreamStrategyBacktestEvents)
 	backtestsGroup.GET("/runs/:runID/report", h.GetStrategyBacktestReport)
 	backtestsGroup.GET("/runs/:runID/reports/:reportID", h.GetStrategyBacktestNamedReport)

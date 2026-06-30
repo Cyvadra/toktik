@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -443,6 +444,77 @@ plot(close, title="Close")`,
 	}
 }
 
+func TestCancelStrategyBacktestBeforeRunStarts(t *testing.T) {
+	now := time.Date(2026, 6, 30, 12, 0, 0, 0, time.UTC)
+	canceled := false
+	run := &portfolioBacktestRun{
+		id:          "run-cancel-queued",
+		cancel:      func() { canceled = true },
+		request:     dto.StrategyBacktestRunRequest{Asset: "BTC", From: "2026-01-01", To: "2026-01-02", Capital: 5},
+		status:      backtestStatusQueued,
+		createdAt:   now,
+		updatedAt:   now,
+		subscribers: make(map[chan dto.StrategyBacktestSSEvent]struct{}),
+		dirty:       true,
+	}
+	svc := NewPortfolioBacktestService(nil, nil)
+	svc.now = func() time.Time { return now }
+	svc.runs[run.id] = run
+
+	status, err := svc.CancelStrategyBacktest(context.Background(), run.id)
+	if err != nil {
+		t.Fatalf("CancelStrategyBacktest returned error: %v", err)
+	}
+	if !canceled {
+		t.Fatalf("expected run cancel func to be called")
+	}
+	if status.Status != backtestStatusCanceled {
+		t.Fatalf("status = %q, want %q", status.Status, backtestStatusCanceled)
+	}
+	if !run.finished {
+		t.Fatalf("expected run to be terminal after cancellation")
+	}
+	if run.markRunning(now.Add(time.Second)) {
+		t.Fatalf("canceled run should not transition to running")
+	}
+}
+
+func TestCancelStrategyBacktestPropagatesToExecutionContext(t *testing.T) {
+	feed := &cancelAwareFeed{started: make(chan struct{}), release: make(chan struct{})}
+	svc := NewPortfolioBacktestService(nil, nil)
+	svc.engineBuilder = func(cfg backtest.Config, chainProvider backtest.OptionsChainProvider, usesOptions bool) *backtest.Engine {
+		engine := backtest.NewEngine(cfg)
+		engine.RegisterDataFeed(cryptoUnderlyingFeed, feed)
+		return engine
+	}
+	accepted, err := svc.StartStrategyBacktest(context.Background(), dto.StrategyBacktestRunRequest{
+		Asset:   "BTC",
+		From:    "2026-01-01",
+		To:      "2026-01-02",
+		Capital: 5,
+		DSL: `strategy("cancelable")
+plot(close, title="close")`,
+	})
+	if err != nil {
+		t.Fatalf("StartStrategyBacktest returned error: %v", err)
+	}
+
+	<-feed.started
+	status, err := svc.CancelStrategyBacktest(context.Background(), accepted.RunID)
+	if err != nil {
+		t.Fatalf("CancelStrategyBacktest returned error: %v", err)
+	}
+	close(feed.release)
+	if status.Status != backtestStatusCanceled {
+		t.Fatalf("status = %q, want %q", status.Status, backtestStatusCanceled)
+	}
+	select {
+	case <-feed.canceled:
+	case <-time.After(time.Second):
+		t.Fatalf("feed did not observe context cancellation")
+	}
+}
+
 func TestResolveBacktestPlanLoadsMultipleOptionChainTargets(t *testing.T) {
 	feed := &validationTestFeed{}
 	svc := NewPortfolioBacktestService(nil, nil)
@@ -586,4 +658,28 @@ func (f *validationTestFeed) Load(_ context.Context, req backtest.DataRequest) (
 	ds.AddColumn("close", []float64{100.5, 101.5, 102.5, 103.5, 104.5, 105.5})
 	ds.AddColumn("volume", []float64{10, 11, 12, 13, 14, 15})
 	return ds, nil
+}
+
+type cancelAwareFeed struct {
+	started  chan struct{}
+	release  chan struct{}
+	canceled chan struct{}
+}
+
+func (f *cancelAwareFeed) Fields() []string {
+	return []string{"open", "high", "low", "close", "volume"}
+}
+
+func (f *cancelAwareFeed) Load(ctx context.Context, req backtest.DataRequest) (*backtest.DataSet, error) {
+	if f.canceled == nil {
+		f.canceled = make(chan struct{})
+	}
+	close(f.started)
+	select {
+	case <-ctx.Done():
+		close(f.canceled)
+		return nil, ctx.Err()
+	case <-f.release:
+		return nil, errors.New("released before cancellation")
+	}
 }

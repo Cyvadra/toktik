@@ -477,7 +477,7 @@ func TestFillVolatilityHistoryFallback(t *testing.T) {
 		},
 		{Date: time.Date(2026, 4, 3, 0, 0, 0, 0, time.UTC)},
 		{Date: time.Date(2026, 4, 10, 0, 0, 0, 0, time.UTC)},
-	}, featureFallbackWindowDays)
+	}, DefaultFeaturePolicy().FallbackWindowDays)
 
 	if rows[1].HV20 == nil || *rows[1].HV20 != hv20 || rows[1].CurrentIV == nil || *rows[1].CurrentIV != currentIV {
 		t.Fatalf("expected 7-day fallback to fill missing row: %+v", rows[1])
@@ -520,7 +520,7 @@ func TestFillDailyPanelFallback(t *testing.T) {
 		},
 		{Date: time.Date(2026, 4, 4, 0, 0, 0, 0, time.UTC)},
 		{Date: time.Date(2026, 4, 10, 0, 0, 0, 0, time.UTC)},
-	}, featureFallbackWindowDays)
+	}, DefaultFeaturePolicy().FallbackWindowDays)
 
 	if rows[1].HV20 == nil || *rows[1].HV20 != hv20 || rows[1].CurrentIV == nil || *rows[1].CurrentIV != currentIV {
 		t.Fatalf("expected volatility fallback on panel row: %+v", rows[1])

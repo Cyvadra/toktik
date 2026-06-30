@@ -111,7 +111,7 @@ func (s *DataBrowserService) QueryDatasetPreview(ctx context.Context, req dto.Br
 
 	data := []map[string]any{}
 	for rows.Next() {
-		values := make([]string, len(selected))
+		values := make([]sql.NullString, len(selected))
 		scan := make([]any, len(selected))
 		for i := range values {
 			scan[i] = &values[i]
@@ -121,7 +121,11 @@ func (s *DataBrowserService) QueryDatasetPreview(ctx context.Context, req dto.Br
 		}
 		row := make(map[string]any, len(selected))
 		for i, column := range selected {
-			row[column] = normalizeBrowserValue(values[i])
+			if !values[i].Valid {
+				row[column] = nil
+				continue
+			}
+			row[column] = normalizeBrowserValue(values[i].String)
 		}
 		data = append(data, row)
 	}

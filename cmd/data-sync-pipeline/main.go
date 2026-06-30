@@ -23,6 +23,7 @@ import (
 	"github.com/Cyvadra/toktik/internal/service"
 	"github.com/Cyvadra/toktik/internal/syncpipeline"
 	pipelinejobs "github.com/Cyvadra/toktik/internal/syncpipeline/jobs"
+	"github.com/Cyvadra/toktik/internal/usexport"
 	"github.com/Cyvadra/toktik/internal/usmarket"
 	"github.com/Cyvadra/toktik/internal/usmarket/macro"
 	"github.com/Cyvadra/toktik/pkg/fmp"
@@ -172,6 +173,8 @@ func main() {
 		err = integrityCommand(os.Args[2:])
 	case "list-jobs":
 		err = listJobsCommand(os.Args[2:])
+	case "us-market-export", "rus-market-export":
+		err = usMarketExportCommand(os.Args[2:])
 	case "help", "-h", "--help":
 		usage()
 		return
@@ -182,6 +185,58 @@ func main() {
 		fmt.Fprintf(os.Stderr, "data-sync-pipeline: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+func usMarketExportCommand(args []string) error {
+	fs := flag.NewFlagSet("us-market-export", flag.ContinueOnError)
+	dsn := fs.String("clickhouse-dsn", "", "ClickHouse DSN; default comes from runtime config")
+	symbolsFlag := fs.String("symbols", "", "Comma-separated US stock/option underlying symbols to export, e.g. AAPL,MSFT,SPY")
+	startDateFlag := fs.String("start-date", "", "Inclusive market date start (YYYY-MM-DD)")
+	endDateFlag := fs.String("end-date", "", "Inclusive market date end (YYYY-MM-DD); defaults to --start-date")
+	intervalFlag := fs.String("interval", "1m", "Bar interval to export (1m,5m,15m,30m,1h,2h,4h,1d)")
+	outputDir := fs.String("output-dir", "", "Output directory; defaults to exports/us-market-<symbols>-<start>-<end>-<interval>")
+	regularOnly := fs.Bool("regular-session-only", false, "Export regular-session rows only. Only valid for 1m data because higher interval views are already regular-session aggregates")
+	includeStocks := fs.Bool("include-stocks", true, "Export stock bars")
+	includeContracts := fs.Bool("include-option-contracts", true, "Export distinct option contracts seen in the date range")
+	includeOptions := fs.Bool("include-option-bars", true, "Export option bars")
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+		return err
+	}
+	runtimeCfg := appCli.MustLoadRuntime()
+	clickHouseDSN := strings.TrimSpace(*dsn)
+	if clickHouseDSN == "" {
+		clickHouseDSN = runtimeCfg.ClickHouse.DSN
+	}
+	symbols := usexport.NormalizeSymbols([]string{*symbolsFlag})
+	if len(symbols) == 0 {
+		return fmt.Errorf("--symbols is required")
+	}
+	if strings.TrimSpace(*startDateFlag) == "" {
+		return fmt.Errorf("--start-date is required")
+	}
+	startDate := appCli.ParseDate(*startDateFlag, "--start-date")
+	endDate := startDate
+	if strings.TrimSpace(*endDateFlag) != "" {
+		endDate = appCli.ParseDate(*endDateFlag, "--end-date")
+	}
+	ctx := context.Background()
+	conn, err := usmarket.ConnectClickHouse(ctx, clickHouseDSN)
+	if err != nil {
+		return fmt.Errorf("connect ClickHouse: %w", err)
+	}
+	defer conn.Close()
+	result, err := usexport.Run(ctx, conn, usexport.Config{Symbols: symbols, StartDate: startDate, EndDate: endDate, Interval: *intervalFlag, OutputDir: *outputDir, RegularSessionOnly: *regularOnly, IncludeStocks: *includeStocks, IncludeOptionContracts: *includeContracts, IncludeOptionBars: *includeOptions})
+	if err != nil {
+		return err
+	}
+	for _, file := range result.Files {
+		fmt.Printf("exported %s rows=%d path=%s\n", file.Name, file.Rows, file.Path)
+	}
+	fmt.Printf("US market export complete: files=%d dir=%s\n", len(result.Files), result.OutputDir)
+	return nil
 }
 
 func integrityCommand(args []string) error {
@@ -1468,6 +1523,7 @@ Commands:
 	audit        Run duplicate audit over an explicit window
 	integrity    Check core market-data completeness and optionally repair aggregates
 	list-jobs    Print configured jobs and dependencies
+	us-market-export  Export US market CSV bundle; alias: rus-market-export
 `)
 }
 

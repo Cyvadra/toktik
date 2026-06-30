@@ -111,7 +111,7 @@ func joinPreviewExpressions(columns []string) string {
 }
 
 func previewExpression(column string) string {
-	return fmt.Sprintf("ifNull(toString(%[1]s), '') AS %[1]s", column)
+	return fmt.Sprintf("CAST(%[1]s, 'Nullable(String)') AS %[1]s", column)
 }
 
 func isNumericClickHouseType(t string) bool {

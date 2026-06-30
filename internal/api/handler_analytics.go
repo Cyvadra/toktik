@@ -186,6 +186,22 @@ func (h *Handler) GetStrategyBacktestRun(c *gin.Context) {
 	c.JSON(http.StatusOK, decorateBacktestRunStatus(resp))
 }
 
+// CancelStrategyBacktest handles DELETE /api/v1/backtests/runs/:runID.
+func (h *Handler) CancelStrategyBacktest(c *gin.Context) {
+	if h.strategyBacktests == nil {
+		c.JSON(http.StatusNotImplemented, dto.ErrorResponse{Error: "strategy backtest provider not configured"})
+		return
+	}
+
+	resp, err := h.strategyBacktests.CancelStrategyBacktest(c.Request.Context(), c.Param("runID"))
+	if err != nil {
+		h.handleServiceError(c, err)
+		return
+	}
+
+	c.JSON(http.StatusOK, decorateBacktestRunStatus(resp))
+}
+
 // GetStrategyBacktestReport handles GET /api/v1/backtests/runs/:runID/report.
 //
 //	@Summary		Get primary backtest report
@@ -276,7 +292,7 @@ func (h *Handler) StreamStrategyBacktestEvents(c *gin.Context) {
 		return
 	}
 
-	if status.Status != "completed" && status.Status != "failed" {
+	if !isTerminalStrategyBacktestStatus(status.Status) {
 		if err := writeSSEEvent(c, "status", status); err != nil {
 			return
 		}
@@ -306,6 +322,10 @@ func (h *Handler) StreamStrategyBacktestEvents(c *gin.Context) {
 			}
 		}
 	}
+}
+
+func isTerminalStrategyBacktestStatus(status string) bool {
+	return status == "completed" || status == "failed" || status == "canceled"
 }
 
 // ScreenUnderlyings handles GET /api/v1/screener/underlyings.

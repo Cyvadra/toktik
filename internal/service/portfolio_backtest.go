@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log/slog"
 	"path/filepath"
@@ -29,6 +30,7 @@ const (
 	backtestStatusRunning   = "running"
 	backtestStatusCompleted = "completed"
 	backtestStatusFailed    = "failed"
+	backtestStatusCanceled  = "canceled"
 	marketCrypto            = "crypto"
 	marketUS                = "us"
 	marketForex             = "forex"
@@ -98,7 +100,8 @@ type optionsChainProviderLoad struct {
 }
 
 type portfolioBacktestRun struct {
-	id string
+	id     string
+	cancel context.CancelFunc
 
 	mu          sync.RWMutex
 	request     dto.StrategyBacktestRunRequest
@@ -380,8 +383,10 @@ func (s *PortfolioBacktestService) StartStrategyBacktest(_ context.Context, req 
 		return nil, fmt.Errorf("generate run id: %w", err)
 	}
 	now := s.now().UTC()
+	runCtx, cancel := context.WithCancel(context.Background())
 	run := &portfolioBacktestRun{
 		id:          runID,
+		cancel:      cancel,
 		request:     req,
 		status:      backtestStatusQueued,
 		createdAt:   now,
@@ -395,7 +400,7 @@ func (s *PortfolioBacktestService) StartStrategyBacktest(_ context.Context, req 
 	s.mu.Unlock()
 
 	go run.publishLoop()
-	go s.executeRun(run)
+	go s.executeRun(runCtx, run)
 
 	return &dto.StrategyBacktestRunAccepted{
 		RunID:     runID,
@@ -450,6 +455,15 @@ func (s *PortfolioBacktestService) GetStrategyBacktestRun(_ context.Context, run
 	return run.snapshot(), nil
 }
 
+func (s *PortfolioBacktestService) CancelStrategyBacktest(_ context.Context, runID string) (*dto.StrategyBacktestRunStatus, error) {
+	run, err := s.lookupRun(runID)
+	if err != nil {
+		return nil, err
+	}
+	run.cancelRun(s.now().UTC(), "backtest run canceled")
+	return run.snapshot(), nil
+}
+
 func (s *PortfolioBacktestService) SubscribeStrategyBacktest(_ context.Context, runID string) (<-chan dto.StrategyBacktestSSEvent, func(), error) {
 	run, err := s.lookupRun(runID)
 	if err != nil {
@@ -474,18 +488,24 @@ func (s *PortfolioBacktestService) lookupRun(runID string) (*portfolioBacktestRu
 	return run, nil
 }
 
-func (s *PortfolioBacktestService) executeRun(run *portfolioBacktestRun) {
+func (s *PortfolioBacktestService) executeRun(ctx context.Context, run *portfolioBacktestRun) {
 	startedAt := s.now().UTC()
-	run.markRunning(startedAt)
+	if !run.markRunning(startedAt) {
+		return
+	}
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			run.markFailed(s.now().UTC(), fmt.Sprintf("panic: %v", recovered))
 		}
 	}()
 
-	result, err := s.runBacktest(context.Background(), run, run.request)
+	result, err := s.runBacktest(ctx, run, run.request)
 	completedAt := s.now().UTC()
 	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			run.cancelRun(completedAt, "backtest run canceled")
+			return
+		}
 		run.markFailed(completedAt, err.Error())
 		return
 	}
@@ -1020,13 +1040,17 @@ func newBacktestRunID() (string, error) {
 	return hex.EncodeToString(buf), nil
 }
 
-func (r *portfolioBacktestRun) markRunning(startedAt time.Time) {
+func (r *portfolioBacktestRun) markRunning(startedAt time.Time) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.finished {
+		return false
+	}
 	r.status = backtestStatusRunning
 	r.startedAt = &startedAt
 	r.updatedAt = startedAt
 	r.dirty = true
+	return true
 }
 
 func (r *portfolioBacktestRun) setProgress(progress *dto.StrategyBacktestProgress) {
@@ -1043,6 +1067,9 @@ func (r *portfolioBacktestRun) setProgress(progress *dto.StrategyBacktestProgres
 func (r *portfolioBacktestRun) markCompleted(completedAt time.Time, result *dto.StrategyBacktestRunResult) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.finished {
+		return
+	}
 	r.status = backtestStatusCompleted
 	r.completedAt = &completedAt
 	r.updatedAt = completedAt
@@ -1059,7 +1086,31 @@ func (r *portfolioBacktestRun) markCompleted(completedAt time.Time, result *dto.
 func (r *portfolioBacktestRun) markFailed(completedAt time.Time, errText string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.finished {
+		return
+	}
 	r.status = backtestStatusFailed
+	r.completedAt = &completedAt
+	r.updatedAt = completedAt
+	r.errText = strings.TrimSpace(errText)
+	if r.progress != nil {
+		r.progress.Completed = true
+		r.progress.Timestamp = completedAt
+	}
+	r.dirty = true
+	r.finished = true
+}
+
+func (r *portfolioBacktestRun) cancelRun(completedAt time.Time, errText string) {
+	if r.cancel != nil {
+		r.cancel()
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.finished {
+		return
+	}
+	r.status = backtestStatusCanceled
 	r.completedAt = &completedAt
 	r.updatedAt = completedAt
 	r.errText = strings.TrimSpace(errText)
@@ -1204,8 +1255,16 @@ func (r *portfolioBacktestRun) closeSubscribers() {
 }
 
 func terminalEventName(status string) string {
-	if status == backtestStatusCompleted {
+	switch status {
+	case backtestStatusCompleted:
 		return backtestStatusCompleted
+	case backtestStatusCanceled:
+		return backtestStatusCanceled
+	default:
+		return backtestStatusFailed
 	}
-	return backtestStatusFailed
+}
+
+func isTerminalBacktestStatus(status string) bool {
+	return status == backtestStatusCompleted || status == backtestStatusFailed || status == backtestStatusCanceled
 }

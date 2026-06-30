@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"strings"
 	"testing"
@@ -14,6 +15,7 @@ import (
 
 type fakeForexConn struct {
 	rows      driver.Rows
+	rowSets   []driver.Rows
 	queryText string
 	queryErr  error
 	closed    bool
@@ -29,6 +31,11 @@ func (f *fakeForexConn) Query(_ context.Context, query string, _ ...any) (driver
 	f.queryText = query
 	if f.queryErr != nil {
 		return nil, f.queryErr
+	}
+	if len(f.rowSets) > 0 {
+		rows := f.rowSets[0]
+		f.rowSets = f.rowSets[1:]
+		return rows, nil
 	}
 	if f.rows == nil {
 		return &fakeForexRows{}, nil
@@ -99,6 +106,16 @@ func (r *fakeForexRows) Scan(dest ...any) error {
 				return fmt.Errorf("column %d: want string, got %T", index, row[index])
 			}
 			*ptr = value
+		case *sql.NullString:
+			if row[index] == nil {
+				*ptr = sql.NullString{}
+				continue
+			}
+			value, ok := row[index].(string)
+			if !ok {
+				return fmt.Errorf("column %d: want string, got %T", index, row[index])
+			}
+			*ptr = sql.NullString{String: value, Valid: true}
 		case *float32:
 			value, ok := row[index].(float32)
 			if !ok {

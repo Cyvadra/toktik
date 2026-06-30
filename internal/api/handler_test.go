@@ -106,6 +106,7 @@ type mockStrategyBacktests struct {
 	stream       <-chan dto.StrategyBacktestSSEvent
 	validateReq  dto.StrategyBacktestRunRequest
 	startReq     dto.StrategyBacktestRunRequest
+	cancelRunID  string
 	err          error
 }
 
@@ -324,6 +325,11 @@ func (m *mockStrategyBacktests) StartStrategyBacktest(_ context.Context, req dto
 }
 
 func (m *mockStrategyBacktests) GetStrategyBacktestRun(_ context.Context, _ string) (*dto.StrategyBacktestRunStatus, error) {
+	return m.statusResp, m.err
+}
+
+func (m *mockStrategyBacktests) CancelStrategyBacktest(_ context.Context, runID string) (*dto.StrategyBacktestRunStatus, error) {
+	m.cancelRunID = runID
 	return m.statusResp, m.err
 }
 

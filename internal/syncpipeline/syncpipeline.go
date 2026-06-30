@@ -26,6 +26,8 @@ const recentCursorSkipThreshold = 20 * time.Hour
 
 const defaultLockTTL = 2 * time.Hour
 
+const defaultFailureCleanupTimeout = 30 * time.Second
+
 type JobStatus string
 
 const (
@@ -466,7 +468,9 @@ func (r *Runner) runSource(ctx context.Context, spec JobSpec, ledger *importledg
 	if err != nil {
 		if !r.opts.DryRun {
 			syncErr := err
-			err = importledger.RecordFailure(context.Background(), retryFailureRecorder{recorder: ledger, retry: r.opts.DBRetry, logger: r.opts.Logger, operation: spec.Name + " ledger failure"}, importledger.CompletionRequest{ImporterName: spec.Name, SourceKey: sourceKey, ScopeKey: scope, ImportID: importID, SourceHash: sourceHash, RowsInserted: importledger.NonNegativeRows(res.RowsInserted), ErrorMessage: syncErr.Error(), CompletedAt: time.Now().UTC()}, syncErr)
+			cleanupCtx, cancel := failureCleanupContext(sourceCtx, defaultFailureCleanupTimeout)
+			err = importledger.RecordFailure(cleanupCtx, retryFailureRecorder{recorder: ledger, retry: r.opts.DBRetry, logger: r.opts.Logger, operation: spec.Name + " ledger failure"}, importledger.CompletionRequest{ImporterName: spec.Name, SourceKey: sourceKey, ScopeKey: scope, ImportID: importID, SourceHash: sourceHash, RowsInserted: importledger.NonNegativeRows(res.RowsInserted), ErrorMessage: syncErr.Error(), CompletedAt: time.Now().UTC()}, syncErr)
+			cancel()
 		}
 		r.opts.Logger.Error("sync source failed", "job", spec.Name, "source", sourceKey, "scope", scope, "rows", res.RowsInserted, "elapsed", time.Since(sourceStarted).Round(time.Second), "err", err)
 		return SourceReport{SourceKey: sourceKey, From: from, To: to, Status: JobStatusFailed, RowsInserted: res.RowsInserted, Err: err.Error(), Notes: res.Notes}
@@ -481,6 +485,13 @@ func (r *Runner) runSource(ctx context.Context, spec JobSpec, ledger *importledg
 	}
 	r.opts.Logger.Info("sync source finished", "job", spec.Name, "source", sourceKey, "scope", scope, "rows", res.RowsInserted, "notes", len(res.Notes), "elapsed", time.Since(sourceStarted).Round(time.Second))
 	return SourceReport{SourceKey: sourceKey, From: from, To: to, Status: JobStatusSuccess, RowsInserted: res.RowsInserted, Notes: res.Notes}
+}
+
+func failureCleanupContext(parent context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
+	if timeout <= 0 {
+		timeout = defaultFailureCleanupTimeout
+	}
+	return context.WithTimeout(context.WithoutCancel(parent), timeout)
 }
 
 func (r *Runner) retry(ctx context.Context, operation string, fn func(context.Context) error) error {

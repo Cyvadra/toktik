@@ -282,6 +282,45 @@ func TestGetStrategyBacktestRunRoute(t *testing.T) {
 	}
 }
 
+func TestCancelStrategyBacktestRunRoute(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	mockBacktests := &mockStrategyBacktests{statusResp: &dto.StrategyBacktestRunStatus{
+		RunID:     "run-123",
+		Status:    "canceled",
+		Request:   dto.StrategyBacktestRunRequest{Asset: "BTC", From: "2026-01-01", To: "2026-02-01", Capital: 5},
+		CreatedAt: time.Date(2026, 4, 7, 8, 0, 0, 0, time.UTC),
+		UpdatedAt: time.Date(2026, 4, 7, 8, 0, 1, 0, time.UTC),
+	}}
+	r := NewRouter(
+		&mockQuerier{},
+		&mockUSStocksQuerier{},
+		&mockUSOptionsQuerier{},
+		&mockInfra{},
+		&mockFeature{},
+		nil,
+		mockBacktests,
+		nil, nil, nil, nil, nil,
+	)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("DELETE", "/api/v1/backtests/runs/run-123", nil)
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if mockBacktests.cancelRunID != "run-123" {
+		t.Fatalf("cancelRunID = %q, want run-123", mockBacktests.cancelRunID)
+	}
+	var resp dto.StrategyBacktestRunStatus
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if resp.Status != "canceled" {
+		t.Fatalf("status = %q, want canceled", resp.Status)
+	}
+}
+
 func TestStreamStrategyBacktestEventsRoute(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	stream := make(chan dto.StrategyBacktestSSEvent, 1)

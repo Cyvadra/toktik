@@ -26,14 +26,47 @@ const (
 	featureSkewTable           = "feature_skew_snapshot_daily"
 	featureLiquidityTable      = "feature_liquidity_snapshot_daily"
 	featureDailyPanelTable     = "feature_daily_panel_daily"
-	defaultPanelMaxDTE         = 365
-	featureFallbackWindowDays  = 7
 )
 
-var usOptionsATMWindowRatios = [][2]float64{
-	{0.98, 1.02},
-	{0.97, 1.03},
-	{0.95, 1.05},
+type FeaturePolicy struct {
+	DefaultLookbackDays int
+	MaxLookbackDays     int
+	DefaultMaxDTE       int
+	FallbackWindowDays  int
+	USOptionsATMWindows [][2]float64
+}
+
+func DefaultFeaturePolicy() FeaturePolicy {
+	return FeaturePolicy{
+		DefaultLookbackDays: defaultFeatureLookbackDays,
+		MaxLookbackDays:     maxFeatureLookbackDays,
+		DefaultMaxDTE:       365,
+		FallbackWindowDays:  7,
+		USOptionsATMWindows: [][2]float64{{0.98, 1.02}, {0.97, 1.03}, {0.95, 1.05}},
+	}
+}
+
+func (p FeaturePolicy) normalized() FeaturePolicy {
+	defaults := DefaultFeaturePolicy()
+	if p.DefaultLookbackDays <= 0 {
+		p.DefaultLookbackDays = defaults.DefaultLookbackDays
+	}
+	if p.MaxLookbackDays <= 0 {
+		p.MaxLookbackDays = defaults.MaxLookbackDays
+	}
+	if p.MaxLookbackDays < p.DefaultLookbackDays {
+		p.MaxLookbackDays = p.DefaultLookbackDays
+	}
+	if p.DefaultMaxDTE <= 0 {
+		p.DefaultMaxDTE = defaults.DefaultMaxDTE
+	}
+	if p.FallbackWindowDays <= 0 {
+		p.FallbackWindowDays = defaults.FallbackWindowDays
+	}
+	if len(p.USOptionsATMWindows) == 0 {
+		p.USOptionsATMWindows = defaults.USOptionsATMWindows
+	}
+	return p
 }
 
 type featurePoint struct {
@@ -199,15 +232,24 @@ type FeatureBackfillStats struct {
 
 // FeatureService exposes read-only derived feature APIs.
 type FeatureService struct {
-	repo *chrepo.Repo
+	repo   *chrepo.Repo
+	policy FeaturePolicy
 }
 
 func NewFeatureService(repo *chrepo.Repo) *FeatureService {
-	return &FeatureService{repo: repo}
+	return &FeatureService{repo: repo, policy: DefaultFeaturePolicy()}
+}
+
+func (s *FeatureService) WithPolicy(policy FeaturePolicy) *FeatureService {
+	if s == nil {
+		return nil
+	}
+	s.policy = policy.normalized()
+	return s
 }
 
 func (s *FeatureService) QueryVolatilitySnapshot(ctx context.Context, req dto.FeatureVolatilitySnapshotRequest) (*dto.FeatureVolatilitySnapshotResponse, error) {
-	market, underlying, lookbackDays, err := normalizeFeatureRequest(req.Market, req.Underlying, req.LookbackDays)
+	market, underlying, lookbackDays, err := s.normalizeFeatureRequest(req.Market, req.Underlying, req.LookbackDays)
 	if err != nil {
 		return nil, err
 	}
@@ -261,7 +303,7 @@ func (s *FeatureService) QueryVolatilitySnapshot(ctx context.Context, req dto.Fe
 }
 
 func (s *FeatureService) QueryVolatilityHistory(ctx context.Context, req dto.FeatureVolatilityHistoryRequest) (*dto.FeatureVolatilityHistoryResponse, error) {
-	market, underlying, lookbackDays, err := normalizeFeatureRequest(req.Market, req.Underlying, req.LookbackDays)
+	market, underlying, lookbackDays, err := s.normalizeFeatureRequest(req.Market, req.Underlying, req.LookbackDays)
 	if err != nil {
 		return nil, err
 	}
@@ -480,7 +522,7 @@ func (s *FeatureService) QueryEventWindowHistory(ctx context.Context, req dto.Fe
 }
 
 func (s *FeatureService) QueryDailyFeaturePanel(ctx context.Context, req dto.FeatureDailyPanelRequest) (*dto.FeatureDailyPanelResponse, error) {
-	market, underlying, lookbackDays, err := normalizeFeatureRequest(req.Market, req.Underlying, req.LookbackDays)
+	market, underlying, lookbackDays, err := s.normalizeFeatureRequest(req.Market, req.Underlying, req.LookbackDays)
 	if err != nil {
 		return nil, err
 	}
@@ -491,7 +533,7 @@ func (s *FeatureService) QueryDailyFeaturePanel(ctx context.Context, req dto.Fea
 	if market != "crypto-options" && market != "us-options" {
 		return nil, dto.NewValidationError("unsupported daily panel market %q", market)
 	}
-	minDTE, maxDTE, err := normalizeFeatureDTEBounds(req.MinDaysToExpiry, req.MaxDaysToExpiry)
+	minDTE, maxDTE, err := s.normalizeFeatureDTEBounds(req.MinDaysToExpiry, req.MaxDaysToExpiry)
 	if err != nil {
 		return nil, err
 	}
@@ -518,7 +560,7 @@ func (s *FeatureService) QueryTermStructureHistory(ctx context.Context, req dto.
 	if err != nil {
 		return nil, err
 	}
-	minDTE, maxDTE, err := normalizeFeatureDTEBounds(req.MinDaysToExpiry, req.MaxDaysToExpiry)
+	minDTE, maxDTE, err := s.normalizeFeatureDTEBounds(req.MinDaysToExpiry, req.MaxDaysToExpiry)
 	if err != nil {
 		return nil, err
 	}
@@ -594,7 +636,7 @@ func (s *FeatureService) QuerySkewHistory(ctx context.Context, req dto.FeatureSk
 	if err != nil {
 		return nil, err
 	}
-	minDTE, maxDTE, err := normalizeFeatureDTEBounds(req.MinDaysToExpiry, req.MaxDaysToExpiry)
+	minDTE, maxDTE, err := s.normalizeFeatureDTEBounds(req.MinDaysToExpiry, req.MaxDaysToExpiry)
 	if err != nil {
 		return nil, err
 	}
@@ -661,7 +703,7 @@ ORDER BY as_of_date ASC, expiration ASC`, featureSkewTable),
 
 // BackfillFeatureSnapshots computes and stores all currently supported feature-store snapshots.
 func (s *FeatureService) BackfillFeatureSnapshots(ctx context.Context, opts FeatureBackfillOptions) (FeatureBackfillStats, error) {
-	lookbackDays := clamp(opts.LookbackDays, defaultFeatureLookbackDays, maxFeatureLookbackDays)
+	lookbackDays := clamp(opts.LookbackDays, s.policy.DefaultLookbackDays, s.policy.MaxLookbackDays)
 	workers := opts.Workers
 	if workers < 1 {
 		workers = 1
@@ -670,7 +712,7 @@ func (s *FeatureService) BackfillFeatureSnapshots(ctx context.Context, opts Feat
 	if err != nil {
 		return FeatureBackfillStats{}, err
 	}
-	minDTE, maxDTE, err := normalizeFeatureDTEBounds(opts.MinDaysToExpiry, opts.MaxDaysToExpiry)
+	minDTE, maxDTE, err := s.normalizeFeatureDTEBounds(opts.MinDaysToExpiry, opts.MaxDaysToExpiry)
 	if err != nil {
 		return FeatureBackfillStats{}, err
 	}
@@ -1097,7 +1139,7 @@ func emitFeatureBackfillProgress(opts FeatureBackfillOptions, progress FeatureBa
 
 // BackfillVolatilitySnapshots computes and stores daily volatility feature rows.
 func (s *FeatureService) BackfillVolatilitySnapshots(ctx context.Context, opts FeatureBackfillOptions) (FeatureBackfillStats, error) {
-	lookbackDays := clamp(opts.LookbackDays, defaultFeatureLookbackDays, maxFeatureLookbackDays)
+	lookbackDays := clamp(opts.LookbackDays, s.policy.DefaultLookbackDays, s.policy.MaxLookbackDays)
 	markets, err := normalizeFeatureMarkets(opts.Markets)
 	if err != nil {
 		return FeatureBackfillStats{}, err
@@ -1295,7 +1337,7 @@ func (s *FeatureService) computeVolatilityHistoryForBackfill(ctx context.Context
 		return nil, nil, err
 	}
 	if market == "us-options" {
-		aggregates, err := s.queryUSOptionsSurfaceAggregates(ctx, underlying, historyStart, to, time.Time{}, 1, defaultPanelMaxDTE)
+		aggregates, err := s.queryUSOptionsSurfaceAggregates(ctx, underlying, historyStart, to, time.Time{}, 1, int32(s.policy.DefaultMaxDTE))
 		if err != nil {
 			return nil, nil, err
 		}
@@ -1430,11 +1472,20 @@ func normalizeFeatureSurfaceRequest(req dto.FeatureSurfaceSnapshotRequest) (stri
 }
 
 func normalizeFeatureDTEBounds(minDTE, maxDTE int) (int32, int32, error) {
+	return DefaultFeaturePolicy().normalizeDTEBounds(minDTE, maxDTE)
+}
+
+func (s *FeatureService) normalizeFeatureDTEBounds(minDTE, maxDTE int) (int32, int32, error) {
+	return s.policy.normalizeDTEBounds(minDTE, maxDTE)
+}
+
+func (p FeaturePolicy) normalizeDTEBounds(minDTE, maxDTE int) (int32, int32, error) {
+	p = p.normalized()
 	if minDTE < 0 {
 		return 0, 0, dto.NewValidationError("min_days_to_expiry must be >= 0")
 	}
 	if maxDTE <= 0 {
-		maxDTE = defaultPanelMaxDTE
+		maxDTE = p.DefaultMaxDTE
 	}
 	if maxDTE < minDTE {
 		return 0, 0, dto.NewValidationError("max_days_to_expiry must be >= min_days_to_expiry")
@@ -1529,7 +1580,7 @@ func (s *FeatureService) queryUSOptionsSurfaceAggregates(ctx context.Context, un
 	toUInt32(countIf(isFinite(implied_volatility) AND implied_volatility > 0)) AS contract_count
 FROM us_options_bar_1d
 WHERE underlying = {underlying:String}
-	  AND expiration >= toDate(timestamp)`, buildUSOptionsATMIVExpr())
+	  AND expiration >= toDate(timestamp)`, buildUSOptionsATMIVExprWithWindows(s.policy.USOptionsATMWindows))
 	args := []interface{}{clickhouse.Named("underlying", underlying)}
 	if !asOf.IsZero() {
 		query += `
@@ -1614,8 +1665,15 @@ ORDER BY as_of_date ASC, expiration ASC`
 }
 
 func buildUSOptionsATMIVExpr() string {
-	parts := make([]string, 0, len(usOptionsATMWindowRatios))
-	for _, window := range usOptionsATMWindowRatios {
+	return buildUSOptionsATMIVExprWithWindows(DefaultFeaturePolicy().USOptionsATMWindows)
+}
+
+func buildUSOptionsATMIVExprWithWindows(windows [][2]float64) string {
+	if len(windows) == 0 {
+		windows = DefaultFeaturePolicy().USOptionsATMWindows
+	}
+	parts := make([]string, 0, len(windows))
+	for _, window := range windows {
 		parts = append(parts, fmt.Sprintf(
 			"nullIf(avgIf(toFloat64(implied_volatility), isFinite(implied_volatility) AND implied_volatility > 0 AND strike >= underlying_close * %.2f AND strike <= underlying_close * %.2f), 0)",
 			window[0],
@@ -1836,6 +1894,15 @@ func (s *FeatureService) queryLiquidityAggregates(ctx context.Context, market, u
 }
 
 func normalizeFeatureRequest(market, underlying string, lookbackDays int) (string, string, int, error) {
+	return DefaultFeaturePolicy().normalizeFeatureRequest(market, underlying, lookbackDays)
+}
+
+func (s *FeatureService) normalizeFeatureRequest(market, underlying string, lookbackDays int) (string, string, int, error) {
+	return s.policy.normalizeFeatureRequest(market, underlying, lookbackDays)
+}
+
+func (p FeaturePolicy) normalizeFeatureRequest(market, underlying string, lookbackDays int) (string, string, int, error) {
+	p = p.normalized()
 	normalizedMarket, err := normalizeFeatureMarket(market)
 	if err != nil {
 		return "", "", 0, err
@@ -1844,7 +1911,7 @@ func normalizeFeatureRequest(market, underlying string, lookbackDays int) (strin
 	if normalizedUnderlying == "" {
 		return "", "", 0, dto.NewValidationError("underlying is required")
 	}
-	return normalizedMarket, normalizedUnderlying, clamp(lookbackDays, defaultFeatureLookbackDays, maxFeatureLookbackDays), nil
+	return normalizedMarket, normalizedUnderlying, clamp(lookbackDays, p.DefaultLookbackDays, p.MaxLookbackDays), nil
 }
 
 func normalizeFeatureMarket(market string) (string, error) {
@@ -1998,7 +2065,7 @@ ORDER BY day ASC`
 
 func (s *FeatureService) queryImpliedVolatilityHistory(ctx context.Context, market, underlying string, from, to time.Time) ([]featurePoint, error) {
 	if market == "us-options" {
-		aggregates, err := s.queryUSOptionsSurfaceAggregates(ctx, underlying, from, to, time.Time{}, 1, defaultPanelMaxDTE)
+		aggregates, err := s.queryUSOptionsSurfaceAggregates(ctx, underlying, from, to, time.Time{}, 1, int32(s.policy.DefaultMaxDTE))
 		if err != nil {
 			return nil, err
 		}
@@ -2131,7 +2198,7 @@ WHERE market = {market:String}
   AND underlying = {underlying:String}
   AND lookback_days = {lookback_days:UInt16}
 ORDER BY as_of_date DESC
-LIMIT %d`, featureSnapshotTable, featureFallbackWindowDays),
+LIMIT %d`, featureSnapshotTable, s.policy.FallbackWindowDays),
 		clickhouse.Named("market", market),
 		clickhouse.Named("underlying", underlying),
 		clickhouse.Named("lookback_days", uint16(lookbackDays)),
@@ -2140,7 +2207,7 @@ LIMIT %d`, featureSnapshotTable, featureFallbackWindowDays),
 		return nil, false, fmt.Errorf("query precomputed volatility snapshot: %w", err)
 	}
 	defer rows.Close()
-	historyDesc := make([]dto.FeatureVolatilityHistoryRow, 0, featureFallbackWindowDays)
+	historyDesc := make([]dto.FeatureVolatilityHistoryRow, 0, s.policy.FallbackWindowDays)
 	for rows.Next() {
 		row, err := scanFeatureHistoryRow(rows)
 		if err != nil {
@@ -2154,7 +2221,7 @@ LIMIT %d`, featureSnapshotTable, featureFallbackWindowDays),
 	if len(historyDesc) == 0 {
 		return nil, false, nil
 	}
-	priceRow, ivRow := latestValidVolatilitySnapshotRows(historyDesc, featureFallbackWindowDays)
+	priceRow, ivRow := latestValidVolatilitySnapshotRows(historyDesc, s.policy.FallbackWindowDays)
 	resp := &dto.FeatureVolatilitySnapshotResponse{
 		Market:       market,
 		Underlying:   underlying,
@@ -2225,7 +2292,7 @@ ORDER BY as_of_date ASC`, featureSnapshotTable),
 	if len(history) == 0 {
 		return nil, false, nil
 	}
-	history = fillVolatilityHistoryFallback(history, featureFallbackWindowDays)
+	history = fillVolatilityHistoryFallback(history, s.policy.FallbackWindowDays)
 	history = trimVolatilityHistoryRange(history, from, to)
 	if len(history) == 0 {
 		return nil, false, nil
@@ -2665,7 +2732,7 @@ ORDER BY as_of_date ASC`, featureDailyPanelTable),
 	if len(data) == 0 {
 		return nil, false, nil
 	}
-	data = fillDailyPanelFallback(data, featureFallbackWindowDays)
+	data = fillDailyPanelFallback(data, s.policy.FallbackWindowDays)
 	data = trimDailyPanelRange(data, from, to)
 	data = trimDailyPanelTrailingEmptyRows(data)
 	if len(data) == 0 {
@@ -3402,7 +3469,7 @@ func summarizeLiquidityHistory(rows []dto.FeatureLiquidityHistoryRow) map[string
 }
 
 func featureFallbackWindowStart(from time.Time) time.Time {
-	return from.UTC().AddDate(0, 0, -featureFallbackWindowDays)
+	return from.UTC().AddDate(0, 0, -DefaultFeaturePolicy().FallbackWindowDays)
 }
 
 func latestValidVolatilitySnapshotRows(rowsDesc []dto.FeatureVolatilityHistoryRow, maxDays int) (*dto.FeatureVolatilityHistoryRow, *dto.FeatureVolatilityHistoryRow) {

@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+	"github.com/Cyvadra/toktik/internal/chrepo"
 	"github.com/Cyvadra/toktik/internal/dto"
 )
 
@@ -29,6 +31,38 @@ func TestDataBrowserRejectsUnknownDataset(t *testing.T) {
 	}
 	if _, ok := err.(*dto.ValidationError); !ok {
 		t.Fatalf("expected ValidationError, got %T", err)
+	}
+}
+
+func TestDataBrowserPreviewPreservesNullAndEmptyString(t *testing.T) {
+	conn := &fakeForexConn{rowSets: []driver.Rows{
+		&fakeForexRows{data: [][]any{
+			{"timestamp", "Nullable(DateTime)", uint64(1), "", "", "", ""},
+			{"symbol", "Nullable(String)", uint64(2), "", "", "", ""},
+		}},
+		&fakeForexRows{data: [][]any{{nil, ""}}},
+	}}
+	svc := NewDataBrowserService(chrepo.NewRepo(conn))
+	svc.datasets = map[string]browserDatasetSpec{
+		"test": {
+			Name:           "test",
+			Relation:       "test_relation",
+			DefaultColumns: []string{"timestamp", "symbol"},
+		},
+	}
+
+	resp, err := svc.QueryDatasetPreview(context.Background(), dto.BrowserPreviewRequest{Dataset: "test"})
+	if err != nil {
+		t.Fatalf("QueryDatasetPreview returned error: %v", err)
+	}
+	if len(resp.Data) != 1 {
+		t.Fatalf("expected one preview row, got %d", len(resp.Data))
+	}
+	if got := resp.Data[0]["timestamp"]; got != nil {
+		t.Fatalf("timestamp = %#v, want nil", got)
+	}
+	if got := resp.Data[0]["symbol"]; got != "" {
+		t.Fatalf("symbol = %#v, want empty string", got)
 	}
 }
 
