@@ -55,8 +55,12 @@ type Parser struct {
 
 // New creates a parser from source text.
 func New(src string) *Parser {
-	tokens, _ := lexer.Tokenize(src)
-	return &Parser{tokens: tokens}
+	tokens, err := lexer.Tokenize(src)
+	p := &Parser{tokens: tokens}
+	if err != nil {
+		p.errors = append(p.errors, err.Error())
+	}
+	return p
 }
 
 // Parse parses the entire program.

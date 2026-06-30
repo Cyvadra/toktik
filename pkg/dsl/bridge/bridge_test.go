@@ -902,6 +902,33 @@ plot(alt_close, title="ALT Expr Close", precision=1)
 	}
 }
 
+func TestDslStrategyRequestSecurityExpressionUsesRemoteAliasGraph(t *testing.T) {
+	src := `strategy("Security Alias Expression Request")
+basis = close * 2
+alt_basis = request.security("test", "ALT", "1h", basis)
+plot(alt_basis, title="ALT Basis", precision=1)
+`
+
+	result, _ := runTestDSL(t, src, nil)
+	series := result.Series[result.ReportColumns[0].Source]
+	if series[0] != 401 || series[1] != 403 {
+		t.Fatalf("unexpected remote alias expression series: first=%v second=%v", series[0], series[1])
+	}
+}
+
+func TestDslStrategyRequestSecurityExpressionSupportsNamedArgs(t *testing.T) {
+	src := `strategy("Security Named Expression Request")
+alt_close = request.security(symbol="ALT", market="test", field=close, interval="1h")
+plot(alt_close, title="ALT Named Close", precision=1)
+`
+
+	result, _ := runTestDSL(t, src, nil)
+	series := result.Series[result.ReportColumns[0].Source]
+	if series[0] != 200.5 || series[1] != 201.5 {
+		t.Fatalf("unexpected named request.security expression series: first=%v second=%v", series[0], series[1])
+	}
+}
+
 func TestDslStrategyRequestSecurityExpressionBindsFactorToRemoteSymbol(t *testing.T) {
 	src := `strategy("Security Factor Expression Request")
 iv_rank_base = request.factor("dvol", "1h", "dvol")
@@ -967,6 +994,25 @@ plot(alt_pe, title="ALT PE", precision=1)
 	}
 	if fundamentalFeed.lastReq.Market != "test" || fundamentalFeed.lastReq.Symbol != "ALT" {
 		t.Fatalf("expected remote symbol-bound fundamental request for test/ALT, got %+v", fundamentalFeed.lastReq)
+	}
+}
+
+func TestDslStrategyRequestSecurityExpressionHonorsExplicitFundamentalTarget(t *testing.T) {
+	src := `strategy("Security Fundamental Explicit Target")
+msft_pe = request.security("test", "ALT", "1h", request.fundamental("test", "MSFT", "pe"))
+plot(msft_pe, title="MSFT PE", precision=1)
+`
+
+	fundamentalFeed := &testFundamentalFactorFeed{}
+	result, _ := runTestDSL(t, src, func(engine *backtest.Engine) {
+		engine.RegisterFactorFeed("pe", fundamentalFeed)
+	})
+	series := result.Series[result.ReportColumns[0].Source]
+	if series[0] != 24.5 || series[1] != 25.5 {
+		t.Fatalf("unexpected explicit fundamental expression series: first=%v second=%v", series[0], series[1])
+	}
+	if fundamentalFeed.lastReq.Market != "test" || fundamentalFeed.lastReq.Symbol != "MSFT" {
+		t.Fatalf("expected explicit symbol-bound fundamental request for test/MSFT, got %+v", fundamentalFeed.lastReq)
 	}
 }
 

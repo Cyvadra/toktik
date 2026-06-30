@@ -17,16 +17,17 @@ func (b *barContextBridge) EvalSpecialForm(ip *runtime.Interpreter, call *ast.Ca
 	if b == nil || b.ds == nil || call == nil || !isRequestSecurityCall(call) {
 		return runtime.Value{}, false
 	}
-	if len(call.Args) < 4 {
+	args := evalCallArgs(ip, call, scope, []string{"market", "symbol", "interval", "field"})
+	if len(args) < 4 || args[0] == nil || args[1] == nil || args[2] == nil || args[3] == nil {
 		return runtime.NaVal(), true
 	}
-	marketValue := ip.EvalExpression(call.Args[0].Value, scope)
-	symbolValue := ip.EvalExpression(call.Args[1].Value, scope)
-	intervalValue := ip.EvalExpression(call.Args[2].Value, scope)
+	marketValue := ip.EvalExpression(args[0], scope)
+	symbolValue := ip.EvalExpression(args[1], scope)
+	intervalValue := ip.EvalExpression(args[2], scope)
 	market := strings.TrimSpace(marketValue.Str())
 	symbol := strings.TrimSpace(symbolValue.Str())
 	interval := strings.TrimSpace(intervalValue.Str())
-	fieldExpr := call.Args[3].Value
+	fieldExpr := args[3]
 	if field, ok := fieldExpr.(*ast.StringLit); ok {
 		ref, found := b.ds.secRefs[requestSecurityKey(market, symbol, interval)]
 		if !found {
@@ -40,7 +41,7 @@ func (b *barContextBridge) EvalSpecialForm(ip *runtime.Interpreter, call *ast.Ca
 	if !found {
 		return runtime.NaVal(), true
 	}
-	expr := b.ds.resolveDeferredExpr(fieldExpr)
+	expr := b.ds.resolveRemoteExpr(fieldExpr)
 	previous := ip.Bridge
 	ip.Bridge = &remoteContextBridge{parent: b, securityRef: ref, securityKey: key}
 	restore := bindRemoteFields(ip, scope, key, b.ctx.Security(ref))
@@ -50,6 +51,28 @@ func (b *barContextBridge) EvalSpecialForm(ip *runtime.Interpreter, call *ast.Ca
 	}()
 	value := ip.EvalReadOnlyExpression(expr, scope)
 	return ip.CaptureSeries("request.security."+key+".__expr", value.Float()), true
+}
+
+func evalCallArgs(ip *runtime.Interpreter, call *ast.CallExpr, scope *runtime.Scope, params []string) []ast.Expr {
+	out := make([]ast.Expr, len(params))
+	paramIdx := make(map[string]int, len(params))
+	for i, param := range params {
+		paramIdx[param] = i
+	}
+	pos := 0
+	for _, arg := range call.Args {
+		if arg.Name != "" {
+			if idx, ok := paramIdx[arg.Name]; ok {
+				out[idx] = arg.Value
+			}
+			continue
+		}
+		if pos < len(out) {
+			out[pos] = arg.Value
+		}
+		pos++
+	}
+	return out
 }
 
 func bindRemoteFields(ip *runtime.Interpreter, scope *runtime.Scope, key string, acc *backtest.SecurityAccessor) func() {
@@ -132,9 +155,13 @@ func (r *remoteContextBridge) evalRemoteFactor(ip *runtime.Interpreter, call *as
 	if len(call.Args) < 3 || r.parent == nil || r.parent.ds == nil {
 		return runtime.NaVal(), true
 	}
-	name := strings.TrimSpace(ip.EvalExpression(call.Args[0].Value, scope).Str())
-	interval := strings.TrimSpace(ip.EvalExpression(call.Args[1].Value, scope).Str())
-	field := strings.TrimSpace(ip.EvalExpression(call.Args[2].Value, scope).Str())
+	args := evalCallArgs(ip, call, scope, []string{"name", "interval", "field"})
+	if len(args) < 3 || args[0] == nil || args[1] == nil || args[2] == nil {
+		return runtime.NaVal(), true
+	}
+	name := strings.TrimSpace(ip.EvalExpression(args[0], scope).Str())
+	interval := strings.TrimSpace(ip.EvalExpression(args[1], scope).Str())
+	field := strings.TrimSpace(ip.EvalExpression(args[2], scope).Str())
 	ref, ok := r.parent.ds.remoteFacRefs[remoteFactorKey(r.securityKey, requestSpec{Name: name, Interval: interval})]
 	if !ok {
 		return runtime.NaVal(), true
@@ -147,15 +174,27 @@ func (r *remoteContextBridge) evalRemoteFundamental(ip *runtime.Interpreter, cal
 	if len(call.Args) < 3 || r.parent == nil || r.parent.ds == nil {
 		return runtime.NaVal(), true
 	}
-	factor := strings.TrimSpace(ip.EvalExpression(call.Args[2].Value, scope).Str())
+	args := evalCallArgs(ip, call, scope, []string{"market", "symbol", "factor", "mode"})
+	if len(args) < 3 || args[2] == nil {
+		return runtime.NaVal(), true
+	}
+	market := ""
+	if args[0] != nil {
+		market = strings.TrimSpace(ip.EvalExpression(args[0], scope).Str())
+	}
+	symbol := ""
+	if args[1] != nil {
+		symbol = strings.TrimSpace(ip.EvalExpression(args[1], scope).Str())
+	}
+	factor := strings.TrimSpace(ip.EvalExpression(args[2], scope).Str())
 	mode := "filled"
-	if len(call.Args) >= 4 {
-		mode = strings.TrimSpace(ip.EvalExpression(call.Args[3].Value, scope).Str())
+	if len(args) >= 4 && args[3] != nil {
+		mode = strings.TrimSpace(ip.EvalExpression(args[3], scope).Str())
 	}
 	if factor == "" {
 		return runtime.NaVal(), true
 	}
-	ref, ok := r.parent.ds.remoteFacRefs[remoteFactorKey(r.securityKey, requestSpec{Name: factor, Interval: "primary", Mode: mode})]
+	ref, ok := r.parent.ds.remoteFacRefs[remoteFactorKey(r.securityKey, requestSpec{Market: market, Symbol: symbol, Name: factor, Interval: "primary", Mode: mode})]
 	if !ok {
 		return runtime.NaVal(), true
 	}

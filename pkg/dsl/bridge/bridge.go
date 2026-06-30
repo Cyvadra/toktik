@@ -59,7 +59,7 @@ type DslStrategy struct {
 	secRefs            map[string]backtest.SecurityRef
 	facRefs            map[string]backtest.FactorRef
 	remoteFacRefs      map[string]backtest.FactorRef
-	deferredExprs      map[string]ast.Expr
+	aliasExprs         map[string]ast.Expr
 	runtimeDiagnostics diagnostics.List
 	events             []signals.SignalEvent // structured events loaded during Preload
 }
@@ -88,7 +88,7 @@ func NewWithOptions(source string, opts Options) *DslStrategy {
 		secRefs:       make(map[string]backtest.SecurityRef),
 		facRefs:       make(map[string]backtest.FactorRef),
 		remoteFacRefs: make(map[string]backtest.FactorRef),
-		deferredExprs: collectDeferredExprs(prog),
+		aliasExprs:    collectAliasExprs(prog),
 	}
 }
 
@@ -137,7 +137,7 @@ func (ds *DslStrategy) Init(ctx *backtest.SetupContext) error {
 				ds.secRefs[req.Key] = ctx.AddSecurity(req.Market, req.Symbol, req.Interval)
 			}
 			if req.ExpressionMode {
-				expr := ds.resolveDeferredExpr(req.Expression)
+				expr := ds.resolveRemoteExpr(req.Expression)
 				for _, factor := range collectRemoteFactorRequests(expr) {
 					key := remoteFactorKey(req.Key, factor)
 					if _, ok := ds.remoteFacRefs[key]; ok {
@@ -147,7 +147,15 @@ func (ds *DslStrategy) Init(ctx *backtest.SetupContext) error {
 					if strings.TrimSpace(strings.ToLower(interval)) == "primary" {
 						interval = req.Interval
 					}
-					ds.remoteFacRefs[key] = ctx.AddSymbolFactor(factor.Name, req.Market, req.Symbol, interval, factor.Mode)
+					market := strings.TrimSpace(factor.Market)
+					if market == "" {
+						market = req.Market
+					}
+					symbol := strings.TrimSpace(factor.Symbol)
+					if symbol == "" {
+						symbol = req.Symbol
+					}
+					ds.remoteFacRefs[key] = ctx.AddSymbolFactor(factor.Name, market, symbol, interval, factor.Mode)
 				}
 			}
 		case "factor":
@@ -567,44 +575,99 @@ func requestFactorKey(name, interval string) string {
 }
 
 func remoteFactorKey(securityKey string, spec requestSpec) string {
-	return strings.Join([]string{securityKey, spec.Name, spec.Interval, spec.Mode}, "|")
+	return strings.Join([]string{
+		securityKey,
+		strings.TrimSpace(strings.ToLower(spec.Market)),
+		strings.TrimSpace(strings.ToUpper(spec.Symbol)),
+		strings.TrimSpace(strings.ToLower(spec.Name)),
+		strings.TrimSpace(strings.ToLower(spec.Interval)),
+		strings.TrimSpace(strings.ToLower(spec.Mode)),
+	}, "|")
 }
 
-func collectDeferredExprs(prog *ast.Program) map[string]ast.Expr {
+func collectAliasExprs(prog *ast.Program) map[string]ast.Expr {
 	out := make(map[string]ast.Expr)
 	if prog == nil {
 		return out
 	}
 	for _, stmt := range prog.Stmts {
 		decl, ok := stmt.(*ast.VarDecl)
-		if !ok || strings.TrimSpace(decl.Name) == "" || decl.Value == nil {
+		if !ok || decl.Persist || decl.Varip || strings.TrimSpace(decl.Name) == "" || decl.Value == nil {
 			continue
 		}
-		if isDeferredTemplateExpr(decl.Value) {
-			out[decl.Name] = decl.Value
-		}
+		out[decl.Name] = decl.Value
 	}
 	return out
 }
 
-func (ds *DslStrategy) resolveDeferredExpr(expr ast.Expr) ast.Expr {
-	if id, ok := expr.(*ast.IdentExpr); ok && ds != nil && ds.deferredExprs != nil {
-		if resolved, found := ds.deferredExprs[id.Name]; found {
-			return resolved
-		}
-	}
-	if value, ok := expr.(*ast.IdentExpr); ok {
-		_ = value
-	}
-	return expr
+func (ds *DslStrategy) resolveRemoteExpr(expr ast.Expr) ast.Expr {
+	return ds.expandRemoteExpr(expr, make(map[string]bool))
 }
 
-func isDeferredTemplateExpr(expr ast.Expr) bool {
-	call, ok := expr.(*ast.CallExpr)
-	if !ok {
-		return false
+func (ds *DslStrategy) expandRemoteExpr(expr ast.Expr, stack map[string]bool) ast.Expr {
+	if expr == nil || ds == nil || len(ds.aliasExprs) == 0 {
+		return expr
 	}
-	return isRequestFactorCall(call) || isRequestFundamentalCall(call)
+	switch node := expr.(type) {
+	case *ast.IdentExpr:
+		name := strings.TrimSpace(node.Name)
+		if name == "" || stack[name] {
+			return expr
+		}
+		alias, ok := ds.aliasExprs[name]
+		if !ok {
+			return expr
+		}
+		stack[name] = true
+		resolved := ds.expandRemoteExpr(alias, stack)
+		delete(stack, name)
+		return resolved
+	case *ast.BinaryExpr:
+		copy := *node
+		copy.Left = ds.expandRemoteExpr(node.Left, stack)
+		copy.Right = ds.expandRemoteExpr(node.Right, stack)
+		return &copy
+	case *ast.UnaryExpr:
+		copy := *node
+		copy.Operand = ds.expandRemoteExpr(node.Operand, stack)
+		return &copy
+	case *ast.CallExpr:
+		copy := *node
+		copy.Callee = ds.expandRemoteExpr(node.Callee, stack)
+		copy.Args = make([]ast.CallArg, len(node.Args))
+		for i, arg := range node.Args {
+			copy.Args[i] = ast.CallArg{Name: arg.Name, Value: ds.expandRemoteExpr(arg.Value, stack)}
+		}
+		return &copy
+	case *ast.DotExpr:
+		copy := *node
+		copy.Object = ds.expandRemoteExpr(node.Object, stack)
+		return &copy
+	case *ast.IndexExpr:
+		copy := *node
+		copy.Left = ds.expandRemoteExpr(node.Left, stack)
+		copy.Index = ds.expandRemoteExpr(node.Index, stack)
+		return &copy
+	case *ast.TernaryExpr:
+		copy := *node
+		copy.Condition = ds.expandRemoteExpr(node.Condition, stack)
+		copy.Then = ds.expandRemoteExpr(node.Then, stack)
+		copy.Else = ds.expandRemoteExpr(node.Else, stack)
+		return &copy
+	case *ast.ArrayLit:
+		copy := *node
+		copy.Elements = make([]ast.Expr, len(node.Elements))
+		for i, element := range node.Elements {
+			copy.Elements[i] = ds.expandRemoteExpr(element, stack)
+		}
+		return &copy
+	case *ast.LambdaExpr:
+		copy := *node
+		copy.Body = ds.expandRemoteExpr(node.Body, stack)
+		return &copy
+	default:
+		return expr
+	}
 }
 
 func collectRemoteFactorRequests(expr ast.Expr) []requestSpec {
@@ -628,13 +691,15 @@ func collectRemoteFactorRequests(expr ast.Expr) []requestSpec {
 					out = append(out, requestSpec{Kind: "factor", Name: name, Interval: interval, Field: field, Key: requestFactorKey(name, interval)})
 				}
 			} else if isRequestFundamentalCall(n) {
+				market := positionalStringArg(n, "market", 0)
+				symbol := positionalStringArg(n, "symbol", 1)
 				factor := positionalStringArg(n, "factor", 2)
 				mode := positionalStringArg(n, "mode", 3)
 				if mode == "" {
 					mode = "filled"
 				}
 				if factor != "" {
-					out = append(out, requestSpec{Kind: "fundamental", Name: factor, Interval: "primary", Mode: mode, Field: "value"})
+					out = append(out, requestSpec{Kind: "fundamental", Market: market, Symbol: symbol, Name: factor, Interval: "primary", Mode: mode, Field: "value"})
 				}
 			}
 			walk(n.Callee)

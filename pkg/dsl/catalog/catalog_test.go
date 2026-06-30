@@ -27,3 +27,9 @@ func TestDSLStrategiesParse(t *testing.T) {
 		})
 	}
 }
+
+func TestRegisterDSLRejectsInvalidSource(t *testing.T) {
+	if err := RegisterDSL("invalid-dsl-test", "x = @"); err == nil {
+		t.Fatal("expected invalid DSL registration to fail")
+	}
+}

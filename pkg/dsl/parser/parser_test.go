@@ -1,6 +1,7 @@
 package parser
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/Cyvadra/toktik/pkg/dsl/ast"
@@ -27,6 +28,16 @@ func TestParseSimpleAssign(t *testing.T) {
 	}
 	if num.Value != 42 {
 		t.Errorf("expected 42, got %f", num.Value)
+	}
+}
+
+func TestParseReportsLexerErrors(t *testing.T) {
+	_, errs := Parse("x = @")
+	if len(errs) == 0 {
+		t.Fatal("expected lexer error")
+	}
+	if !strings.Contains(errs[0], "illegal token") {
+		t.Fatalf("unexpected lexer error: %v", errs)
 	}
 }
 

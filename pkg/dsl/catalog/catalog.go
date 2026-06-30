@@ -8,6 +8,7 @@ import (
 	"github.com/Cyvadra/toktik/internal/backtest"
 	"github.com/Cyvadra/toktik/pkg/dsl/bridge"
 	"github.com/Cyvadra/toktik/pkg/dsl/configmap"
+	"github.com/Cyvadra/toktik/pkg/dsl/parser"
 	"github.com/Cyvadra/toktik/pkg/strategies/catalog"
 )
 
@@ -21,6 +22,9 @@ func RegisterDSL(name, source string) error {
 
 // RegisterDSLWithMetadata registers a DSL script with explicit catalog metadata.
 func RegisterDSLWithMetadata(reg catalog.Registration, source string) error {
+	if _, errs := parser.Parse(source); len(errs) > 0 {
+		return fmt.Errorf("DSL parse errors in %q: %v", reg.Name, errs)
+	}
 	return catalog.TryRegister(catalog.Registration{
 		Name:    reg.Name,
 		Aliases: append([]string(nil), reg.Aliases...),
