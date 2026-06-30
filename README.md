@@ -117,34 +117,26 @@ Key design decisions:
 | `fundamental_observation` | US stocks, Crypto spot | Tall sparse symbol-bound observations with `event_ts`, `known_at`, revision, and point-in-time query semantics |
 | Materialized K-line views | Both | 5m, 15m, 30m, 1h, 2h, 3h, 4h, 6h, 8h, 12h, 1d auto-aggregated from 1m |
 
-### API Route Map
+### API Surface
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/ready` | GET | Health / readiness check |
-| `/api/v1/backtests/runs` | POST | Start an async strategy backtest run |
-| `/api/v1/backtests/runs/{run_id}` | GET | Query async strategy backtest status/result |
-| `/api/v1/backtests/runs/{run_id}/events` | GET | Subscribe to async strategy backtest progress via SSE |
-| `/api/v1/infra/markets` | GET | List available markets and capabilities |
-| `/api/v1/infra/datasets` | GET | Dataset row counts, freshness, summary aggregates |
-| `/api/v1/markets/{market}/bars` | GET | Unified bars (us-stocks, us-options, etc.) |
-| `/api/v1/markets/{market}/symbols` | GET | Unified symbol search |
-| `/api/v1/features/volatility-snapshot` | GET | Latest HV/IV/percentile for a symbol |
-| `/api/v1/features/volatility-history` | GET | Historical IV time-series |
-| `/api/v1/features/term-structure-snapshot` | GET | ATM IV by expiration |
-| `/api/v1/features/skew-snapshot` | GET | OTM call/put skew |
-| `/api/v1/features/liquidity-snapshot` | GET | Bid/ask spreads, OI by expiration |
-| `/api/v1/features/liquidity-history` | GET | Historical liquidity series |
-| `/api/v1/features/event-window-snapshot` | GET | Early-close / holiday flags |
-| `/api/v1/features/event-window-history` | GET | Historical market events |
-| `/api/v1/features/daily-feature-panel` | GET | Merged daily features |
-| `/api/v1/fundamentals/factors` | GET | List symbol-bound fundamental factors and metadata |
-| `/api/v1/fundamentals/series` | GET | Query sparse, as-of, or filled point-in-time series for one symbol/factor |
-| `/api/v1/fundamentals/snapshot` | GET | Latest known values for one symbol across many factors |
-| `/api/v1/fundamentals/panel` | GET | Latest known values across many symbols/factors |
-| `/api/v1/fundamentals/freshness` | GET | Latest `known_at` and SLA-based freshness per factor |
+The canonical route table is registered in `internal/api/router.go`; generated endpoint references live in `docs/swagger.json`, `docs/swagger.yaml`, and `docs/db-market-indicator-api.md`. Major route groups:
 
-All list endpoints support cursor-based pagination (`cursor` / `next_cursor`). Supported intervals: `1m` through `1w`.
+| Group | Purpose |
+|-------|---------|
+| `/health`, `/ready`, `/swagger/*` | Health, readiness, and OpenAPI UI/JSON |
+| `/api/v1/backtests` | Strategy validation, async runs, cancellation, SSE progress, and HTML reports |
+| `/api/v1/infra` | Market catalog and dataset readiness/freshness inspection |
+| `/api/v1/browser` | Server-approved dataset schema, preview, coverage, profiling, and value listing |
+| `/api/v1/features` | Volatility, surface, skew, liquidity, event-window, and daily-panel features |
+| `/api/v1/indicators` | Indicator presets and DSL-driven series evaluation |
+| `/api/v1/markets/*` | Low-level bars, symbols, chains, greeks, profiles, fundamentals, splits, and option-wall queries |
+| `/api/v1/screener` | Underlying and option screening, including US turnover intersections |
+| `/api/v1/factors`, `/api/v1/fundamentals`, `/api/v1/macro` | Factor catalog/data, symbol-bound fundamentals, and macro series |
+| `/api/v1/calendar` | Economic and observed-stock finance calendar queries |
+| `/api/v1/polygon` | Massive/Polygon stock and option REST proxy endpoints |
+| `/api/v1/strategies` | Registered Go and DSL strategy catalog |
+
+Pagination and interval support are endpoint-specific. Current market interval maps are defined in `internal/chquery/tables.go`: crypto options support `5m` through `1d`; crypto spot supports `1m` through `1d`; forex supports `1m`, `5m`, `15m`, `30m`, `1h`, `2h`, `4h`, and `1d`; US stocks/options support `1m`, `5m`, `15m`, `30m`, `1h`, `2h`, `4h`, and `1d`.
 
 ### Strategy Architecture
 
@@ -158,12 +150,13 @@ Toktik DSL documentation: [docs/dsl.md](docs/dsl.md)
 
 Built-in strategies: `golden-cross`, `delta-filter`, `bull-put-spread`, `bear-call-spread`, `forum-short-put`, `lvol-scalper`, `ema-atr-spot`, `turtle-trend-simp`, `buy-flash-low`, `covered-call`, `retracement-ratio-protective-spread-long`, `retracement-ratio-protective-spread-short`.
 
-## Infra Progress
+## Current API Coverage
 
-- Phase 1: unified market API and infra dataset/market inspection — **implemented**.
-- Phase 2: feature-store and fundamentals APIs — **in progress**; volatility, liquidity, event-window, daily panel, `us-options` surface features, and symbol-bound fundamentals endpoints are available.
-- Phase 3: reference-data APIs — planned.
-- Phase 4: production scheduling/run-state APIs — planned (readiness and freshness inspection already in place).
+- Unified market API and infra dataset/market inspection are implemented.
+- Feature-store, fundamentals, macro, calendar, screener, data-browser, and indicator APIs are available.
+- Strategy backtests support validation, async run state, cancellation, SSE progress, and HTML reports.
+- Massive/Polygon stock and option REST proxy endpoints are available when configured.
+- Remaining production concerns are mainly durable run queues, scheduler control APIs, and broader reference-data management.
 
 ## Prerequisites
 
