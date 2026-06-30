@@ -3,7 +3,6 @@ package bridge
 
 import (
 	"fmt"
-	"math"
 	"strings"
 	"time"
 
@@ -49,19 +48,20 @@ type Manifest = analysis.Manifest
 
 // DslStrategy implements backtest.Strategy by interpreting a Toktik DSL script.
 type DslStrategy struct {
-	source        string
-	name          string
-	prog          *ast.Program
-	ip            *runtime.Interpreter
-	errs          []string
-	opts          Options
-	manifest      analysis.Manifest
-	meta          strategyMetadata
-	secRefs       map[string]backtest.SecurityRef
-	facRefs       map[string]backtest.FactorRef
-	remoteFacRefs map[string]backtest.FactorRef
-	deferredExprs map[string]ast.Expr
-	events        []signals.SignalEvent // structured events loaded during Preload
+	source             string
+	name               string
+	prog               *ast.Program
+	ip                 *runtime.Interpreter
+	errs               []string
+	opts               Options
+	manifest           analysis.Manifest
+	meta               strategyMetadata
+	secRefs            map[string]backtest.SecurityRef
+	facRefs            map[string]backtest.FactorRef
+	remoteFacRefs      map[string]backtest.FactorRef
+	deferredExprs      map[string]ast.Expr
+	runtimeDiagnostics diagnostics.List
+	events             []signals.SignalEvent // structured events loaded during Preload
 }
 
 // New creates a DslStrategy from DSL source code.
@@ -111,7 +111,11 @@ func (ds *DslStrategy) OptionChainRequests() []ChainRequestSpec {
 
 func (ds *DslStrategy) Manifest() analysis.Manifest { return ds.manifest }
 
-func (ds *DslStrategy) Diagnostics() []diagnostics.Diagnostic { return ds.manifest.Diagnostics }
+func (ds *DslStrategy) Diagnostics() []diagnostics.Diagnostic {
+	out := append([]diagnostics.Diagnostic(nil), ds.manifest.Diagnostics...)
+	out = append(out, ds.runtimeDiagnostics...)
+	return out
+}
 
 // Name implements backtest.Strategy.
 func (ds *DslStrategy) Name() string { return ds.name }
@@ -134,11 +138,16 @@ func (ds *DslStrategy) Init(ctx *backtest.SetupContext) error {
 			}
 			if req.ExpressionMode {
 				expr := ds.resolveDeferredExpr(req.Expression)
-				for _, factor := range collectFactorRequests(expr) {
-					key := remoteFactorKey(req.Key, factor.Name, factor.Interval)
-					if _, ok := ds.remoteFacRefs[key]; !ok {
-						ds.remoteFacRefs[key] = ctx.AddSymbolFactor(factor.Name, req.Market, req.Symbol, factor.Interval, factor.Mode)
+				for _, factor := range collectRemoteFactorRequests(expr) {
+					key := remoteFactorKey(req.Key, factor)
+					if _, ok := ds.remoteFacRefs[key]; ok {
+						continue
 					}
+					interval := factor.Interval
+					if strings.TrimSpace(strings.ToLower(interval)) == "primary" {
+						interval = req.Interval
+					}
+					ds.remoteFacRefs[key] = ctx.AddSymbolFactor(factor.Name, req.Market, req.Symbol, interval, factor.Mode)
 				}
 			}
 		case "factor":
@@ -156,6 +165,8 @@ func (ds *DslStrategy) Init(ctx *backtest.SetupContext) error {
 		}
 	}
 	ds.ip = runtime.NewInterpreter(ds.prog)
+	ds.runtimeDiagnostics = nil
+	ds.ip.Diagnostics = &ds.runtimeDiagnostics
 	ApplyParams(ds.ip, ds.opts.Params)
 	runtime.RegisterBacktestProfile(ds.ip, ds.requestSecurityBuiltin(), ds.requestFactorBuiltin(), ds.requestFundamentalBuiltin())
 	ds.ip.Init()
@@ -344,129 +355,6 @@ func (b *barContextBridge) Cash() float64   { return b.ctx.Cash() }
 
 func (b *barContextBridge) Ind(name string) float64          { return b.ctx.Ind(name) }
 func (b *barContextBridge) IndAt(name string, o int) float64 { return b.ctx.IndAt(name, o) }
-
-// EvalSpecialForm implements runtime.SpecialFormBridge for request.security's
-// expression mode. The fourth argument remains an AST template and is evaluated
-// with field/factor reads redirected to the requested security context.
-func (b *barContextBridge) EvalSpecialForm(ip *runtime.Interpreter, call *ast.CallExpr, scope *runtime.Scope) (runtime.Value, bool) {
-	if b == nil || b.ds == nil || call == nil || !isRequestSecurityCall(call) {
-		return runtime.Value{}, false
-	}
-	if len(call.Args) < 4 {
-		return runtime.NaVal(), true
-	}
-	marketValue := ip.EvalExpression(call.Args[0].Value, scope)
-	symbolValue := ip.EvalExpression(call.Args[1].Value, scope)
-	intervalValue := ip.EvalExpression(call.Args[2].Value, scope)
-	market := strings.TrimSpace(marketValue.Str())
-	symbol := strings.TrimSpace(symbolValue.Str())
-	interval := strings.TrimSpace(intervalValue.Str())
-	fieldExpr := call.Args[3].Value
-	if field, ok := fieldExpr.(*ast.StringLit); ok {
-		ref, found := b.ds.secRefs[requestSecurityKey(market, symbol, interval)]
-		if !found {
-			return runtime.NaVal(), true
-		}
-		value := b.ctx.Security(ref).Field(strings.TrimSpace(field.Value))
-		return ip.CaptureSeries("request.security."+requestSecurityKey(market, symbol, interval)+"."+strings.TrimSpace(field.Value), value), true
-	}
-	key := requestSecurityKey(market, symbol, interval)
-	ref, found := b.ds.secRefs[key]
-	if !found {
-		return runtime.NaVal(), true
-	}
-	expr := b.ds.resolveDeferredExpr(fieldExpr)
-	previous := ip.Bridge
-	ip.Bridge = &remoteContextBridge{parent: b, securityRef: ref, securityKey: key}
-	restore := bindRemoteFields(ip, scope, key, b.ctx.Security(ref))
-	defer func() {
-		restore()
-		ip.Bridge = previous
-	}()
-	value := ip.EvalExpression(expr, scope)
-	return ip.CaptureSeries("request.security."+key+".__expr", value.Float()), true
-}
-
-func bindRemoteFields(ip *runtime.Interpreter, scope *runtime.Scope, key string, acc *backtest.SecurityAccessor) func() {
-	fields := []string{"open", "high", "low", "close", "volume"}
-	previous := make(map[string]runtime.Value, len(fields))
-	for _, field := range fields {
-		value, _ := scope.Get(field)
-		previous[field] = value
-		remoteValue := math.NaN()
-		if acc != nil {
-			remoteValue = acc.Field(field)
-		}
-		scope.Set(field, ip.CaptureSeries("request.security."+key+"."+field+".__remote", remoteValue))
-	}
-	return func() {
-		for _, field := range fields {
-			scope.Set(field, previous[field])
-		}
-	}
-}
-
-type remoteContextBridge struct {
-	parent      *barContextBridge
-	securityRef backtest.SecurityRef
-	securityKey string
-}
-
-func (r *remoteContextBridge) accessor() *backtest.SecurityAccessor {
-	if r == nil || r.parent == nil {
-		return nil
-	}
-	return r.parent.ctx.Security(r.securityRef)
-}
-
-func (r *remoteContextBridge) BarIndex() int   { return r.parent.BarIndex() }
-func (r *remoteContextBridge) Close() float64  { return r.Field("close") }
-func (r *remoteContextBridge) Open() float64   { return r.Field("open") }
-func (r *remoteContextBridge) High() float64   { return r.Field("high") }
-func (r *remoteContextBridge) Low() float64    { return r.Field("low") }
-func (r *remoteContextBridge) Volume() float64 { return r.Field("volume") }
-func (r *remoteContextBridge) Field(name string) float64 {
-	if acc := r.accessor(); acc != nil {
-		return acc.Field(name)
-	}
-	return math.NaN()
-}
-func (r *remoteContextBridge) FieldAt(name string, offset int) float64 {
-	if acc := r.accessor(); acc != nil {
-		return acc.FieldAt(name, offset)
-	}
-	return math.NaN()
-}
-func (r *remoteContextBridge) Buy(qty float64)                       { r.parent.Buy(qty) }
-func (r *remoteContextBridge) Sell(qty float64)                      { r.parent.Sell(qty) }
-func (r *remoteContextBridge) EntryLong(id string, qty float64)      { r.parent.EntryLong(id, qty) }
-func (r *remoteContextBridge) EntryShort(id string, qty float64)     { r.parent.EntryShort(id, qty) }
-func (r *remoteContextBridge) ExitLong(id string)                    { r.parent.ExitLong(id) }
-func (r *remoteContextBridge) ExitShort(id string)                   { r.parent.ExitShort(id) }
-func (r *remoteContextBridge) PositionSize() float64                 { return r.parent.PositionSize() }
-func (r *remoteContextBridge) PositionAvgPrice() float64             { return r.parent.PositionAvgPrice() }
-func (r *remoteContextBridge) Equity() float64                       { return r.parent.Equity() }
-func (r *remoteContextBridge) Cash() float64                         { return r.parent.Cash() }
-func (r *remoteContextBridge) Ind(name string) float64               { return r.Field(name) }
-func (r *remoteContextBridge) IndAt(name string, offset int) float64 { return r.FieldAt(name, offset) }
-
-func (r *remoteContextBridge) EvalSpecialForm(ip *runtime.Interpreter, call *ast.CallExpr, scope *runtime.Scope) (runtime.Value, bool) {
-	if call == nil || !isRequestFactorCall(call) {
-		return runtime.Value{}, false
-	}
-	if len(call.Args) < 3 || r.parent == nil || r.parent.ds == nil {
-		return runtime.NaVal(), true
-	}
-	name := strings.TrimSpace(ip.EvalExpression(call.Args[0].Value, scope).Str())
-	interval := strings.TrimSpace(ip.EvalExpression(call.Args[1].Value, scope).Str())
-	field := strings.TrimSpace(ip.EvalExpression(call.Args[2].Value, scope).Str())
-	ref, ok := r.parent.ds.remoteFacRefs[remoteFactorKey(r.securityKey, name, interval)]
-	if !ok {
-		return runtime.NaVal(), true
-	}
-	value := r.parent.ctx.Factor(ref).Field(field)
-	return ip.CaptureSeries("request.factor."+r.securityKey+"."+requestFactorKey(name, interval)+"."+field, value), true
-}
 
 // ConfigFloat implements runtime.ConfigBridge.
 func (b *barContextBridge) ConfigFloat(name string, defval float64) float64 {
@@ -678,8 +566,8 @@ func requestFactorKey(name, interval string) string {
 	return analysis.RequestFactorKey(name, interval)
 }
 
-func remoteFactorKey(securityKey, name, interval string) string {
-	return strings.Join([]string{securityKey, name, interval}, "|")
+func remoteFactorKey(securityKey string, spec requestSpec) string {
+	return strings.Join([]string{securityKey, spec.Name, spec.Interval, spec.Mode}, "|")
 }
 
 func collectDeferredExprs(prog *ast.Program) map[string]ast.Expr {
@@ -719,7 +607,7 @@ func isDeferredTemplateExpr(expr ast.Expr) bool {
 	return isRequestFactorCall(call) || isRequestFundamentalCall(call)
 }
 
-func collectFactorRequests(expr ast.Expr) []requestSpec {
+func collectRemoteFactorRequests(expr ast.Expr) []requestSpec {
 	var out []requestSpec
 	var walk func(ast.Expr)
 	walk = func(node ast.Expr) {
@@ -738,6 +626,15 @@ func collectFactorRequests(expr ast.Expr) []requestSpec {
 				field := positionalStringArg(n, "field", 2)
 				if name != "" && interval != "" && field != "" {
 					out = append(out, requestSpec{Kind: "factor", Name: name, Interval: interval, Field: field, Key: requestFactorKey(name, interval)})
+				}
+			} else if isRequestFundamentalCall(n) {
+				factor := positionalStringArg(n, "factor", 2)
+				mode := positionalStringArg(n, "mode", 3)
+				if mode == "" {
+					mode = "filled"
+				}
+				if factor != "" {
+					out = append(out, requestSpec{Kind: "fundamental", Name: factor, Interval: "primary", Mode: mode, Field: "value"})
 				}
 			}
 			walk(n.Callee)

@@ -376,9 +376,14 @@ func (r *Runner) runJob(ctx context.Context, spec JobSpec) JobReport {
 				report.Err = result.report.Err
 			}
 		}
-		for _, sourceReport := range orderedReports {
+		for index, sourceReport := range orderedReports {
 			if strings.TrimSpace(sourceReport.SourceKey) == "" {
-				continue
+				sourceReport = canceledSourceReport(NormalizeSourceKey(keys[index]), jobCtx.Err())
+				orderedReports[index] = sourceReport
+			}
+			if report.Status != JobStatusFailed && sourceReport.Status == JobStatusFailed {
+				report.Status = JobStatusFailed
+				report.Err = sourceReport.Err
 			}
 			report.Sources = append(report.Sources, sourceReport)
 		}
@@ -398,6 +403,13 @@ func (r *Runner) runJob(ctx context.Context, spec JobSpec) JobReport {
 	}
 	r.opts.Logger.Info("sync job finished", "job", spec.Name, "status", report.Status, "rows", report.RowsInserted, "sources", len(report.Sources), "audit_findings", len(report.AuditFindings), "elapsed", time.Since(jobStarted).Round(time.Second))
 	return report
+}
+
+func canceledSourceReport(sourceKey string, err error) SourceReport {
+	if err == nil {
+		err = context.Canceled
+	}
+	return SourceReport{SourceKey: sourceKey, Status: JobStatusFailed, Err: err.Error()}
 }
 
 func (r *Runner) sourceConcurrency(spec JobSpec, keyCount int) int {

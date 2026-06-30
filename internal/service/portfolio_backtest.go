@@ -73,6 +73,9 @@ type PortfolioBacktestService struct {
 	chainCache    *optionsChainProviderCache
 	runTTL        time.Duration
 	reportsRoot   string
+	stopEviction  chan struct{}
+	evictionDone  chan struct{}
+	closeOnce     sync.Once
 
 	mu   sync.RWMutex
 	runs map[string]*portfolioBacktestRun
@@ -122,12 +125,14 @@ type portfolioBacktestRun struct {
 
 func NewPortfolioBacktestService(repo *chrepo.Repo, factorStore *feeds.Store) *PortfolioBacktestService {
 	svc := &PortfolioBacktestService{
-		repo:        repo,
-		factorStore: factorStore,
-		now:         time.Now,
-		runs:        make(map[string]*portfolioBacktestRun),
-		runTTL:      defaultRunTTL,
-		reportsRoot: defaultBacktestHTMLDir,
+		repo:         repo,
+		factorStore:  factorStore,
+		now:          time.Now,
+		runs:         make(map[string]*portfolioBacktestRun),
+		runTTL:       defaultRunTTL,
+		reportsRoot:  defaultBacktestHTMLDir,
+		stopEviction: make(chan struct{}),
+		evictionDone: make(chan struct{}),
 	}
 	svc.chainLoader = svc.defaultChainLoader
 	svc.engineBuilder = func(cfg backtest.Config, chainProvider backtest.OptionsChainProvider, usesOptions bool) *backtest.Engine {
@@ -136,6 +141,17 @@ func NewPortfolioBacktestService(repo *chrepo.Repo, factorStore *feeds.Store) *P
 	svc.chainCache = newOptionsChainProviderCache(svc.now, defaultChainProviderTTL, maxChainProviderEntries)
 	go svc.evictionLoop()
 	return svc
+}
+
+func (s *PortfolioBacktestService) Close() error {
+	if s == nil {
+		return nil
+	}
+	s.closeOnce.Do(func() {
+		close(s.stopEviction)
+		<-s.evictionDone
+	})
+	return nil
 }
 
 func (s *PortfolioBacktestService) WithReportsRoot(root string) *PortfolioBacktestService {
@@ -152,8 +168,14 @@ func (s *PortfolioBacktestService) WithReportsRoot(root string) *PortfolioBackte
 func (s *PortfolioBacktestService) evictionLoop() {
 	ticker := time.NewTicker(runEvictionInterval)
 	defer ticker.Stop()
-	for range ticker.C {
-		s.evictOldRuns()
+	defer close(s.evictionDone)
+	for {
+		select {
+		case <-ticker.C:
+			s.evictOldRuns()
+		case <-s.stopEviction:
+			return
+		}
 	}
 }
 

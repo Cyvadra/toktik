@@ -132,6 +132,31 @@ func TestRunJobContinuesAfterSourceFailure(t *testing.T) {
 	}
 }
 
+func TestRunJobParallelTimeoutReportsEverySource(t *testing.T) {
+	syncer := &blockingParallelSyncer{keys: []string{"A", "B", "C"}}
+	runner := NewRunner(nil, RunnerOptions{DryRun: true, Force: true, FromOverride: time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)})
+
+	report := runner.runJob(context.Background(), JobSpec{Name: "job", Syncer: syncer, PerJobTimeout: 20 * time.Millisecond})
+	if report.Status != JobStatusFailed {
+		t.Fatalf("expected failed job report, got %s", report.Status)
+	}
+	if len(report.Sources) != 3 {
+		t.Fatalf("expected report for every source, got %#v", report.Sources)
+	}
+	failed := 0
+	for _, source := range report.Sources {
+		if source.SourceKey == "" {
+			t.Fatalf("source report missing source key: %#v", report.Sources)
+		}
+		if source.Status == JobStatusFailed {
+			failed++
+		}
+	}
+	if failed == 0 || !strings.Contains(report.Err, "context deadline exceeded") {
+		t.Fatalf("expected context deadline failure, got status=%s err=%q sources=%#v", report.Status, report.Err, report.Sources)
+	}
+}
+
 func TestDependencyBlockedReportSkipsFailedDependency(t *testing.T) {
 	report, blocked := dependencyBlockedReport(JobSpec{Name: "child", DependsOn: []string{"parent"}}, map[string]JobReport{
 		"parent": {Job: "parent", Status: JobStatusFailed, Err: "boom"},
@@ -251,3 +276,27 @@ func (s *sourceFailureSyncer) Sync(_ context.Context, _ driver.Conn, req SyncReq
 }
 func (s *sourceFailureSyncer) AuditTargets(string) []AuditTarget { return nil }
 func (s *sourceFailureSyncer) MaxConcurrency() int               { return 1 }
+
+type blockingParallelSyncer struct {
+	keys []string
+}
+
+func (s *blockingParallelSyncer) Name() string { return "blocking-parallel" }
+func (s *blockingParallelSyncer) SourceKeys(context.Context, driver.Conn) ([]string, error) {
+	return s.keys, nil
+}
+func (s *blockingParallelSyncer) ResolveCursor(context.Context, driver.Conn, string) (time.Time, bool, error) {
+	return time.Time{}, false, nil
+}
+func (s *blockingParallelSyncer) ColdStartFloor(string) time.Time {
+	return time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+}
+func (s *blockingParallelSyncer) Sync(ctx context.Context, _ driver.Conn, req SyncRequest) (SyncResult, error) {
+	if req.SourceKey == "A" {
+		return SyncResult{RowsInserted: 1}, nil
+	}
+	<-ctx.Done()
+	return SyncResult{}, ctx.Err()
+}
+func (s *blockingParallelSyncer) AuditTargets(string) []AuditTarget { return nil }
+func (s *blockingParallelSyncer) MaxConcurrency() int               { return 3 }

@@ -9,6 +9,9 @@ func RegisterStrategyBuiltins(ip *Interpreter) {
 	// When limit/stop/twap_bars are specified and OrderBridge is available,
 	// uses the richer OrderIntent path. Otherwise falls back to basic Buy/Sell.
 	ip.RegisterBuiltinWithParams("strategy.entry", []string{"id", "direction", "qty", "limit", "stop", "twap_bars", "immediate", "note"}, func(args []Value) Value {
+		if !ip.AllowSideEffect("strategy.entry") {
+			return NaVal()
+		}
 		if ip.Bridge == nil || len(args) < 2 {
 			return NaVal()
 		}
@@ -50,6 +53,9 @@ func RegisterStrategyBuiltins(ip *Interpreter) {
 
 	// strategy.close(id)
 	ip.RegisterBuiltinWithParams("strategy.close", []string{"id"}, func(args []Value) Value {
+		if !ip.AllowSideEffect("strategy.close") {
+			return NaVal()
+		}
 		if ip.Bridge == nil || len(args) < 1 {
 			return NaVal()
 		}
@@ -62,6 +68,9 @@ func RegisterStrategyBuiltins(ip *Interpreter) {
 
 	// strategy.exit(id)
 	ip.RegisterBuiltinWithParams("strategy.exit", []string{"id"}, func(args []Value) Value {
+		if !ip.AllowSideEffect("strategy.exit") {
+			return NaVal()
+		}
 		if ip.Bridge == nil || len(args) < 1 {
 			return NaVal()
 		}
@@ -96,6 +105,9 @@ func RegisterStrategyBuiltins(ip *Interpreter) {
 
 	// buy(qty)
 	ip.RegisterBuiltin("buy", func(args []Value) Value {
+		if !ip.AllowSideEffect("buy") {
+			return NaVal()
+		}
 		if ip.Bridge == nil {
 			return NaVal()
 		}
@@ -109,6 +121,9 @@ func RegisterStrategyBuiltins(ip *Interpreter) {
 
 	// sell(qty)
 	ip.RegisterBuiltin("sell", func(args []Value) Value {
+		if !ip.AllowSideEffect("sell") {
+			return NaVal()
+		}
 		if ip.Bridge == nil {
 			return NaVal()
 		}

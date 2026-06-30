@@ -400,6 +400,9 @@ func RegisterOptionsBuiltins(ip *Interpreter) {
 	// spread.open(legs_array, tag) → spread_id
 	// Each leg is [contract, "buy"/"sell", qty]
 	ip.RegisterBuiltin("spread.open", func(args []Value) Value {
+		if !ip.AllowSideEffect("spread.open") {
+			return NaVal()
+		}
 		b := ob()
 		if b == nil || len(args) < 2 {
 			return NaVal()
@@ -416,6 +419,9 @@ func RegisterOptionsBuiltins(ip *Interpreter) {
 
 	// spread.open_on(market, underlying, legs_array, tag) → spread_id
 	ip.RegisterBuiltinWithParams("spread.open_on", []string{"market", "underlying", "legs", "tag"}, func(args []Value) Value {
+		if !ip.AllowSideEffect("spread.open_on") {
+			return NaVal()
+		}
 		b := ob()
 		if b == nil || len(args) < 4 {
 			return NaVal()
@@ -430,6 +436,9 @@ func RegisterOptionsBuiltins(ip *Interpreter) {
 
 	// spread.open_in_group(legs_array, tag, group_id) → spread_id
 	ip.RegisterBuiltin("spread.open_in_group", func(args []Value) Value {
+		if !ip.AllowSideEffect("spread.open_in_group") {
+			return NaVal()
+		}
 		b := ob()
 		if b == nil || len(args) < 3 {
 			return NaVal()
@@ -447,6 +456,9 @@ func RegisterOptionsBuiltins(ip *Interpreter) {
 
 	// spread.open_in_group_on(market, underlying, legs_array, tag, group_id) → spread_id
 	ip.RegisterBuiltinWithParams("spread.open_in_group_on", []string{"market", "underlying", "legs", "tag", "group_id"}, func(args []Value) Value {
+		if !ip.AllowSideEffect("spread.open_in_group_on") {
+			return NaVal()
+		}
 		b := ob()
 		if b == nil || len(args) < 5 {
 			return NaVal()
@@ -461,6 +473,9 @@ func RegisterOptionsBuiltins(ip *Interpreter) {
 
 	// spread.close(spread_id, reason?)
 	ip.RegisterBuiltin("spread.close", func(args []Value) Value {
+		if !ip.AllowSideEffect("spread.close") {
+			return NaVal()
+		}
 		b := ob()
 		if b == nil || len(args) < 1 {
 			return NaVal()
@@ -480,6 +495,9 @@ func RegisterOptionsBuiltins(ip *Interpreter) {
 
 	// spread.close_leg(spread_id, leg_index, close_price) → bool
 	ip.RegisterBuiltin("spread.close_leg", func(args []Value) Value {
+		if !ip.AllowSideEffect("spread.close_leg") {
+			return NaVal()
+		}
 		b := ob()
 		if b == nil || len(args) < 3 {
 			return NaVal()
@@ -590,6 +608,9 @@ func RegisterOptionsBuiltins(ip *Interpreter) {
 
 	// group.open(tag, init_amount, decay_factor) → group_id
 	ip.RegisterBuiltin("group.open", func(args []Value) Value {
+		if !ip.AllowSideEffect("group.open") {
+			return NaVal()
+		}
 		b := ob()
 		if b == nil || len(args) < 3 {
 			return NaVal()
@@ -600,6 +621,9 @@ func RegisterOptionsBuiltins(ip *Interpreter) {
 
 	// group.close(group_id)
 	ip.RegisterBuiltin("group.close", func(args []Value) Value {
+		if !ip.AllowSideEffect("group.close") {
+			return NaVal()
+		}
 		b := ob()
 		if b == nil || len(args) < 1 {
 			return NaVal()
@@ -631,6 +655,9 @@ func RegisterOptionsBuiltins(ip *Interpreter) {
 
 	// group.add_spread(group_id, spread_id)
 	ip.RegisterBuiltin("group.add_spread", func(args []Value) Value {
+		if !ip.AllowSideEffect("group.add_spread") {
+			return NaVal()
+		}
 		b := ob()
 		if b == nil || len(args) < 2 {
 			return NaVal()
@@ -641,6 +668,9 @@ func RegisterOptionsBuiltins(ip *Interpreter) {
 
 	// group.increment_roll(group_id)
 	ip.RegisterBuiltin("group.increment_roll", func(args []Value) Value {
+		if !ip.AllowSideEffect("group.increment_roll") {
+			return NaVal()
+		}
 		b := ob()
 		if b == nil || len(args) < 1 {
 			return NaVal()
@@ -667,6 +697,9 @@ func RegisterOptionsBuiltins(ip *Interpreter) {
 
 	// schedule.close_spread(bars_offset, spread_id, reason?)
 	ip.RegisterBuiltin("schedule.close_spread", func(args []Value) Value {
+		if !ip.AllowSideEffect("schedule.close_spread") {
+			return NaVal()
+		}
 		b := ob()
 		if b == nil || len(args) < 2 {
 			return NaVal()
@@ -687,6 +720,9 @@ func RegisterOptionsBuiltins(ip *Interpreter) {
 
 	// schedule.close_leg(bars_offset, spread_id, leg_index)
 	ip.RegisterBuiltin("schedule.close_leg", func(args []Value) Value {
+		if !ip.AllowSideEffect("schedule.close_leg") {
+			return NaVal()
+		}
 		b := ob()
 		if b == nil || len(args) < 3 {
 			return NaVal()
@@ -723,6 +759,9 @@ func RegisterOptionsBuiltins(ip *Interpreter) {
 
 	// schedule.close_group(bars_offset, group_id) — schedule group close
 	ip.RegisterBuiltinWithParams("schedule.close_group", []string{"bars_offset", "group_id"}, func(args []Value) Value {
+		if !ip.AllowSideEffect("schedule.close_group") {
+			return NaVal()
+		}
 		b := ob()
 		if b == nil || len(args) < 2 {
 			return NaVal()

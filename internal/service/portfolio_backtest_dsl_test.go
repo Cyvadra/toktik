@@ -238,6 +238,7 @@ func TestDescribeResolvedStrategiesUsesStrategyNameForSingleResult(t *testing.T)
 func TestValidateStrategyBacktestPerformsPreparePreflight(t *testing.T) {
 	feed := &validationTestFeed{}
 	svc := NewPortfolioBacktestService(nil, nil)
+	t.Cleanup(func() { _ = svc.Close() })
 	svc.engineBuilder = func(cfg backtest.Config, chainProvider backtest.OptionsChainProvider, usesOptions bool) *backtest.Engine {
 		engine := backtest.NewEngine(cfg)
 		engine.RegisterDataFeed(cryptoUnderlyingFeed, feed)
@@ -287,6 +288,7 @@ plot(ta.sma(close, length), title="SMA")`,
 func TestStartStrategyBacktestSkipsSubmissionPreflightDataLoad(t *testing.T) {
 	feed := &validationTestFeed{}
 	svc := NewPortfolioBacktestService(nil, nil)
+	t.Cleanup(func() { _ = svc.Close() })
 	svc.engineBuilder = func(cfg backtest.Config, chainProvider backtest.OptionsChainProvider, usesOptions bool) *backtest.Engine {
 		engine := backtest.NewEngine(cfg)
 		engine.RegisterDataFeed(cryptoUnderlyingFeed, feed)
@@ -318,6 +320,7 @@ func TestRunBacktestWritesReportsUnderConfiguredRoot(t *testing.T) {
 	reportsRoot := t.TempDir()
 	feed := &validationTestFeed{}
 	svc := NewPortfolioBacktestService(nil, nil).WithReportsRoot(reportsRoot)
+	t.Cleanup(func() { _ = svc.Close() })
 	svc.engineBuilder = func(cfg backtest.Config, chainProvider backtest.OptionsChainProvider, usesOptions bool) *backtest.Engine {
 		engine := backtest.NewEngine(cfg)
 		engine.RegisterDataFeed(cryptoUnderlyingFeed, feed)

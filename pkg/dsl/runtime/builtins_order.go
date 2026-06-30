@@ -145,6 +145,9 @@ func RegisterOrderBuiltins(ip *Interpreter) {
 }
 
 func submitIntent(ip *Interpreter, intent OrderIntent) int {
+	if !ip.AllowSideEffect("order.submit") {
+		return 0
+	}
 	if ip.Bridge == nil {
 		return 0
 	}

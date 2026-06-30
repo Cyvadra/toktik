@@ -81,6 +81,23 @@ type testFundamentalFactorFeed struct {
 
 type testOptionsChainProvider struct{}
 
+func runTestDSL(t *testing.T, src string, register func(*backtest.Engine)) (*backtest.Result, *DslStrategy) {
+	t.Helper()
+	strategy := New(src)
+	engine := backtest.NewEngine(backtest.Config{InitialCapital: 10000})
+	engine.RegisterDataFeed("test", &testDataFeed{fields: []string{"open", "high", "low", "close", "volume"}})
+	if register != nil {
+		register(engine)
+	}
+	from := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	to := from.Add(6 * time.Hour)
+	result, err := engine.Run(context.Background(), "test", "TEST", "1h", from, to, strategy, nil)
+	if err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+	return result, strategy
+}
+
 func (p *testOptionsChainProvider) AvailableContracts(t time.Time) []backtest.OptionContract {
 	expiry := t.Add(30 * 24 * time.Hour)
 	return []backtest.OptionContract{
@@ -823,16 +840,7 @@ alt_close = request.security("test", "ALT", "1h", "close")
 plot(alt_close, title="ALT Close", precision=1)
 `
 
-	engine := backtest.NewEngine(backtest.Config{InitialCapital: 10000})
-	engine.RegisterDataFeed("test", &testDataFeed{fields: []string{"open", "high", "low", "close", "volume"}})
-
-	from := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
-	to := from.Add(6 * time.Hour)
-
-	result, err := engine.Run(context.Background(), "test", "TEST", "1h", from, to, New(src), nil)
-	if err != nil {
-		t.Fatalf("Run failed: %v", err)
-	}
+	result, _ := runTestDSL(t, src, nil)
 	series := result.Series[result.ReportColumns[0].Source]
 	if series[0] != 200.5 || series[1] != 201.5 {
 		t.Fatalf("unexpected request.security plot series: first=%v second=%v", series[0], series[1])
@@ -872,17 +880,9 @@ dvol = request.factor("dvol", "1h", "dvol")
 plot(dvol, title="DVOL", precision=1)
 `
 
-	engine := backtest.NewEngine(backtest.Config{InitialCapital: 10000})
-	engine.RegisterDataFeed("test", &testDataFeed{fields: []string{"open", "high", "low", "close", "volume"}})
-	engine.RegisterFactorFeed("dvol", &testFactorFeed{})
-
-	from := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
-	to := from.Add(6 * time.Hour)
-
-	result, err := engine.Run(context.Background(), "test", "TEST", "1h", from, to, New(src), nil)
-	if err != nil {
-		t.Fatalf("Run failed: %v", err)
-	}
+	result, _ := runTestDSL(t, src, func(engine *backtest.Engine) {
+		engine.RegisterFactorFeed("dvol", &testFactorFeed{})
+	})
 	series := result.Series[result.ReportColumns[0].Source]
 	if series[0] != 50 || series[1] != 51 {
 		t.Fatalf("unexpected request.factor plot series: first=%v second=%v", series[0], series[1])
@@ -895,16 +895,7 @@ alt_close = request.security("test", "ALT", "1h", close)
 plot(alt_close, title="ALT Expr Close", precision=1)
 `
 
-	engine := backtest.NewEngine(backtest.Config{InitialCapital: 10000})
-	engine.RegisterDataFeed("test", &testDataFeed{fields: []string{"open", "high", "low", "close", "volume"}})
-
-	from := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
-	to := from.Add(6 * time.Hour)
-
-	result, err := engine.Run(context.Background(), "test", "TEST", "1h", from, to, New(src), nil)
-	if err != nil {
-		t.Fatalf("Run failed: %v", err)
-	}
+	result, _ := runTestDSL(t, src, nil)
 	series := result.Series[result.ReportColumns[0].Source]
 	if series[0] != 200.5 || series[1] != 201.5 {
 		t.Fatalf("unexpected request.security expression series: first=%v second=%v", series[0], series[1])
@@ -918,18 +909,10 @@ alt_dvol = request.security("test", "ALT", "1h", iv_rank_base)
 plot(alt_dvol, title="ALT DVOL", precision=1)
 `
 
-	engine := backtest.NewEngine(backtest.Config{InitialCapital: 10000})
-	engine.RegisterDataFeed("test", &testDataFeed{fields: []string{"open", "high", "low", "close", "volume"}})
 	factorFeed := &testFactorFeed{}
-	engine.RegisterFactorFeed("dvol", factorFeed)
-
-	from := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
-	to := from.Add(6 * time.Hour)
-
-	result, err := engine.Run(context.Background(), "test", "TEST", "1h", from, to, New(src), nil)
-	if err != nil {
-		t.Fatalf("Run failed: %v", err)
-	}
+	result, _ := runTestDSL(t, src, func(engine *backtest.Engine) {
+		engine.RegisterFactorFeed("dvol", factorFeed)
+	})
 	series := result.Series[result.ReportColumns[0].Source]
 	if series[0] != 50 || series[1] != 51 {
 		t.Fatalf("unexpected remote factor expression series: first=%v second=%v", series[0], series[1])
@@ -943,6 +926,47 @@ plot(alt_dvol, title="ALT DVOL", precision=1)
 	}
 	if !foundRemote {
 		t.Fatalf("expected remote symbol-bound factor request for test/ALT, got %+v", factorFeed.reqs)
+	}
+}
+
+func TestDslStrategyRequestSecurityExpressionRejectsSideEffects(t *testing.T) {
+	src := `strategy("Security Side Effect Expression")
+side_effect = request.security("test", "ALT", "1h", strategy.entry(id="bad", direction=strategy.long, qty=1))
+plot(side_effect, title="Side Effect", precision=1)
+`
+
+	result, strategy := runTestDSL(t, src, nil)
+	if len(result.Trades) != 0 {
+		t.Fatalf("expected no trades from remote read-only expression, got %d", len(result.Trades))
+	}
+	found := false
+	for _, diag := range strategy.Diagnostics() {
+		if diag.Code == "dsl.readonly_side_effect" && diag.Function == "strategy.entry" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected readonly side-effect diagnostic, got %+v", strategy.Diagnostics())
+	}
+}
+
+func TestDslStrategyRequestSecurityExpressionBindsFundamentalToRemoteSymbol(t *testing.T) {
+	src := `strategy("Security Fundamental Expression Request")
+alt_pe = request.security("test", "ALT", "1h", request.fundamental("test", "ALT", "pe"))
+plot(alt_pe, title="ALT PE", precision=1)
+`
+
+	fundamentalFeed := &testFundamentalFactorFeed{}
+	result, _ := runTestDSL(t, src, func(engine *backtest.Engine) {
+		engine.RegisterFactorFeed("pe", fundamentalFeed)
+	})
+	series := result.Series[result.ReportColumns[0].Source]
+	if series[0] != 24.5 || series[1] != 25.5 {
+		t.Fatalf("unexpected remote fundamental expression series: first=%v second=%v", series[0], series[1])
+	}
+	if fundamentalFeed.lastReq.Market != "test" || fundamentalFeed.lastReq.Symbol != "ALT" {
+		t.Fatalf("expected remote symbol-bound fundamental request for test/ALT, got %+v", fundamentalFeed.lastReq)
 	}
 }
 

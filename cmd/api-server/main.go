@@ -52,6 +52,7 @@ type apiCoreServices struct {
 	financeCalendar *service.FinanceCalendarService
 	usStocks        *service.USStocksService
 	screener        *service.ScreenerService
+	backtests       *service.PortfolioBacktestService
 	latestMarket    *service.LatestUSMarketCache
 	fmpClient       *fmp.Client
 }
@@ -61,7 +62,7 @@ const (
 	redisStartupRetryDelay = 3 * time.Second
 )
 
-func buildAPICoreServices(runtimeCfg config.Runtime, repo *chrepo.Repo, calendarRepo *calendarrepo.Repo, cacheStore cache.Store) (*apiCoreServices, error) {
+func buildAPICoreServices(runtimeCfg config.Runtime, repo *chrepo.Repo, calendarRepo *calendarrepo.Repo, cacheStore cache.Store, factorStore *feeds.Store) (*apiCoreServices, error) {
 	fundamentalsSvc := service.NewFundamentalsService(repo)
 	macroSvc := service.NewMacroService(repo)
 	fmpAPIKey, err := runtimeCfg.FMPAPIKey()
@@ -72,6 +73,7 @@ func buildAPICoreServices(runtimeCfg config.Runtime, repo *chrepo.Repo, calendar
 	financeCalendarSvc := service.NewFinanceCalendarService(calendarRepo, fmpClient, cacheStore)
 	companyProfileProvider := service.NewClickHouseUSStockCompanyProfileProvider(repo)
 	latestMarket := service.NewLatestUSMarketCache(cacheStore, runtimeCfg.LatestMarketDataRedisTTL())
+	backtests := service.NewPortfolioBacktestService(repo, factorStore).WithReportsRoot(runtimeCfg.Paths.ReportsRoot)
 
 	return &apiCoreServices{
 		fundamentals:    fundamentalsSvc,
@@ -83,6 +85,7 @@ func buildAPICoreServices(runtimeCfg config.Runtime, repo *chrepo.Repo, calendar
 		screener: service.NewScreenerService(repo, cacheStore).
 			WithCompanyProfileProvider(companyProfileProvider).
 			WithLatestMarketCache(latestMarket),
+		backtests:    backtests,
 		latestMarket: latestMarket,
 		fmpClient:    fmpClient,
 	}, nil
@@ -98,7 +101,7 @@ func buildAPIDeps(runtimeCfg config.Runtime, repo *chrepo.Repo, factorStore *fee
 		DataBrowser:       service.NewDataBrowserService(repo),
 		Features:          service.NewFeatureService(repo),
 		Indicators:        service.NewIndicatorService(repo),
-		StrategyBacktests: service.NewPortfolioBacktestService(repo, factorStore).WithReportsRoot(runtimeCfg.Paths.ReportsRoot),
+		StrategyBacktests: services.backtests,
 		CryptoSpot:        service.NewCryptoSpotService(repo),
 		Forex:             service.NewForexService(repo),
 		Screener:          services.screener,
@@ -228,10 +231,15 @@ func run() error {
 	}()
 
 	repo := chrepo.NewRepo(conn)
-	apiServices, err := buildAPICoreServices(runtimeCfg, repo, calendarRepo, cacheStore)
+	apiServices, err := buildAPICoreServices(runtimeCfg, repo, calendarRepo, cacheStore, factorStore)
 	if err != nil {
 		return err
 	}
+	defer func() {
+		if closeErr := apiServices.backtests.Close(); closeErr != nil {
+			slog.Error("close backtest service", "error", closeErr)
+		}
+	}()
 
 	polygonSvc, err := service.NewPolygonServiceFromConfig(runtimeCfg, cacheStore)
 	if err != nil {

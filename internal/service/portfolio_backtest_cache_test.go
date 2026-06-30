@@ -18,6 +18,7 @@ func (p *stubOptionsChainProvider) AvailableContracts(time.Time) []backtest.Opti
 
 func TestPortfolioBacktestServiceLoadOptionsChainProviderReusesCachedProvider(t *testing.T) {
 	svc := NewPortfolioBacktestService(nil, nil)
+	t.Cleanup(func() { _ = svc.Close() })
 	var loadCalls int
 	svc.chainLoader = func(_ context.Context, marketName, asset, interval string, from, to time.Time) (backtest.OptionsChainProvider, error) {
 		loadCalls++
@@ -46,6 +47,7 @@ func TestPortfolioBacktestServiceLoadOptionsChainProviderReusesCachedProvider(t 
 func TestPortfolioBacktestServiceLoadOptionsChainProviderReloadsExpiredEntry(t *testing.T) {
 	now := time.Date(2026, 4, 14, 9, 0, 0, 0, time.UTC)
 	svc := NewPortfolioBacktestService(nil, nil)
+	t.Cleanup(func() { _ = svc.Close() })
 	svc.now = func() time.Time { return now }
 	svc.chainCache = newOptionsChainProviderCache(svc.now, time.Minute, 4)
 
@@ -81,5 +83,15 @@ func TestPortfolioBacktestServiceLoadOptionsChainProviderReloadsExpiredEntry(t *
 	}
 	if third == second {
 		t.Fatal("expected provider to reload after TTL expiry")
+	}
+}
+
+func TestPortfolioBacktestServiceCloseIsIdempotent(t *testing.T) {
+	svc := NewPortfolioBacktestService(nil, nil)
+	if err := svc.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	if err := svc.Close(); err != nil {
+		t.Fatalf("second Close() error = %v", err)
 	}
 }

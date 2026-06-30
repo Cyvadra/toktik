@@ -47,6 +47,21 @@ type usTurnoverOptionAggregate struct {
 	OptionTradingDays int
 }
 
+type optionScreenSortSpec struct {
+	Name        string
+	PrimaryExpr string
+	PrimaryDesc bool
+	OrderSQL    string
+}
+
+type optionScreenCursor struct {
+	Sort         string  `json:"sort"`
+	PrimaryValue float64 `json:"primary_value,omitempty"`
+	DaysToExpiry int     `json:"days_to_expiry"`
+	Strike       float64 `json:"strike"`
+	Symbol       string  `json:"symbol"`
+}
+
 func NewScreenerService(repo *chrepo.Repo, cacheStore ...cache.Store) *ScreenerService {
 	service := &ScreenerService{repo: repo}
 	if len(cacheStore) > 0 {
@@ -522,29 +537,29 @@ WHERE chain.timestamp = latest.ts
 	if req.OpenInterestMin != nil {
 		query += fmt.Sprintf(` AND %s >= %.17g`, oiCol, *req.OpenInterestMin)
 	}
+	if req.RelativeSpreadMax != nil {
+		if !isCrypto {
+			return nil, dto.NewValidationError("relative_spread_max is not supported for us-options until bid/ask data is available")
+		}
+		query += fmt.Sprintf(` AND %s <= %.17g`, cryptoOptionRelativeSpreadExpr(), *req.RelativeSpreadMax)
+	}
 	if !isCrypto && req.DTEMin == nil && req.DTEMax == nil {
 		query += ` AND toInt32(dateDiff('day', now(), expiration_val)) >= 0`
 	}
 
-	_ = premiumCol
-	_ = volumeCol
-	_ = oiCol
-
-	sortBy := "days_to_expiry ASC, strike ASC"
-	switch strings.ToLower(req.SortBy) {
-	case "delta":
-		sortBy = "delta DESC"
-	case "iv", "implied_volatility":
-		sortBy = "implied_volatility DESC"
-	case "volume":
-		sortBy = "volume DESC"
-	case "dte":
-		sortBy = "days_to_expiry ASC"
-	case "premium":
-		sortBy = "close DESC"
+	sortSpec := buildOptionScreenSortSpec(req.SortBy, isCrypto)
+	if req.Cursor != "" {
+		cursor, err := decodeOptionScreenCursor(req.Cursor)
+		if err != nil {
+			return nil, invalidCursorError(err)
+		}
+		if cursor.Sort != sortSpec.Name {
+			return nil, dto.NewValidationError("cursor sort %q does not match requested sort %q", cursor.Sort, sortSpec.Name)
+		}
+		query += optionScreenCursorWhereSQL(sortSpec, optionScreenSymbolExpr(isCrypto), expirationCol(isCrypto), optionScreenStrikeExpr(isCrypto), cursor)
 	}
 
-	query += fmt.Sprintf(` ORDER BY %s LIMIT %d`, sortBy, limit+1)
+	query += fmt.Sprintf(` ORDER BY %s LIMIT %d`, sortSpec.OrderSQL, limit+1)
 
 	rows, err := s.repo.Query(ctx, query)
 	if err != nil {
@@ -578,17 +593,157 @@ WHERE chain.timestamp = latest.ts
 	}
 
 	resp := &dto.ScreenOptionResponse{Data: make([]dto.ScreenedOption, 0)}
-	if len(results) > limit {
-		resp.Data = results[:limit]
-		// Cursor-based pagination by symbol
-		resp.NextCursor = encodeCursorString(results[limit-1].Symbol)
-	} else {
-		resp.Data = results
-	}
+	resp.Data, resp.NextCursor = paginateScreenedOptions(results, limit, sortSpec)
 	if req.IncludeLatest != nil && *req.IncludeLatest && req.Market == "us-options" && s.latest != nil {
 		resp.Data, resp.NextCursor = s.mergeLatestOptionScreenRows(ctx, req, resp.Data, resp.NextCursor, limit)
 	}
 	return resp, nil
+}
+
+func buildOptionScreenSortSpec(sortBy string, isCrypto bool) optionScreenSortSpec {
+	symbolExpr := optionScreenSymbolExpr(isCrypto)
+	dteExpr := fmt.Sprintf("toInt32(dateDiff('day', now(), %s))", expirationCol(isCrypto))
+	strikeExpr := optionScreenStrikeExpr(isCrypto)
+	baseOrder := fmt.Sprintf("%s ASC, %s ASC, %s ASC", dteExpr, strikeExpr, symbolExpr)
+	spec := optionScreenSortSpec{Name: mapOptionScreenSortName(sortBy), OrderSQL: baseOrder}
+	switch spec.Name {
+	case "delta":
+		spec.PrimaryExpr = optionScreenDeltaExpr(isCrypto)
+		spec.PrimaryDesc = true
+	case "iv":
+		spec.PrimaryExpr = optionScreenIVExpr(isCrypto)
+		spec.PrimaryDesc = true
+	case "volume":
+		spec.PrimaryExpr = optionScreenVolumeExpr(isCrypto)
+		spec.PrimaryDesc = true
+	case "premium":
+		spec.PrimaryExpr = optionScreenPremiumExpr(isCrypto)
+		spec.PrimaryDesc = true
+	}
+	if spec.PrimaryExpr != "" {
+		spec.OrderSQL = fmt.Sprintf("%s DESC, %s", spec.PrimaryExpr, baseOrder)
+	}
+	return spec
+}
+
+func mapOptionScreenSortName(sortBy string) string {
+	switch strings.ToLower(strings.TrimSpace(sortBy)) {
+	case "delta":
+		return "delta"
+	case "iv", "implied_volatility":
+		return "iv"
+	case "volume":
+		return "volume"
+	case "premium":
+		return "premium"
+	default:
+		return "dte"
+	}
+}
+
+func optionScreenSymbolExpr(isCrypto bool) string {
+	if isCrypto {
+		return "m.symbol"
+	}
+	return "symbol_val"
+}
+
+func optionScreenStrikeExpr(isCrypto bool) string {
+	if isCrypto {
+		return "m.strike_price"
+	}
+	return "strike_val"
+}
+
+func optionScreenDeltaExpr(bool) string { return "delta_val" }
+
+func optionScreenIVExpr(isCrypto bool) string {
+	if isCrypto {
+		return "mark_iv_val"
+	}
+	return "implied_volatility_val"
+}
+
+func optionScreenVolumeExpr(bool) string { return "volume_val" }
+
+func optionScreenPremiumExpr(isCrypto bool) string {
+	if isCrypto {
+		return "mark_close_val"
+	}
+	return "close_price_val"
+}
+
+func cryptoOptionRelativeSpreadExpr() string {
+	return "if(mark_close_val > 0, (ask_close_val - bid_close_val) / mark_close_val, 0)"
+}
+
+func optionScreenCursorWhereSQL(spec optionScreenSortSpec, symbolExpr, expirationExpr, strikeExpr string, cursor optionScreenCursor) string {
+	dteExpr := fmt.Sprintf("toInt32(dateDiff('day', now(), %s))", expirationExpr)
+	tail := fmt.Sprintf(`(%s > %d OR (%s = %d AND (%s > %.17g OR (%s = %.17g AND %s > %s))))`,
+		dteExpr, cursor.DaysToExpiry,
+		dteExpr, cursor.DaysToExpiry,
+		strikeExpr, cursor.Strike,
+		strikeExpr, cursor.Strike,
+		symbolExpr, clickHouseStringLiteral(cursor.Symbol),
+	)
+	if spec.PrimaryExpr == "" {
+		return " AND " + tail
+	}
+	primaryCompare := ">"
+	if spec.PrimaryDesc {
+		primaryCompare = "<"
+	}
+	return fmt.Sprintf(` AND (%s %s %.17g OR (%s = %.17g AND %s))`, spec.PrimaryExpr, primaryCompare, cursor.PrimaryValue, spec.PrimaryExpr, cursor.PrimaryValue, tail)
+}
+
+func paginateScreenedOptions(rows []dto.ScreenedOption, limit int, spec optionScreenSortSpec) ([]dto.ScreenedOption, string) {
+	if len(rows) > limit {
+		return rows[:limit], encodeOptionScreenCursor(rows[limit-1], spec)
+	}
+	return rows, ""
+}
+
+func encodeOptionScreenCursor(row dto.ScreenedOption, spec optionScreenSortSpec) string {
+	cursor := optionScreenCursor{
+		Sort:         spec.Name,
+		PrimaryValue: optionScreenPrimaryValue(row, spec.Name),
+		DaysToExpiry: row.DaysToExpiry,
+		Strike:       row.Strike,
+		Symbol:       row.Symbol,
+	}
+	payload, _ := json.Marshal(cursor)
+	return encodeCursorString(string(payload))
+}
+
+func decodeOptionScreenCursor(raw string) (optionScreenCursor, error) {
+	payload, err := decodeCursorString(raw)
+	if err != nil {
+		return optionScreenCursor{}, err
+	}
+	var cursor optionScreenCursor
+	if err := json.Unmarshal([]byte(payload), &cursor); err != nil {
+		return optionScreenCursor{}, err
+	}
+	cursor.Symbol = strings.TrimSpace(cursor.Symbol)
+	if cursor.Sort == "" || cursor.Symbol == "" {
+		return optionScreenCursor{}, fmt.Errorf("missing cursor fields")
+	}
+	return cursor, nil
+}
+
+func optionScreenPrimaryValue(row dto.ScreenedOption, sortName string) float64 {
+	switch sortName {
+	case "delta":
+		return row.Delta
+	case "iv":
+		return row.ImpliedVolatility
+	case "volume":
+		return row.Volume
+	case "premium":
+		return row.Close
+	default:
+		return 0
+	}
 }
 
 func (s *ScreenerService) applyLatestUnderlyingOverlay(ctx context.Context, rows []dto.ScreenedUnderlying) {
@@ -638,9 +793,38 @@ func (s *ScreenerService) mergeLatestOptionScreenRows(ctx context.Context, req d
 		out = append(out, row)
 	}
 	sortScreenedOptions(out, req.SortBy)
-	return applySymbolCursorPagination(out, limit, func(r dto.ScreenedOption) string {
-		return encodeCursorString(r.Symbol)
-	})
+	sortSpec := optionScreenSortSpec{Name: mapOptionScreenSortName(req.SortBy)}
+	if req.Cursor != "" {
+		cursor, err := decodeOptionScreenCursor(req.Cursor)
+		if err == nil && cursor.Sort == sortSpec.Name {
+			out = filterScreenedOptionsAfterCursor(out, cursor, sortSpec)
+		}
+	}
+	return paginateScreenedOptions(out, limit, sortSpec)
+}
+
+func filterScreenedOptionsAfterCursor(rows []dto.ScreenedOption, cursor optionScreenCursor, spec optionScreenSortSpec) []dto.ScreenedOption {
+	filtered := rows[:0]
+	for _, row := range rows {
+		if screenedOptionAfterCursor(row, cursor, spec.Name) {
+			filtered = append(filtered, row)
+		}
+	}
+	return filtered
+}
+
+func screenedOptionAfterCursor(row dto.ScreenedOption, cursor optionScreenCursor, sortName string) bool {
+	primary := optionScreenPrimaryValue(row, sortName)
+	if sortName != "dte" && primary != cursor.PrimaryValue {
+		return primary < cursor.PrimaryValue
+	}
+	if row.DaysToExpiry != cursor.DaysToExpiry {
+		return row.DaysToExpiry > cursor.DaysToExpiry
+	}
+	if row.Strike != cursor.Strike {
+		return row.Strike > cursor.Strike
+	}
+	return row.Symbol > cursor.Symbol
 }
 
 func screenedOptionFromLatestContract(underlying string, contract dto.USOptionChainContract) dto.ScreenedOption {
@@ -715,6 +899,11 @@ func screenedOptionMatchesRequest(row dto.ScreenedOption, req dto.ScreenOptionRe
 	}
 	if req.OpenInterestMin != nil && row.OpenInterest < *req.OpenInterestMin {
 		return false
+	}
+	if req.RelativeSpreadMax != nil {
+		if row.RelativeSpread == nil || *row.RelativeSpread > *req.RelativeSpreadMax {
+			return false
+		}
 	}
 	return true
 }

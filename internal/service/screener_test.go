@@ -272,6 +272,69 @@ func TestScreenOptionsFiltersExpiredUSContractsByDefault(t *testing.T) {
 	}
 }
 
+func TestScreenOptionsAppliesSortAwareCursor(t *testing.T) {
+	cursor := encodeOptionScreenCursor(dto.ScreenedOption{Symbol: "O:SPY260620C00735000", DaysToExpiry: 9, Strike: 735, Volume: 60962}, optionScreenSortSpec{Name: "volume"})
+	conn := &fakeScreenerConn{rows: []driver.Rows{&fakeScreenerRows{}}}
+	svc := NewScreenerService(chrepo.NewRepo(conn))
+
+	_, err := svc.ScreenOptions(context.Background(), dto.ScreenOptionRequest{Market: "us-options", Underlying: "SPY", SortBy: "volume", Cursor: cursor, Limit: 10})
+	if err != nil {
+		t.Fatalf("ScreenOptions() error = %v", err)
+	}
+	if len(conn.queries) != 1 {
+		t.Fatalf("expected 1 query, got %d", len(conn.queries))
+	}
+	query := conn.queries[0]
+	for _, want := range []string{
+		"volume_val DESC",
+		"volume_val < 60962",
+		"dateDiff('day', now(), expiration_val)) > 9",
+		"strike_val > 735",
+		"symbol_val > 'O:SPY260620C00735000'",
+	} {
+		if !strings.Contains(query, want) {
+			t.Fatalf("expected query to contain %q, got %q", want, query)
+		}
+	}
+}
+
+func TestScreenOptionsRejectsCursorForDifferentSort(t *testing.T) {
+	cursor := encodeOptionScreenCursor(dto.ScreenedOption{Symbol: "O:SPY260620C00735000", DaysToExpiry: 9, Strike: 735, Volume: 60962}, optionScreenSortSpec{Name: "volume"})
+	svc := NewScreenerService(chrepo.NewRepo(&fakeScreenerConn{}))
+
+	_, err := svc.ScreenOptions(context.Background(), dto.ScreenOptionRequest{Market: "us-options", Underlying: "SPY", SortBy: "delta", Cursor: cursor, Limit: 10})
+	if err == nil || !strings.Contains(err.Error(), "does not match requested sort") {
+		t.Fatalf("expected cursor sort mismatch error, got %v", err)
+	}
+}
+
+func TestScreenOptionsAppliesCryptoRelativeSpreadFilter(t *testing.T) {
+	maxSpread := 0.15
+	conn := &fakeScreenerConn{rows: []driver.Rows{&fakeScreenerRows{}}}
+	svc := NewScreenerService(chrepo.NewRepo(conn))
+
+	_, err := svc.ScreenOptions(context.Background(), dto.ScreenOptionRequest{Market: "crypto-options", Underlying: "BTC", RelativeSpreadMax: &maxSpread, Limit: 10})
+	if err != nil {
+		t.Fatalf("ScreenOptions() error = %v", err)
+	}
+	if len(conn.queries) != 1 {
+		t.Fatalf("expected 1 query, got %d", len(conn.queries))
+	}
+	if !strings.Contains(conn.queries[0], "(ask_close_val - bid_close_val) / mark_close_val") || !strings.Contains(conn.queries[0], "<= 0.14999999999999999") {
+		t.Fatalf("expected relative spread filter, got %q", conn.queries[0])
+	}
+}
+
+func TestScreenOptionsRejectsUSRelativeSpreadUntilBidAskAvailable(t *testing.T) {
+	maxSpread := 0.15
+	svc := NewScreenerService(chrepo.NewRepo(&fakeScreenerConn{}))
+
+	_, err := svc.ScreenOptions(context.Background(), dto.ScreenOptionRequest{Market: "us-options", Underlying: "SPY", RelativeSpreadMax: &maxSpread, Limit: 10})
+	if err == nil || !strings.Contains(err.Error(), "relative_spread_max is not supported") {
+		t.Fatalf("expected unsupported relative spread error, got %v", err)
+	}
+}
+
 func TestMergeLatestOptionScreenRowsAddsLatestContractsBeforePagination(t *testing.T) {
 	store := cache.NewMemoryStore()
 	latest := NewLatestUSMarketCache(store, time.Hour)

@@ -61,8 +61,9 @@ type Interpreter struct {
 	InputStrings map[string]string
 
 	// Bridge for strategy/trading calls (set externally).
-	Bridge      Bridge
-	Diagnostics diagnostics.Collector
+	Bridge        Bridge
+	Diagnostics   diagnostics.Collector
+	readOnlyDepth int
 
 	// last signal and return value
 	sig    signal
@@ -690,6 +691,30 @@ func (ip *Interpreter) evalExpr(expr ast.Expr, scope *Scope) Value {
 // under a temporary context.
 func (ip *Interpreter) EvalExpression(expr ast.Expr, scope *Scope) Value {
 	return ip.evalExpr(expr, scope)
+}
+
+func (ip *Interpreter) EvalReadOnlyExpression(expr ast.Expr, scope *Scope) Value {
+	ip.readOnlyDepth++
+	defer func() { ip.readOnlyDepth-- }()
+	return ip.evalExpr(expr, scope)
+}
+
+func (ip *Interpreter) AllowSideEffect(function string) bool {
+	if ip == nil || ip.readOnlyDepth == 0 {
+		return true
+	}
+	if ip.Diagnostics != nil {
+		barIndex := ip.BarIndex
+		ip.Diagnostics.Add(diagnostics.Diagnostic{
+			Severity: diagnostics.SeverityError,
+			Code:     "dsl.readonly_side_effect",
+			Function: function,
+			Message:  "side-effecting DSL calls are not allowed inside read-only expressions",
+			BarIndex: &barIndex,
+			Hint:     "Move trading, spread, group, or scheduling calls out of request.security expression arguments.",
+		})
+	}
+	return false
 }
 
 func snapshotContainerValue(v Value) Value {
