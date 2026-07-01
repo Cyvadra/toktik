@@ -1,6 +1,6 @@
 # US Stock Split Adjustments
 
-US stock prices returned by database-backed services are front-adjusted for stock splits by default.
+US stock prices returned by database-backed services are front-adjusted for stock splits by default. The US stock bars API can return raw unadjusted OHLC prices by passing `adjusted=false`.
 
 ## Data Source
 
@@ -10,7 +10,7 @@ The split sync is registered as `fmp_us_stock_splits` in `data-sync-pipeline` an
 
 ## Price Basis
 
-Raw OHLC bars remain unchanged in `us_stocks_bar_1m` and the precomputed `us_stocks_bar_*` aggregate tables. Query services apply the split factor at read time:
+Raw OHLC bars remain unchanged in `us_stocks_bar_1m` and the precomputed `us_stocks_bar_*` aggregate tables. Query services apply the split factor at read time unless a supported request explicitly opts out:
 
 ```text
 price_factor = product(denominator / numerator for split_date > bar_date)

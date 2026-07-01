@@ -263,7 +263,7 @@ func TestUSStocksBarsRoute(t *testing.T) {
 	)
 
 	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("GET", "/api/v1/markets/us-stocks/bars?symbol=AAPL&interval=1m&from=2024-01-02&to=2024-01-03&factor=pe&factor=pb", nil)
+	req, _ := http.NewRequest("GET", "/api/v1/markets/us-stocks/bars?symbol=AAPL&interval=1m&from=2024-01-02&to=2024-01-03&factor=pe&factor=pb&adjusted=false", nil)
 	r.ServeHTTP(w, req)
 
 	if w.Code != http.StatusOK {
@@ -271,6 +271,9 @@ func TestUSStocksBarsRoute(t *testing.T) {
 	}
 	if len(mock.barsReq.Factors) != 2 || mock.barsReq.Factors[0] != "pe" || mock.barsReq.Factors[1] != "pb" {
 		t.Fatalf("expected factor query params to be forwarded, got %#v", mock.barsReq.Factors)
+	}
+	if mock.barsReq.Adjusted == nil || *mock.barsReq.Adjusted {
+		t.Fatalf("expected adjusted=false query param to be forwarded, got %#v", mock.barsReq.Adjusted)
 	}
 	if !strings.Contains(w.Body.String(), `"meta":{"profile":{"symbol":"AAPL","sector":"Technology","industry":"Consumer Electronics"}}`) {
 		t.Fatalf("expected company profile metadata in response body, got %s", w.Body.String())

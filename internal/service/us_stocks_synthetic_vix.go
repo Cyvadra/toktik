@@ -44,14 +44,14 @@ func syntheticVIXFetchLimit(limit int) int {
 	return limit*4 + 1
 }
 
-func (s *USStocksService) mergeSyntheticVIXBars(ctx context.Context, tableName string, fromT, toT time.Time, session string, limit int, actual []dto.USStockBarRow) ([]dto.USStockBarRow, error) {
+func (s *USStocksService) mergeSyntheticVIXBars(ctx context.Context, tableName string, fromT, toT time.Time, session string, limit int, adjusted bool, actual []dto.USStockBarRow) ([]dto.USStockBarRow, error) {
 	model, err := s.loadSyntheticVIXModel(ctx)
 	if err != nil {
 		return nil, err
 	}
 	model = resolveSyntheticVIXModel(model)
 
-	proxySeries, err := s.loadSyntheticVIXProxySeries(ctx, tableName, fromT, toT, session, limit, model.Symbols)
+	proxySeries, err := s.loadSyntheticVIXProxySeries(ctx, tableName, fromT, toT, session, limit, adjusted, model.Symbols)
 	if err != nil {
 		return nil, err
 	}
@@ -194,13 +194,13 @@ func defaultSyntheticVIXModel() *syntheticVIXModel {
 	}
 }
 
-func (s *USStocksService) loadSyntheticVIXProxySeries(ctx context.Context, tableName string, fromT, toT time.Time, session string, limit int, symbols []string) (map[time.Time]map[string]dto.USStockBarRow, error) {
+func (s *USStocksService) loadSyntheticVIXProxySeries(ctx context.Context, tableName string, fromT, toT time.Time, session string, limit int, adjusted bool, symbols []string) (map[time.Time]map[string]dto.USStockBarRow, error) {
 	if s == nil || s.repo == nil {
 		return nil, nil
 	}
 	series := make(map[time.Time]map[string]dto.USStockBarRow)
 	for _, symbol := range symbols {
-		rows, err := s.queryBarRows(ctx, tableName, symbol, fromT, toT, session, limit)
+		rows, err := s.queryBarRows(ctx, tableName, symbol, fromT, toT, session, limit, adjusted)
 		if err != nil {
 			return nil, err
 		}

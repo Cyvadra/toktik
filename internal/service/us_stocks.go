@@ -255,12 +255,13 @@ func (s *USStocksService) QueryBars(ctx context.Context, req dto.USStockBarReque
 	if isSyntheticVIXSymbol(req.Symbol) {
 		fetchLimit = syntheticVIXFetchLimit(limit)
 	}
-	bars, err := s.queryBarRows(ctx, tableName, req.Symbol, fromT, toT, session, fetchLimit)
+	adjusted := usStockBarsAdjusted(req.Adjusted)
+	bars, err := s.queryBarRows(ctx, tableName, req.Symbol, fromT, toT, session, fetchLimit, adjusted)
 	if err != nil {
 		return nil, err
 	}
 	if isSyntheticVIXSymbol(req.Symbol) {
-		bars, err = s.mergeSyntheticVIXBars(ctx, tableName, fromT, toT, session, fetchLimit, bars)
+		bars, err = s.mergeSyntheticVIXBars(ctx, tableName, fromT, toT, session, fetchLimit, adjusted, bars)
 		if err != nil {
 			return nil, err
 		}
@@ -299,6 +300,10 @@ func (s *USStocksService) QueryBars(ctx context.Context, req dto.USStockBarReque
 
 func (s *USStocksService) shouldMergeLatestStockBars(req dto.USStockBarRequest) bool {
 	return s != nil && s.latest != nil && req.IncludeLatest && req.Interval == "1d" && !isSyntheticVIXSymbol(req.Symbol)
+}
+
+func usStockBarsAdjusted(adjusted *bool) bool {
+	return adjusted == nil || *adjusted
 }
 
 func (s *USStocksService) stockBarFreshnessDiagnostic(ctx context.Context, symbol string, from, to time.Time, historicalLast *time.Time) *dto.USStockBarFreshnessMeta {
@@ -354,7 +359,15 @@ func latestUSStockDailyBarTimestamp(rows []LatestUSStockDailyBar) *time.Time {
 	return &last
 }
 
-func (s *USStocksService) queryBarRows(ctx context.Context, tableName, symbol string, fromT, toT time.Time, session string, limit int) ([]dto.USStockBarRow, error) {
+func (s *USStocksService) queryBarRows(ctx context.Context, tableName, symbol string, fromT, toT time.Time, session string, limit int, adjusted bool) ([]dto.USStockBarRow, error) {
+	openExpr := usStockPriceSQL("b", "open", "sp", adjusted)
+	highExpr := usStockPriceSQL("b", "high", "sp", adjusted)
+	lowExpr := usStockPriceSQL("b", "low", "sp", adjusted)
+	closeExpr := usStockPriceSQL("b", "close", "sp", adjusted)
+	splitJoin := ""
+	if adjusted {
+		splitJoin = chquery.USStockSplitJoinSQL("b", "sp")
+	}
 	query := fmt.Sprintf(`SELECT
 		b.timestamp,
 		b.symbol,
@@ -371,7 +384,7 @@ WHERE b.symbol = %s
 	AND b.timestamp < toDateTime(%s, 'UTC')%s
 GROUP BY b.timestamp, b.symbol, b.open, b.high, b.low, b.close, b.volume, b.transactions
 ORDER BY b.timestamp
-LIMIT %s`, chquery.USStockAdjustedPriceSQL("b", "open", "sp"), chquery.USStockAdjustedPriceSQL("b", "high", "sp"), chquery.USStockAdjustedPriceSQL("b", "low", "sp"), chquery.USStockAdjustedPriceSQL("b", "close", "sp"), tableName, chquery.USStockSplitJoinSQL("b", "sp"), clickhouseStringLiteral(symbol), clickhouseDateTimeLiteral(fromT), clickhouseDateTimeLiteral(toT), strings.ReplaceAll(usSessionCondition(session), " AND ", " AND b."), clickhouseUInt32Literal(limit))
+LIMIT %s`, openExpr, highExpr, lowExpr, closeExpr, tableName, splitJoin, clickhouseStringLiteral(symbol), clickhouseDateTimeLiteral(fromT), clickhouseDateTimeLiteral(toT), strings.ReplaceAll(usSessionCondition(session), " AND ", " AND b."), clickhouseUInt32Literal(limit))
 
 	rows, err := s.repo.Query(ctx, query)
 	if err != nil {
@@ -400,6 +413,13 @@ LIMIT %s`, chquery.USStockAdjustedPriceSQL("b", "open", "sp"), chquery.USStockAd
 		return nil, fmt.Errorf("iterate US stock bar rows: %w", err)
 	}
 	return bars, nil
+}
+
+func usStockPriceSQL(barAlias, column, splitAlias string, adjusted bool) string {
+	if adjusted {
+		return chquery.USStockAdjustedPriceSQL(barAlias, column, splitAlias)
+	}
+	return fmt.Sprintf("toFloat64(%s.%s)", barAlias, column)
 }
 
 func normalizeUSStockSymbolList(symbols []string) []string {

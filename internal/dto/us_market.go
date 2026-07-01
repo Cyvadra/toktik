@@ -8,6 +8,7 @@ type USStockBarRequest struct {
 	Interval      string   `form:"interval" binding:"required"`
 	From          string   `form:"from" binding:"required"`
 	To            string   `form:"to" binding:"required"`
+	Adjusted      *bool    `form:"adjusted" binding:"omitempty"`
 	Session       string   `form:"session" binding:"omitempty"`
 	Factors       []string `form:"factor" binding:"omitempty"`
 	Limit         int      `form:"limit" binding:"omitempty"`

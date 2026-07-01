@@ -173,6 +173,45 @@ func TestUSStocksQuerySplitsRequiresSymbol(t *testing.T) {
 	}
 }
 
+func TestUSStocksQueryBarsDefaultsToSplitAdjustedPrices(t *testing.T) {
+	rows := &fakeForexRows{data: [][]any{
+		{time.Date(2026, 1, 2, 14, 30, 0, 0, time.UTC), "AAPL", float32(100), float32(101), float32(99), float32(100.5), 1234.0, uint64(42)},
+	}}
+	conn := &fakeForexConn{rows: rows}
+	svc := NewUSStocksService(chrepo.NewRepo(conn))
+
+	_, err := svc.QueryBars(context.Background(), dto.USStockBarRequest{Symbol: "AAPL", Interval: "1d", From: "2026-01-01", To: "2026-01-03"})
+	if err != nil {
+		t.Fatalf("QueryBars returned error: %v", err)
+	}
+	if !strings.Contains(conn.queryText, "FROM us_stock_splits") {
+		t.Fatalf("expected default bars query to apply split adjustment, got %s", conn.queryText)
+	}
+	if !strings.Contains(conn.queryText, "toFloat64(b.open) * exp(sum") {
+		t.Fatalf("expected adjusted open expression, got %s", conn.queryText)
+	}
+}
+
+func TestUSStocksQueryBarsCanReturnRawUnadjustedPrices(t *testing.T) {
+	adjusted := false
+	rows := &fakeForexRows{data: [][]any{
+		{time.Date(2026, 1, 2, 14, 30, 0, 0, time.UTC), "AAPL", float32(100), float32(101), float32(99), float32(100.5), 1234.0, uint64(42)},
+	}}
+	conn := &fakeForexConn{rows: rows}
+	svc := NewUSStocksService(chrepo.NewRepo(conn))
+
+	_, err := svc.QueryBars(context.Background(), dto.USStockBarRequest{Symbol: "AAPL", Interval: "1d", From: "2026-01-01", To: "2026-01-03", Adjusted: &adjusted})
+	if err != nil {
+		t.Fatalf("QueryBars returned error: %v", err)
+	}
+	if strings.Contains(conn.queryText, "FROM us_stock_splits") || strings.Contains(conn.queryText, "latest_numerator") {
+		t.Fatalf("expected raw bars query to skip split adjustment, got %s", conn.queryText)
+	}
+	if !strings.Contains(conn.queryText, "toFloat32(toFloat64(b.open)) AS open") {
+		t.Fatalf("expected raw open expression, got %s", conn.queryText)
+	}
+}
+
 func TestLatestUSStockFreshnessStatusDistinguishesCacheMissAndMerge(t *testing.T) {
 	historicalLast := time.Date(2026, 6, 22, 0, 0, 0, 0, time.UTC)
 	latestLast := time.Date(2026, 6, 26, 0, 0, 0, 0, time.UTC)

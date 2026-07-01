@@ -671,6 +671,7 @@ Returns latest known values per (symbol, factor) at as_of. For us-stocks, price-
 | interval | query | string | yes | Bar interval |
 | from | query | string | yes | Start time (RFC3339 or YYYY-MM-DD) |
 | to | query | string | yes | End time (RFC3339 or YYYY-MM-DD) |
+| adjusted | query | boolean | no | Apply split adjustment to OHLC prices (defaults to true); set false for raw unadjusted prices. |
 | factor | query | array<string> | no | Optional fundamentals to align onto each bar (repeat or comma-separated, e.g. pe,pb). PE/PB are recomputed from each bar close using the latest known filing-derived denominator. |
 | include_latest | query | boolean | no | Merge Redis-cached provisional latest daily bars when interval=1d. This never calls upstream providers and defaults to false. |
 | limit | query | integer | no | Max rows (default 1000) |
