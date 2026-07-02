@@ -7,5 +7,5 @@ func init() {
 		Name:    "delta-filter-dsl",
 		Groups:  []string{"dsl"},
 		Profile: catalog.StrategyProfile{UsesOptions: true, RegularTrade: catalog.RegularTradeNone},
-	}, "delta-filter.dsl")
+	}, "delta-filter.toktik")
 }

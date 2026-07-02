@@ -7,5 +7,5 @@ func init() {
 		Name:    "strong-momentum-dsl",
 		Groups:  []string{"dsl", "universe", "momentum"},
 		Profile: catalog.StrategyProfile{UsesOptions: true, RegularTrade: catalog.RegularTradeNone},
-	}, "strong-momentum.dsl")
+	}, "strong-momentum.toktik")
 }

@@ -82,6 +82,9 @@ export-market-api-md:
 export-backtests-api-md:
 	go run ./cmd/api-docs-markdown -scope backtests -input docs/swagger.json -output docs/dsl.md -title "Backtests & DSL API"
 
+export-vscode-dsl-extension:
+	go run ./cmd/vscode-dsl-extension-data -output extension/vscode
+
 refresh-api-docs: swagger-fmt swagger-docs export-market-api-md export-backtests-api-md
 
 build-win-arm:

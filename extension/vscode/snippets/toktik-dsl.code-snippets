@@ -1,0 +1,990 @@
+{
+  "alpha.decay_linear": {
+    "body": "alpha.decay_linear(${1:x}, ${2:window})",
+    "description": "用於計算近期權重較高的線性衰減平均，降低舊資料影響。",
+    "prefix": "alpha.decay_linear"
+  },
+  "alpha.log_return": {
+    "body": "alpha.log_return(${1:x}, ${2:period})",
+    "description": "用於計算指定週期的對數報酬。",
+    "prefix": "alpha.log_return"
+  },
+  "alpha.rank": {
+    "body": "alpha.rank(${1:x})",
+    "description": "用於把目前值轉成歷史百分位，適合判斷目前價格或因子相對自身歷史是否偏高。",
+    "prefix": "alpha.rank"
+  },
+  "alpha.scale": {
+    "body": "alpha.scale(${1:x}, ${2:target_sum})",
+    "description": "用於把單一訊號縮放到指定目標絕對值。",
+    "prefix": "alpha.scale"
+  },
+  "alpha.signed_power": {
+    "body": "alpha.signed_power(${1:x}, ${2:exp})",
+    "description": "用於保留正負號並放大或壓縮訊號強度。",
+    "prefix": "alpha.signed_power"
+  },
+  "alpha.ts_argmax": {
+    "body": "alpha.ts_argmax(${1:x}, ${2:window})",
+    "description": "用於取得近期最高值距離目前幾根 bar。",
+    "prefix": "alpha.ts_argmax"
+  },
+  "alpha.ts_argmin": {
+    "body": "alpha.ts_argmin(${1:x}, ${2:window})",
+    "description": "用於取得近期最低值距離目前幾根 bar。",
+    "prefix": "alpha.ts_argmin"
+  },
+  "alpha.ts_corr": {
+    "body": "alpha.ts_corr(${1:x}, ${2:y}, ${3:window})",
+    "description": "用於衡量兩個序列近期相關性，例如價格與成交量或標的與基準指數。",
+    "prefix": "alpha.ts_corr"
+  },
+  "alpha.ts_cov": {
+    "body": "alpha.ts_cov(${1:x}, ${2:y}, ${3:window})",
+    "description": "用於衡量兩個序列近期共同變動程度。",
+    "prefix": "alpha.ts_cov"
+  },
+  "alpha.ts_delta": {
+    "body": "alpha.ts_delta(${1:x}, ${2:period})",
+    "description": "用於計算目前值與 N 根 bar 前的差值。",
+    "prefix": "alpha.ts_delta"
+  },
+  "alpha.ts_kurtosis": {
+    "body": "alpha.ts_kurtosis(${1:x}, ${2:window})",
+    "description": "用於衡量近期分布尾部厚度，輔助辨識極端波動環境。",
+    "prefix": "alpha.ts_kurtosis"
+  },
+  "alpha.ts_max": {
+    "body": "alpha.ts_max(${1:x}, ${2:window})",
+    "description": "用於取得近期視窗最大值。",
+    "prefix": "alpha.ts_max"
+  },
+  "alpha.ts_mean": {
+    "body": "alpha.ts_mean(${1:x}, ${2:window})",
+    "description": "用於計算近期視窗平均值，可作平滑濾網。",
+    "prefix": "alpha.ts_mean"
+  },
+  "alpha.ts_median": {
+    "body": "alpha.ts_median(${1:x}, ${2:window})",
+    "description": "用於取得近期視窗中位數，降低極端值影響。",
+    "prefix": "alpha.ts_median"
+  },
+  "alpha.ts_min": {
+    "body": "alpha.ts_min(${1:x}, ${2:window})",
+    "description": "用於取得近期視窗最小值。",
+    "prefix": "alpha.ts_min"
+  },
+  "alpha.ts_rank": {
+    "body": "alpha.ts_rank(${1:x}, ${2:window})",
+    "description": "用於取得目前值在近期視窗內的排名比例。",
+    "prefix": "alpha.ts_rank"
+  },
+  "alpha.ts_skewness": {
+    "body": "alpha.ts_skewness(${1:x}, ${2:window})",
+    "description": "用於衡量近期分布偏態，輔助辨識報酬分布是否偏向單側。",
+    "prefix": "alpha.ts_skewness"
+  },
+  "alpha.ts_std": {
+    "body": "alpha.ts_std(${1:x}, ${2:window})",
+    "description": "用於衡量近期視窗波動度。",
+    "prefix": "alpha.ts_std"
+  },
+  "alpha.ts_sum": {
+    "body": "alpha.ts_sum(${1:x}, ${2:window})",
+    "description": "用於計算近期視窗總和，例如累積成交量或累積報酬。",
+    "prefix": "alpha.ts_sum"
+  },
+  "alpha.zscore": {
+    "body": "alpha.zscore(${1:x}, ${2:window})",
+    "description": "用於衡量目前值偏離近期均值幾個標準差，常作為均值回歸或異常波動濾網。",
+    "prefix": "alpha.zscore"
+  },
+  "buy": {
+    "body": "buy(${1:qty})",
+    "description": "用於快速送出基本買入指令，適合最小範例或不需要命名部位的腳本。",
+    "prefix": "buy"
+  },
+  "config.get": {
+    "body": "config.get(${1:name}, ${2:defval})",
+    "description": "用於讀取策略 catalog 或 API 注入的數值設定，並在未設定時使用預設值。",
+    "prefix": "config.get"
+  },
+  "config.string": {
+    "body": "config.string(${1:name}, ${2:defval})",
+    "description": "用於讀取策略 catalog 或 API 注入的字串設定，例如模式名稱或標籤。",
+    "prefix": "config.string"
+  },
+  "contract.ask": {
+    "body": "contract.ask(${1:contract})",
+    "description": "用於讀取已選期權合約的欄位，讓策略能依履約價、到期日、Greeks 或報價做篩選。",
+    "prefix": "contract.ask"
+  },
+  "contract.bid": {
+    "body": "contract.bid(${1:contract})",
+    "description": "用於讀取已選期權合約的欄位，讓策略能依履約價、到期日、Greeks 或報價做篩選。",
+    "prefix": "contract.bid"
+  },
+  "contract.delta": {
+    "body": "contract.delta(${1:contract})",
+    "description": "用於讀取已選期權合約的欄位，讓策略能依履約價、到期日、Greeks 或報價做篩選。",
+    "prefix": "contract.delta"
+  },
+  "contract.dte": {
+    "body": "contract.dte(${1:contract})",
+    "description": "用於讀取已選期權合約的欄位，讓策略能依履約價、到期日、Greeks 或報價做篩選。",
+    "prefix": "contract.dte"
+  },
+  "contract.expiry": {
+    "body": "contract.expiry(${1:contract})",
+    "description": "用於讀取已選期權合約的欄位，讓策略能依履約價、到期日、Greeks 或報價做篩選。",
+    "prefix": "contract.expiry"
+  },
+  "contract.gamma": {
+    "body": "contract.gamma(${1:contract})",
+    "description": "用於讀取已選期權合約的欄位，讓策略能依履約價、到期日、Greeks 或報價做篩選。",
+    "prefix": "contract.gamma"
+  },
+  "contract.iv": {
+    "body": "contract.iv(${1:contract})",
+    "description": "用於讀取已選期權合約的欄位，讓策略能依履約價、到期日、Greeks 或報價做篩選。",
+    "prefix": "contract.iv"
+  },
+  "contract.mark": {
+    "body": "contract.mark(${1:contract})",
+    "description": "用於讀取已選期權合約的欄位，讓策略能依履約價、到期日、Greeks 或報價做篩選。",
+    "prefix": "contract.mark"
+  },
+  "contract.market": {
+    "body": "contract.market(${1:contract})",
+    "description": "用於讀取已選期權合約的欄位，讓策略能依履約價、到期日、Greeks 或報價做篩選。",
+    "prefix": "contract.market"
+  },
+  "contract.oi": {
+    "body": "contract.oi(${1:contract})",
+    "description": "用於讀取已選期權合約的欄位，讓策略能依履約價、到期日、Greeks 或報價做篩選。",
+    "prefix": "contract.oi"
+  },
+  "contract.strike": {
+    "body": "contract.strike(${1:contract})",
+    "description": "用於讀取已選期權合約的欄位，讓策略能依履約價、到期日、Greeks 或報價做篩選。",
+    "prefix": "contract.strike"
+  },
+  "contract.symbol": {
+    "body": "contract.symbol(${1:contract})",
+    "description": "用於讀取已選期權合約的欄位，讓策略能依履約價、到期日、Greeks 或報價做篩選。",
+    "prefix": "contract.symbol"
+  },
+  "contract.theta": {
+    "body": "contract.theta(${1:contract})",
+    "description": "用於讀取已選期權合約的欄位，讓策略能依履約價、到期日、Greeks 或報價做篩選。",
+    "prefix": "contract.theta"
+  },
+  "contract.type": {
+    "body": "contract.type(${1:contract})",
+    "description": "用於讀取已選期權合約的欄位，讓策略能依履約價、到期日、Greeks 或報價做篩選。",
+    "prefix": "contract.type"
+  },
+  "contract.underlying": {
+    "body": "contract.underlying(${1:contract})",
+    "description": "用於讀取已選期權合約的欄位，讓策略能依履約價、到期日、Greeks 或報價做篩選。",
+    "prefix": "contract.underlying"
+  },
+  "contract.vega": {
+    "body": "contract.vega(${1:contract})",
+    "description": "用於讀取已選期權合約的欄位，讓策略能依履約價、到期日、Greeks 或報價做篩選。",
+    "prefix": "contract.vega"
+  },
+  "contract.volume": {
+    "body": "contract.volume(${1:contract})",
+    "description": "用於讀取已選期權合約的欄位，讓策略能依履約價、到期日、Greeks 或報價做篩選。",
+    "prefix": "contract.volume"
+  },
+  "event.consume_all": {
+    "body": "event.consume_all()",
+    "description": "用於一次標記目前 bar 所有未處理事件為已消費。",
+    "prefix": "event.consume_all"
+  },
+  "event.is_add": {
+    "body": "event.is_add()",
+    "description": "用於判斷下一個事件是否為 add 動作。",
+    "prefix": "event.is_add"
+  },
+  "event.is_close": {
+    "body": "event.is_close()",
+    "description": "用於判斷下一個事件是否為 close 動作。",
+    "prefix": "event.is_close"
+  },
+  "event.is_init": {
+    "body": "event.is_init()",
+    "description": "用於判斷下一個事件是否為 init 動作。",
+    "prefix": "event.is_init"
+  },
+  "event.is_roll": {
+    "body": "event.is_roll()",
+    "description": "用於判斷下一個事件是否為 roll 動作。",
+    "prefix": "event.is_roll"
+  },
+  "event.next": {
+    "body": "event.next()",
+    "description": "用於消費下一個事件並取得方向，避免同一事件重複下單。",
+    "prefix": "event.next"
+  },
+  "event.next_action": {
+    "body": "event.next_action()",
+    "description": "用於消費下一個事件並取得動作代碼。",
+    "prefix": "event.next_action"
+  },
+  "event.peek": {
+    "body": "event.peek()",
+    "description": "用於查看下一個未消費事件方向，但不標記已處理。",
+    "prefix": "event.peek"
+  },
+  "event.peek_action": {
+    "body": "event.peek_action()",
+    "description": "用於查看下一個未消費事件動作代碼，但不標記已處理。",
+    "prefix": "event.peek_action"
+  },
+  "event.peek_name": {
+    "body": "event.peek_name()",
+    "description": "用於查看下一個未消費事件名稱。",
+    "prefix": "event.peek_name"
+  },
+  "event.peek_qty": {
+    "body": "event.peek_qty()",
+    "description": "用於查看下一個未消費事件的數量。",
+    "prefix": "event.peek_qty"
+  },
+  "event.pending": {
+    "body": "event.pending()",
+    "description": "用於檢查目前 bar 還有多少外部事件尚未被消費。",
+    "prefix": "event.pending"
+  },
+  "group.add_spread": {
+    "body": "group.add_spread(${1:group_id}, ${2:spread_id})",
+    "description": "用於管理一組相關期權 spread，常見於分批建倉、roll 倉與組合平倉。",
+    "prefix": "group.add_spread"
+  },
+  "group.close": {
+    "body": "group.close(${1:group_id})",
+    "description": "用於管理一組相關期權 spread，常見於分批建倉、roll 倉與組合平倉。",
+    "prefix": "group.close"
+  },
+  "group.get": {
+    "body": "group.get(${1:group_id})",
+    "description": "用於管理一組相關期權 spread，常見於分批建倉、roll 倉與組合平倉。",
+    "prefix": "group.get"
+  },
+  "group.increment_roll": {
+    "body": "group.increment_roll(${1:group_id})",
+    "description": "用於管理一組相關期權 spread，常見於分批建倉、roll 倉與組合平倉。",
+    "prefix": "group.increment_roll"
+  },
+  "group.open": {
+    "body": "group.open(${1:tag}, ${2:init_amount}, ${3:decay_factor})",
+    "description": "用於管理一組相關期權 spread，常見於分批建倉、roll 倉與組合平倉。",
+    "prefix": "group.open"
+  },
+  "group.open_ids": {
+    "body": "group.open_ids()",
+    "description": "用於管理一組相關期權 spread，常見於分批建倉、roll 倉與組合平倉。",
+    "prefix": "group.open_ids"
+  },
+  "group.spread_count": {
+    "body": "group.spread_count(${1:group_id})",
+    "description": "用於管理一組相關期權 spread，常見於分批建倉、roll 倉與組合平倉。",
+    "prefix": "group.spread_count"
+  },
+  "if block": {
+    "body": [
+      "if ${1:condition}",
+      "    ${0}"
+    ],
+    "description": "Create an indented if block",
+    "prefix": "if"
+  },
+  "input": {
+    "body": "input(${1:defval}, ${2:title}, ${3:minval}, ${4:maxval}, ${5:step})",
+    "description": "用於把策略參數暴露給 validate API 與回測請求，讓使用者能用 dsl_params 覆蓋預設值。",
+    "prefix": "input"
+  },
+  "input.bool": {
+    "body": "input.bool(${1:defval}, ${2:title})",
+    "description": "用於宣告功能開關，例如是否啟用趨勢濾網或是否允許加倉。",
+    "prefix": "input.bool"
+  },
+  "input.float": {
+    "body": "input.float(${1:defval}, ${2:title}, ${3:minval}, ${4:maxval}, ${5:step})",
+    "description": "用於宣告小數參數，例如資金比例、停損比例或權重上限。",
+    "prefix": "input.float"
+  },
+  "input.int": {
+    "body": "input.int(${1:defval}, ${2:title}, ${3:minval}, ${4:maxval}, ${5:step})",
+    "description": "用於宣告整數參數，例如均線週期、持倉 bar 數或分批次數。",
+    "prefix": "input.int"
+  },
+  "input.string": {
+    "body": "input.string(${1:defval}, ${2:title}, ${3:options})",
+    "description": "用於宣告模式、標的、分組名稱等字串參數，並可限制可選值。",
+    "prefix": "input.string"
+  },
+  "leg.buy": {
+    "body": "leg.buy(${1:contract}, ${2:qty})",
+    "description": "用於建立買方 leg，qty 表示期權合約張數；US options 的現金流與 PnL 會按 100 contract multiplier 計算。",
+    "prefix": "leg.buy"
+  },
+  "leg.sell": {
+    "body": "leg.sell(${1:contract}, ${2:qty})",
+    "description": "用於建立賣方 leg，qty 表示期權合約張數；US options 的現金流與 PnL 會按 100 contract multiplier 計算。",
+    "prefix": "leg.sell"
+  },
+  "len": {
+    "body": "len(${1:value})",
+    "description": "用於檢查陣列或字串長度，常搭配 portfolio、options.sort_by_delta 或字串拆分結果。",
+    "prefix": "len"
+  },
+  "market.context": {
+    "body": "market.context(${1:rsi14}, ${2:cci20}, ${3:hv_percentile}, ${4:iv_percentile}, ${5:valuation_percentile})",
+    "description": "用於把策略已讀取或計算的真實因子轉成趨勢、波動、估值與情境分類。",
+    "prefix": "market.context"
+  },
+  "market.hv_state": {
+    "body": "market.hv_state(${1:context})",
+    "description": "用於讀取 market.context 的 HV 狀態。",
+    "prefix": "market.hv_state"
+  },
+  "market.iv_state": {
+    "body": "market.iv_state(${1:context})",
+    "description": "用於讀取 market.context 的 IV 狀態。",
+    "prefix": "market.iv_state"
+  },
+  "market.reason_codes": {
+    "body": "market.reason_codes()",
+    "description": "用於策略腳本中的資料處理、條件判斷或交易流程控制。",
+    "prefix": "market.reason_codes"
+  },
+  "market.risk_label": {
+    "body": "market.risk_label()",
+    "description": "用於策略腳本中的資料處理、條件判斷或交易流程控制。",
+    "prefix": "market.risk_label"
+  },
+  "market.scenario_label": {
+    "body": "market.scenario_label()",
+    "description": "用於策略腳本中的資料處理、條件判斷或交易流程控制。",
+    "prefix": "market.scenario_label"
+  },
+  "market.trend_state": {
+    "body": "market.trend_state(${1:context})",
+    "description": "用於讀取 market.context 的趨勢狀態。",
+    "prefix": "market.trend_state"
+  },
+  "market.valuation_state": {
+    "body": "market.valuation_state(${1:context})",
+    "description": "用於讀取 market.context 的估值狀態。",
+    "prefix": "market.valuation_state"
+  },
+  "market.warnings": {
+    "body": "market.warnings()",
+    "description": "用於策略腳本中的資料處理、條件判斷或交易流程控制。",
+    "prefix": "market.warnings"
+  },
+  "math.abs": {
+    "body": "math.abs(${1:x})",
+    "description": "用於取得絕對值，例如計算偏離程度或風險距離。",
+    "prefix": "math.abs"
+  },
+  "math.avg": {
+    "body": "math.avg(${1:a}, ${2:b})",
+    "description": "用於計算多個數值的平均。",
+    "prefix": "math.avg"
+  },
+  "math.ceil": {
+    "body": "math.ceil(${1:x})",
+    "description": "用於把倉位數量或 bar 數向上取整。",
+    "prefix": "math.ceil"
+  },
+  "math.exp": {
+    "body": "math.exp(${1:x})",
+    "description": "用於指數轉換或還原 log 值。",
+    "prefix": "math.exp"
+  },
+  "math.floor": {
+    "body": "math.floor(${1:x})",
+    "description": "用於把倉位數量向下取整，避免買入零碎股數。",
+    "prefix": "math.floor"
+  },
+  "math.log": {
+    "body": "math.log(${1:x})",
+    "description": "用於自然對數轉換，例如對數報酬。",
+    "prefix": "math.log"
+  },
+  "math.log10": {
+    "body": "math.log10(${1:x})",
+    "description": "用於十進位對數轉換。",
+    "prefix": "math.log10"
+  },
+  "math.max": {
+    "body": "math.max(${1:a}, ${2:b})",
+    "description": "用於設定下限或在兩個風險值中取較大者。",
+    "prefix": "math.max"
+  },
+  "math.min": {
+    "body": "math.min(${1:a}, ${2:b})",
+    "description": "用於限制倉位、風險或價格門檻不超過上限。",
+    "prefix": "math.min"
+  },
+  "math.pow": {
+    "body": "math.pow(${1:x}, ${2:exp})",
+    "description": "用於自訂非線性權重或訊號強度。",
+    "prefix": "math.pow"
+  },
+  "math.round": {
+    "body": "math.round(${1:x})",
+    "description": "用於把價格或數量四捨五入。",
+    "prefix": "math.round"
+  },
+  "math.sign": {
+    "body": "math.sign(${1:x})",
+    "description": "用於把訊號轉成方向 -1、0 或 1。",
+    "prefix": "math.sign"
+  },
+  "math.sqrt": {
+    "body": "math.sqrt(${1:x})",
+    "description": "用於自訂波動率或標準差相關公式。",
+    "prefix": "math.sqrt"
+  },
+  "na": {
+    "body": "na(${1:x})",
+    "description": "用於檢查值是否為 na。",
+    "prefix": "na"
+  },
+  "nz": {
+    "body": "nz(${1:x}, ${2:replacement})",
+    "description": "用於把 na 替換成指定值，避免暖身期指標造成條件失效。",
+    "prefix": "nz"
+  },
+  "options.best_spread": {
+    "body": "options.best_spread(${1:chain})",
+    "description": "用於從期權鏈中篩出符合到期日、Delta、權利金或履約價條件的候選合約。",
+    "prefix": "options.best_spread"
+  },
+  "options.build_strategy": {
+    "body": "options.build_strategy(${1:chain}, ${2:name}, ${3:qty}, ${4:target_delta})",
+    "description": "用於把策略名稱和期權鏈轉成可檢查的標準 legs，不直接下單。",
+    "prefix": "options.build_strategy"
+  },
+  "options.calls": {
+    "body": "options.calls(${1:chain})",
+    "description": "用於把期權鏈縮小到 call 合約。",
+    "prefix": "options.calls"
+  },
+  "options.chain": {
+    "body": "options.chain(${1:market}, ${2:symbol})",
+    "description": "用於取得目前 bar 可用的期權鏈；多標的策略可指定市場與 underlying。",
+    "prefix": "options.chain"
+  },
+  "options.delta_range": {
+    "body": "options.delta_range(${1:chain}, ${2:min_delta}, ${3:max_delta})",
+    "description": "用於從期權鏈中篩出符合到期日、Delta、權利金或履約價條件的候選合約。",
+    "prefix": "options.delta_range"
+  },
+  "options.expiry_max": {
+    "body": "options.expiry_max(${1:chain}, ${2:max_days})",
+    "description": "用於從期權鏈中篩出符合到期日、Delta、權利金或履約價條件的候選合約。",
+    "prefix": "options.expiry_max"
+  },
+  "options.expiry_min": {
+    "body": "options.expiry_min(${1:chain}, ${2:min_days})",
+    "description": "用於從期權鏈中篩出符合到期日、Delta、權利金或履約價條件的候選合約。",
+    "prefix": "options.expiry_min"
+  },
+  "options.expiry_nearest": {
+    "body": "options.expiry_nearest(${1:chain}, ${2:target_days})",
+    "description": "用於從期權鏈中篩出符合到期日、Delta、權利金或履約價條件的候選合約。",
+    "prefix": "options.expiry_nearest"
+  },
+  "options.expiry_range": {
+    "body": "options.expiry_range(${1:chain}, ${2:min_days}, ${3:max_days})",
+    "description": "用於從期權鏈中篩出符合到期日、Delta、權利金或履約價條件的候選合約。",
+    "prefix": "options.expiry_range"
+  },
+  "options.len": {
+    "body": "options.len(${1:chain})",
+    "description": "用於從期權鏈中篩出符合到期日、Delta、權利金或履約價條件的候選合約。",
+    "prefix": "options.len"
+  },
+  "options.min_premium": {
+    "body": "options.min_premium(${1:chain}, ${2:min_bid})",
+    "description": "用於從期權鏈中篩出符合到期日、Delta、權利金或履約價條件的候選合約。",
+    "prefix": "options.min_premium"
+  },
+  "options.open_strategy": {
+    "body": "options.open_strategy(${1:chain}, ${2:name}, ${3:qty}, ${4:target_delta}, ${5:tag})",
+    "description": "用於明確開啟由策略名稱生成的期權 spread。",
+    "prefix": "options.open_strategy"
+  },
+  "options.puts": {
+    "body": "options.puts(${1:chain})",
+    "description": "用於把期權鏈縮小到 put 合約。",
+    "prefix": "options.puts"
+  },
+  "options.sort_by_delta": {
+    "body": "options.sort_by_delta(${1:chain}, ${2:target})",
+    "description": "用於把候選合約依 Delta 接近目標值排序，方便取第一筆作交易。",
+    "prefix": "options.sort_by_delta"
+  },
+  "options.strategies": {
+    "body": "options.strategies(${1:context}, ${2:family})",
+    "description": "用於依市場環境分類挑選候選期權策略名稱。",
+    "prefix": "options.strategies"
+  },
+  "options.strike_range": {
+    "body": "options.strike_range(${1:chain}, ${2:min}, ${3:max})",
+    "description": "用於從期權鏈中篩出符合到期日、Delta、權利金或履約價條件的候選合約。",
+    "prefix": "options.strike_range"
+  },
+  "order.immediate": {
+    "body": "order.immediate(${1:side}, ${2:qty}, ${3:note})",
+    "description": "用於要求當根 bar 以目前 close 立即成交的市場單。",
+    "prefix": "order.immediate"
+  },
+  "order.limit": {
+    "body": "order.limit(${1:side}, ${2:qty}, ${3:price}, ${4:note})",
+    "description": "用於在指定價格送出限價單，例如等待回落買入或反彈賣出。",
+    "prefix": "order.limit"
+  },
+  "order.market": {
+    "body": "order.market(${1:side}, ${2:qty}, ${3:note})",
+    "description": "用於立即以市場單買入或賣出固定數量，並取得訂單 ID 供後續追蹤。",
+    "prefix": "order.market"
+  },
+  "order.market_notional": {
+    "body": "order.market_notional(${1:side}, ${2:notional}, ${3:note})",
+    "description": "用於依名義金額下市場單，讓策略用資金金額而非股數控倉。",
+    "prefix": "order.market_notional"
+  },
+  "order.stop": {
+    "body": "order.stop(${1:side}, ${2:qty}, ${3:stop_price}, ${4:note})",
+    "description": "用於在觸及停損或突破價格後送出停損單。",
+    "prefix": "order.stop"
+  },
+  "order.stop_limit": {
+    "body": "order.stop_limit(${1:side}, ${2:qty}, ${3:stop_price}, ${4:limit_price}, ${5:note})",
+    "description": "用於建立同時含觸發價與限價的停損限價單。",
+    "prefix": "order.stop_limit"
+  },
+  "order.submit": {
+    "body": "order.submit(${1:id}, ${2:side}, ${3:qty}, ${4:notional}, ${5:type}, ${6:limit}, ${7:stop}, ${8:twap_bars}, ${9:immediate}, ${10:note}, ${11:ref}, ${12:group_ref}, ${13:schedule_at})",
+    "description": "用於用單一入口送出可擴充訂單意圖，適合需要 ID、ref、group_ref 或排程資訊的策略。",
+    "prefix": "order.submit"
+  },
+  "order.twap": {
+    "body": "order.twap(${1:side}, ${2:qty}, ${3:bars}, ${4:note})",
+    "description": "用於把一筆交易拆到多根 bar 執行，降低一次性成交衝擊。",
+    "prefix": "order.twap"
+  },
+  "plot": {
+    "body": "plot(${1:series}, ${2:title}, ${3:overlay}, ${4:precision})",
+    "description": "用於把中間指標或交易條件輸出到回測結果，方便檢查策略為何進出場。",
+    "prefix": "plot"
+  },
+  "portfolio.items": {
+    "body": "portfolio.items()",
+    "description": "用於一次取得 [symbol, weight] 陣列，方便多標的輪詢。",
+    "prefix": "portfolio.items"
+  },
+  "portfolio.len": {
+    "body": "portfolio.len()",
+    "description": "用於取得組合標的數量，常作為 for 迴圈上限。",
+    "prefix": "portfolio.len"
+  },
+  "portfolio.symbol": {
+    "body": "portfolio.symbol(${1:index}, ${2:defval})",
+    "description": "用於依索引讀取單一組合標的，索引不存在時回傳預設值。",
+    "prefix": "portfolio.symbol"
+  },
+  "portfolio.symbols": {
+    "body": "portfolio.symbols()",
+    "description": "用於取得回測請求傳入的標的清單。",
+    "prefix": "portfolio.symbols"
+  },
+  "portfolio.weight": {
+    "body": "portfolio.weight(${1:symbol}, ${2:defval})",
+    "description": "用於依 symbol 查詢組合權重，找不到時回傳預設值。",
+    "prefix": "portfolio.weight"
+  },
+  "portfolio.weights": {
+    "body": "portfolio.weights()",
+    "description": "用於取得與 portfolio.symbols 對應的權重清單。",
+    "prefix": "portfolio.weights"
+  },
+  "ref.clear": {
+    "body": "ref.clear(${1:name})",
+    "description": "用於跨 bar 保存自訂狀態，例如上次訂單 ID、spread ID 或已處理次數。",
+    "prefix": "ref.clear"
+  },
+  "ref.dec": {
+    "body": "ref.dec(${1:name})",
+    "description": "用於跨 bar 保存自訂狀態，例如上次訂單 ID、spread ID 或已處理次數。",
+    "prefix": "ref.dec"
+  },
+  "ref.get": {
+    "body": "ref.get(${1:name})",
+    "description": "用於跨 bar 保存自訂狀態，例如上次訂單 ID、spread ID 或已處理次數。",
+    "prefix": "ref.get"
+  },
+  "ref.has": {
+    "body": "ref.has(${1:name})",
+    "description": "用於跨 bar 保存自訂狀態，例如上次訂單 ID、spread ID 或已處理次數。",
+    "prefix": "ref.has"
+  },
+  "ref.inc": {
+    "body": "ref.inc(${1:name})",
+    "description": "用於跨 bar 保存自訂狀態，例如上次訂單 ID、spread ID 或已處理次數。",
+    "prefix": "ref.inc"
+  },
+  "ref.set": {
+    "body": "ref.set(${1:name}, ${2:value})",
+    "description": "用於跨 bar 保存自訂狀態，例如上次訂單 ID、spread ID 或已處理次數。",
+    "prefix": "ref.set"
+  },
+  "request.factor": {
+    "body": "request.factor(${1:name}, ${2:interval}, ${3:field})",
+    "description": "用於讀取預載因子資料；內建 volatility 因子會綁定目前回測主標的，提供 iv/current_iv、hv10、hv20、hv30、iv_percentile、iv_rank、price_observations、iv_observations 等 1d 欄位。",
+    "prefix": "request.factor"
+  },
+  "request.fundamental": {
+    "body": "request.fundamental(${1:market}, ${2:symbol}, ${3:factor}, ${4:mode})",
+    "description": "用於讀取標的綁定的基本面序列，例如 PE、PB、market_cap 等；美股的 PE/PB 會依 bar close 以 point-in-time 方式動態重估。",
+    "prefix": "request.fundamental"
+  },
+  "request.security": {
+    "body": "request.security(${1:market}, ${2:symbol}, ${3:interval}, ${4:field})",
+    "description": "用於讀取其他市場、標的或週期的預載欄位；第四參數也可為純表達式，會在指定標的/週期上下文中計算後對齊回主時間軸。",
+    "prefix": "request.security"
+  },
+  "schedule.close_group": {
+    "body": "schedule.close_group(${1:bars_offset}, ${2:group_id})",
+    "description": "用於排程未來幾根 bar 後關閉 spread、leg 或 group。",
+    "prefix": "schedule.close_group"
+  },
+  "schedule.close_leg": {
+    "body": "schedule.close_leg(${1:bars_offset}, ${2:spread_id}, ${3:leg_index})",
+    "description": "用於排程未來幾根 bar 後關閉 spread、leg 或 group。",
+    "prefix": "schedule.close_leg"
+  },
+  "schedule.close_spread": {
+    "body": "schedule.close_spread(${1:bars_offset}, ${2:spread_id}, ${3:reason})",
+    "description": "用於排程未來幾根 bar 後關閉 spread、leg 或 group。",
+    "prefix": "schedule.close_spread"
+  },
+  "sell": {
+    "body": "sell(${1:qty})",
+    "description": "用於快速送出基本賣出指令，適合最小範例或不需要命名部位的腳本。",
+    "prefix": "sell"
+  },
+  "signal.action": {
+    "body": "signal.action()",
+    "description": "用於讀取第一個信號動作代碼，對應 init/add/close/roll。",
+    "prefix": "signal.action"
+  },
+  "signal.active": {
+    "body": "signal.active()",
+    "description": "用於判斷目前 bar 是否有外部信號。",
+    "prefix": "signal.active"
+  },
+  "signal.consume": {
+    "body": "signal.consume()",
+    "description": "用於把目前 bar 的第一個信號標記為已處理。",
+    "prefix": "signal.consume"
+  },
+  "signal.consumed": {
+    "body": "signal.consumed()",
+    "description": "用於判斷目前 bar 的第一個信號是否已被標記處理。",
+    "prefix": "signal.consumed"
+  },
+  "signal.count": {
+    "body": "signal.count()",
+    "description": "用於取得目前 bar 外部信號數量。",
+    "prefix": "signal.count"
+  },
+  "signal.direction": {
+    "body": "signal.direction()",
+    "description": "用於讀取第一個信號方向，1 表示多、-1 表示空、0 表示無方向。",
+    "prefix": "signal.direction"
+  },
+  "signal.group_ref": {
+    "body": "signal.group_ref()",
+    "description": "用於讀取信號分組參考 ID。",
+    "prefix": "signal.group_ref"
+  },
+  "signal.name": {
+    "body": "signal.name()",
+    "description": "用於讀取第一個信號名稱，便於路由不同策略邏輯。",
+    "prefix": "signal.name"
+  },
+  "signal.qty": {
+    "body": "signal.qty()",
+    "description": "用於讀取第一個信號建議數量。",
+    "prefix": "signal.qty"
+  },
+  "signal.ref": {
+    "body": "signal.ref()",
+    "description": "用於讀取信號參考 ID，方便連結訂單或 spread。",
+    "prefix": "signal.ref"
+  },
+  "signal.remarks": {
+    "body": "signal.remarks()",
+    "description": "用於讀取信號備註文字。",
+    "prefix": "signal.remarks"
+  },
+  "signal.source": {
+    "body": "signal.source()",
+    "description": "用於讀取信號來源，便於區分不同上游系統。",
+    "prefix": "signal.source"
+  },
+  "spread.close": {
+    "body": "spread.close(${1:spread_id}, ${2:reason})",
+    "description": "用於建立、查詢、關閉與監控期權價差部位。",
+    "prefix": "spread.close"
+  },
+  "spread.close_leg": {
+    "body": "spread.close_leg(${1:spread_id}, ${2:leg_index}, ${3:close_price})",
+    "description": "用於建立、查詢、關閉與監控期權價差部位。",
+    "prefix": "spread.close_leg"
+  },
+  "spread.count": {
+    "body": "spread.count()",
+    "description": "用於建立、查詢、關閉與監控期權價差部位。",
+    "prefix": "spread.count"
+  },
+  "spread.get": {
+    "body": "spread.get(${1:spread_id})",
+    "description": "用於建立、查詢、關閉與監控期權價差部位。",
+    "prefix": "spread.get"
+  },
+  "spread.leg_contract": {
+    "body": "spread.leg_contract(${1:spread_id}, ${2:leg_index})",
+    "description": "用於建立、查詢、關閉與監控期權價差部位。",
+    "prefix": "spread.leg_contract"
+  },
+  "spread.leg_entry_price": {
+    "body": "spread.leg_entry_price(${1:spread_id}, ${2:leg_index})",
+    "description": "用於建立、查詢、關閉與監控期權價差部位。",
+    "prefix": "spread.leg_entry_price"
+  },
+  "spread.leg_open": {
+    "body": "spread.leg_open(${1:spread_id}, ${2:leg_index})",
+    "description": "用於建立、查詢、關閉與監控期權價差部位。",
+    "prefix": "spread.leg_open"
+  },
+  "spread.leg_qty": {
+    "body": "spread.leg_qty(${1:spread_id}, ${2:leg_index})",
+    "description": "用於建立、查詢、關閉與監控期權價差部位。",
+    "prefix": "spread.leg_qty"
+  },
+  "spread.leg_side": {
+    "body": "spread.leg_side(${1:spread_id}, ${2:leg_index})",
+    "description": "用於建立、查詢、關閉與監控期權價差部位。",
+    "prefix": "spread.leg_side"
+  },
+  "spread.open": {
+    "body": "spread.open(${1:legs}, ${2:tag})",
+    "description": "用於建立、查詢、關閉與監控期權價差部位。",
+    "prefix": "spread.open"
+  },
+  "spread.open_ids": {
+    "body": "spread.open_ids()",
+    "description": "用於建立、查詢、關閉與監控期權價差部位。",
+    "prefix": "spread.open_ids"
+  },
+  "spread.open_in_group": {
+    "body": "spread.open_in_group(${1:legs}, ${2:tag}, ${3:group_id})",
+    "description": "用於建立、查詢、關閉與監控期權價差部位。",
+    "prefix": "spread.open_in_group"
+  },
+  "spread.open_in_group_on": {
+    "body": "spread.open_in_group_on(${1:market}, ${2:underlying}, ${3:legs}, ${4:tag}, ${5:group_id})",
+    "description": "用於建立、查詢、關閉與監控期權價差部位。",
+    "prefix": "spread.open_in_group_on"
+  },
+  "spread.open_on": {
+    "body": "spread.open_on(${1:market}, ${2:underlying}, ${3:legs}, ${4:tag})",
+    "description": "用於建立、查詢、關閉與監控期權價差部位。",
+    "prefix": "spread.open_on"
+  },
+  "spread.pnl": {
+    "body": "spread.pnl(${1:spread_id})",
+    "description": "用於建立、查詢、關閉與監控期權價差部位。",
+    "prefix": "spread.pnl"
+  },
+  "spread.pnl_all": {
+    "body": "spread.pnl_all()",
+    "description": "用於建立、查詢、關閉與監控期權價差部位。",
+    "prefix": "spread.pnl_all"
+  },
+  "str.contains": {
+    "body": "str.contains(${1:s}, ${2:substr})",
+    "description": "用於判斷字串是否包含子字串，例如篩選 symbol 或模式名稱。",
+    "prefix": "str.contains"
+  },
+  "str.format": {
+    "body": "str.format(${1:format}, ${2:value})",
+    "description": "用於格式化報告標籤或訂單備註。",
+    "prefix": "str.format"
+  },
+  "str.join": {
+    "body": "str.join(${1:parts}, ${2:sep})",
+    "description": "用於把字串陣列合併成標籤或備註。",
+    "prefix": "str.join"
+  },
+  "str.length": {
+    "body": "str.length(${1:s})",
+    "description": "用於取得字串長度。",
+    "prefix": "str.length"
+  },
+  "str.lower": {
+    "body": "str.lower(${1:s})",
+    "description": "用於把設定值轉成小寫以便比對。",
+    "prefix": "str.lower"
+  },
+  "str.split": {
+    "body": "str.split(${1:s}, ${2:sep})",
+    "description": "用於把逗號分隔設定拆成陣列。",
+    "prefix": "str.split"
+  },
+  "str.tostring": {
+    "body": "str.tostring(${1:value})",
+    "description": "用於把數值、布林或陣列轉成字串。",
+    "prefix": "str.tostring"
+  },
+  "str.upper": {
+    "body": "str.upper(${1:s})",
+    "description": "用於把 symbol 或設定值轉成大寫以便比對。",
+    "prefix": "str.upper"
+  },
+  "strategy template": {
+    "body": [
+      "//@version=6",
+      "strategy(\"${1:Strategy Name}\")",
+      "",
+      "${0}"
+    ],
+    "description": "Create a Toktik DSL strategy header",
+    "prefix": "strategy"
+  },
+  "strategy.close": {
+    "body": "strategy.close(${1:id})",
+    "description": "用於依 entry ID 平掉既有部位，常放在出場訊號或風控條件中。",
+    "prefix": "strategy.close"
+  },
+  "strategy.entry": {
+    "body": "strategy.entry(${1:id}, ${2:direction}, ${3:qty}, ${4:limit}, ${5:stop}, ${6:twap_bars}, ${7:immediate}, ${8:note})",
+    "description": "用於以命名 ID 建立多頭或空頭部位；需要限價、停損或 TWAP 時也可帶進階參數。",
+    "prefix": "strategy.entry"
+  },
+  "strategy.exit": {
+    "body": "strategy.exit(${1:id})",
+    "description": "用於依 entry ID 退出部位；目前行為與 strategy.close 相同。",
+    "prefix": "strategy.exit"
+  },
+  "ta.atr": {
+    "body": "ta.atr(${1:length})",
+    "description": "用於衡量近期波動，常拿來設定停損距離或倉位大小。",
+    "prefix": "ta.atr"
+  },
+  "ta.barssince": {
+    "body": "ta.barssince(${1:condition})",
+    "description": "用於計算某條件距離最近一次成立已過幾根 bar。",
+    "prefix": "ta.barssince"
+  },
+  "ta.bb": {
+    "body": "ta.bb(${1:source}, ${2:length}, ${3:mult})",
+    "description": "用於取得布林通道上軌、中線、下軌陣列。",
+    "prefix": "ta.bb"
+  },
+  "ta.bb_lower": {
+    "body": "ta.bb_lower(${1:source}, ${2:length}, ${3:mult})",
+    "description": "用於取得布林通道下軌，常作為超跌或回補判斷。",
+    "prefix": "ta.bb_lower"
+  },
+  "ta.bb_upper": {
+    "body": "ta.bb_upper(${1:source}, ${2:length}, ${3:mult})",
+    "description": "用於取得布林通道上軌，常作為過熱或突破判斷。",
+    "prefix": "ta.bb_upper"
+  },
+  "ta.cci": {
+    "body": "ta.cci(${1:length})",
+    "description": "用於判斷價格偏離典型價格均值的程度，常作為反轉或過熱濾網。",
+    "prefix": "ta.cci"
+  },
+  "ta.change": {
+    "body": "ta.change(${1:source}, ${2:length})",
+    "description": "用於計算目前值相對 N 根 bar 前的變化量。",
+    "prefix": "ta.change"
+  },
+  "ta.crossover": {
+    "body": "ta.crossover(${1:left}, ${2:right})",
+    "description": "用於偵測左側序列在本 bar 向上穿越右側序列。",
+    "prefix": "ta.crossover"
+  },
+  "ta.crossunder": {
+    "body": "ta.crossunder(${1:left}, ${2:right})",
+    "description": "用於偵測左側序列在本 bar 向下跌破右側序列。",
+    "prefix": "ta.crossunder"
+  },
+  "ta.cum": {
+    "body": "ta.cum(${1:source})",
+    "description": "用於累加序列值，例如累積成交量或自訂資金流。",
+    "prefix": "ta.cum"
+  },
+  "ta.ema": {
+    "body": "ta.ema(${1:source}, ${2:length})",
+    "description": "用於較重視近期價格的趨勢判斷。",
+    "prefix": "ta.ema"
+  },
+  "ta.highest": {
+    "body": "ta.highest(${1:source}, ${2:length})",
+    "description": "用於取得近期最高值，常作為突破或追蹤停利條件。",
+    "prefix": "ta.highest"
+  },
+  "ta.lowest": {
+    "body": "ta.lowest(${1:source}, ${2:length})",
+    "description": "用於取得近期最低值，常作為停損或跌破條件。",
+    "prefix": "ta.lowest"
+  },
+  "ta.percentrank": {
+    "body": "ta.percentrank(${1:source}, ${2:length})",
+    "description": "用於衡量目前值在近期視窗中的百分位排名。",
+    "prefix": "ta.percentrank"
+  },
+  "ta.rsi": {
+    "body": "ta.rsi(${1:source}, ${2:length})",
+    "description": "用於衡量超買超賣或動能強弱。",
+    "prefix": "ta.rsi"
+  },
+  "ta.sma": {
+    "body": "ta.sma(${1:source}, ${2:length})",
+    "description": "用於平滑價格或成交量，常作為趨勢方向與均線交叉訊號。",
+    "prefix": "ta.sma"
+  },
+  "ta.stdev": {
+    "body": "ta.stdev(${1:source}, ${2:length})",
+    "description": "用於衡量序列波動程度，常搭配均線形成通道。",
+    "prefix": "ta.stdev"
+  },
+  "ta.valuewhen": {
+    "body": "ta.valuewhen(${1:condition}, ${2:source}, ${3:occurrence})",
+    "description": "用於取得某條件第 N 次成立時的來源序列值。",
+    "prefix": "ta.valuewhen"
+  },
+  "ta.wma": {
+    "body": "ta.wma(${1:source}, ${2:length})",
+    "description": "用於計算線性加權均線，近期資料權重較高。",
+    "prefix": "ta.wma"
+  },
+  "universe.symbols": {
+    "body": "universe.symbols(${1:code})",
+    "description": "用於取得 validate/run 階段展開並注入的 universe 成員標的。",
+    "prefix": "universe.symbols"
+  }
+}

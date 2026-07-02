@@ -5,7 +5,7 @@ import (
 	"fmt"
 )
 
-//go:embed strategies/*.dsl
+//go:embed strategies/*.toktik
 var files embed.FS
 
 func ReadStrategy(name string) (string, error) {

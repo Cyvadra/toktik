@@ -353,7 +353,7 @@ plot(close, title="Close")`,
 }
 
 func TestExampleWheelPortfolioRunPayloadIsValid(t *testing.T) {
-	dslPath := filepath.Join("..", "..", "pkg", "dsl", "scripts", "strategies", "wheel-portfolio-us-sell-put.dsl")
+	dslPath := filepath.Join("..", "..", "pkg", "dsl", "scripts", "strategies", "wheel-portfolio-us-sell-put.toktik")
 	payloadPath := filepath.Join("..", "..", "docs", "examples", "wheel-portfolio-us-sell-put.run.json")
 
 	dslSrc, err := os.ReadFile(dslPath)

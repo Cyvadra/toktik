@@ -1,0 +1,5087 @@
+{
+  "generatedBy": "go run ./cmd/vscode-dsl-extension-data",
+  "profile": "backtest",
+  "keywords": [
+    "and",
+    "bool",
+    "break",
+    "by",
+    "color",
+    "const",
+    "continue",
+    "else",
+    "export",
+    "false",
+    "float",
+    "fn",
+    "for",
+    "if",
+    "import",
+    "in",
+    "indicator",
+    "input",
+    "int",
+    "library",
+    "method",
+    "na",
+    "not",
+    "or",
+    "return",
+    "series",
+    "simple",
+    "strategy",
+    "string",
+    "switch",
+    "to",
+    "true",
+    "var",
+    "varip",
+    "while"
+  ],
+  "lexicalDocs": [
+    {
+      "Topic": "單行註釋",
+      "Syntax": "// ...",
+      "Example": "//@version=6\n// rebalance monthly",
+      "Notes": "從 `//` 到行尾都會被忽略；`//@version=6` 也是註釋，保留給 Pine v6 風格相容。"
+    },
+    {
+      "Topic": "多行註釋",
+      "Syntax": "/* ... */",
+      "Example": "/*\nentry rules\nexit rules\n*/",
+      "Notes": "可跨多行，直到第一個 `*/` 結束；目前不支援巢狀 block comment。"
+    },
+    {
+      "Topic": "換行",
+      "Syntax": "\\n",
+      "Example": "fast = ta.sma(close, 10)\nslow = ta.sma(close, 30)",
+      "Notes": "換行是 statement separator；空格、tab、carriage return 會被略過。"
+    },
+    {
+      "Topic": "續行",
+      "Syntax": "\\ + newline",
+      "Example": "signal = close \u003e open and \\\n    volume \u003e ta.sma(volume, 20)",
+      "Notes": "反斜線必須緊接換行，lexer 會移除該換行，讓下一行接續同一個 expression。"
+    },
+    {
+      "Topic": "字串",
+      "Syntax": "\"...\" 或 '...'",
+      "Example": "label = \"SMA\"\nside = 'long'",
+      "Notes": "支援 `\\n`、`\\t`、`\\\\`、`\\'`、`\\\"` escape；字串不可直接跨換行。"
+    },
+    {
+      "Topic": "數字",
+      "Syntax": "int、float、scientific notation",
+      "Example": "risk = 0.02\nscale = 6.02e23\nwhole = 3.",
+      "Notes": "整數、小數、科學記號都會被 token 化；`3.` 會被視為 float。"
+    },
+    {
+      "Topic": "識別字",
+      "Syntax": "letter 或 underscore 開頭，後續可含數字",
+      "Example": "_fast_len = 10\n信號 = close \u003e open",
+      "Notes": "使用 Unicode letter 判定，因此非 ASCII 變數名可被 lexer 接受；關鍵字會被轉成對應 token。"
+    }
+  ],
+  "builtins": [
+    {
+      "name": "alpha.decay_linear",
+      "kind": "function",
+      "params": [
+        "x",
+        "window"
+      ],
+      "signature": "alpha.decay_linear(x, window)",
+      "summary": "用於計算近期權重較高的線性衰減平均，降低舊資料影響。",
+      "example": "smooth = alpha.decay_linear(close, 10)",
+      "returnValue": "數值",
+      "snippet": "alpha.decay_linear(${1:x}, ${2:window})"
+    },
+    {
+      "name": "alpha.log_return",
+      "kind": "function",
+      "params": [
+        "x",
+        "period"
+      ],
+      "signature": "alpha.log_return(x, period)",
+      "summary": "用於計算指定週期的對數報酬。",
+      "example": "ret = alpha.log_return(close, 5)",
+      "returnValue": "數值",
+      "snippet": "alpha.log_return(${1:x}, ${2:period})"
+    },
+    {
+      "name": "alpha.rank",
+      "kind": "function",
+      "params": [
+        "x"
+      ],
+      "signature": "alpha.rank(x)",
+      "summary": "用於把目前值轉成歷史百分位，適合判斷目前價格或因子相對自身歷史是否偏高。",
+      "example": "rank = alpha.rank(close)",
+      "returnValue": "數值",
+      "snippet": "alpha.rank(${1:x})"
+    },
+    {
+      "name": "alpha.scale",
+      "kind": "function",
+      "params": [
+        "x",
+        "target_sum"
+      ],
+      "signature": "alpha.scale(x, target_sum)",
+      "summary": "用於把單一訊號縮放到指定目標絕對值。",
+      "example": "scaled = alpha.scale(close - ta.sma(close, 20), 1)",
+      "returnValue": "數值",
+      "snippet": "alpha.scale(${1:x}, ${2:target_sum})"
+    },
+    {
+      "name": "alpha.signed_power",
+      "kind": "function",
+      "params": [
+        "x",
+        "exp"
+      ],
+      "signature": "alpha.signed_power(x, exp)",
+      "summary": "用於保留正負號並放大或壓縮訊號強度。",
+      "example": "signal2 = alpha.signed_power(close - ta.sma(close, 20), 2)",
+      "returnValue": "數值",
+      "snippet": "alpha.signed_power(${1:x}, ${2:exp})"
+    },
+    {
+      "name": "alpha.ts_argmax",
+      "kind": "function",
+      "params": [
+        "x",
+        "window"
+      ],
+      "signature": "alpha.ts_argmax(x, window)",
+      "summary": "用於取得近期最高值距離目前幾根 bar。",
+      "example": "bars_from_high = alpha.ts_argmax(high, 20)",
+      "returnValue": "數值",
+      "snippet": "alpha.ts_argmax(${1:x}, ${2:window})"
+    },
+    {
+      "name": "alpha.ts_argmin",
+      "kind": "function",
+      "params": [
+        "x",
+        "window"
+      ],
+      "signature": "alpha.ts_argmin(x, window)",
+      "summary": "用於取得近期最低值距離目前幾根 bar。",
+      "example": "bars_from_low = alpha.ts_argmin(low, 20)",
+      "returnValue": "數值",
+      "snippet": "alpha.ts_argmin(${1:x}, ${2:window})"
+    },
+    {
+      "name": "alpha.ts_corr",
+      "kind": "function",
+      "params": [
+        "x",
+        "y",
+        "window"
+      ],
+      "signature": "alpha.ts_corr(x, y, window)",
+      "summary": "用於衡量兩個序列近期相關性，例如價格與成交量或標的與基準指數。",
+      "example": "corr = alpha.ts_corr(close, volume, 20)",
+      "returnValue": "數值",
+      "snippet": "alpha.ts_corr(${1:x}, ${2:y}, ${3:window})"
+    },
+    {
+      "name": "alpha.ts_cov",
+      "kind": "function",
+      "params": [
+        "x",
+        "y",
+        "window"
+      ],
+      "signature": "alpha.ts_cov(x, y, window)",
+      "summary": "用於衡量兩個序列近期共同變動程度。",
+      "example": "cov = alpha.ts_cov(close, volume, 20)",
+      "returnValue": "數值",
+      "snippet": "alpha.ts_cov(${1:x}, ${2:y}, ${3:window})"
+    },
+    {
+      "name": "alpha.ts_delta",
+      "kind": "function",
+      "params": [
+        "x",
+        "period"
+      ],
+      "signature": "alpha.ts_delta(x, period)",
+      "summary": "用於計算目前值與 N 根 bar 前的差值。",
+      "example": "delta5 = alpha.ts_delta(close, 5)",
+      "returnValue": "數值",
+      "snippet": "alpha.ts_delta(${1:x}, ${2:period})"
+    },
+    {
+      "name": "alpha.ts_kurtosis",
+      "kind": "function",
+      "params": [
+        "x",
+        "window"
+      ],
+      "signature": "alpha.ts_kurtosis(x, window)",
+      "summary": "用於衡量近期分布尾部厚度，輔助辨識極端波動環境。",
+      "example": "kurt = alpha.ts_kurtosis(close, 20)",
+      "returnValue": "數值",
+      "snippet": "alpha.ts_kurtosis(${1:x}, ${2:window})"
+    },
+    {
+      "name": "alpha.ts_max",
+      "kind": "function",
+      "params": [
+        "x",
+        "window"
+      ],
+      "signature": "alpha.ts_max(x, window)",
+      "summary": "用於取得近期視窗最大值。",
+      "example": "max20 = alpha.ts_max(high, 20)",
+      "returnValue": "數值",
+      "snippet": "alpha.ts_max(${1:x}, ${2:window})"
+    },
+    {
+      "name": "alpha.ts_mean",
+      "kind": "function",
+      "params": [
+        "x",
+        "window"
+      ],
+      "signature": "alpha.ts_mean(x, window)",
+      "summary": "用於計算近期視窗平均值，可作平滑濾網。",
+      "example": "mean20 = alpha.ts_mean(close, 20)",
+      "returnValue": "數值",
+      "snippet": "alpha.ts_mean(${1:x}, ${2:window})"
+    },
+    {
+      "name": "alpha.ts_median",
+      "kind": "function",
+      "params": [
+        "x",
+        "window"
+      ],
+      "signature": "alpha.ts_median(x, window)",
+      "summary": "用於取得近期視窗中位數，降低極端值影響。",
+      "example": "median20 = alpha.ts_median(close, 20)",
+      "returnValue": "數值",
+      "snippet": "alpha.ts_median(${1:x}, ${2:window})"
+    },
+    {
+      "name": "alpha.ts_min",
+      "kind": "function",
+      "params": [
+        "x",
+        "window"
+      ],
+      "signature": "alpha.ts_min(x, window)",
+      "summary": "用於取得近期視窗最小值。",
+      "example": "min20 = alpha.ts_min(low, 20)",
+      "returnValue": "數值",
+      "snippet": "alpha.ts_min(${1:x}, ${2:window})"
+    },
+    {
+      "name": "alpha.ts_rank",
+      "kind": "function",
+      "params": [
+        "x",
+        "window"
+      ],
+      "signature": "alpha.ts_rank(x, window)",
+      "summary": "用於取得目前值在近期視窗內的排名比例。",
+      "example": "rank20 = alpha.ts_rank(close, 20)",
+      "returnValue": "數值",
+      "snippet": "alpha.ts_rank(${1:x}, ${2:window})"
+    },
+    {
+      "name": "alpha.ts_skewness",
+      "kind": "function",
+      "params": [
+        "x",
+        "window"
+      ],
+      "signature": "alpha.ts_skewness(x, window)",
+      "summary": "用於衡量近期分布偏態，輔助辨識報酬分布是否偏向單側。",
+      "example": "skew = alpha.ts_skewness(close, 20)",
+      "returnValue": "數值",
+      "snippet": "alpha.ts_skewness(${1:x}, ${2:window})"
+    },
+    {
+      "name": "alpha.ts_std",
+      "kind": "function",
+      "params": [
+        "x",
+        "window"
+      ],
+      "signature": "alpha.ts_std(x, window)",
+      "summary": "用於衡量近期視窗波動度。",
+      "example": "std20 = alpha.ts_std(close, 20)",
+      "returnValue": "數值",
+      "snippet": "alpha.ts_std(${1:x}, ${2:window})"
+    },
+    {
+      "name": "alpha.ts_sum",
+      "kind": "function",
+      "params": [
+        "x",
+        "window"
+      ],
+      "signature": "alpha.ts_sum(x, window)",
+      "summary": "用於計算近期視窗總和，例如累積成交量或累積報酬。",
+      "example": "sum_vol = alpha.ts_sum(volume, 20)",
+      "returnValue": "數值",
+      "snippet": "alpha.ts_sum(${1:x}, ${2:window})"
+    },
+    {
+      "name": "alpha.zscore",
+      "kind": "function",
+      "params": [
+        "x",
+        "window"
+      ],
+      "signature": "alpha.zscore(x, window)",
+      "summary": "用於衡量目前值偏離近期均值幾個標準差，常作為均值回歸或異常波動濾網。",
+      "example": "z = alpha.zscore(close, 20)",
+      "returnValue": "數值",
+      "snippet": "alpha.zscore(${1:x}, ${2:window})"
+    },
+    {
+      "name": "config.get",
+      "kind": "function",
+      "params": [
+        "name",
+        "defval"
+      ],
+      "signature": "config.get(name, defval)",
+      "summary": "用於讀取策略 catalog 或 API 注入的數值設定，並在未設定時使用預設值。",
+      "example": "max_risk = config.get(\"max_risk\", 0.02)",
+      "returnValue": "數值",
+      "snippet": "config.get(${1:name}, ${2:defval})"
+    },
+    {
+      "name": "config.string",
+      "kind": "function",
+      "params": [
+        "name",
+        "defval"
+      ],
+      "signature": "config.string(name, defval)",
+      "summary": "用於讀取策略 catalog 或 API 注入的字串設定，例如模式名稱或標籤。",
+      "example": "mode = config.string(\"mode\", \"default\")",
+      "returnValue": "字串",
+      "snippet": "config.string(${1:name}, ${2:defval})"
+    },
+    {
+      "name": "contract.ask",
+      "kind": "function",
+      "params": [
+        "contract"
+      ],
+      "signature": "contract.ask(contract)",
+      "summary": "用於讀取已選期權合約的欄位，讓策略能依履約價、到期日、Greeks 或報價做篩選。",
+      "example": "ask = contract.ask(contract)",
+      "returnValue": "合約欄位",
+      "snippet": "contract.ask(${1:contract})"
+    },
+    {
+      "name": "contract.bid",
+      "kind": "function",
+      "params": [
+        "contract"
+      ],
+      "signature": "contract.bid(contract)",
+      "summary": "用於讀取已選期權合約的欄位，讓策略能依履約價、到期日、Greeks 或報價做篩選。",
+      "example": "bid = contract.bid(contract)",
+      "returnValue": "合約欄位",
+      "snippet": "contract.bid(${1:contract})"
+    },
+    {
+      "name": "contract.delta",
+      "kind": "function",
+      "params": [
+        "contract"
+      ],
+      "signature": "contract.delta(contract)",
+      "summary": "用於讀取已選期權合約的欄位，讓策略能依履約價、到期日、Greeks 或報價做篩選。",
+      "example": "delta = contract.delta(contract)",
+      "returnValue": "合約欄位",
+      "snippet": "contract.delta(${1:contract})"
+    },
+    {
+      "name": "contract.dte",
+      "kind": "function",
+      "params": [
+        "contract"
+      ],
+      "signature": "contract.dte(contract)",
+      "summary": "用於讀取已選期權合約的欄位，讓策略能依履約價、到期日、Greeks 或報價做篩選。",
+      "example": "dte = contract.dte(contract)",
+      "returnValue": "合約欄位",
+      "snippet": "contract.dte(${1:contract})"
+    },
+    {
+      "name": "contract.expiry",
+      "kind": "function",
+      "params": [
+        "contract"
+      ],
+      "signature": "contract.expiry(contract)",
+      "summary": "用於讀取已選期權合約的欄位，讓策略能依履約價、到期日、Greeks 或報價做篩選。",
+      "example": "expiry = contract.expiry(contract)",
+      "returnValue": "合約欄位",
+      "snippet": "contract.expiry(${1:contract})"
+    },
+    {
+      "name": "contract.gamma",
+      "kind": "function",
+      "params": [
+        "contract"
+      ],
+      "signature": "contract.gamma(contract)",
+      "summary": "用於讀取已選期權合約的欄位，讓策略能依履約價、到期日、Greeks 或報價做篩選。",
+      "example": "gamma = contract.gamma(contract)",
+      "returnValue": "合約欄位",
+      "snippet": "contract.gamma(${1:contract})"
+    },
+    {
+      "name": "contract.iv",
+      "kind": "function",
+      "params": [
+        "contract"
+      ],
+      "signature": "contract.iv(contract)",
+      "summary": "用於讀取已選期權合約的欄位，讓策略能依履約價、到期日、Greeks 或報價做篩選。",
+      "example": "iv = contract.iv(contract)",
+      "returnValue": "合約欄位",
+      "snippet": "contract.iv(${1:contract})"
+    },
+    {
+      "name": "contract.mark",
+      "kind": "function",
+      "params": [
+        "contract"
+      ],
+      "signature": "contract.mark(contract)",
+      "summary": "用於讀取已選期權合約的欄位，讓策略能依履約價、到期日、Greeks 或報價做篩選。",
+      "example": "mark = contract.mark(contract)",
+      "returnValue": "合約欄位",
+      "snippet": "contract.mark(${1:contract})"
+    },
+    {
+      "name": "contract.market",
+      "kind": "function",
+      "params": [
+        "contract"
+      ],
+      "signature": "contract.market(contract)",
+      "summary": "用於讀取已選期權合約的欄位，讓策略能依履約價、到期日、Greeks 或報價做篩選。",
+      "example": "market = contract.market(contract)",
+      "returnValue": "合約欄位",
+      "snippet": "contract.market(${1:contract})"
+    },
+    {
+      "name": "contract.oi",
+      "kind": "function",
+      "params": [
+        "contract"
+      ],
+      "signature": "contract.oi(contract)",
+      "summary": "用於讀取已選期權合約的欄位，讓策略能依履約價、到期日、Greeks 或報價做篩選。",
+      "example": "oi = contract.oi(contract)",
+      "returnValue": "合約欄位",
+      "snippet": "contract.oi(${1:contract})"
+    },
+    {
+      "name": "contract.strike",
+      "kind": "function",
+      "params": [
+        "contract"
+      ],
+      "signature": "contract.strike(contract)",
+      "summary": "用於讀取已選期權合約的欄位，讓策略能依履約價、到期日、Greeks 或報價做篩選。",
+      "example": "strike = contract.strike(contract)",
+      "returnValue": "合約欄位",
+      "snippet": "contract.strike(${1:contract})"
+    },
+    {
+      "name": "contract.symbol",
+      "kind": "function",
+      "params": [
+        "contract"
+      ],
+      "signature": "contract.symbol(contract)",
+      "summary": "用於讀取已選期權合約的欄位，讓策略能依履約價、到期日、Greeks 或報價做篩選。",
+      "example": "symbol = contract.symbol(contract)",
+      "returnValue": "合約欄位",
+      "snippet": "contract.symbol(${1:contract})"
+    },
+    {
+      "name": "contract.theta",
+      "kind": "function",
+      "params": [
+        "contract"
+      ],
+      "signature": "contract.theta(contract)",
+      "summary": "用於讀取已選期權合約的欄位，讓策略能依履約價、到期日、Greeks 或報價做篩選。",
+      "example": "theta = contract.theta(contract)",
+      "returnValue": "合約欄位",
+      "snippet": "contract.theta(${1:contract})"
+    },
+    {
+      "name": "contract.type",
+      "kind": "function",
+      "params": [
+        "contract"
+      ],
+      "signature": "contract.type(contract)",
+      "summary": "用於讀取已選期權合約的欄位，讓策略能依履約價、到期日、Greeks 或報價做篩選。",
+      "example": "right = contract.type(contract)",
+      "returnValue": "合約欄位",
+      "snippet": "contract.type(${1:contract})"
+    },
+    {
+      "name": "contract.underlying",
+      "kind": "function",
+      "params": [
+        "contract"
+      ],
+      "signature": "contract.underlying(contract)",
+      "summary": "用於讀取已選期權合約的欄位，讓策略能依履約價、到期日、Greeks 或報價做篩選。",
+      "example": "underlying = contract.underlying(contract)",
+      "returnValue": "合約欄位",
+      "snippet": "contract.underlying(${1:contract})"
+    },
+    {
+      "name": "contract.vega",
+      "kind": "function",
+      "params": [
+        "contract"
+      ],
+      "signature": "contract.vega(contract)",
+      "summary": "用於讀取已選期權合約的欄位，讓策略能依履約價、到期日、Greeks 或報價做篩選。",
+      "example": "vega = contract.vega(contract)",
+      "returnValue": "合約欄位",
+      "snippet": "contract.vega(${1:contract})"
+    },
+    {
+      "name": "contract.volume",
+      "kind": "function",
+      "params": [
+        "contract"
+      ],
+      "signature": "contract.volume(contract)",
+      "summary": "用於讀取已選期權合約的欄位，讓策略能依履約價、到期日、Greeks 或報價做篩選。",
+      "example": "vol = contract.volume(contract)",
+      "returnValue": "合約欄位",
+      "snippet": "contract.volume(${1:contract})"
+    },
+    {
+      "name": "bar_index",
+      "kind": "constant",
+      "signature": "bar_index",
+      "summary": "用於限制策略暖身期、排除前幾根資料不足的 bar。",
+      "example": "ready = bar_index \u003e 50",
+      "returnValue": "數值",
+      "snippet": "bar_index"
+    },
+    {
+      "name": "buy",
+      "kind": "function",
+      "params": [
+        "qty"
+      ],
+      "signature": "buy(qty)",
+      "summary": "用於快速送出基本買入指令，適合最小範例或不需要命名部位的腳本。",
+      "example": "buy(1)",
+      "returnValue": "na",
+      "snippet": "buy(${1:qty})"
+    },
+    {
+      "name": "close",
+      "kind": "constant",
+      "signature": "close",
+      "summary": "用作主要價格序列，常拿來計算均線、動能、突破與下單價格。",
+      "example": "fast = ta.sma(close, 20)",
+      "returnValue": "series",
+      "snippet": "close"
+    },
+    {
+      "name": "high",
+      "kind": "constant",
+      "signature": "high",
+      "summary": "用於偵測近期高點、突破條件或計算震幅類指標。",
+      "example": "breakout = close \u003e ta.highest(high, 20)[1]",
+      "returnValue": "series",
+      "snippet": "high"
+    },
+    {
+      "name": "input",
+      "kind": "function",
+      "params": [
+        "defval",
+        "title",
+        "minval",
+        "maxval",
+        "step"
+      ],
+      "signature": "input(defval, title, minval, maxval, step)",
+      "summary": "用於把策略參數暴露給 validate API 與回測請求，讓使用者能用 dsl_params 覆蓋預設值。",
+      "example": "risk = input(0.02, title=\"Risk\", minval=0, maxval=1, step=0.01)",
+      "returnValue": "值",
+      "snippet": "input(${1:defval}, ${2:title}, ${3:minval}, ${4:maxval}, ${5:step})"
+    },
+    {
+      "name": "len",
+      "kind": "function",
+      "params": [
+        "value"
+      ],
+      "signature": "len(value)",
+      "summary": "用於檢查陣列或字串長度，常搭配 portfolio、options.sort_by_delta 或字串拆分結果。",
+      "example": "has_symbols = len(portfolio.symbols()) \u003e 0",
+      "returnValue": "數值",
+      "snippet": "len(${1:value})"
+    },
+    {
+      "name": "low",
+      "kind": "constant",
+      "signature": "low",
+      "summary": "用於偵測近期低點、停損位置或回撤條件。",
+      "example": "stop_price = ta.lowest(low, 10)",
+      "returnValue": "series",
+      "snippet": "low"
+    },
+    {
+      "name": "math_e",
+      "kind": "constant",
+      "signature": "math_e",
+      "summary": "用於自然對數或指數模型中的 e 常數。",
+      "example": "one = math.log(math_e)",
+      "returnValue": "數值",
+      "snippet": "math_e"
+    },
+    {
+      "name": "math_phi",
+      "kind": "constant",
+      "signature": "math_phi",
+      "summary": "用於黃金比例相關的價格或比例計算。",
+      "example": "target = close * math_phi",
+      "returnValue": "數值",
+      "snippet": "math_phi"
+    },
+    {
+      "name": "math_pi",
+      "kind": "constant",
+      "signature": "math_pi",
+      "summary": "用於需要圓周率的自訂數學轉換。",
+      "example": "cycle = math_pi * 2",
+      "returnValue": "數值",
+      "snippet": "math_pi"
+    },
+    {
+      "name": "na",
+      "kind": "function",
+      "params": [
+        "x"
+      ],
+      "signature": "na(x)",
+      "summary": "用於檢查值是否為 na。",
+      "example": "warming_up = na(ta.sma(close, 50))",
+      "returnValue": "數值",
+      "snippet": "na(${1:x})"
+    },
+    {
+      "name": "nz",
+      "kind": "function",
+      "params": [
+        "x",
+        "replacement"
+      ],
+      "signature": "nz(x, replacement)",
+      "summary": "用於把 na 替換成指定值，避免暖身期指標造成條件失效。",
+      "example": "safe_rsi = nz(ta.rsi(close, 14), 50)",
+      "returnValue": "數值",
+      "snippet": "nz(${1:x}, ${2:replacement})"
+    },
+    {
+      "name": "open",
+      "kind": "constant",
+      "signature": "open",
+      "summary": "用於判斷當根 K 線方向或估算開盤後價格變化。",
+      "example": "green_bar = close \u003e open",
+      "returnValue": "series",
+      "snippet": "open"
+    },
+    {
+      "name": "plot",
+      "kind": "function",
+      "params": [
+        "series",
+        "title",
+        "overlay",
+        "precision"
+      ],
+      "signature": "plot(series, title, overlay, precision)",
+      "summary": "用於把中間指標或交易條件輸出到回測結果，方便檢查策略為何進出場。",
+      "example": "plot(ta.sma(close, 20), title=\"SMA 20\", overlay=true, precision=2)",
+      "returnValue": "值",
+      "snippet": "plot(${1:series}, ${2:title}, ${3:overlay}, ${4:precision})"
+    },
+    {
+      "name": "sell",
+      "kind": "function",
+      "params": [
+        "qty"
+      ],
+      "signature": "sell(qty)",
+      "summary": "用於快速送出基本賣出指令，適合最小範例或不需要命名部位的腳本。",
+      "example": "sell(1)",
+      "returnValue": "na",
+      "snippet": "sell(${1:qty})"
+    },
+    {
+      "name": "volume",
+      "kind": "constant",
+      "signature": "volume",
+      "summary": "用於成交量濾網、量能均線或流動性條件。",
+      "example": "active_volume = volume \u003e ta.sma(volume, 20)",
+      "returnValue": "series",
+      "snippet": "volume"
+    },
+    {
+      "name": "event.consume_all",
+      "kind": "function",
+      "signature": "event.consume_all()",
+      "summary": "用於一次標記目前 bar 所有未處理事件為已消費。",
+      "example": "consumed = event.consume_all()",
+      "returnValue": "信號值",
+      "snippet": "event.consume_all()"
+    },
+    {
+      "name": "event.is_add",
+      "kind": "function",
+      "signature": "event.is_add()",
+      "summary": "用於判斷下一個事件是否為 add 動作。",
+      "example": "should_add = event.is_add() == 1",
+      "returnValue": "信號值",
+      "snippet": "event.is_add()"
+    },
+    {
+      "name": "event.is_close",
+      "kind": "function",
+      "signature": "event.is_close()",
+      "summary": "用於判斷下一個事件是否為 close 動作。",
+      "example": "should_close = event.is_close() == 1",
+      "returnValue": "信號值",
+      "snippet": "event.is_close()"
+    },
+    {
+      "name": "event.is_init",
+      "kind": "function",
+      "signature": "event.is_init()",
+      "summary": "用於判斷下一個事件是否為 init 動作。",
+      "example": "should_open = event.is_init() == 1",
+      "returnValue": "信號值",
+      "snippet": "event.is_init()"
+    },
+    {
+      "name": "event.is_roll",
+      "kind": "function",
+      "signature": "event.is_roll()",
+      "summary": "用於判斷下一個事件是否為 roll 動作。",
+      "example": "should_roll = event.is_roll() == 1",
+      "returnValue": "信號值",
+      "snippet": "event.is_roll()"
+    },
+    {
+      "name": "event.next",
+      "kind": "function",
+      "signature": "event.next()",
+      "summary": "用於消費下一個事件並取得方向，避免同一事件重複下單。",
+      "example": "direction = event.next()",
+      "returnValue": "信號值",
+      "snippet": "event.next()"
+    },
+    {
+      "name": "event.next_action",
+      "kind": "function",
+      "signature": "event.next_action()",
+      "summary": "用於消費下一個事件並取得動作代碼。",
+      "example": "action = event.next_action()",
+      "returnValue": "信號值",
+      "snippet": "event.next_action()"
+    },
+    {
+      "name": "event.peek",
+      "kind": "function",
+      "signature": "event.peek()",
+      "summary": "用於查看下一個未消費事件方向，但不標記已處理。",
+      "example": "next_dir = event.peek()",
+      "returnValue": "信號值",
+      "snippet": "event.peek()"
+    },
+    {
+      "name": "event.peek_action",
+      "kind": "function",
+      "signature": "event.peek_action()",
+      "summary": "用於查看下一個未消費事件動作代碼，但不標記已處理。",
+      "example": "next_action = event.peek_action()",
+      "returnValue": "信號值",
+      "snippet": "event.peek_action()"
+    },
+    {
+      "name": "event.peek_name",
+      "kind": "function",
+      "signature": "event.peek_name()",
+      "summary": "用於查看下一個未消費事件名稱。",
+      "example": "event_name = event.peek_name()",
+      "returnValue": "信號值",
+      "snippet": "event.peek_name()"
+    },
+    {
+      "name": "event.peek_qty",
+      "kind": "function",
+      "signature": "event.peek_qty()",
+      "summary": "用於查看下一個未消費事件的數量。",
+      "example": "event_qty = event.peek_qty()",
+      "returnValue": "信號值",
+      "snippet": "event.peek_qty()"
+    },
+    {
+      "name": "event.pending",
+      "kind": "function",
+      "signature": "event.pending()",
+      "summary": "用於檢查目前 bar 還有多少外部事件尚未被消費。",
+      "example": "has_event = event.pending() \u003e 0",
+      "returnValue": "信號值",
+      "snippet": "event.pending()"
+    },
+    {
+      "name": "group.add_spread",
+      "kind": "function",
+      "params": [
+        "group_id",
+        "spread_id"
+      ],
+      "signature": "group.add_spread(group_id, spread_id)",
+      "summary": "用於管理一組相關期權 spread，常見於分批建倉、roll 倉與組合平倉。",
+      "example": "group.add_spread(\"main\", spread_id)",
+      "returnValue": "handle 或值",
+      "snippet": "group.add_spread(${1:group_id}, ${2:spread_id})"
+    },
+    {
+      "name": "group.close",
+      "kind": "function",
+      "params": [
+        "group_id"
+      ],
+      "signature": "group.close(group_id)",
+      "summary": "用於管理一組相關期權 spread，常見於分批建倉、roll 倉與組合平倉。",
+      "example": "group.close(\"main\")",
+      "returnValue": "handle 或值",
+      "snippet": "group.close(${1:group_id})"
+    },
+    {
+      "name": "group.get",
+      "kind": "function",
+      "params": [
+        "group_id"
+      ],
+      "signature": "group.get(group_id)",
+      "summary": "用於管理一組相關期權 spread，常見於分批建倉、roll 倉與組合平倉。",
+      "example": "group.get(\"main\")",
+      "returnValue": "handle 或值",
+      "snippet": "group.get(${1:group_id})"
+    },
+    {
+      "name": "group.increment_roll",
+      "kind": "function",
+      "params": [
+        "group_id"
+      ],
+      "signature": "group.increment_roll(group_id)",
+      "summary": "用於管理一組相關期權 spread，常見於分批建倉、roll 倉與組合平倉。",
+      "example": "group.increment_roll(\"main\")",
+      "returnValue": "handle 或值",
+      "snippet": "group.increment_roll(${1:group_id})"
+    },
+    {
+      "name": "group.open",
+      "kind": "function",
+      "params": [
+        "tag",
+        "init_amount",
+        "decay_factor"
+      ],
+      "signature": "group.open(tag, init_amount, decay_factor)",
+      "summary": "用於管理一組相關期權 spread，常見於分批建倉、roll 倉與組合平倉。",
+      "example": "group.open(\"main\", 10000, 0.5)",
+      "returnValue": "handle 或值",
+      "snippet": "group.open(${1:tag}, ${2:init_amount}, ${3:decay_factor})"
+    },
+    {
+      "name": "group.open_ids",
+      "kind": "function",
+      "signature": "group.open_ids()",
+      "summary": "用於管理一組相關期權 spread，常見於分批建倉、roll 倉與組合平倉。",
+      "example": "group.open_ids()",
+      "returnValue": "handle 或值",
+      "snippet": "group.open_ids()"
+    },
+    {
+      "name": "group.spread_count",
+      "kind": "function",
+      "params": [
+        "group_id"
+      ],
+      "signature": "group.spread_count(group_id)",
+      "summary": "用於管理一組相關期權 spread，常見於分批建倉、roll 倉與組合平倉。",
+      "example": "group.spread_count(\"main\")",
+      "returnValue": "handle 或值",
+      "snippet": "group.spread_count(${1:group_id})"
+    },
+    {
+      "name": "input.bool",
+      "kind": "function",
+      "params": [
+        "defval",
+        "title"
+      ],
+      "signature": "input.bool(defval, title)",
+      "summary": "用於宣告功能開關，例如是否啟用趨勢濾網或是否允許加倉。",
+      "example": "use_filter = input.bool(true, title=\"Use Filter\")",
+      "returnValue": "布林",
+      "snippet": "input.bool(${1:defval}, ${2:title})"
+    },
+    {
+      "name": "input.float",
+      "kind": "function",
+      "params": [
+        "defval",
+        "title",
+        "minval",
+        "maxval",
+        "step"
+      ],
+      "signature": "input.float(defval, title, minval, maxval, step)",
+      "summary": "用於宣告小數參數，例如資金比例、停損比例或權重上限。",
+      "example": "position_pct = input.float(0.95, title=\"Position %\", minval=0.01, maxval=1.0)",
+      "returnValue": "數值",
+      "snippet": "input.float(${1:defval}, ${2:title}, ${3:minval}, ${4:maxval}, ${5:step})"
+    },
+    {
+      "name": "input.int",
+      "kind": "function",
+      "params": [
+        "defval",
+        "title",
+        "minval",
+        "maxval",
+        "step"
+      ],
+      "signature": "input.int(defval, title, minval, maxval, step)",
+      "summary": "用於宣告整數參數，例如均線週期、持倉 bar 數或分批次數。",
+      "example": "fast_len = input.int(10, title=\"Fast SMA\", minval=1, step=1)",
+      "returnValue": "數值",
+      "snippet": "input.int(${1:defval}, ${2:title}, ${3:minval}, ${4:maxval}, ${5:step})"
+    },
+    {
+      "name": "input.string",
+      "kind": "function",
+      "params": [
+        "defval",
+        "title",
+        "options"
+      ],
+      "signature": "input.string(defval, title, options)",
+      "summary": "用於宣告模式、標的、分組名稱等字串參數，並可限制可選值。",
+      "example": "mode = input.string(\"trend\", title=\"Mode\", options=[\"trend\", \"mean\"])",
+      "returnValue": "字串",
+      "snippet": "input.string(${1:defval}, ${2:title}, ${3:options})"
+    },
+    {
+      "name": "leg.buy",
+      "kind": "function",
+      "params": [
+        "contract",
+        "qty"
+      ],
+      "signature": "leg.buy(contract, qty)",
+      "summary": "用於建立買方 leg，qty 表示期權合約張數；US options 的現金流與 PnL 會按 100 contract multiplier 計算。",
+      "example": "long_leg = leg.buy(contract, 1)",
+      "returnValue": "leg",
+      "snippet": "leg.buy(${1:contract}, ${2:qty})"
+    },
+    {
+      "name": "leg.sell",
+      "kind": "function",
+      "params": [
+        "contract",
+        "qty"
+      ],
+      "signature": "leg.sell(contract, qty)",
+      "summary": "用於建立賣方 leg，qty 表示期權合約張數；US options 的現金流與 PnL 會按 100 contract multiplier 計算。",
+      "example": "short_leg = leg.sell(contract, 1)",
+      "returnValue": "leg",
+      "snippet": "leg.sell(${1:contract}, ${2:qty})"
+    },
+    {
+      "name": "market.context",
+      "kind": "function",
+      "params": [
+        "rsi14",
+        "cci20",
+        "hv_percentile",
+        "iv_percentile",
+        "valuation_percentile"
+      ],
+      "signature": "market.context(rsi14, cci20, hv_percentile, iv_percentile, valuation_percentile)",
+      "summary": "用於把策略已讀取或計算的真實因子轉成趨勢、波動、估值與情境分類。",
+      "example": "ctx = market.context(rsi14, cci20, hvp, ivp, valp)",
+      "returnValue": "市場環境物件",
+      "snippet": "market.context(${1:rsi14}, ${2:cci20}, ${3:hv_percentile}, ${4:iv_percentile}, ${5:valuation_percentile})"
+    },
+    {
+      "name": "market.hv_state",
+      "kind": "function",
+      "params": [
+        "context"
+      ],
+      "signature": "market.hv_state(context)",
+      "summary": "用於讀取 market.context 的 HV 狀態。",
+      "example": "hv_state = market.hv_state(ctx)",
+      "returnValue": "字串",
+      "snippet": "market.hv_state(${1:context})"
+    },
+    {
+      "name": "market.iv_state",
+      "kind": "function",
+      "params": [
+        "context"
+      ],
+      "signature": "market.iv_state(context)",
+      "summary": "用於讀取 market.context 的 IV 狀態。",
+      "example": "iv_state = market.iv_state(ctx)",
+      "returnValue": "字串",
+      "snippet": "market.iv_state(${1:context})"
+    },
+    {
+      "name": "market.reason_codes",
+      "kind": "function",
+      "signature": "market.reason_codes()",
+      "summary": "用於策略腳本中的資料處理、條件判斷或交易流程控制。",
+      "example": "market.reason_codes()",
+      "returnValue": "數值",
+      "snippet": "market.reason_codes()"
+    },
+    {
+      "name": "market.risk_label",
+      "kind": "function",
+      "signature": "market.risk_label()",
+      "summary": "用於策略腳本中的資料處理、條件判斷或交易流程控制。",
+      "example": "market.risk_label()",
+      "returnValue": "數值",
+      "snippet": "market.risk_label()"
+    },
+    {
+      "name": "market.scenario_label",
+      "kind": "function",
+      "signature": "market.scenario_label()",
+      "summary": "用於策略腳本中的資料處理、條件判斷或交易流程控制。",
+      "example": "market.scenario_label()",
+      "returnValue": "數值",
+      "snippet": "market.scenario_label()"
+    },
+    {
+      "name": "market.trend_state",
+      "kind": "function",
+      "params": [
+        "context"
+      ],
+      "signature": "market.trend_state(context)",
+      "summary": "用於讀取 market.context 的趨勢狀態。",
+      "example": "trend = market.trend_state(ctx)",
+      "returnValue": "字串",
+      "snippet": "market.trend_state(${1:context})"
+    },
+    {
+      "name": "market.valuation_state",
+      "kind": "function",
+      "params": [
+        "context"
+      ],
+      "signature": "market.valuation_state(context)",
+      "summary": "用於讀取 market.context 的估值狀態。",
+      "example": "valuation = market.valuation_state(ctx)",
+      "returnValue": "字串",
+      "snippet": "market.valuation_state(${1:context})"
+    },
+    {
+      "name": "market.warnings",
+      "kind": "function",
+      "signature": "market.warnings()",
+      "summary": "用於策略腳本中的資料處理、條件判斷或交易流程控制。",
+      "example": "market.warnings()",
+      "returnValue": "數值",
+      "snippet": "market.warnings()"
+    },
+    {
+      "name": "math.abs",
+      "kind": "function",
+      "params": [
+        "x"
+      ],
+      "signature": "math.abs(x)",
+      "summary": "用於取得絕對值，例如計算偏離程度或風險距離。",
+      "example": "distance = math.abs(close - ta.sma(close, 20))",
+      "returnValue": "數值",
+      "snippet": "math.abs(${1:x})"
+    },
+    {
+      "name": "math.avg",
+      "kind": "function",
+      "params": [
+        "a",
+        "b"
+      ],
+      "signature": "math.avg(a, b)",
+      "summary": "用於計算多個數值的平均。",
+      "example": "mid = math.avg(high, low, close)",
+      "returnValue": "數值",
+      "snippet": "math.avg(${1:a}, ${2:b})"
+    },
+    {
+      "name": "math.ceil",
+      "kind": "function",
+      "params": [
+        "x"
+      ],
+      "signature": "math.ceil(x)",
+      "summary": "用於把倉位數量或 bar 數向上取整。",
+      "example": "lots = math.ceil(strategy.equity / close)",
+      "returnValue": "數值",
+      "snippet": "math.ceil(${1:x})"
+    },
+    {
+      "name": "math.exp",
+      "kind": "function",
+      "params": [
+        "x"
+      ],
+      "signature": "math.exp(x)",
+      "summary": "用於指數轉換或還原 log 值。",
+      "example": "restored = math.exp(math.log(close))",
+      "returnValue": "數值",
+      "snippet": "math.exp(${1:x})"
+    },
+    {
+      "name": "math.floor",
+      "kind": "function",
+      "params": [
+        "x"
+      ],
+      "signature": "math.floor(x)",
+      "summary": "用於把倉位數量向下取整，避免買入零碎股數。",
+      "example": "qty = math.floor(strategy.cash / close)",
+      "returnValue": "數值",
+      "snippet": "math.floor(${1:x})"
+    },
+    {
+      "name": "math.log",
+      "kind": "function",
+      "params": [
+        "x"
+      ],
+      "signature": "math.log(x)",
+      "summary": "用於自然對數轉換，例如對數報酬。",
+      "example": "log_close = math.log(close)",
+      "returnValue": "數值",
+      "snippet": "math.log(${1:x})"
+    },
+    {
+      "name": "math.log10",
+      "kind": "function",
+      "params": [
+        "x"
+      ],
+      "signature": "math.log10(x)",
+      "summary": "用於十進位對數轉換。",
+      "example": "log10_close = math.log10(close)",
+      "returnValue": "數值",
+      "snippet": "math.log10(${1:x})"
+    },
+    {
+      "name": "math.max",
+      "kind": "function",
+      "params": [
+        "a",
+        "b"
+      ],
+      "signature": "math.max(a, b)",
+      "summary": "用於設定下限或在兩個風險值中取較大者。",
+      "example": "risk = math.max(ta.atr(14), close * 0.01)",
+      "returnValue": "數值",
+      "snippet": "math.max(${1:a}, ${2:b})"
+    },
+    {
+      "name": "math.min",
+      "kind": "function",
+      "params": [
+        "a",
+        "b"
+      ],
+      "signature": "math.min(a, b)",
+      "summary": "用於限制倉位、風險或價格門檻不超過上限。",
+      "example": "budget = math.min(strategy.cash, strategy.equity * 0.5)",
+      "returnValue": "數值",
+      "snippet": "math.min(${1:a}, ${2:b})"
+    },
+    {
+      "name": "math.pow",
+      "kind": "function",
+      "params": [
+        "x",
+        "exp"
+      ],
+      "signature": "math.pow(x, exp)",
+      "summary": "用於自訂非線性權重或訊號強度。",
+      "example": "squared = math.pow(close - ta.sma(close, 20), 2)",
+      "returnValue": "數值",
+      "snippet": "math.pow(${1:x}, ${2:exp})"
+    },
+    {
+      "name": "math.round",
+      "kind": "function",
+      "params": [
+        "x"
+      ],
+      "signature": "math.round(x)",
+      "summary": "用於把價格或數量四捨五入。",
+      "example": "rounded = math.round(close)",
+      "returnValue": "數值",
+      "snippet": "math.round(${1:x})"
+    },
+    {
+      "name": "math.sign",
+      "kind": "function",
+      "params": [
+        "x"
+      ],
+      "signature": "math.sign(x)",
+      "summary": "用於把訊號轉成方向 -1、0 或 1。",
+      "example": "dir = math.sign(close - ta.sma(close, 20))",
+      "returnValue": "數值",
+      "snippet": "math.sign(${1:x})"
+    },
+    {
+      "name": "math.sqrt",
+      "kind": "function",
+      "params": [
+        "x"
+      ],
+      "signature": "math.sqrt(x)",
+      "summary": "用於自訂波動率或標準差相關公式。",
+      "example": "root = math.sqrt(ta.stdev(close, 20))",
+      "returnValue": "數值",
+      "snippet": "math.sqrt(${1:x})"
+    },
+    {
+      "name": "options.best_spread",
+      "kind": "function",
+      "params": [
+        "chain"
+      ],
+      "signature": "options.best_spread(chain)",
+      "summary": "用於從期權鏈中篩出符合到期日、Delta、權利金或履約價條件的候選合約。",
+      "example": "contract = options.best_spread(options.puts(options.chain(\"us-options\", \"SPY\")))",
+      "returnValue": "期權鏈或值",
+      "snippet": "options.best_spread(${1:chain})"
+    },
+    {
+      "name": "options.build_strategy",
+      "kind": "function",
+      "params": [
+        "chain",
+        "name",
+        "qty",
+        "target_delta"
+      ],
+      "signature": "options.build_strategy(chain, name, qty, target_delta)",
+      "summary": "用於把策略名稱和期權鏈轉成可檢查的標準 legs，不直接下單。",
+      "example": "legs = options.build_strategy(chain, \"BUY_CALL\", 1, 0.35)",
+      "returnValue": "leg 陣列",
+      "snippet": "options.build_strategy(${1:chain}, ${2:name}, ${3:qty}, ${4:target_delta})"
+    },
+    {
+      "name": "options.calls",
+      "kind": "function",
+      "params": [
+        "chain"
+      ],
+      "signature": "options.calls(chain)",
+      "summary": "用於把期權鏈縮小到 call 合約。",
+      "example": "calls = options.calls(options.chain(\"us-options\", \"SPY\"))",
+      "returnValue": "期權鏈",
+      "snippet": "options.calls(${1:chain})"
+    },
+    {
+      "name": "options.chain",
+      "kind": "function",
+      "params": [
+        "market",
+        "symbol"
+      ],
+      "signature": "options.chain(market, symbol)",
+      "summary": "用於取得目前 bar 可用的期權鏈；多標的策略可指定市場與 underlying。",
+      "example": "chain = options.chain(\"us-options\", \"SPY\")",
+      "returnValue": "期權鏈",
+      "snippet": "options.chain(${1:market}, ${2:symbol})"
+    },
+    {
+      "name": "options.delta_range",
+      "kind": "function",
+      "params": [
+        "chain",
+        "min_delta",
+        "max_delta"
+      ],
+      "signature": "options.delta_range(chain, min_delta, max_delta)",
+      "summary": "用於從期權鏈中篩出符合到期日、Delta、權利金或履約價條件的候選合約。",
+      "example": "puts = options.delta_range(options.puts(options.chain(\"us-options\", \"SPY\")), -0.35, -0.15)",
+      "returnValue": "期權鏈或值",
+      "snippet": "options.delta_range(${1:chain}, ${2:min_delta}, ${3:max_delta})"
+    },
+    {
+      "name": "options.expiry_max",
+      "kind": "function",
+      "params": [
+        "chain",
+        "max_days"
+      ],
+      "signature": "options.expiry_max(chain, max_days)",
+      "summary": "用於從期權鏈中篩出符合到期日、Delta、權利金或履約價條件的候選合約。",
+      "example": "chain45 = options.expiry_max(options.chain(\"us-options\", \"SPY\"), 45)",
+      "returnValue": "期權鏈或值",
+      "snippet": "options.expiry_max(${1:chain}, ${2:max_days})"
+    },
+    {
+      "name": "options.expiry_min",
+      "kind": "function",
+      "params": [
+        "chain",
+        "min_days"
+      ],
+      "signature": "options.expiry_min(chain, min_days)",
+      "summary": "用於從期權鏈中篩出符合到期日、Delta、權利金或履約價條件的候選合約。",
+      "example": "chain20 = options.expiry_min(options.chain(\"us-options\", \"SPY\"), 20)",
+      "returnValue": "期權鏈或值",
+      "snippet": "options.expiry_min(${1:chain}, ${2:min_days})"
+    },
+    {
+      "name": "options.expiry_nearest",
+      "kind": "function",
+      "params": [
+        "chain",
+        "target_days"
+      ],
+      "signature": "options.expiry_nearest(chain, target_days)",
+      "summary": "用於從期權鏈中篩出符合到期日、Delta、權利金或履約價條件的候選合約。",
+      "example": "near = options.expiry_nearest(options.chain(\"us-options\", \"SPY\"), 30)",
+      "returnValue": "期權鏈或值",
+      "snippet": "options.expiry_nearest(${1:chain}, ${2:target_days})"
+    },
+    {
+      "name": "options.expiry_range",
+      "kind": "function",
+      "params": [
+        "chain",
+        "min_days",
+        "max_days"
+      ],
+      "signature": "options.expiry_range(chain, min_days, max_days)",
+      "summary": "用於從期權鏈中篩出符合到期日、Delta、權利金或履約價條件的候選合約。",
+      "example": "chain30 = options.expiry_range(options.chain(\"us-options\", \"SPY\"), 20, 45)",
+      "returnValue": "期權鏈或值",
+      "snippet": "options.expiry_range(${1:chain}, ${2:min_days}, ${3:max_days})"
+    },
+    {
+      "name": "options.len",
+      "kind": "function",
+      "params": [
+        "chain"
+      ],
+      "signature": "options.len(chain)",
+      "summary": "用於從期權鏈中篩出符合到期日、Delta、權利金或履約價條件的候選合約。",
+      "example": "count = options.len(options.chain(\"us-options\", \"SPY\"))",
+      "returnValue": "期權鏈或值",
+      "snippet": "options.len(${1:chain})"
+    },
+    {
+      "name": "options.min_premium",
+      "kind": "function",
+      "params": [
+        "chain",
+        "min_bid"
+      ],
+      "signature": "options.min_premium(chain, min_bid)",
+      "summary": "用於從期權鏈中篩出符合到期日、Delta、權利金或履約價條件的候選合約。",
+      "example": "rich = options.min_premium(options.puts(options.chain(\"us-options\", \"SPY\")), 1.0)",
+      "returnValue": "期權鏈或值",
+      "snippet": "options.min_premium(${1:chain}, ${2:min_bid})"
+    },
+    {
+      "name": "options.open_strategy",
+      "kind": "function",
+      "params": [
+        "chain",
+        "name",
+        "qty",
+        "target_delta",
+        "tag"
+      ],
+      "signature": "options.open_strategy(chain, name, qty, target_delta, tag)",
+      "summary": "用於明確開啟由策略名稱生成的期權 spread。",
+      "example": "sid = options.open_strategy(chain, \"BUY_CALL\", 1, 0.35, \"momentum\")",
+      "returnValue": "spread id",
+      "snippet": "options.open_strategy(${1:chain}, ${2:name}, ${3:qty}, ${4:target_delta}, ${5:tag})"
+    },
+    {
+      "name": "options.puts",
+      "kind": "function",
+      "params": [
+        "chain"
+      ],
+      "signature": "options.puts(chain)",
+      "summary": "用於把期權鏈縮小到 put 合約。",
+      "example": "puts = options.puts(options.chain(\"us-options\", \"SPY\"))",
+      "returnValue": "期權鏈",
+      "snippet": "options.puts(${1:chain})"
+    },
+    {
+      "name": "options.sort_by_delta",
+      "kind": "function",
+      "params": [
+        "chain",
+        "target"
+      ],
+      "signature": "options.sort_by_delta(chain, target)",
+      "summary": "用於把候選合約依 Delta 接近目標值排序，方便取第一筆作交易。",
+      "example": "contracts = options.sort_by_delta(options.puts(options.chain(\"us-options\", \"SPY\")), -0.3)",
+      "returnValue": "陣列",
+      "snippet": "options.sort_by_delta(${1:chain}, ${2:target})"
+    },
+    {
+      "name": "options.strategies",
+      "kind": "function",
+      "params": [
+        "context",
+        "family"
+      ],
+      "signature": "options.strategies(context, family)",
+      "summary": "用於依市場環境分類挑選候選期權策略名稱。",
+      "example": "names = options.strategies(ctx, \"momentum\")",
+      "returnValue": "陣列",
+      "snippet": "options.strategies(${1:context}, ${2:family})"
+    },
+    {
+      "name": "options.strike_range",
+      "kind": "function",
+      "params": [
+        "chain",
+        "min",
+        "max"
+      ],
+      "signature": "options.strike_range(chain, min, max)",
+      "summary": "用於從期權鏈中篩出符合到期日、Delta、權利金或履約價條件的候選合約。",
+      "example": "near_money = options.strike_range(options.chain(\"us-options\", \"SPY\"), close * 0.9, close * 1.1)",
+      "returnValue": "期權鏈或值",
+      "snippet": "options.strike_range(${1:chain}, ${2:min}, ${3:max})"
+    },
+    {
+      "name": "order.buy",
+      "kind": "constant",
+      "signature": "order.buy",
+      "summary": "用於 order.* 函數表示買入方向。",
+      "example": "order.market(order.buy, 100, note=\"enter\")",
+      "returnValue": "數值",
+      "snippet": "order.buy"
+    },
+    {
+      "name": "order.immediate",
+      "kind": "function",
+      "params": [
+        "side",
+        "qty",
+        "note"
+      ],
+      "signature": "order.immediate(side, qty, note)",
+      "summary": "用於要求當根 bar 以目前 close 立即成交的市場單。",
+      "example": "order.immediate(order.sell, 100, note=\"force_exit\")",
+      "returnValue": "數值",
+      "snippet": "order.immediate(${1:side}, ${2:qty}, ${3:note})"
+    },
+    {
+      "name": "order.limit",
+      "kind": "function",
+      "params": [
+        "side",
+        "qty",
+        "price",
+        "note"
+      ],
+      "signature": "order.limit(side, qty, price, note)",
+      "summary": "用於在指定價格送出限價單，例如等待回落買入或反彈賣出。",
+      "example": "order.limit(order.buy, 100, close * 0.99)",
+      "returnValue": "數值",
+      "snippet": "order.limit(${1:side}, ${2:qty}, ${3:price}, ${4:note})"
+    },
+    {
+      "name": "order.market",
+      "kind": "function",
+      "params": [
+        "side",
+        "qty",
+        "note"
+      ],
+      "signature": "order.market(side, qty, note)",
+      "summary": "用於立即以市場單買入或賣出固定數量，並取得訂單 ID 供後續追蹤。",
+      "example": "order_id = order.market(order.buy, 100, note=\"enter\")",
+      "returnValue": "數值",
+      "snippet": "order.market(${1:side}, ${2:qty}, ${3:note})"
+    },
+    {
+      "name": "order.market_notional",
+      "kind": "function",
+      "params": [
+        "side",
+        "notional",
+        "note"
+      ],
+      "signature": "order.market_notional(side, notional, note)",
+      "summary": "用於依名義金額下市場單，讓策略用資金金額而非股數控倉。",
+      "example": "order_id = order.market_notional(order.buy, 10000, note=\"rebalance\")",
+      "returnValue": "數值",
+      "snippet": "order.market_notional(${1:side}, ${2:notional}, ${3:note})"
+    },
+    {
+      "name": "order.sell",
+      "kind": "constant",
+      "signature": "order.sell",
+      "summary": "用於 order.* 函數表示賣出方向。",
+      "example": "order.market(order.sell, 100, note=\"exit\")",
+      "returnValue": "數值",
+      "snippet": "order.sell"
+    },
+    {
+      "name": "order.stop",
+      "kind": "function",
+      "params": [
+        "side",
+        "qty",
+        "stop_price",
+        "note"
+      ],
+      "signature": "order.stop(side, qty, stop_price, note)",
+      "summary": "用於在觸及停損或突破價格後送出停損單。",
+      "example": "order.stop(order.sell, 100, close * 0.95)",
+      "returnValue": "數值",
+      "snippet": "order.stop(${1:side}, ${2:qty}, ${3:stop_price}, ${4:note})"
+    },
+    {
+      "name": "order.stop_limit",
+      "kind": "function",
+      "params": [
+        "side",
+        "qty",
+        "stop_price",
+        "limit_price",
+        "note"
+      ],
+      "signature": "order.stop_limit(side, qty, stop_price, limit_price, note)",
+      "summary": "用於建立同時含觸發價與限價的停損限價單。",
+      "example": "order.stop_limit(order.sell, 100, close * 0.95, close * 0.94)",
+      "returnValue": "數值",
+      "snippet": "order.stop_limit(${1:side}, ${2:qty}, ${3:stop_price}, ${4:limit_price}, ${5:note})"
+    },
+    {
+      "name": "order.submit",
+      "kind": "function",
+      "params": [
+        "id",
+        "side",
+        "qty",
+        "notional",
+        "type",
+        "limit",
+        "stop",
+        "twap_bars",
+        "immediate",
+        "note",
+        "ref",
+        "group_ref",
+        "schedule_at"
+      ],
+      "signature": "order.submit(id, side, qty, notional, type, limit, stop, twap_bars, immediate, note, ref, group_ref, schedule_at)",
+      "summary": "用於用單一入口送出可擴充訂單意圖，適合需要 ID、ref、group_ref 或排程資訊的策略。",
+      "example": "order.submit(id=\"entry\", side=order.buy, qty=100, type=\"market\")",
+      "returnValue": "數值",
+      "snippet": "order.submit(${1:id}, ${2:side}, ${3:qty}, ${4:notional}, ${5:type}, ${6:limit}, ${7:stop}, ${8:twap_bars}, ${9:immediate}, ${10:note}, ${11:ref}, ${12:group_ref}, ${13:schedule_at})"
+    },
+    {
+      "name": "order.twap",
+      "kind": "function",
+      "params": [
+        "side",
+        "qty",
+        "bars",
+        "note"
+      ],
+      "signature": "order.twap(side, qty, bars, note)",
+      "summary": "用於把一筆交易拆到多根 bar 執行，降低一次性成交衝擊。",
+      "example": "order.twap(order.buy, 100, 5)",
+      "returnValue": "數值",
+      "snippet": "order.twap(${1:side}, ${2:qty}, ${3:bars}, ${4:note})"
+    },
+    {
+      "name": "portfolio.items",
+      "kind": "function",
+      "signature": "portfolio.items()",
+      "summary": "用於一次取得 [symbol, weight] 陣列，方便多標的輪詢。",
+      "example": "items = portfolio.items()",
+      "returnValue": "陣列",
+      "snippet": "portfolio.items()"
+    },
+    {
+      "name": "portfolio.len",
+      "kind": "function",
+      "signature": "portfolio.len()",
+      "summary": "用於取得組合標的數量，常作為 for 迴圈上限。",
+      "example": "n = portfolio.len()",
+      "returnValue": "數值",
+      "snippet": "portfolio.len()"
+    },
+    {
+      "name": "portfolio.symbol",
+      "kind": "function",
+      "params": [
+        "index",
+        "defval"
+      ],
+      "signature": "portfolio.symbol(index, defval)",
+      "summary": "用於依索引讀取單一組合標的，索引不存在時回傳預設值。",
+      "example": "symbol = portfolio.symbol(0, \"SPY\")",
+      "returnValue": "字串",
+      "snippet": "portfolio.symbol(${1:index}, ${2:defval})"
+    },
+    {
+      "name": "portfolio.symbols",
+      "kind": "function",
+      "signature": "portfolio.symbols()",
+      "summary": "用於取得回測請求傳入的標的清單。",
+      "example": "symbols = portfolio.symbols()",
+      "returnValue": "陣列",
+      "snippet": "portfolio.symbols()"
+    },
+    {
+      "name": "portfolio.weight",
+      "kind": "function",
+      "params": [
+        "symbol",
+        "defval"
+      ],
+      "signature": "portfolio.weight(symbol, defval)",
+      "summary": "用於依 symbol 查詢組合權重，找不到時回傳預設值。",
+      "example": "w = portfolio.weight(\"SPY\", 0)",
+      "returnValue": "數值",
+      "snippet": "portfolio.weight(${1:symbol}, ${2:defval})"
+    },
+    {
+      "name": "portfolio.weights",
+      "kind": "function",
+      "signature": "portfolio.weights()",
+      "summary": "用於取得與 portfolio.symbols 對應的權重清單。",
+      "example": "weights = portfolio.weights()",
+      "returnValue": "陣列",
+      "snippet": "portfolio.weights()"
+    },
+    {
+      "name": "ref.clear",
+      "kind": "function",
+      "params": [
+        "name"
+      ],
+      "signature": "ref.clear(name)",
+      "summary": "用於跨 bar 保存自訂狀態，例如上次訂單 ID、spread ID 或已處理次數。",
+      "example": "ref.clear(\"main\")",
+      "returnValue": "數值",
+      "snippet": "ref.clear(${1:name})"
+    },
+    {
+      "name": "ref.dec",
+      "kind": "function",
+      "params": [
+        "name"
+      ],
+      "signature": "ref.dec(name)",
+      "summary": "用於跨 bar 保存自訂狀態，例如上次訂單 ID、spread ID 或已處理次數。",
+      "example": "ref.dec(\"main\")",
+      "returnValue": "數值",
+      "snippet": "ref.dec(${1:name})"
+    },
+    {
+      "name": "ref.get",
+      "kind": "function",
+      "params": [
+        "name"
+      ],
+      "signature": "ref.get(name)",
+      "summary": "用於跨 bar 保存自訂狀態，例如上次訂單 ID、spread ID 或已處理次數。",
+      "example": "ref.get(\"main\")",
+      "returnValue": "數值",
+      "snippet": "ref.get(${1:name})"
+    },
+    {
+      "name": "ref.has",
+      "kind": "function",
+      "params": [
+        "name"
+      ],
+      "signature": "ref.has(name)",
+      "summary": "用於跨 bar 保存自訂狀態，例如上次訂單 ID、spread ID 或已處理次數。",
+      "example": "ref.has(\"main\")",
+      "returnValue": "數值",
+      "snippet": "ref.has(${1:name})"
+    },
+    {
+      "name": "ref.inc",
+      "kind": "function",
+      "params": [
+        "name"
+      ],
+      "signature": "ref.inc(name)",
+      "summary": "用於跨 bar 保存自訂狀態，例如上次訂單 ID、spread ID 或已處理次數。",
+      "example": "ref.inc(\"main\")",
+      "returnValue": "數值",
+      "snippet": "ref.inc(${1:name})"
+    },
+    {
+      "name": "ref.set",
+      "kind": "function",
+      "params": [
+        "name",
+        "value"
+      ],
+      "signature": "ref.set(name, value)",
+      "summary": "用於跨 bar 保存自訂狀態，例如上次訂單 ID、spread ID 或已處理次數。",
+      "example": "ref.set(\"main\", close)",
+      "returnValue": "數值",
+      "snippet": "ref.set(${1:name}, ${2:value})"
+    },
+    {
+      "name": "request.factor",
+      "kind": "function",
+      "params": [
+        "name",
+        "interval",
+        "field"
+      ],
+      "signature": "request.factor(name, interval, field)",
+      "summary": "用於讀取預載因子資料；內建 volatility 因子會綁定目前回測主標的，提供 iv/current_iv、hv10、hv20、hv30、iv_percentile、iv_rank、price_observations、iv_observations 等 1d 欄位。",
+      "example": "iv_rank = request.factor(\"volatility\", \"1d\", \"iv_rank\")",
+      "returnValue": "series",
+      "snippet": "request.factor(${1:name}, ${2:interval}, ${3:field})"
+    },
+    {
+      "name": "request.fundamental",
+      "kind": "function",
+      "params": [
+        "market",
+        "symbol",
+        "factor",
+        "mode"
+      ],
+      "signature": "request.fundamental(market, symbol, factor, mode)",
+      "summary": "用於讀取標的綁定的基本面序列，例如 PE、PB、market_cap 等；美股的 PE/PB 會依 bar close 以 point-in-time 方式動態重估。",
+      "example": "pe = request.fundamental(\"us-stocks\", \"AAPL\", \"pe\")",
+      "returnValue": "series",
+      "snippet": "request.fundamental(${1:market}, ${2:symbol}, ${3:factor}, ${4:mode})"
+    },
+    {
+      "name": "request.security",
+      "kind": "function",
+      "params": [
+        "market",
+        "symbol",
+        "interval",
+        "field"
+      ],
+      "signature": "request.security(market, symbol, interval, field)",
+      "summary": "用於讀取其他市場、標的或週期的預載欄位；第四參數也可為純表達式，會在指定標的/週期上下文中計算後對齊回主時間軸。",
+      "example": "spy_close = request.security(\"us-stocks\", \"SPY\", \"1d\", \"close\")",
+      "returnValue": "series",
+      "snippet": "request.security(${1:market}, ${2:symbol}, ${3:interval}, ${4:field})"
+    },
+    {
+      "name": "schedule.close_group",
+      "kind": "function",
+      "params": [
+        "bars_offset",
+        "group_id"
+      ],
+      "signature": "schedule.close_group(bars_offset, group_id)",
+      "summary": "用於排程未來幾根 bar 後關閉 spread、leg 或 group。",
+      "example": "schedule.close_group(20, \"main\")",
+      "returnValue": "handle 或值",
+      "snippet": "schedule.close_group(${1:bars_offset}, ${2:group_id})"
+    },
+    {
+      "name": "schedule.close_leg",
+      "kind": "function",
+      "params": [
+        "bars_offset",
+        "spread_id",
+        "leg_index"
+      ],
+      "signature": "schedule.close_leg(bars_offset, spread_id, leg_index)",
+      "summary": "用於排程未來幾根 bar 後關閉 spread、leg 或 group。",
+      "example": "schedule.close_leg(20, spread_id, 0)",
+      "returnValue": "handle 或值",
+      "snippet": "schedule.close_leg(${1:bars_offset}, ${2:spread_id}, ${3:leg_index})"
+    },
+    {
+      "name": "schedule.close_spread",
+      "kind": "function",
+      "params": [
+        "bars_offset",
+        "spread_id",
+        "reason"
+      ],
+      "signature": "schedule.close_spread(bars_offset, spread_id, reason)",
+      "summary": "用於排程未來幾根 bar 後關閉 spread、leg 或 group。",
+      "example": "schedule.close_spread(20, spread_id, \"risk_exit\")",
+      "returnValue": "handle 或值",
+      "snippet": "schedule.close_spread(${1:bars_offset}, ${2:spread_id}, ${3:reason})"
+    },
+    {
+      "name": "signal.action",
+      "kind": "function",
+      "signature": "signal.action()",
+      "summary": "用於讀取第一個信號動作代碼，對應 init/add/close/roll。",
+      "example": "action = signal.action()",
+      "returnValue": "信號值",
+      "snippet": "signal.action()"
+    },
+    {
+      "name": "signal.active",
+      "kind": "function",
+      "signature": "signal.active()",
+      "summary": "用於判斷目前 bar 是否有外部信號。",
+      "example": "has_signal = signal.active() == 1",
+      "returnValue": "信號值",
+      "snippet": "signal.active()"
+    },
+    {
+      "name": "signal.consume",
+      "kind": "function",
+      "signature": "signal.consume()",
+      "summary": "用於把目前 bar 的第一個信號標記為已處理。",
+      "example": "done = signal.consume()",
+      "returnValue": "信號值",
+      "snippet": "signal.consume()"
+    },
+    {
+      "name": "signal.consumed",
+      "kind": "function",
+      "signature": "signal.consumed()",
+      "summary": "用於判斷目前 bar 的第一個信號是否已被標記處理。",
+      "example": "if signal.active() == 1 and signal.consumed() == 0",
+      "returnValue": "信號值",
+      "snippet": "signal.consumed()"
+    },
+    {
+      "name": "signal.count",
+      "kind": "function",
+      "signature": "signal.count()",
+      "summary": "用於取得目前 bar 外部信號數量。",
+      "example": "signal_total = signal.count()",
+      "returnValue": "信號值",
+      "snippet": "signal.count()"
+    },
+    {
+      "name": "signal.direction",
+      "kind": "function",
+      "signature": "signal.direction()",
+      "summary": "用於讀取第一個信號方向，1 表示多、-1 表示空、0 表示無方向。",
+      "example": "dir = signal.direction()",
+      "returnValue": "信號值",
+      "snippet": "signal.direction()"
+    },
+    {
+      "name": "signal.group_ref",
+      "kind": "function",
+      "signature": "signal.group_ref()",
+      "summary": "用於讀取信號分組參考 ID。",
+      "example": "group_id = signal.group_ref()",
+      "returnValue": "信號值",
+      "snippet": "signal.group_ref()"
+    },
+    {
+      "name": "signal.name",
+      "kind": "function",
+      "signature": "signal.name()",
+      "summary": "用於讀取第一個信號名稱，便於路由不同策略邏輯。",
+      "example": "name = signal.name()",
+      "returnValue": "信號值",
+      "snippet": "signal.name()"
+    },
+    {
+      "name": "signal.qty",
+      "kind": "function",
+      "signature": "signal.qty()",
+      "summary": "用於讀取第一個信號建議數量。",
+      "example": "qty = nz(signal.qty(), 1)",
+      "returnValue": "信號值",
+      "snippet": "signal.qty()"
+    },
+    {
+      "name": "signal.ref",
+      "kind": "function",
+      "signature": "signal.ref()",
+      "summary": "用於讀取信號參考 ID，方便連結訂單或 spread。",
+      "example": "ref_id = signal.ref()",
+      "returnValue": "信號值",
+      "snippet": "signal.ref()"
+    },
+    {
+      "name": "signal.remarks",
+      "kind": "function",
+      "signature": "signal.remarks()",
+      "summary": "用於讀取信號備註文字。",
+      "example": "note = signal.remarks()",
+      "returnValue": "信號值",
+      "snippet": "signal.remarks()"
+    },
+    {
+      "name": "signal.source",
+      "kind": "function",
+      "signature": "signal.source()",
+      "summary": "用於讀取信號來源，便於區分不同上游系統。",
+      "example": "source = signal.source()",
+      "returnValue": "信號值",
+      "snippet": "signal.source()"
+    },
+    {
+      "name": "spread.close",
+      "kind": "function",
+      "params": [
+        "spread_id",
+        "reason"
+      ],
+      "signature": "spread.close(spread_id, reason)",
+      "summary": "用於建立、查詢、關閉與監控期權價差部位。",
+      "example": "spread.close(spread_id, \"risk_exit\")",
+      "returnValue": "handle 或值",
+      "snippet": "spread.close(${1:spread_id}, ${2:reason})"
+    },
+    {
+      "name": "spread.close_leg",
+      "kind": "function",
+      "params": [
+        "spread_id",
+        "leg_index",
+        "close_price"
+      ],
+      "signature": "spread.close_leg(spread_id, leg_index, close_price)",
+      "summary": "用於建立、查詢、關閉與監控期權價差部位。",
+      "example": "spread.close_leg(spread_id, 0, contract.mark(contract))",
+      "returnValue": "handle 或值",
+      "snippet": "spread.close_leg(${1:spread_id}, ${2:leg_index}, ${3:close_price})"
+    },
+    {
+      "name": "spread.count",
+      "kind": "function",
+      "signature": "spread.count()",
+      "summary": "用於建立、查詢、關閉與監控期權價差部位。",
+      "example": "spread.count()",
+      "returnValue": "handle 或值",
+      "snippet": "spread.count()"
+    },
+    {
+      "name": "spread.get",
+      "kind": "function",
+      "params": [
+        "spread_id"
+      ],
+      "signature": "spread.get(spread_id)",
+      "summary": "用於建立、查詢、關閉與監控期權價差部位。",
+      "example": "spread.get(spread_id)",
+      "returnValue": "handle 或值",
+      "snippet": "spread.get(${1:spread_id})"
+    },
+    {
+      "name": "spread.leg_contract",
+      "kind": "function",
+      "params": [
+        "spread_id",
+        "leg_index"
+      ],
+      "signature": "spread.leg_contract(spread_id, leg_index)",
+      "summary": "用於建立、查詢、關閉與監控期權價差部位。",
+      "example": "spread.leg_contract(spread_id, 0)",
+      "returnValue": "handle 或值",
+      "snippet": "spread.leg_contract(${1:spread_id}, ${2:leg_index})"
+    },
+    {
+      "name": "spread.leg_entry_price",
+      "kind": "function",
+      "params": [
+        "spread_id",
+        "leg_index"
+      ],
+      "signature": "spread.leg_entry_price(spread_id, leg_index)",
+      "summary": "用於建立、查詢、關閉與監控期權價差部位。",
+      "example": "spread.leg_entry_price(spread_id, 0)",
+      "returnValue": "handle 或值",
+      "snippet": "spread.leg_entry_price(${1:spread_id}, ${2:leg_index})"
+    },
+    {
+      "name": "spread.leg_open",
+      "kind": "function",
+      "params": [
+        "spread_id",
+        "leg_index"
+      ],
+      "signature": "spread.leg_open(spread_id, leg_index)",
+      "summary": "用於建立、查詢、關閉與監控期權價差部位。",
+      "example": "spread.leg_open(spread_id, 0)",
+      "returnValue": "handle 或值",
+      "snippet": "spread.leg_open(${1:spread_id}, ${2:leg_index})"
+    },
+    {
+      "name": "spread.leg_qty",
+      "kind": "function",
+      "params": [
+        "spread_id",
+        "leg_index"
+      ],
+      "signature": "spread.leg_qty(spread_id, leg_index)",
+      "summary": "用於建立、查詢、關閉與監控期權價差部位。",
+      "example": "spread.leg_qty(spread_id, 0)",
+      "returnValue": "handle 或值",
+      "snippet": "spread.leg_qty(${1:spread_id}, ${2:leg_index})"
+    },
+    {
+      "name": "spread.leg_side",
+      "kind": "function",
+      "params": [
+        "spread_id",
+        "leg_index"
+      ],
+      "signature": "spread.leg_side(spread_id, leg_index)",
+      "summary": "用於建立、查詢、關閉與監控期權價差部位。",
+      "example": "spread.leg_side(spread_id, 0)",
+      "returnValue": "handle 或值",
+      "snippet": "spread.leg_side(${1:spread_id}, ${2:leg_index})"
+    },
+    {
+      "name": "spread.open",
+      "kind": "function",
+      "params": [
+        "legs",
+        "tag"
+      ],
+      "signature": "spread.open(legs, tag)",
+      "summary": "用於建立、查詢、關閉與監控期權價差部位。",
+      "example": "spread.open([leg.sell(contract, 1)], \"main\")",
+      "returnValue": "handle 或值",
+      "snippet": "spread.open(${1:legs}, ${2:tag})"
+    },
+    {
+      "name": "spread.open_ids",
+      "kind": "function",
+      "signature": "spread.open_ids()",
+      "summary": "用於建立、查詢、關閉與監控期權價差部位。",
+      "example": "spread.open_ids()",
+      "returnValue": "handle 或值",
+      "snippet": "spread.open_ids()"
+    },
+    {
+      "name": "spread.open_in_group",
+      "kind": "function",
+      "params": [
+        "legs",
+        "tag",
+        "group_id"
+      ],
+      "signature": "spread.open_in_group(legs, tag, group_id)",
+      "summary": "用於建立、查詢、關閉與監控期權價差部位。",
+      "example": "spread.open_in_group([leg.sell(contract, 1)], \"main\", \"main\")",
+      "returnValue": "handle 或值",
+      "snippet": "spread.open_in_group(${1:legs}, ${2:tag}, ${3:group_id})"
+    },
+    {
+      "name": "spread.open_in_group_on",
+      "kind": "function",
+      "params": [
+        "market",
+        "underlying",
+        "legs",
+        "tag",
+        "group_id"
+      ],
+      "signature": "spread.open_in_group_on(market, underlying, legs, tag, group_id)",
+      "summary": "用於建立、查詢、關閉與監控期權價差部位。",
+      "example": "spread.open_in_group_on(\"us-options\", \"SPY\", [leg.sell(contract, 1)], \"main\", \"main\")",
+      "returnValue": "handle 或值",
+      "snippet": "spread.open_in_group_on(${1:market}, ${2:underlying}, ${3:legs}, ${4:tag}, ${5:group_id})"
+    },
+    {
+      "name": "spread.open_on",
+      "kind": "function",
+      "params": [
+        "market",
+        "underlying",
+        "legs",
+        "tag"
+      ],
+      "signature": "spread.open_on(market, underlying, legs, tag)",
+      "summary": "用於建立、查詢、關閉與監控期權價差部位。",
+      "example": "spread.open_on(\"us-options\", \"SPY\", [leg.sell(contract, 1)], \"main\")",
+      "returnValue": "handle 或值",
+      "snippet": "spread.open_on(${1:market}, ${2:underlying}, ${3:legs}, ${4:tag})"
+    },
+    {
+      "name": "spread.pnl",
+      "kind": "function",
+      "params": [
+        "spread_id"
+      ],
+      "signature": "spread.pnl(spread_id)",
+      "summary": "用於建立、查詢、關閉與監控期權價差部位。",
+      "example": "spread.pnl(spread_id)",
+      "returnValue": "handle 或值",
+      "snippet": "spread.pnl(${1:spread_id})"
+    },
+    {
+      "name": "spread.pnl_all",
+      "kind": "function",
+      "signature": "spread.pnl_all()",
+      "summary": "用於建立、查詢、關閉與監控期權價差部位。",
+      "example": "spread.pnl_all()",
+      "returnValue": "handle 或值",
+      "snippet": "spread.pnl_all()"
+    },
+    {
+      "name": "str.contains",
+      "kind": "function",
+      "params": [
+        "s",
+        "substr"
+      ],
+      "signature": "str.contains(s, substr)",
+      "summary": "用於判斷字串是否包含子字串，例如篩選 symbol 或模式名稱。",
+      "example": "is_spy = str.contains(\"SPY.US\", \"SPY\")",
+      "returnValue": "字串或陣列",
+      "snippet": "str.contains(${1:s}, ${2:substr})"
+    },
+    {
+      "name": "str.format",
+      "kind": "function",
+      "params": [
+        "format",
+        "value"
+      ],
+      "signature": "str.format(format, value)",
+      "summary": "用於格式化報告標籤或訂單備註。",
+      "example": "note = str.format(\"close=%s\", close)",
+      "returnValue": "字串或陣列",
+      "snippet": "str.format(${1:format}, ${2:value})"
+    },
+    {
+      "name": "str.join",
+      "kind": "function",
+      "params": [
+        "parts",
+        "sep"
+      ],
+      "signature": "str.join(parts, sep)",
+      "summary": "用於把字串陣列合併成標籤或備註。",
+      "example": "label = str.join([\"SPY\", \"long\"], \"-\")",
+      "returnValue": "字串或陣列",
+      "snippet": "str.join(${1:parts}, ${2:sep})"
+    },
+    {
+      "name": "str.length",
+      "kind": "function",
+      "params": [
+        "s"
+      ],
+      "signature": "str.length(s)",
+      "summary": "用於取得字串長度。",
+      "example": "symbol_len = str.length(\"SPY\")",
+      "returnValue": "字串或陣列",
+      "snippet": "str.length(${1:s})"
+    },
+    {
+      "name": "str.lower",
+      "kind": "function",
+      "params": [
+        "s"
+      ],
+      "signature": "str.lower(s)",
+      "summary": "用於把設定值轉成小寫以便比對。",
+      "example": "mode = str.lower(\"TREND\")",
+      "returnValue": "字串或陣列",
+      "snippet": "str.lower(${1:s})"
+    },
+    {
+      "name": "str.split",
+      "kind": "function",
+      "params": [
+        "s",
+        "sep"
+      ],
+      "signature": "str.split(s, sep)",
+      "summary": "用於把逗號分隔設定拆成陣列。",
+      "example": "symbols = str.split(\"SPY,QQQ\", \",\")",
+      "returnValue": "字串或陣列",
+      "snippet": "str.split(${1:s}, ${2:sep})"
+    },
+    {
+      "name": "str.tostring",
+      "kind": "function",
+      "params": [
+        "value"
+      ],
+      "signature": "str.tostring(value)",
+      "summary": "用於把數值、布林或陣列轉成字串。",
+      "example": "label = str.tostring(close)",
+      "returnValue": "字串或陣列",
+      "snippet": "str.tostring(${1:value})"
+    },
+    {
+      "name": "str.upper",
+      "kind": "function",
+      "params": [
+        "s"
+      ],
+      "signature": "str.upper(s)",
+      "summary": "用於把 symbol 或設定值轉成大寫以便比對。",
+      "example": "symbol = str.upper(\"spy\")",
+      "returnValue": "字串或陣列",
+      "snippet": "str.upper(${1:s})"
+    },
+    {
+      "name": "strategy.cash",
+      "kind": "property",
+      "signature": "strategy.cash",
+      "summary": "用於避免下單金額超過可用現金。",
+      "example": "qty = math.min(strategy.cash, strategy.equity * 0.5) / close",
+      "returnValue": "數值",
+      "snippet": "strategy.cash"
+    },
+    {
+      "name": "strategy.close",
+      "kind": "function",
+      "params": [
+        "id"
+      ],
+      "signature": "strategy.close(id)",
+      "summary": "用於依 entry ID 平掉既有部位，常放在出場訊號或風控條件中。",
+      "example": "strategy.close(id=\"long\")",
+      "returnValue": "na",
+      "snippet": "strategy.close(${1:id})"
+    },
+    {
+      "name": "strategy.entry",
+      "kind": "function",
+      "params": [
+        "id",
+        "direction",
+        "qty",
+        "limit",
+        "stop",
+        "twap_bars",
+        "immediate",
+        "note"
+      ],
+      "signature": "strategy.entry(id, direction, qty, limit, stop, twap_bars, immediate, note)",
+      "summary": "用於以命名 ID 建立多頭或空頭部位；需要限價、停損或 TWAP 時也可帶進階參數。",
+      "example": "strategy.entry(id=\"long\", direction=strategy.long, qty=100)",
+      "returnValue": "na",
+      "snippet": "strategy.entry(${1:id}, ${2:direction}, ${3:qty}, ${4:limit}, ${5:stop}, ${6:twap_bars}, ${7:immediate}, ${8:note})"
+    },
+    {
+      "name": "strategy.equity",
+      "kind": "property",
+      "signature": "strategy.equity",
+      "summary": "用於依目前權益估算倉位大小或風險預算。",
+      "example": "budget = strategy.equity * 0.95",
+      "returnValue": "數值",
+      "snippet": "strategy.equity"
+    },
+    {
+      "name": "strategy.exit",
+      "kind": "function",
+      "params": [
+        "id"
+      ],
+      "signature": "strategy.exit(id)",
+      "summary": "用於依 entry ID 退出部位；目前行為與 strategy.close 相同。",
+      "example": "strategy.exit(id=\"long\")",
+      "returnValue": "na",
+      "snippet": "strategy.exit(${1:id})"
+    },
+    {
+      "name": "strategy.long",
+      "kind": "constant",
+      "signature": "strategy.long",
+      "summary": "用於 strategy.entry 表示建立多頭部位。",
+      "example": "strategy.entry(id=\"long\", direction=strategy.long, qty=1)",
+      "returnValue": "數值",
+      "snippet": "strategy.long"
+    },
+    {
+      "name": "strategy.position_avg_price",
+      "kind": "property",
+      "signature": "strategy.position_avg_price",
+      "summary": "用於根據持倉均價設停利、停損或移動停損。",
+      "example": "take_profit = close \u003e strategy.position_avg_price * 1.08",
+      "returnValue": "數值",
+      "snippet": "strategy.position_avg_price"
+    },
+    {
+      "name": "strategy.position_size",
+      "kind": "property",
+      "signature": "strategy.position_size",
+      "summary": "用於判斷目前是否已有部位，避免重複進場或決定是否出場。",
+      "example": "flat = strategy.position_size == 0",
+      "returnValue": "數值",
+      "snippet": "strategy.position_size"
+    },
+    {
+      "name": "strategy.short",
+      "kind": "constant",
+      "signature": "strategy.short",
+      "summary": "用於 strategy.entry 表示建立空頭部位。",
+      "example": "strategy.entry(id=\"short\", direction=strategy.short, qty=1)",
+      "returnValue": "數值",
+      "snippet": "strategy.short"
+    },
+    {
+      "name": "ta.atr",
+      "kind": "function",
+      "params": [
+        "length"
+      ],
+      "signature": "ta.atr(length)",
+      "summary": "用於衡量近期波動，常拿來設定停損距離或倉位大小。",
+      "example": "atr = ta.atr(14)",
+      "returnValue": "series",
+      "snippet": "ta.atr(${1:length})"
+    },
+    {
+      "name": "ta.barssince",
+      "kind": "function",
+      "params": [
+        "condition"
+      ],
+      "signature": "ta.barssince(condition)",
+      "summary": "用於計算某條件距離最近一次成立已過幾根 bar。",
+      "example": "bars_from_entry = ta.barssince(close \u003e ta.sma(close, 20))",
+      "returnValue": "數值",
+      "snippet": "ta.barssince(${1:condition})"
+    },
+    {
+      "name": "ta.bb",
+      "kind": "function",
+      "params": [
+        "source",
+        "length",
+        "mult"
+      ],
+      "signature": "ta.bb(source, length, mult)",
+      "summary": "用於取得布林通道上軌、中線、下軌陣列。",
+      "example": "bands = ta.bb(close, 20, 2)",
+      "returnValue": "陣列",
+      "snippet": "ta.bb(${1:source}, ${2:length}, ${3:mult})"
+    },
+    {
+      "name": "ta.bb_lower",
+      "kind": "function",
+      "params": [
+        "source",
+        "length",
+        "mult"
+      ],
+      "signature": "ta.bb_lower(source, length, mult)",
+      "summary": "用於取得布林通道下軌，常作為超跌或回補判斷。",
+      "example": "lower = ta.bb_lower(close, 20, 2)",
+      "returnValue": "series",
+      "snippet": "ta.bb_lower(${1:source}, ${2:length}, ${3:mult})"
+    },
+    {
+      "name": "ta.bb_upper",
+      "kind": "function",
+      "params": [
+        "source",
+        "length",
+        "mult"
+      ],
+      "signature": "ta.bb_upper(source, length, mult)",
+      "summary": "用於取得布林通道上軌，常作為過熱或突破判斷。",
+      "example": "upper = ta.bb_upper(close, 20, 2)",
+      "returnValue": "series",
+      "snippet": "ta.bb_upper(${1:source}, ${2:length}, ${3:mult})"
+    },
+    {
+      "name": "ta.cci",
+      "kind": "function",
+      "params": [
+        "length"
+      ],
+      "signature": "ta.cci(length)",
+      "summary": "用於判斷價格偏離典型價格均值的程度，常作為反轉或過熱濾網。",
+      "example": "cci = ta.cci(20)",
+      "returnValue": "series",
+      "snippet": "ta.cci(${1:length})"
+    },
+    {
+      "name": "ta.change",
+      "kind": "function",
+      "params": [
+        "source",
+        "length"
+      ],
+      "signature": "ta.change(source, length)",
+      "summary": "用於計算目前值相對 N 根 bar 前的變化量。",
+      "example": "momentum = ta.change(close, 5)",
+      "returnValue": "series",
+      "snippet": "ta.change(${1:source}, ${2:length})"
+    },
+    {
+      "name": "ta.crossover",
+      "kind": "function",
+      "params": [
+        "left",
+        "right"
+      ],
+      "signature": "ta.crossover(left, right)",
+      "summary": "用於偵測左側序列在本 bar 向上穿越右側序列。",
+      "example": "long_signal = ta.crossover(ta.sma(close, 10), ta.sma(close, 50))",
+      "returnValue": "布林",
+      "snippet": "ta.crossover(${1:left}, ${2:right})"
+    },
+    {
+      "name": "ta.crossunder",
+      "kind": "function",
+      "params": [
+        "left",
+        "right"
+      ],
+      "signature": "ta.crossunder(left, right)",
+      "summary": "用於偵測左側序列在本 bar 向下跌破右側序列。",
+      "example": "exit_signal = ta.crossunder(ta.sma(close, 10), ta.sma(close, 50))",
+      "returnValue": "布林",
+      "snippet": "ta.crossunder(${1:left}, ${2:right})"
+    },
+    {
+      "name": "ta.cum",
+      "kind": "function",
+      "params": [
+        "source"
+      ],
+      "signature": "ta.cum(source)",
+      "summary": "用於累加序列值，例如累積成交量或自訂資金流。",
+      "example": "cum_volume = ta.cum(volume)",
+      "returnValue": "series",
+      "snippet": "ta.cum(${1:source})"
+    },
+    {
+      "name": "ta.ema",
+      "kind": "function",
+      "params": [
+        "source",
+        "length"
+      ],
+      "signature": "ta.ema(source, length)",
+      "summary": "用於較重視近期價格的趨勢判斷。",
+      "example": "trend = ta.ema(close, 20)",
+      "returnValue": "series",
+      "snippet": "ta.ema(${1:source}, ${2:length})"
+    },
+    {
+      "name": "ta.highest",
+      "kind": "function",
+      "params": [
+        "source",
+        "length"
+      ],
+      "signature": "ta.highest(source, length)",
+      "summary": "用於取得近期最高值，常作為突破或追蹤停利條件。",
+      "example": "breakout_level = ta.highest(high, 20)",
+      "returnValue": "series",
+      "snippet": "ta.highest(${1:source}, ${2:length})"
+    },
+    {
+      "name": "ta.lowest",
+      "kind": "function",
+      "params": [
+        "source",
+        "length"
+      ],
+      "signature": "ta.lowest(source, length)",
+      "summary": "用於取得近期最低值，常作為停損或跌破條件。",
+      "example": "stop_level = ta.lowest(low, 10)",
+      "returnValue": "series",
+      "snippet": "ta.lowest(${1:source}, ${2:length})"
+    },
+    {
+      "name": "ta.percentrank",
+      "kind": "function",
+      "params": [
+        "source",
+        "length"
+      ],
+      "signature": "ta.percentrank(source, length)",
+      "summary": "用於衡量目前值在近期視窗中的百分位排名。",
+      "example": "rank = ta.percentrank(ta.rsi(close, 14), 20)",
+      "returnValue": "series",
+      "snippet": "ta.percentrank(${1:source}, ${2:length})"
+    },
+    {
+      "name": "ta.rsi",
+      "kind": "function",
+      "params": [
+        "source",
+        "length"
+      ],
+      "signature": "ta.rsi(source, length)",
+      "summary": "用於衡量超買超賣或動能強弱。",
+      "example": "rsi = ta.rsi(close, 14)",
+      "returnValue": "series",
+      "snippet": "ta.rsi(${1:source}, ${2:length})"
+    },
+    {
+      "name": "ta.sma",
+      "kind": "function",
+      "params": [
+        "source",
+        "length"
+      ],
+      "signature": "ta.sma(source, length)",
+      "summary": "用於平滑價格或成交量，常作為趨勢方向與均線交叉訊號。",
+      "example": "fast = ta.sma(close, 10)",
+      "returnValue": "series",
+      "snippet": "ta.sma(${1:source}, ${2:length})"
+    },
+    {
+      "name": "ta.stdev",
+      "kind": "function",
+      "params": [
+        "source",
+        "length"
+      ],
+      "signature": "ta.stdev(source, length)",
+      "summary": "用於衡量序列波動程度，常搭配均線形成通道。",
+      "example": "vol = ta.stdev(close, 20)",
+      "returnValue": "series",
+      "snippet": "ta.stdev(${1:source}, ${2:length})"
+    },
+    {
+      "name": "ta.valuewhen",
+      "kind": "function",
+      "params": [
+        "condition",
+        "source",
+        "occurrence"
+      ],
+      "signature": "ta.valuewhen(condition, source, occurrence)",
+      "summary": "用於取得某條件第 N 次成立時的來源序列值。",
+      "example": "last_breakout_close = ta.valuewhen(close \u003e ta.highest(high, 20)[1], close, 0)",
+      "returnValue": "數值",
+      "snippet": "ta.valuewhen(${1:condition}, ${2:source}, ${3:occurrence})"
+    },
+    {
+      "name": "ta.wma",
+      "kind": "function",
+      "params": [
+        "source",
+        "length"
+      ],
+      "signature": "ta.wma(source, length)",
+      "summary": "用於計算線性加權均線，近期資料權重較高。",
+      "example": "weighted = ta.wma(close, 20)",
+      "returnValue": "series",
+      "snippet": "ta.wma(${1:source}, ${2:length})"
+    },
+    {
+      "name": "universe.symbols",
+      "kind": "function",
+      "params": [
+        "code"
+      ],
+      "signature": "universe.symbols(code)",
+      "summary": "用於取得 validate/run 階段展開並注入的 universe 成員標的。",
+      "example": "symbols = universe.symbols(\"strong_momentum\")",
+      "returnValue": "陣列",
+      "snippet": "universe.symbols(${1:code})"
+    }
+  ],
+  "namespaces": {
+    "alpha": [
+      "alpha.decay_linear",
+      "alpha.log_return",
+      "alpha.rank",
+      "alpha.scale",
+      "alpha.signed_power",
+      "alpha.ts_argmax",
+      "alpha.ts_argmin",
+      "alpha.ts_corr",
+      "alpha.ts_cov",
+      "alpha.ts_delta",
+      "alpha.ts_kurtosis",
+      "alpha.ts_max",
+      "alpha.ts_mean",
+      "alpha.ts_median",
+      "alpha.ts_min",
+      "alpha.ts_rank",
+      "alpha.ts_skewness",
+      "alpha.ts_std",
+      "alpha.ts_sum",
+      "alpha.zscore"
+    ],
+    "config": [
+      "config.get",
+      "config.string"
+    ],
+    "contract": [
+      "contract.ask",
+      "contract.bid",
+      "contract.delta",
+      "contract.dte",
+      "contract.expiry",
+      "contract.gamma",
+      "contract.iv",
+      "contract.mark",
+      "contract.market",
+      "contract.oi",
+      "contract.strike",
+      "contract.symbol",
+      "contract.theta",
+      "contract.type",
+      "contract.underlying",
+      "contract.vega",
+      "contract.volume"
+    ],
+    "core": [
+      "bar_index",
+      "buy",
+      "close",
+      "high",
+      "input",
+      "len",
+      "low",
+      "math_e",
+      "math_phi",
+      "math_pi",
+      "na",
+      "nz",
+      "open",
+      "plot",
+      "sell",
+      "volume"
+    ],
+    "event": [
+      "event.consume_all",
+      "event.is_add",
+      "event.is_close",
+      "event.is_init",
+      "event.is_roll",
+      "event.next",
+      "event.next_action",
+      "event.peek",
+      "event.peek_action",
+      "event.peek_name",
+      "event.peek_qty",
+      "event.pending"
+    ],
+    "group": [
+      "group.add_spread",
+      "group.close",
+      "group.get",
+      "group.increment_roll",
+      "group.open",
+      "group.open_ids",
+      "group.spread_count"
+    ],
+    "input": [
+      "input.bool",
+      "input.float",
+      "input.int",
+      "input.string"
+    ],
+    "leg": [
+      "leg.buy",
+      "leg.sell"
+    ],
+    "market": [
+      "market.context",
+      "market.hv_state",
+      "market.iv_state",
+      "market.reason_codes",
+      "market.risk_label",
+      "market.scenario_label",
+      "market.trend_state",
+      "market.valuation_state",
+      "market.warnings"
+    ],
+    "math": [
+      "math.abs",
+      "math.avg",
+      "math.ceil",
+      "math.exp",
+      "math.floor",
+      "math.log",
+      "math.log10",
+      "math.max",
+      "math.min",
+      "math.pow",
+      "math.round",
+      "math.sign",
+      "math.sqrt"
+    ],
+    "options": [
+      "options.best_spread",
+      "options.build_strategy",
+      "options.calls",
+      "options.chain",
+      "options.delta_range",
+      "options.expiry_max",
+      "options.expiry_min",
+      "options.expiry_nearest",
+      "options.expiry_range",
+      "options.len",
+      "options.min_premium",
+      "options.open_strategy",
+      "options.puts",
+      "options.sort_by_delta",
+      "options.strategies",
+      "options.strike_range"
+    ],
+    "order": [
+      "order.buy",
+      "order.immediate",
+      "order.limit",
+      "order.market",
+      "order.market_notional",
+      "order.sell",
+      "order.stop",
+      "order.stop_limit",
+      "order.submit",
+      "order.twap"
+    ],
+    "portfolio": [
+      "portfolio.items",
+      "portfolio.len",
+      "portfolio.symbol",
+      "portfolio.symbols",
+      "portfolio.weight",
+      "portfolio.weights"
+    ],
+    "ref": [
+      "ref.clear",
+      "ref.dec",
+      "ref.get",
+      "ref.has",
+      "ref.inc",
+      "ref.set"
+    ],
+    "request": [
+      "request.factor",
+      "request.fundamental",
+      "request.security"
+    ],
+    "schedule": [
+      "schedule.close_group",
+      "schedule.close_leg",
+      "schedule.close_spread"
+    ],
+    "signal": [
+      "signal.action",
+      "signal.active",
+      "signal.consume",
+      "signal.consumed",
+      "signal.count",
+      "signal.direction",
+      "signal.group_ref",
+      "signal.name",
+      "signal.qty",
+      "signal.ref",
+      "signal.remarks",
+      "signal.source"
+    ],
+    "spread": [
+      "spread.close",
+      "spread.close_leg",
+      "spread.count",
+      "spread.get",
+      "spread.leg_contract",
+      "spread.leg_entry_price",
+      "spread.leg_open",
+      "spread.leg_qty",
+      "spread.leg_side",
+      "spread.open",
+      "spread.open_ids",
+      "spread.open_in_group",
+      "spread.open_in_group_on",
+      "spread.open_on",
+      "spread.pnl",
+      "spread.pnl_all"
+    ],
+    "str": [
+      "str.contains",
+      "str.format",
+      "str.join",
+      "str.length",
+      "str.lower",
+      "str.split",
+      "str.tostring",
+      "str.upper"
+    ],
+    "strategy": [
+      "strategy.cash",
+      "strategy.close",
+      "strategy.entry",
+      "strategy.equity",
+      "strategy.exit",
+      "strategy.long",
+      "strategy.position_avg_price",
+      "strategy.position_size",
+      "strategy.short"
+    ],
+    "ta": [
+      "ta.atr",
+      "ta.barssince",
+      "ta.bb",
+      "ta.bb_lower",
+      "ta.bb_upper",
+      "ta.cci",
+      "ta.change",
+      "ta.crossover",
+      "ta.crossunder",
+      "ta.cum",
+      "ta.ema",
+      "ta.highest",
+      "ta.lowest",
+      "ta.percentrank",
+      "ta.rsi",
+      "ta.sma",
+      "ta.stdev",
+      "ta.valuewhen",
+      "ta.wma"
+    ],
+    "universe": [
+      "universe.symbols"
+    ]
+  },
+  "counts": {
+    "alpha": 20,
+    "config": 2,
+    "contract": 17,
+    "core": 16,
+    "event": 12,
+    "group": 7,
+    "input": 4,
+    "leg": 2,
+    "market": 9,
+    "math": 13,
+    "options": 16,
+    "order": 10,
+    "portfolio": 6,
+    "ref": 6,
+    "request": 3,
+    "schedule": 3,
+    "signal": 12,
+    "spread": 16,
+    "str": 8,
+    "strategy": 9,
+    "ta": 19,
+    "universe": 1
+  },
+  "rawDocs": [
+    {
+      "Name": "alpha.decay_linear",
+      "Kind": "function",
+      "Params": [
+        "x",
+        "window"
+      ],
+      "Summary": "用於計算近期權重較高的線性衰減平均，降低舊資料影響。",
+      "Example": "smooth = alpha.decay_linear(close, 10)",
+      "ReturnValue": "數值"
+    },
+    {
+      "Name": "alpha.log_return",
+      "Kind": "function",
+      "Params": [
+        "x",
+        "period"
+      ],
+      "Summary": "用於計算指定週期的對數報酬。",
+      "Example": "ret = alpha.log_return(close, 5)",
+      "ReturnValue": "數值"
+    },
+    {
+      "Name": "alpha.rank",
+      "Kind": "function",
+      "Params": [
+        "x"
+      ],
+      "Summary": "用於把目前值轉成歷史百分位，適合判斷目前價格或因子相對自身歷史是否偏高。",
+      "Example": "rank = alpha.rank(close)",
+      "ReturnValue": "數值"
+    },
+    {
+      "Name": "alpha.scale",
+      "Kind": "function",
+      "Params": [
+        "x",
+        "target_sum"
+      ],
+      "Summary": "用於把單一訊號縮放到指定目標絕對值。",
+      "Example": "scaled = alpha.scale(close - ta.sma(close, 20), 1)",
+      "ReturnValue": "數值"
+    },
+    {
+      "Name": "alpha.signed_power",
+      "Kind": "function",
+      "Params": [
+        "x",
+        "exp"
+      ],
+      "Summary": "用於保留正負號並放大或壓縮訊號強度。",
+      "Example": "signal2 = alpha.signed_power(close - ta.sma(close, 20), 2)",
+      "ReturnValue": "數值"
+    },
+    {
+      "Name": "alpha.ts_argmax",
+      "Kind": "function",
+      "Params": [
+        "x",
+        "window"
+      ],
+      "Summary": "用於取得近期最高值距離目前幾根 bar。",
+      "Example": "bars_from_high = alpha.ts_argmax(high, 20)",
+      "ReturnValue": "數值"
+    },
+    {
+      "Name": "alpha.ts_argmin",
+      "Kind": "function",
+      "Params": [
+        "x",
+        "window"
+      ],
+      "Summary": "用於取得近期最低值距離目前幾根 bar。",
+      "Example": "bars_from_low = alpha.ts_argmin(low, 20)",
+      "ReturnValue": "數值"
+    },
+    {
+      "Name": "alpha.ts_corr",
+      "Kind": "function",
+      "Params": [
+        "x",
+        "y",
+        "window"
+      ],
+      "Summary": "用於衡量兩個序列近期相關性，例如價格與成交量或標的與基準指數。",
+      "Example": "corr = alpha.ts_corr(close, volume, 20)",
+      "ReturnValue": "數值"
+    },
+    {
+      "Name": "alpha.ts_cov",
+      "Kind": "function",
+      "Params": [
+        "x",
+        "y",
+        "window"
+      ],
+      "Summary": "用於衡量兩個序列近期共同變動程度。",
+      "Example": "cov = alpha.ts_cov(close, volume, 20)",
+      "ReturnValue": "數值"
+    },
+    {
+      "Name": "alpha.ts_delta",
+      "Kind": "function",
+      "Params": [
+        "x",
+        "period"
+      ],
+      "Summary": "用於計算目前值與 N 根 bar 前的差值。",
+      "Example": "delta5 = alpha.ts_delta(close, 5)",
+      "ReturnValue": "數值"
+    },
+    {
+      "Name": "alpha.ts_kurtosis",
+      "Kind": "function",
+      "Params": [
+        "x",
+        "window"
+      ],
+      "Summary": "用於衡量近期分布尾部厚度，輔助辨識極端波動環境。",
+      "Example": "kurt = alpha.ts_kurtosis(close, 20)",
+      "ReturnValue": "數值"
+    },
+    {
+      "Name": "alpha.ts_max",
+      "Kind": "function",
+      "Params": [
+        "x",
+        "window"
+      ],
+      "Summary": "用於取得近期視窗最大值。",
+      "Example": "max20 = alpha.ts_max(high, 20)",
+      "ReturnValue": "數值"
+    },
+    {
+      "Name": "alpha.ts_mean",
+      "Kind": "function",
+      "Params": [
+        "x",
+        "window"
+      ],
+      "Summary": "用於計算近期視窗平均值，可作平滑濾網。",
+      "Example": "mean20 = alpha.ts_mean(close, 20)",
+      "ReturnValue": "數值"
+    },
+    {
+      "Name": "alpha.ts_median",
+      "Kind": "function",
+      "Params": [
+        "x",
+        "window"
+      ],
+      "Summary": "用於取得近期視窗中位數，降低極端值影響。",
+      "Example": "median20 = alpha.ts_median(close, 20)",
+      "ReturnValue": "數值"
+    },
+    {
+      "Name": "alpha.ts_min",
+      "Kind": "function",
+      "Params": [
+        "x",
+        "window"
+      ],
+      "Summary": "用於取得近期視窗最小值。",
+      "Example": "min20 = alpha.ts_min(low, 20)",
+      "ReturnValue": "數值"
+    },
+    {
+      "Name": "alpha.ts_rank",
+      "Kind": "function",
+      "Params": [
+        "x",
+        "window"
+      ],
+      "Summary": "用於取得目前值在近期視窗內的排名比例。",
+      "Example": "rank20 = alpha.ts_rank(close, 20)",
+      "ReturnValue": "數值"
+    },
+    {
+      "Name": "alpha.ts_skewness",
+      "Kind": "function",
+      "Params": [
+        "x",
+        "window"
+      ],
+      "Summary": "用於衡量近期分布偏態，輔助辨識報酬分布是否偏向單側。",
+      "Example": "skew = alpha.ts_skewness(close, 20)",
+      "ReturnValue": "數值"
+    },
+    {
+      "Name": "alpha.ts_std",
+      "Kind": "function",
+      "Params": [
+        "x",
+        "window"
+      ],
+      "Summary": "用於衡量近期視窗波動度。",
+      "Example": "std20 = alpha.ts_std(close, 20)",
+      "ReturnValue": "數值"
+    },
+    {
+      "Name": "alpha.ts_sum",
+      "Kind": "function",
+      "Params": [
+        "x",
+        "window"
+      ],
+      "Summary": "用於計算近期視窗總和，例如累積成交量或累積報酬。",
+      "Example": "sum_vol = alpha.ts_sum(volume, 20)",
+      "ReturnValue": "數值"
+    },
+    {
+      "Name": "alpha.zscore",
+      "Kind": "function",
+      "Params": [
+        "x",
+        "window"
+      ],
+      "Summary": "用於衡量目前值偏離近期均值幾個標準差，常作為均值回歸或異常波動濾網。",
+      "Example": "z = alpha.zscore(close, 20)",
+      "ReturnValue": "數值"
+    },
+    {
+      "Name": "config.get",
+      "Kind": "function",
+      "Params": [
+        "name",
+        "defval"
+      ],
+      "Summary": "用於讀取策略 catalog 或 API 注入的數值設定，並在未設定時使用預設值。",
+      "Example": "max_risk = config.get(\"max_risk\", 0.02)",
+      "ReturnValue": "數值"
+    },
+    {
+      "Name": "config.string",
+      "Kind": "function",
+      "Params": [
+        "name",
+        "defval"
+      ],
+      "Summary": "用於讀取策略 catalog 或 API 注入的字串設定，例如模式名稱或標籤。",
+      "Example": "mode = config.string(\"mode\", \"default\")",
+      "ReturnValue": "字串"
+    },
+    {
+      "Name": "contract.ask",
+      "Kind": "function",
+      "Params": [
+        "contract"
+      ],
+      "Summary": "用於讀取已選期權合約的欄位，讓策略能依履約價、到期日、Greeks 或報價做篩選。",
+      "Example": "ask = contract.ask(contract)",
+      "ReturnValue": "合約欄位"
+    },
+    {
+      "Name": "contract.bid",
+      "Kind": "function",
+      "Params": [
+        "contract"
+      ],
+      "Summary": "用於讀取已選期權合約的欄位，讓策略能依履約價、到期日、Greeks 或報價做篩選。",
+      "Example": "bid = contract.bid(contract)",
+      "ReturnValue": "合約欄位"
+    },
+    {
+      "Name": "contract.delta",
+      "Kind": "function",
+      "Params": [
+        "contract"
+      ],
+      "Summary": "用於讀取已選期權合約的欄位，讓策略能依履約價、到期日、Greeks 或報價做篩選。",
+      "Example": "delta = contract.delta(contract)",
+      "ReturnValue": "合約欄位"
+    },
+    {
+      "Name": "contract.dte",
+      "Kind": "function",
+      "Params": [
+        "contract"
+      ],
+      "Summary": "用於讀取已選期權合約的欄位，讓策略能依履約價、到期日、Greeks 或報價做篩選。",
+      "Example": "dte = contract.dte(contract)",
+      "ReturnValue": "合約欄位"
+    },
+    {
+      "Name": "contract.expiry",
+      "Kind": "function",
+      "Params": [
+        "contract"
+      ],
+      "Summary": "用於讀取已選期權合約的欄位，讓策略能依履約價、到期日、Greeks 或報價做篩選。",
+      "Example": "expiry = contract.expiry(contract)",
+      "ReturnValue": "合約欄位"
+    },
+    {
+      "Name": "contract.gamma",
+      "Kind": "function",
+      "Params": [
+        "contract"
+      ],
+      "Summary": "用於讀取已選期權合約的欄位，讓策略能依履約價、到期日、Greeks 或報價做篩選。",
+      "Example": "gamma = contract.gamma(contract)",
+      "ReturnValue": "合約欄位"
+    },
+    {
+      "Name": "contract.iv",
+      "Kind": "function",
+      "Params": [
+        "contract"
+      ],
+      "Summary": "用於讀取已選期權合約的欄位，讓策略能依履約價、到期日、Greeks 或報價做篩選。",
+      "Example": "iv = contract.iv(contract)",
+      "ReturnValue": "合約欄位"
+    },
+    {
+      "Name": "contract.mark",
+      "Kind": "function",
+      "Params": [
+        "contract"
+      ],
+      "Summary": "用於讀取已選期權合約的欄位，讓策略能依履約價、到期日、Greeks 或報價做篩選。",
+      "Example": "mark = contract.mark(contract)",
+      "ReturnValue": "合約欄位"
+    },
+    {
+      "Name": "contract.market",
+      "Kind": "function",
+      "Params": [
+        "contract"
+      ],
+      "Summary": "用於讀取已選期權合約的欄位，讓策略能依履約價、到期日、Greeks 或報價做篩選。",
+      "Example": "market = contract.market(contract)",
+      "ReturnValue": "合約欄位"
+    },
+    {
+      "Name": "contract.oi",
+      "Kind": "function",
+      "Params": [
+        "contract"
+      ],
+      "Summary": "用於讀取已選期權合約的欄位，讓策略能依履約價、到期日、Greeks 或報價做篩選。",
+      "Example": "oi = contract.oi(contract)",
+      "ReturnValue": "合約欄位"
+    },
+    {
+      "Name": "contract.strike",
+      "Kind": "function",
+      "Params": [
+        "contract"
+      ],
+      "Summary": "用於讀取已選期權合約的欄位，讓策略能依履約價、到期日、Greeks 或報價做篩選。",
+      "Example": "strike = contract.strike(contract)",
+      "ReturnValue": "合約欄位"
+    },
+    {
+      "Name": "contract.symbol",
+      "Kind": "function",
+      "Params": [
+        "contract"
+      ],
+      "Summary": "用於讀取已選期權合約的欄位，讓策略能依履約價、到期日、Greeks 或報價做篩選。",
+      "Example": "symbol = contract.symbol(contract)",
+      "ReturnValue": "合約欄位"
+    },
+    {
+      "Name": "contract.theta",
+      "Kind": "function",
+      "Params": [
+        "contract"
+      ],
+      "Summary": "用於讀取已選期權合約的欄位，讓策略能依履約價、到期日、Greeks 或報價做篩選。",
+      "Example": "theta = contract.theta(contract)",
+      "ReturnValue": "合約欄位"
+    },
+    {
+      "Name": "contract.type",
+      "Kind": "function",
+      "Params": [
+        "contract"
+      ],
+      "Summary": "用於讀取已選期權合約的欄位，讓策略能依履約價、到期日、Greeks 或報價做篩選。",
+      "Example": "right = contract.type(contract)",
+      "ReturnValue": "合約欄位"
+    },
+    {
+      "Name": "contract.underlying",
+      "Kind": "function",
+      "Params": [
+        "contract"
+      ],
+      "Summary": "用於讀取已選期權合約的欄位，讓策略能依履約價、到期日、Greeks 或報價做篩選。",
+      "Example": "underlying = contract.underlying(contract)",
+      "ReturnValue": "合約欄位"
+    },
+    {
+      "Name": "contract.vega",
+      "Kind": "function",
+      "Params": [
+        "contract"
+      ],
+      "Summary": "用於讀取已選期權合約的欄位，讓策略能依履約價、到期日、Greeks 或報價做篩選。",
+      "Example": "vega = contract.vega(contract)",
+      "ReturnValue": "合約欄位"
+    },
+    {
+      "Name": "contract.volume",
+      "Kind": "function",
+      "Params": [
+        "contract"
+      ],
+      "Summary": "用於讀取已選期權合約的欄位，讓策略能依履約價、到期日、Greeks 或報價做篩選。",
+      "Example": "vol = contract.volume(contract)",
+      "ReturnValue": "合約欄位"
+    },
+    {
+      "Name": "bar_index",
+      "Kind": "constant",
+      "Params": null,
+      "Summary": "用於限制策略暖身期、排除前幾根資料不足的 bar。",
+      "Example": "ready = bar_index \u003e 50",
+      "ReturnValue": "數值"
+    },
+    {
+      "Name": "buy",
+      "Kind": "function",
+      "Params": [
+        "qty"
+      ],
+      "Summary": "用於快速送出基本買入指令，適合最小範例或不需要命名部位的腳本。",
+      "Example": "buy(1)",
+      "ReturnValue": "na"
+    },
+    {
+      "Name": "close",
+      "Kind": "constant",
+      "Params": null,
+      "Summary": "用作主要價格序列，常拿來計算均線、動能、突破與下單價格。",
+      "Example": "fast = ta.sma(close, 20)",
+      "ReturnValue": "series"
+    },
+    {
+      "Name": "high",
+      "Kind": "constant",
+      "Params": null,
+      "Summary": "用於偵測近期高點、突破條件或計算震幅類指標。",
+      "Example": "breakout = close \u003e ta.highest(high, 20)[1]",
+      "ReturnValue": "series"
+    },
+    {
+      "Name": "input",
+      "Kind": "function",
+      "Params": [
+        "defval",
+        "title",
+        "minval",
+        "maxval",
+        "step"
+      ],
+      "Summary": "用於把策略參數暴露給 validate API 與回測請求，讓使用者能用 dsl_params 覆蓋預設值。",
+      "Example": "risk = input(0.02, title=\"Risk\", minval=0, maxval=1, step=0.01)",
+      "ReturnValue": "值"
+    },
+    {
+      "Name": "len",
+      "Kind": "function",
+      "Params": [
+        "value"
+      ],
+      "Summary": "用於檢查陣列或字串長度，常搭配 portfolio、options.sort_by_delta 或字串拆分結果。",
+      "Example": "has_symbols = len(portfolio.symbols()) \u003e 0",
+      "ReturnValue": "數值"
+    },
+    {
+      "Name": "low",
+      "Kind": "constant",
+      "Params": null,
+      "Summary": "用於偵測近期低點、停損位置或回撤條件。",
+      "Example": "stop_price = ta.lowest(low, 10)",
+      "ReturnValue": "series"
+    },
+    {
+      "Name": "math_e",
+      "Kind": "constant",
+      "Params": null,
+      "Summary": "用於自然對數或指數模型中的 e 常數。",
+      "Example": "one = math.log(math_e)",
+      "ReturnValue": "數值"
+    },
+    {
+      "Name": "math_phi",
+      "Kind": "constant",
+      "Params": null,
+      "Summary": "用於黃金比例相關的價格或比例計算。",
+      "Example": "target = close * math_phi",
+      "ReturnValue": "數值"
+    },
+    {
+      "Name": "math_pi",
+      "Kind": "constant",
+      "Params": null,
+      "Summary": "用於需要圓周率的自訂數學轉換。",
+      "Example": "cycle = math_pi * 2",
+      "ReturnValue": "數值"
+    },
+    {
+      "Name": "na",
+      "Kind": "function",
+      "Params": [
+        "x"
+      ],
+      "Summary": "用於檢查值是否為 na。",
+      "Example": "warming_up = na(ta.sma(close, 50))",
+      "ReturnValue": "數值"
+    },
+    {
+      "Name": "nz",
+      "Kind": "function",
+      "Params": [
+        "x",
+        "replacement"
+      ],
+      "Summary": "用於把 na 替換成指定值，避免暖身期指標造成條件失效。",
+      "Example": "safe_rsi = nz(ta.rsi(close, 14), 50)",
+      "ReturnValue": "數值"
+    },
+    {
+      "Name": "open",
+      "Kind": "constant",
+      "Params": null,
+      "Summary": "用於判斷當根 K 線方向或估算開盤後價格變化。",
+      "Example": "green_bar = close \u003e open",
+      "ReturnValue": "series"
+    },
+    {
+      "Name": "plot",
+      "Kind": "function",
+      "Params": [
+        "series",
+        "title",
+        "overlay",
+        "precision"
+      ],
+      "Summary": "用於把中間指標或交易條件輸出到回測結果，方便檢查策略為何進出場。",
+      "Example": "plot(ta.sma(close, 20), title=\"SMA 20\", overlay=true, precision=2)",
+      "ReturnValue": "值"
+    },
+    {
+      "Name": "sell",
+      "Kind": "function",
+      "Params": [
+        "qty"
+      ],
+      "Summary": "用於快速送出基本賣出指令，適合最小範例或不需要命名部位的腳本。",
+      "Example": "sell(1)",
+      "ReturnValue": "na"
+    },
+    {
+      "Name": "volume",
+      "Kind": "constant",
+      "Params": null,
+      "Summary": "用於成交量濾網、量能均線或流動性條件。",
+      "Example": "active_volume = volume \u003e ta.sma(volume, 20)",
+      "ReturnValue": "series"
+    },
+    {
+      "Name": "event.consume_all",
+      "Kind": "function",
+      "Params": null,
+      "Summary": "用於一次標記目前 bar 所有未處理事件為已消費。",
+      "Example": "consumed = event.consume_all()",
+      "ReturnValue": "信號值"
+    },
+    {
+      "Name": "event.is_add",
+      "Kind": "function",
+      "Params": null,
+      "Summary": "用於判斷下一個事件是否為 add 動作。",
+      "Example": "should_add = event.is_add() == 1",
+      "ReturnValue": "信號值"
+    },
+    {
+      "Name": "event.is_close",
+      "Kind": "function",
+      "Params": null,
+      "Summary": "用於判斷下一個事件是否為 close 動作。",
+      "Example": "should_close = event.is_close() == 1",
+      "ReturnValue": "信號值"
+    },
+    {
+      "Name": "event.is_init",
+      "Kind": "function",
+      "Params": null,
+      "Summary": "用於判斷下一個事件是否為 init 動作。",
+      "Example": "should_open = event.is_init() == 1",
+      "ReturnValue": "信號值"
+    },
+    {
+      "Name": "event.is_roll",
+      "Kind": "function",
+      "Params": null,
+      "Summary": "用於判斷下一個事件是否為 roll 動作。",
+      "Example": "should_roll = event.is_roll() == 1",
+      "ReturnValue": "信號值"
+    },
+    {
+      "Name": "event.next",
+      "Kind": "function",
+      "Params": null,
+      "Summary": "用於消費下一個事件並取得方向，避免同一事件重複下單。",
+      "Example": "direction = event.next()",
+      "ReturnValue": "信號值"
+    },
+    {
+      "Name": "event.next_action",
+      "Kind": "function",
+      "Params": null,
+      "Summary": "用於消費下一個事件並取得動作代碼。",
+      "Example": "action = event.next_action()",
+      "ReturnValue": "信號值"
+    },
+    {
+      "Name": "event.peek",
+      "Kind": "function",
+      "Params": null,
+      "Summary": "用於查看下一個未消費事件方向，但不標記已處理。",
+      "Example": "next_dir = event.peek()",
+      "ReturnValue": "信號值"
+    },
+    {
+      "Name": "event.peek_action",
+      "Kind": "function",
+      "Params": null,
+      "Summary": "用於查看下一個未消費事件動作代碼，但不標記已處理。",
+      "Example": "next_action = event.peek_action()",
+      "ReturnValue": "信號值"
+    },
+    {
+      "Name": "event.peek_name",
+      "Kind": "function",
+      "Params": null,
+      "Summary": "用於查看下一個未消費事件名稱。",
+      "Example": "event_name = event.peek_name()",
+      "ReturnValue": "信號值"
+    },
+    {
+      "Name": "event.peek_qty",
+      "Kind": "function",
+      "Params": null,
+      "Summary": "用於查看下一個未消費事件的數量。",
+      "Example": "event_qty = event.peek_qty()",
+      "ReturnValue": "信號值"
+    },
+    {
+      "Name": "event.pending",
+      "Kind": "function",
+      "Params": null,
+      "Summary": "用於檢查目前 bar 還有多少外部事件尚未被消費。",
+      "Example": "has_event = event.pending() \u003e 0",
+      "ReturnValue": "信號值"
+    },
+    {
+      "Name": "group.add_spread",
+      "Kind": "function",
+      "Params": [
+        "group_id",
+        "spread_id"
+      ],
+      "Summary": "用於管理一組相關期權 spread，常見於分批建倉、roll 倉與組合平倉。",
+      "Example": "group.add_spread(\"main\", spread_id)",
+      "ReturnValue": "handle 或值"
+    },
+    {
+      "Name": "group.close",
+      "Kind": "function",
+      "Params": [
+        "group_id"
+      ],
+      "Summary": "用於管理一組相關期權 spread，常見於分批建倉、roll 倉與組合平倉。",
+      "Example": "group.close(\"main\")",
+      "ReturnValue": "handle 或值"
+    },
+    {
+      "Name": "group.get",
+      "Kind": "function",
+      "Params": [
+        "group_id"
+      ],
+      "Summary": "用於管理一組相關期權 spread，常見於分批建倉、roll 倉與組合平倉。",
+      "Example": "group.get(\"main\")",
+      "ReturnValue": "handle 或值"
+    },
+    {
+      "Name": "group.increment_roll",
+      "Kind": "function",
+      "Params": [
+        "group_id"
+      ],
+      "Summary": "用於管理一組相關期權 spread，常見於分批建倉、roll 倉與組合平倉。",
+      "Example": "group.increment_roll(\"main\")",
+      "ReturnValue": "handle 或值"
+    },
+    {
+      "Name": "group.open",
+      "Kind": "function",
+      "Params": [
+        "tag",
+        "init_amount",
+        "decay_factor"
+      ],
+      "Summary": "用於管理一組相關期權 spread，常見於分批建倉、roll 倉與組合平倉。",
+      "Example": "group.open(\"main\", 10000, 0.5)",
+      "ReturnValue": "handle 或值"
+    },
+    {
+      "Name": "group.open_ids",
+      "Kind": "function",
+      "Params": null,
+      "Summary": "用於管理一組相關期權 spread，常見於分批建倉、roll 倉與組合平倉。",
+      "Example": "group.open_ids()",
+      "ReturnValue": "handle 或值"
+    },
+    {
+      "Name": "group.spread_count",
+      "Kind": "function",
+      "Params": [
+        "group_id"
+      ],
+      "Summary": "用於管理一組相關期權 spread，常見於分批建倉、roll 倉與組合平倉。",
+      "Example": "group.spread_count(\"main\")",
+      "ReturnValue": "handle 或值"
+    },
+    {
+      "Name": "input.bool",
+      "Kind": "function",
+      "Params": [
+        "defval",
+        "title"
+      ],
+      "Summary": "用於宣告功能開關，例如是否啟用趨勢濾網或是否允許加倉。",
+      "Example": "use_filter = input.bool(true, title=\"Use Filter\")",
+      "ReturnValue": "布林"
+    },
+    {
+      "Name": "input.float",
+      "Kind": "function",
+      "Params": [
+        "defval",
+        "title",
+        "minval",
+        "maxval",
+        "step"
+      ],
+      "Summary": "用於宣告小數參數，例如資金比例、停損比例或權重上限。",
+      "Example": "position_pct = input.float(0.95, title=\"Position %\", minval=0.01, maxval=1.0)",
+      "ReturnValue": "數值"
+    },
+    {
+      "Name": "input.int",
+      "Kind": "function",
+      "Params": [
+        "defval",
+        "title",
+        "minval",
+        "maxval",
+        "step"
+      ],
+      "Summary": "用於宣告整數參數，例如均線週期、持倉 bar 數或分批次數。",
+      "Example": "fast_len = input.int(10, title=\"Fast SMA\", minval=1, step=1)",
+      "ReturnValue": "數值"
+    },
+    {
+      "Name": "input.string",
+      "Kind": "function",
+      "Params": [
+        "defval",
+        "title",
+        "options"
+      ],
+      "Summary": "用於宣告模式、標的、分組名稱等字串參數，並可限制可選值。",
+      "Example": "mode = input.string(\"trend\", title=\"Mode\", options=[\"trend\", \"mean\"])",
+      "ReturnValue": "字串"
+    },
+    {
+      "Name": "leg.buy",
+      "Kind": "function",
+      "Params": [
+        "contract",
+        "qty"
+      ],
+      "Summary": "用於建立買方 leg，qty 表示期權合約張數；US options 的現金流與 PnL 會按 100 contract multiplier 計算。",
+      "Example": "long_leg = leg.buy(contract, 1)",
+      "ReturnValue": "leg"
+    },
+    {
+      "Name": "leg.sell",
+      "Kind": "function",
+      "Params": [
+        "contract",
+        "qty"
+      ],
+      "Summary": "用於建立賣方 leg，qty 表示期權合約張數；US options 的現金流與 PnL 會按 100 contract multiplier 計算。",
+      "Example": "short_leg = leg.sell(contract, 1)",
+      "ReturnValue": "leg"
+    },
+    {
+      "Name": "market.context",
+      "Kind": "function",
+      "Params": [
+        "rsi14",
+        "cci20",
+        "hv_percentile",
+        "iv_percentile",
+        "valuation_percentile"
+      ],
+      "Summary": "用於把策略已讀取或計算的真實因子轉成趨勢、波動、估值與情境分類。",
+      "Example": "ctx = market.context(rsi14, cci20, hvp, ivp, valp)",
+      "ReturnValue": "市場環境物件"
+    },
+    {
+      "Name": "market.hv_state",
+      "Kind": "function",
+      "Params": [
+        "context"
+      ],
+      "Summary": "用於讀取 market.context 的 HV 狀態。",
+      "Example": "hv_state = market.hv_state(ctx)",
+      "ReturnValue": "字串"
+    },
+    {
+      "Name": "market.iv_state",
+      "Kind": "function",
+      "Params": [
+        "context"
+      ],
+      "Summary": "用於讀取 market.context 的 IV 狀態。",
+      "Example": "iv_state = market.iv_state(ctx)",
+      "ReturnValue": "字串"
+    },
+    {
+      "Name": "market.reason_codes",
+      "Kind": "function",
+      "Params": null,
+      "Summary": "用於策略腳本中的資料處理、條件判斷或交易流程控制。",
+      "Example": "market.reason_codes()",
+      "ReturnValue": "數值"
+    },
+    {
+      "Name": "market.risk_label",
+      "Kind": "function",
+      "Params": null,
+      "Summary": "用於策略腳本中的資料處理、條件判斷或交易流程控制。",
+      "Example": "market.risk_label()",
+      "ReturnValue": "數值"
+    },
+    {
+      "Name": "market.scenario_label",
+      "Kind": "function",
+      "Params": null,
+      "Summary": "用於策略腳本中的資料處理、條件判斷或交易流程控制。",
+      "Example": "market.scenario_label()",
+      "ReturnValue": "數值"
+    },
+    {
+      "Name": "market.trend_state",
+      "Kind": "function",
+      "Params": [
+        "context"
+      ],
+      "Summary": "用於讀取 market.context 的趨勢狀態。",
+      "Example": "trend = market.trend_state(ctx)",
+      "ReturnValue": "字串"
+    },
+    {
+      "Name": "market.valuation_state",
+      "Kind": "function",
+      "Params": [
+        "context"
+      ],
+      "Summary": "用於讀取 market.context 的估值狀態。",
+      "Example": "valuation = market.valuation_state(ctx)",
+      "ReturnValue": "字串"
+    },
+    {
+      "Name": "market.warnings",
+      "Kind": "function",
+      "Params": null,
+      "Summary": "用於策略腳本中的資料處理、條件判斷或交易流程控制。",
+      "Example": "market.warnings()",
+      "ReturnValue": "數值"
+    },
+    {
+      "Name": "math.abs",
+      "Kind": "function",
+      "Params": [
+        "x"
+      ],
+      "Summary": "用於取得絕對值，例如計算偏離程度或風險距離。",
+      "Example": "distance = math.abs(close - ta.sma(close, 20))",
+      "ReturnValue": "數值"
+    },
+    {
+      "Name": "math.avg",
+      "Kind": "function",
+      "Params": [
+        "a",
+        "b"
+      ],
+      "Summary": "用於計算多個數值的平均。",
+      "Example": "mid = math.avg(high, low, close)",
+      "ReturnValue": "數值"
+    },
+    {
+      "Name": "math.ceil",
+      "Kind": "function",
+      "Params": [
+        "x"
+      ],
+      "Summary": "用於把倉位數量或 bar 數向上取整。",
+      "Example": "lots = math.ceil(strategy.equity / close)",
+      "ReturnValue": "數值"
+    },
+    {
+      "Name": "math.exp",
+      "Kind": "function",
+      "Params": [
+        "x"
+      ],
+      "Summary": "用於指數轉換或還原 log 值。",
+      "Example": "restored = math.exp(math.log(close))",
+      "ReturnValue": "數值"
+    },
+    {
+      "Name": "math.floor",
+      "Kind": "function",
+      "Params": [
+        "x"
+      ],
+      "Summary": "用於把倉位數量向下取整，避免買入零碎股數。",
+      "Example": "qty = math.floor(strategy.cash / close)",
+      "ReturnValue": "數值"
+    },
+    {
+      "Name": "math.log",
+      "Kind": "function",
+      "Params": [
+        "x"
+      ],
+      "Summary": "用於自然對數轉換，例如對數報酬。",
+      "Example": "log_close = math.log(close)",
+      "ReturnValue": "數值"
+    },
+    {
+      "Name": "math.log10",
+      "Kind": "function",
+      "Params": [
+        "x"
+      ],
+      "Summary": "用於十進位對數轉換。",
+      "Example": "log10_close = math.log10(close)",
+      "ReturnValue": "數值"
+    },
+    {
+      "Name": "math.max",
+      "Kind": "function",
+      "Params": [
+        "a",
+        "b"
+      ],
+      "Summary": "用於設定下限或在兩個風險值中取較大者。",
+      "Example": "risk = math.max(ta.atr(14), close * 0.01)",
+      "ReturnValue": "數值"
+    },
+    {
+      "Name": "math.min",
+      "Kind": "function",
+      "Params": [
+        "a",
+        "b"
+      ],
+      "Summary": "用於限制倉位、風險或價格門檻不超過上限。",
+      "Example": "budget = math.min(strategy.cash, strategy.equity * 0.5)",
+      "ReturnValue": "數值"
+    },
+    {
+      "Name": "math.pow",
+      "Kind": "function",
+      "Params": [
+        "x",
+        "exp"
+      ],
+      "Summary": "用於自訂非線性權重或訊號強度。",
+      "Example": "squared = math.pow(close - ta.sma(close, 20), 2)",
+      "ReturnValue": "數值"
+    },
+    {
+      "Name": "math.round",
+      "Kind": "function",
+      "Params": [
+        "x"
+      ],
+      "Summary": "用於把價格或數量四捨五入。",
+      "Example": "rounded = math.round(close)",
+      "ReturnValue": "數值"
+    },
+    {
+      "Name": "math.sign",
+      "Kind": "function",
+      "Params": [
+        "x"
+      ],
+      "Summary": "用於把訊號轉成方向 -1、0 或 1。",
+      "Example": "dir = math.sign(close - ta.sma(close, 20))",
+      "ReturnValue": "數值"
+    },
+    {
+      "Name": "math.sqrt",
+      "Kind": "function",
+      "Params": [
+        "x"
+      ],
+      "Summary": "用於自訂波動率或標準差相關公式。",
+      "Example": "root = math.sqrt(ta.stdev(close, 20))",
+      "ReturnValue": "數值"
+    },
+    {
+      "Name": "options.best_spread",
+      "Kind": "function",
+      "Params": [
+        "chain"
+      ],
+      "Summary": "用於從期權鏈中篩出符合到期日、Delta、權利金或履約價條件的候選合約。",
+      "Example": "contract = options.best_spread(options.puts(options.chain(\"us-options\", \"SPY\")))",
+      "ReturnValue": "期權鏈或值"
+    },
+    {
+      "Name": "options.build_strategy",
+      "Kind": "function",
+      "Params": [
+        "chain",
+        "name",
+        "qty",
+        "target_delta"
+      ],
+      "Summary": "用於把策略名稱和期權鏈轉成可檢查的標準 legs，不直接下單。",
+      "Example": "legs = options.build_strategy(chain, \"BUY_CALL\", 1, 0.35)",
+      "ReturnValue": "leg 陣列"
+    },
+    {
+      "Name": "options.calls",
+      "Kind": "function",
+      "Params": [
+        "chain"
+      ],
+      "Summary": "用於把期權鏈縮小到 call 合約。",
+      "Example": "calls = options.calls(options.chain(\"us-options\", \"SPY\"))",
+      "ReturnValue": "期權鏈"
+    },
+    {
+      "Name": "options.chain",
+      "Kind": "function",
+      "Params": [
+        "market",
+        "symbol"
+      ],
+      "Summary": "用於取得目前 bar 可用的期權鏈；多標的策略可指定市場與 underlying。",
+      "Example": "chain = options.chain(\"us-options\", \"SPY\")",
+      "ReturnValue": "期權鏈"
+    },
+    {
+      "Name": "options.delta_range",
+      "Kind": "function",
+      "Params": [
+        "chain",
+        "min_delta",
+        "max_delta"
+      ],
+      "Summary": "用於從期權鏈中篩出符合到期日、Delta、權利金或履約價條件的候選合約。",
+      "Example": "puts = options.delta_range(options.puts(options.chain(\"us-options\", \"SPY\")), -0.35, -0.15)",
+      "ReturnValue": "期權鏈或值"
+    },
+    {
+      "Name": "options.expiry_max",
+      "Kind": "function",
+      "Params": [
+        "chain",
+        "max_days"
+      ],
+      "Summary": "用於從期權鏈中篩出符合到期日、Delta、權利金或履約價條件的候選合約。",
+      "Example": "chain45 = options.expiry_max(options.chain(\"us-options\", \"SPY\"), 45)",
+      "ReturnValue": "期權鏈或值"
+    },
+    {
+      "Name": "options.expiry_min",
+      "Kind": "function",
+      "Params": [
+        "chain",
+        "min_days"
+      ],
+      "Summary": "用於從期權鏈中篩出符合到期日、Delta、權利金或履約價條件的候選合約。",
+      "Example": "chain20 = options.expiry_min(options.chain(\"us-options\", \"SPY\"), 20)",
+      "ReturnValue": "期權鏈或值"
+    },
+    {
+      "Name": "options.expiry_nearest",
+      "Kind": "function",
+      "Params": [
+        "chain",
+        "target_days"
+      ],
+      "Summary": "用於從期權鏈中篩出符合到期日、Delta、權利金或履約價條件的候選合約。",
+      "Example": "near = options.expiry_nearest(options.chain(\"us-options\", \"SPY\"), 30)",
+      "ReturnValue": "期權鏈或值"
+    },
+    {
+      "Name": "options.expiry_range",
+      "Kind": "function",
+      "Params": [
+        "chain",
+        "min_days",
+        "max_days"
+      ],
+      "Summary": "用於從期權鏈中篩出符合到期日、Delta、權利金或履約價條件的候選合約。",
+      "Example": "chain30 = options.expiry_range(options.chain(\"us-options\", \"SPY\"), 20, 45)",
+      "ReturnValue": "期權鏈或值"
+    },
+    {
+      "Name": "options.len",
+      "Kind": "function",
+      "Params": [
+        "chain"
+      ],
+      "Summary": "用於從期權鏈中篩出符合到期日、Delta、權利金或履約價條件的候選合約。",
+      "Example": "count = options.len(options.chain(\"us-options\", \"SPY\"))",
+      "ReturnValue": "期權鏈或值"
+    },
+    {
+      "Name": "options.min_premium",
+      "Kind": "function",
+      "Params": [
+        "chain",
+        "min_bid"
+      ],
+      "Summary": "用於從期權鏈中篩出符合到期日、Delta、權利金或履約價條件的候選合約。",
+      "Example": "rich = options.min_premium(options.puts(options.chain(\"us-options\", \"SPY\")), 1.0)",
+      "ReturnValue": "期權鏈或值"
+    },
+    {
+      "Name": "options.open_strategy",
+      "Kind": "function",
+      "Params": [
+        "chain",
+        "name",
+        "qty",
+        "target_delta",
+        "tag"
+      ],
+      "Summary": "用於明確開啟由策略名稱生成的期權 spread。",
+      "Example": "sid = options.open_strategy(chain, \"BUY_CALL\", 1, 0.35, \"momentum\")",
+      "ReturnValue": "spread id"
+    },
+    {
+      "Name": "options.puts",
+      "Kind": "function",
+      "Params": [
+        "chain"
+      ],
+      "Summary": "用於把期權鏈縮小到 put 合約。",
+      "Example": "puts = options.puts(options.chain(\"us-options\", \"SPY\"))",
+      "ReturnValue": "期權鏈"
+    },
+    {
+      "Name": "options.sort_by_delta",
+      "Kind": "function",
+      "Params": [
+        "chain",
+        "target"
+      ],
+      "Summary": "用於把候選合約依 Delta 接近目標值排序，方便取第一筆作交易。",
+      "Example": "contracts = options.sort_by_delta(options.puts(options.chain(\"us-options\", \"SPY\")), -0.3)",
+      "ReturnValue": "陣列"
+    },
+    {
+      "Name": "options.strategies",
+      "Kind": "function",
+      "Params": [
+        "context",
+        "family"
+      ],
+      "Summary": "用於依市場環境分類挑選候選期權策略名稱。",
+      "Example": "names = options.strategies(ctx, \"momentum\")",
+      "ReturnValue": "陣列"
+    },
+    {
+      "Name": "options.strike_range",
+      "Kind": "function",
+      "Params": [
+        "chain",
+        "min",
+        "max"
+      ],
+      "Summary": "用於從期權鏈中篩出符合到期日、Delta、權利金或履約價條件的候選合約。",
+      "Example": "near_money = options.strike_range(options.chain(\"us-options\", \"SPY\"), close * 0.9, close * 1.1)",
+      "ReturnValue": "期權鏈或值"
+    },
+    {
+      "Name": "order.buy",
+      "Kind": "constant",
+      "Params": null,
+      "Summary": "用於 order.* 函數表示買入方向。",
+      "Example": "order.market(order.buy, 100, note=\"enter\")",
+      "ReturnValue": "數值"
+    },
+    {
+      "Name": "order.immediate",
+      "Kind": "function",
+      "Params": [
+        "side",
+        "qty",
+        "note"
+      ],
+      "Summary": "用於要求當根 bar 以目前 close 立即成交的市場單。",
+      "Example": "order.immediate(order.sell, 100, note=\"force_exit\")",
+      "ReturnValue": "數值"
+    },
+    {
+      "Name": "order.limit",
+      "Kind": "function",
+      "Params": [
+        "side",
+        "qty",
+        "price",
+        "note"
+      ],
+      "Summary": "用於在指定價格送出限價單，例如等待回落買入或反彈賣出。",
+      "Example": "order.limit(order.buy, 100, close * 0.99)",
+      "ReturnValue": "數值"
+    },
+    {
+      "Name": "order.market",
+      "Kind": "function",
+      "Params": [
+        "side",
+        "qty",
+        "note"
+      ],
+      "Summary": "用於立即以市場單買入或賣出固定數量，並取得訂單 ID 供後續追蹤。",
+      "Example": "order_id = order.market(order.buy, 100, note=\"enter\")",
+      "ReturnValue": "數值"
+    },
+    {
+      "Name": "order.market_notional",
+      "Kind": "function",
+      "Params": [
+        "side",
+        "notional",
+        "note"
+      ],
+      "Summary": "用於依名義金額下市場單，讓策略用資金金額而非股數控倉。",
+      "Example": "order_id = order.market_notional(order.buy, 10000, note=\"rebalance\")",
+      "ReturnValue": "數值"
+    },
+    {
+      "Name": "order.sell",
+      "Kind": "constant",
+      "Params": null,
+      "Summary": "用於 order.* 函數表示賣出方向。",
+      "Example": "order.market(order.sell, 100, note=\"exit\")",
+      "ReturnValue": "數值"
+    },
+    {
+      "Name": "order.stop",
+      "Kind": "function",
+      "Params": [
+        "side",
+        "qty",
+        "stop_price",
+        "note"
+      ],
+      "Summary": "用於在觸及停損或突破價格後送出停損單。",
+      "Example": "order.stop(order.sell, 100, close * 0.95)",
+      "ReturnValue": "數值"
+    },
+    {
+      "Name": "order.stop_limit",
+      "Kind": "function",
+      "Params": [
+        "side",
+        "qty",
+        "stop_price",
+        "limit_price",
+        "note"
+      ],
+      "Summary": "用於建立同時含觸發價與限價的停損限價單。",
+      "Example": "order.stop_limit(order.sell, 100, close * 0.95, close * 0.94)",
+      "ReturnValue": "數值"
+    },
+    {
+      "Name": "order.submit",
+      "Kind": "function",
+      "Params": [
+        "id",
+        "side",
+        "qty",
+        "notional",
+        "type",
+        "limit",
+        "stop",
+        "twap_bars",
+        "immediate",
+        "note",
+        "ref",
+        "group_ref",
+        "schedule_at"
+      ],
+      "Summary": "用於用單一入口送出可擴充訂單意圖，適合需要 ID、ref、group_ref 或排程資訊的策略。",
+      "Example": "order.submit(id=\"entry\", side=order.buy, qty=100, type=\"market\")",
+      "ReturnValue": "數值"
+    },
+    {
+      "Name": "order.twap",
+      "Kind": "function",
+      "Params": [
+        "side",
+        "qty",
+        "bars",
+        "note"
+      ],
+      "Summary": "用於把一筆交易拆到多根 bar 執行，降低一次性成交衝擊。",
+      "Example": "order.twap(order.buy, 100, 5)",
+      "ReturnValue": "數值"
+    },
+    {
+      "Name": "portfolio.items",
+      "Kind": "function",
+      "Params": null,
+      "Summary": "用於一次取得 [symbol, weight] 陣列，方便多標的輪詢。",
+      "Example": "items = portfolio.items()",
+      "ReturnValue": "陣列"
+    },
+    {
+      "Name": "portfolio.len",
+      "Kind": "function",
+      "Params": null,
+      "Summary": "用於取得組合標的數量，常作為 for 迴圈上限。",
+      "Example": "n = portfolio.len()",
+      "ReturnValue": "數值"
+    },
+    {
+      "Name": "portfolio.symbol",
+      "Kind": "function",
+      "Params": [
+        "index",
+        "defval"
+      ],
+      "Summary": "用於依索引讀取單一組合標的，索引不存在時回傳預設值。",
+      "Example": "symbol = portfolio.symbol(0, \"SPY\")",
+      "ReturnValue": "字串"
+    },
+    {
+      "Name": "portfolio.symbols",
+      "Kind": "function",
+      "Params": null,
+      "Summary": "用於取得回測請求傳入的標的清單。",
+      "Example": "symbols = portfolio.symbols()",
+      "ReturnValue": "陣列"
+    },
+    {
+      "Name": "portfolio.weight",
+      "Kind": "function",
+      "Params": [
+        "symbol",
+        "defval"
+      ],
+      "Summary": "用於依 symbol 查詢組合權重，找不到時回傳預設值。",
+      "Example": "w = portfolio.weight(\"SPY\", 0)",
+      "ReturnValue": "數值"
+    },
+    {
+      "Name": "portfolio.weights",
+      "Kind": "function",
+      "Params": null,
+      "Summary": "用於取得與 portfolio.symbols 對應的權重清單。",
+      "Example": "weights = portfolio.weights()",
+      "ReturnValue": "陣列"
+    },
+    {
+      "Name": "ref.clear",
+      "Kind": "function",
+      "Params": [
+        "name"
+      ],
+      "Summary": "用於跨 bar 保存自訂狀態，例如上次訂單 ID、spread ID 或已處理次數。",
+      "Example": "ref.clear(\"main\")",
+      "ReturnValue": "數值"
+    },
+    {
+      "Name": "ref.dec",
+      "Kind": "function",
+      "Params": [
+        "name"
+      ],
+      "Summary": "用於跨 bar 保存自訂狀態，例如上次訂單 ID、spread ID 或已處理次數。",
+      "Example": "ref.dec(\"main\")",
+      "ReturnValue": "數值"
+    },
+    {
+      "Name": "ref.get",
+      "Kind": "function",
+      "Params": [
+        "name"
+      ],
+      "Summary": "用於跨 bar 保存自訂狀態，例如上次訂單 ID、spread ID 或已處理次數。",
+      "Example": "ref.get(\"main\")",
+      "ReturnValue": "數值"
+    },
+    {
+      "Name": "ref.has",
+      "Kind": "function",
+      "Params": [
+        "name"
+      ],
+      "Summary": "用於跨 bar 保存自訂狀態，例如上次訂單 ID、spread ID 或已處理次數。",
+      "Example": "ref.has(\"main\")",
+      "ReturnValue": "數值"
+    },
+    {
+      "Name": "ref.inc",
+      "Kind": "function",
+      "Params": [
+        "name"
+      ],
+      "Summary": "用於跨 bar 保存自訂狀態，例如上次訂單 ID、spread ID 或已處理次數。",
+      "Example": "ref.inc(\"main\")",
+      "ReturnValue": "數值"
+    },
+    {
+      "Name": "ref.set",
+      "Kind": "function",
+      "Params": [
+        "name",
+        "value"
+      ],
+      "Summary": "用於跨 bar 保存自訂狀態，例如上次訂單 ID、spread ID 或已處理次數。",
+      "Example": "ref.set(\"main\", close)",
+      "ReturnValue": "數值"
+    },
+    {
+      "Name": "request.factor",
+      "Kind": "function",
+      "Params": [
+        "name",
+        "interval",
+        "field"
+      ],
+      "Summary": "用於讀取預載因子資料；內建 volatility 因子會綁定目前回測主標的，提供 iv/current_iv、hv10、hv20、hv30、iv_percentile、iv_rank、price_observations、iv_observations 等 1d 欄位。",
+      "Example": "iv_rank = request.factor(\"volatility\", \"1d\", \"iv_rank\")",
+      "ReturnValue": "series"
+    },
+    {
+      "Name": "request.fundamental",
+      "Kind": "function",
+      "Params": [
+        "market",
+        "symbol",
+        "factor",
+        "mode"
+      ],
+      "Summary": "用於讀取標的綁定的基本面序列，例如 PE、PB、market_cap 等；美股的 PE/PB 會依 bar close 以 point-in-time 方式動態重估。",
+      "Example": "pe = request.fundamental(\"us-stocks\", \"AAPL\", \"pe\")",
+      "ReturnValue": "series"
+    },
+    {
+      "Name": "request.security",
+      "Kind": "function",
+      "Params": [
+        "market",
+        "symbol",
+        "interval",
+        "field"
+      ],
+      "Summary": "用於讀取其他市場、標的或週期的預載欄位；第四參數也可為純表達式，會在指定標的/週期上下文中計算後對齊回主時間軸。",
+      "Example": "spy_close = request.security(\"us-stocks\", \"SPY\", \"1d\", \"close\")",
+      "ReturnValue": "series"
+    },
+    {
+      "Name": "schedule.close_group",
+      "Kind": "function",
+      "Params": [
+        "bars_offset",
+        "group_id"
+      ],
+      "Summary": "用於排程未來幾根 bar 後關閉 spread、leg 或 group。",
+      "Example": "schedule.close_group(20, \"main\")",
+      "ReturnValue": "handle 或值"
+    },
+    {
+      "Name": "schedule.close_leg",
+      "Kind": "function",
+      "Params": [
+        "bars_offset",
+        "spread_id",
+        "leg_index"
+      ],
+      "Summary": "用於排程未來幾根 bar 後關閉 spread、leg 或 group。",
+      "Example": "schedule.close_leg(20, spread_id, 0)",
+      "ReturnValue": "handle 或值"
+    },
+    {
+      "Name": "schedule.close_spread",
+      "Kind": "function",
+      "Params": [
+        "bars_offset",
+        "spread_id",
+        "reason"
+      ],
+      "Summary": "用於排程未來幾根 bar 後關閉 spread、leg 或 group。",
+      "Example": "schedule.close_spread(20, spread_id, \"risk_exit\")",
+      "ReturnValue": "handle 或值"
+    },
+    {
+      "Name": "signal.action",
+      "Kind": "function",
+      "Params": null,
+      "Summary": "用於讀取第一個信號動作代碼，對應 init/add/close/roll。",
+      "Example": "action = signal.action()",
+      "ReturnValue": "信號值"
+    },
+    {
+      "Name": "signal.active",
+      "Kind": "function",
+      "Params": null,
+      "Summary": "用於判斷目前 bar 是否有外部信號。",
+      "Example": "has_signal = signal.active() == 1",
+      "ReturnValue": "信號值"
+    },
+    {
+      "Name": "signal.consume",
+      "Kind": "function",
+      "Params": null,
+      "Summary": "用於把目前 bar 的第一個信號標記為已處理。",
+      "Example": "done = signal.consume()",
+      "ReturnValue": "信號值"
+    },
+    {
+      "Name": "signal.consumed",
+      "Kind": "function",
+      "Params": null,
+      "Summary": "用於判斷目前 bar 的第一個信號是否已被標記處理。",
+      "Example": "if signal.active() == 1 and signal.consumed() == 0",
+      "ReturnValue": "信號值"
+    },
+    {
+      "Name": "signal.count",
+      "Kind": "function",
+      "Params": null,
+      "Summary": "用於取得目前 bar 外部信號數量。",
+      "Example": "signal_total = signal.count()",
+      "ReturnValue": "信號值"
+    },
+    {
+      "Name": "signal.direction",
+      "Kind": "function",
+      "Params": null,
+      "Summary": "用於讀取第一個信號方向，1 表示多、-1 表示空、0 表示無方向。",
+      "Example": "dir = signal.direction()",
+      "ReturnValue": "信號值"
+    },
+    {
+      "Name": "signal.group_ref",
+      "Kind": "function",
+      "Params": null,
+      "Summary": "用於讀取信號分組參考 ID。",
+      "Example": "group_id = signal.group_ref()",
+      "ReturnValue": "信號值"
+    },
+    {
+      "Name": "signal.name",
+      "Kind": "function",
+      "Params": null,
+      "Summary": "用於讀取第一個信號名稱，便於路由不同策略邏輯。",
+      "Example": "name = signal.name()",
+      "ReturnValue": "信號值"
+    },
+    {
+      "Name": "signal.qty",
+      "Kind": "function",
+      "Params": null,
+      "Summary": "用於讀取第一個信號建議數量。",
+      "Example": "qty = nz(signal.qty(), 1)",
+      "ReturnValue": "信號值"
+    },
+    {
+      "Name": "signal.ref",
+      "Kind": "function",
+      "Params": null,
+      "Summary": "用於讀取信號參考 ID，方便連結訂單或 spread。",
+      "Example": "ref_id = signal.ref()",
+      "ReturnValue": "信號值"
+    },
+    {
+      "Name": "signal.remarks",
+      "Kind": "function",
+      "Params": null,
+      "Summary": "用於讀取信號備註文字。",
+      "Example": "note = signal.remarks()",
+      "ReturnValue": "信號值"
+    },
+    {
+      "Name": "signal.source",
+      "Kind": "function",
+      "Params": null,
+      "Summary": "用於讀取信號來源，便於區分不同上游系統。",
+      "Example": "source = signal.source()",
+      "ReturnValue": "信號值"
+    },
+    {
+      "Name": "spread.close",
+      "Kind": "function",
+      "Params": [
+        "spread_id",
+        "reason"
+      ],
+      "Summary": "用於建立、查詢、關閉與監控期權價差部位。",
+      "Example": "spread.close(spread_id, \"risk_exit\")",
+      "ReturnValue": "handle 或值"
+    },
+    {
+      "Name": "spread.close_leg",
+      "Kind": "function",
+      "Params": [
+        "spread_id",
+        "leg_index",
+        "close_price"
+      ],
+      "Summary": "用於建立、查詢、關閉與監控期權價差部位。",
+      "Example": "spread.close_leg(spread_id, 0, contract.mark(contract))",
+      "ReturnValue": "handle 或值"
+    },
+    {
+      "Name": "spread.count",
+      "Kind": "function",
+      "Params": null,
+      "Summary": "用於建立、查詢、關閉與監控期權價差部位。",
+      "Example": "spread.count()",
+      "ReturnValue": "handle 或值"
+    },
+    {
+      "Name": "spread.get",
+      "Kind": "function",
+      "Params": [
+        "spread_id"
+      ],
+      "Summary": "用於建立、查詢、關閉與監控期權價差部位。",
+      "Example": "spread.get(spread_id)",
+      "ReturnValue": "handle 或值"
+    },
+    {
+      "Name": "spread.leg_contract",
+      "Kind": "function",
+      "Params": [
+        "spread_id",
+        "leg_index"
+      ],
+      "Summary": "用於建立、查詢、關閉與監控期權價差部位。",
+      "Example": "spread.leg_contract(spread_id, 0)",
+      "ReturnValue": "handle 或值"
+    },
+    {
+      "Name": "spread.leg_entry_price",
+      "Kind": "function",
+      "Params": [
+        "spread_id",
+        "leg_index"
+      ],
+      "Summary": "用於建立、查詢、關閉與監控期權價差部位。",
+      "Example": "spread.leg_entry_price(spread_id, 0)",
+      "ReturnValue": "handle 或值"
+    },
+    {
+      "Name": "spread.leg_open",
+      "Kind": "function",
+      "Params": [
+        "spread_id",
+        "leg_index"
+      ],
+      "Summary": "用於建立、查詢、關閉與監控期權價差部位。",
+      "Example": "spread.leg_open(spread_id, 0)",
+      "ReturnValue": "handle 或值"
+    },
+    {
+      "Name": "spread.leg_qty",
+      "Kind": "function",
+      "Params": [
+        "spread_id",
+        "leg_index"
+      ],
+      "Summary": "用於建立、查詢、關閉與監控期權價差部位。",
+      "Example": "spread.leg_qty(spread_id, 0)",
+      "ReturnValue": "handle 或值"
+    },
+    {
+      "Name": "spread.leg_side",
+      "Kind": "function",
+      "Params": [
+        "spread_id",
+        "leg_index"
+      ],
+      "Summary": "用於建立、查詢、關閉與監控期權價差部位。",
+      "Example": "spread.leg_side(spread_id, 0)",
+      "ReturnValue": "handle 或值"
+    },
+    {
+      "Name": "spread.open",
+      "Kind": "function",
+      "Params": [
+        "legs",
+        "tag"
+      ],
+      "Summary": "用於建立、查詢、關閉與監控期權價差部位。",
+      "Example": "spread.open([leg.sell(contract, 1)], \"main\")",
+      "ReturnValue": "handle 或值"
+    },
+    {
+      "Name": "spread.open_ids",
+      "Kind": "function",
+      "Params": null,
+      "Summary": "用於建立、查詢、關閉與監控期權價差部位。",
+      "Example": "spread.open_ids()",
+      "ReturnValue": "handle 或值"
+    },
+    {
+      "Name": "spread.open_in_group",
+      "Kind": "function",
+      "Params": [
+        "legs",
+        "tag",
+        "group_id"
+      ],
+      "Summary": "用於建立、查詢、關閉與監控期權價差部位。",
+      "Example": "spread.open_in_group([leg.sell(contract, 1)], \"main\", \"main\")",
+      "ReturnValue": "handle 或值"
+    },
+    {
+      "Name": "spread.open_in_group_on",
+      "Kind": "function",
+      "Params": [
+        "market",
+        "underlying",
+        "legs",
+        "tag",
+        "group_id"
+      ],
+      "Summary": "用於建立、查詢、關閉與監控期權價差部位。",
+      "Example": "spread.open_in_group_on(\"us-options\", \"SPY\", [leg.sell(contract, 1)], \"main\", \"main\")",
+      "ReturnValue": "handle 或值"
+    },
+    {
+      "Name": "spread.open_on",
+      "Kind": "function",
+      "Params": [
+        "market",
+        "underlying",
+        "legs",
+        "tag"
+      ],
+      "Summary": "用於建立、查詢、關閉與監控期權價差部位。",
+      "Example": "spread.open_on(\"us-options\", \"SPY\", [leg.sell(contract, 1)], \"main\")",
+      "ReturnValue": "handle 或值"
+    },
+    {
+      "Name": "spread.pnl",
+      "Kind": "function",
+      "Params": [
+        "spread_id"
+      ],
+      "Summary": "用於建立、查詢、關閉與監控期權價差部位。",
+      "Example": "spread.pnl(spread_id)",
+      "ReturnValue": "handle 或值"
+    },
+    {
+      "Name": "spread.pnl_all",
+      "Kind": "function",
+      "Params": null,
+      "Summary": "用於建立、查詢、關閉與監控期權價差部位。",
+      "Example": "spread.pnl_all()",
+      "ReturnValue": "handle 或值"
+    },
+    {
+      "Name": "str.contains",
+      "Kind": "function",
+      "Params": [
+        "s",
+        "substr"
+      ],
+      "Summary": "用於判斷字串是否包含子字串，例如篩選 symbol 或模式名稱。",
+      "Example": "is_spy = str.contains(\"SPY.US\", \"SPY\")",
+      "ReturnValue": "字串或陣列"
+    },
+    {
+      "Name": "str.format",
+      "Kind": "function",
+      "Params": [
+        "format",
+        "value"
+      ],
+      "Summary": "用於格式化報告標籤或訂單備註。",
+      "Example": "note = str.format(\"close=%s\", close)",
+      "ReturnValue": "字串或陣列"
+    },
+    {
+      "Name": "str.join",
+      "Kind": "function",
+      "Params": [
+        "parts",
+        "sep"
+      ],
+      "Summary": "用於把字串陣列合併成標籤或備註。",
+      "Example": "label = str.join([\"SPY\", \"long\"], \"-\")",
+      "ReturnValue": "字串或陣列"
+    },
+    {
+      "Name": "str.length",
+      "Kind": "function",
+      "Params": [
+        "s"
+      ],
+      "Summary": "用於取得字串長度。",
+      "Example": "symbol_len = str.length(\"SPY\")",
+      "ReturnValue": "字串或陣列"
+    },
+    {
+      "Name": "str.lower",
+      "Kind": "function",
+      "Params": [
+        "s"
+      ],
+      "Summary": "用於把設定值轉成小寫以便比對。",
+      "Example": "mode = str.lower(\"TREND\")",
+      "ReturnValue": "字串或陣列"
+    },
+    {
+      "Name": "str.split",
+      "Kind": "function",
+      "Params": [
+        "s",
+        "sep"
+      ],
+      "Summary": "用於把逗號分隔設定拆成陣列。",
+      "Example": "symbols = str.split(\"SPY,QQQ\", \",\")",
+      "ReturnValue": "字串或陣列"
+    },
+    {
+      "Name": "str.tostring",
+      "Kind": "function",
+      "Params": [
+        "value"
+      ],
+      "Summary": "用於把數值、布林或陣列轉成字串。",
+      "Example": "label = str.tostring(close)",
+      "ReturnValue": "字串或陣列"
+    },
+    {
+      "Name": "str.upper",
+      "Kind": "function",
+      "Params": [
+        "s"
+      ],
+      "Summary": "用於把 symbol 或設定值轉成大寫以便比對。",
+      "Example": "symbol = str.upper(\"spy\")",
+      "ReturnValue": "字串或陣列"
+    },
+    {
+      "Name": "strategy.cash",
+      "Kind": "property",
+      "Params": null,
+      "Summary": "用於避免下單金額超過可用現金。",
+      "Example": "qty = math.min(strategy.cash, strategy.equity * 0.5) / close",
+      "ReturnValue": "數值"
+    },
+    {
+      "Name": "strategy.close",
+      "Kind": "function",
+      "Params": [
+        "id"
+      ],
+      "Summary": "用於依 entry ID 平掉既有部位，常放在出場訊號或風控條件中。",
+      "Example": "strategy.close(id=\"long\")",
+      "ReturnValue": "na"
+    },
+    {
+      "Name": "strategy.entry",
+      "Kind": "function",
+      "Params": [
+        "id",
+        "direction",
+        "qty",
+        "limit",
+        "stop",
+        "twap_bars",
+        "immediate",
+        "note"
+      ],
+      "Summary": "用於以命名 ID 建立多頭或空頭部位；需要限價、停損或 TWAP 時也可帶進階參數。",
+      "Example": "strategy.entry(id=\"long\", direction=strategy.long, qty=100)",
+      "ReturnValue": "na"
+    },
+    {
+      "Name": "strategy.equity",
+      "Kind": "property",
+      "Params": null,
+      "Summary": "用於依目前權益估算倉位大小或風險預算。",
+      "Example": "budget = strategy.equity * 0.95",
+      "ReturnValue": "數值"
+    },
+    {
+      "Name": "strategy.exit",
+      "Kind": "function",
+      "Params": [
+        "id"
+      ],
+      "Summary": "用於依 entry ID 退出部位；目前行為與 strategy.close 相同。",
+      "Example": "strategy.exit(id=\"long\")",
+      "ReturnValue": "na"
+    },
+    {
+      "Name": "strategy.long",
+      "Kind": "constant",
+      "Params": null,
+      "Summary": "用於 strategy.entry 表示建立多頭部位。",
+      "Example": "strategy.entry(id=\"long\", direction=strategy.long, qty=1)",
+      "ReturnValue": "數值"
+    },
+    {
+      "Name": "strategy.position_avg_price",
+      "Kind": "property",
+      "Params": null,
+      "Summary": "用於根據持倉均價設停利、停損或移動停損。",
+      "Example": "take_profit = close \u003e strategy.position_avg_price * 1.08",
+      "ReturnValue": "數值"
+    },
+    {
+      "Name": "strategy.position_size",
+      "Kind": "property",
+      "Params": null,
+      "Summary": "用於判斷目前是否已有部位，避免重複進場或決定是否出場。",
+      "Example": "flat = strategy.position_size == 0",
+      "ReturnValue": "數值"
+    },
+    {
+      "Name": "strategy.short",
+      "Kind": "constant",
+      "Params": null,
+      "Summary": "用於 strategy.entry 表示建立空頭部位。",
+      "Example": "strategy.entry(id=\"short\", direction=strategy.short, qty=1)",
+      "ReturnValue": "數值"
+    },
+    {
+      "Name": "ta.atr",
+      "Kind": "function",
+      "Params": [
+        "length"
+      ],
+      "Summary": "用於衡量近期波動，常拿來設定停損距離或倉位大小。",
+      "Example": "atr = ta.atr(14)",
+      "ReturnValue": "series"
+    },
+    {
+      "Name": "ta.barssince",
+      "Kind": "function",
+      "Params": [
+        "condition"
+      ],
+      "Summary": "用於計算某條件距離最近一次成立已過幾根 bar。",
+      "Example": "bars_from_entry = ta.barssince(close \u003e ta.sma(close, 20))",
+      "ReturnValue": "數值"
+    },
+    {
+      "Name": "ta.bb",
+      "Kind": "function",
+      "Params": [
+        "source",
+        "length",
+        "mult"
+      ],
+      "Summary": "用於取得布林通道上軌、中線、下軌陣列。",
+      "Example": "bands = ta.bb(close, 20, 2)",
+      "ReturnValue": "陣列"
+    },
+    {
+      "Name": "ta.bb_lower",
+      "Kind": "function",
+      "Params": [
+        "source",
+        "length",
+        "mult"
+      ],
+      "Summary": "用於取得布林通道下軌，常作為超跌或回補判斷。",
+      "Example": "lower = ta.bb_lower(close, 20, 2)",
+      "ReturnValue": "series"
+    },
+    {
+      "Name": "ta.bb_upper",
+      "Kind": "function",
+      "Params": [
+        "source",
+        "length",
+        "mult"
+      ],
+      "Summary": "用於取得布林通道上軌，常作為過熱或突破判斷。",
+      "Example": "upper = ta.bb_upper(close, 20, 2)",
+      "ReturnValue": "series"
+    },
+    {
+      "Name": "ta.cci",
+      "Kind": "function",
+      "Params": [
+        "length"
+      ],
+      "Summary": "用於判斷價格偏離典型價格均值的程度，常作為反轉或過熱濾網。",
+      "Example": "cci = ta.cci(20)",
+      "ReturnValue": "series"
+    },
+    {
+      "Name": "ta.change",
+      "Kind": "function",
+      "Params": [
+        "source",
+        "length"
+      ],
+      "Summary": "用於計算目前值相對 N 根 bar 前的變化量。",
+      "Example": "momentum = ta.change(close, 5)",
+      "ReturnValue": "series"
+    },
+    {
+      "Name": "ta.crossover",
+      "Kind": "function",
+      "Params": [
+        "left",
+        "right"
+      ],
+      "Summary": "用於偵測左側序列在本 bar 向上穿越右側序列。",
+      "Example": "long_signal = ta.crossover(ta.sma(close, 10), ta.sma(close, 50))",
+      "ReturnValue": "布林"
+    },
+    {
+      "Name": "ta.crossunder",
+      "Kind": "function",
+      "Params": [
+        "left",
+        "right"
+      ],
+      "Summary": "用於偵測左側序列在本 bar 向下跌破右側序列。",
+      "Example": "exit_signal = ta.crossunder(ta.sma(close, 10), ta.sma(close, 50))",
+      "ReturnValue": "布林"
+    },
+    {
+      "Name": "ta.cum",
+      "Kind": "function",
+      "Params": [
+        "source"
+      ],
+      "Summary": "用於累加序列值，例如累積成交量或自訂資金流。",
+      "Example": "cum_volume = ta.cum(volume)",
+      "ReturnValue": "series"
+    },
+    {
+      "Name": "ta.ema",
+      "Kind": "function",
+      "Params": [
+        "source",
+        "length"
+      ],
+      "Summary": "用於較重視近期價格的趨勢判斷。",
+      "Example": "trend = ta.ema(close, 20)",
+      "ReturnValue": "series"
+    },
+    {
+      "Name": "ta.highest",
+      "Kind": "function",
+      "Params": [
+        "source",
+        "length"
+      ],
+      "Summary": "用於取得近期最高值，常作為突破或追蹤停利條件。",
+      "Example": "breakout_level = ta.highest(high, 20)",
+      "ReturnValue": "series"
+    },
+    {
+      "Name": "ta.lowest",
+      "Kind": "function",
+      "Params": [
+        "source",
+        "length"
+      ],
+      "Summary": "用於取得近期最低值，常作為停損或跌破條件。",
+      "Example": "stop_level = ta.lowest(low, 10)",
+      "ReturnValue": "series"
+    },
+    {
+      "Name": "ta.percentrank",
+      "Kind": "function",
+      "Params": [
+        "source",
+        "length"
+      ],
+      "Summary": "用於衡量目前值在近期視窗中的百分位排名。",
+      "Example": "rank = ta.percentrank(ta.rsi(close, 14), 20)",
+      "ReturnValue": "series"
+    },
+    {
+      "Name": "ta.rsi",
+      "Kind": "function",
+      "Params": [
+        "source",
+        "length"
+      ],
+      "Summary": "用於衡量超買超賣或動能強弱。",
+      "Example": "rsi = ta.rsi(close, 14)",
+      "ReturnValue": "series"
+    },
+    {
+      "Name": "ta.sma",
+      "Kind": "function",
+      "Params": [
+        "source",
+        "length"
+      ],
+      "Summary": "用於平滑價格或成交量，常作為趨勢方向與均線交叉訊號。",
+      "Example": "fast = ta.sma(close, 10)",
+      "ReturnValue": "series"
+    },
+    {
+      "Name": "ta.stdev",
+      "Kind": "function",
+      "Params": [
+        "source",
+        "length"
+      ],
+      "Summary": "用於衡量序列波動程度，常搭配均線形成通道。",
+      "Example": "vol = ta.stdev(close, 20)",
+      "ReturnValue": "series"
+    },
+    {
+      "Name": "ta.valuewhen",
+      "Kind": "function",
+      "Params": [
+        "condition",
+        "source",
+        "occurrence"
+      ],
+      "Summary": "用於取得某條件第 N 次成立時的來源序列值。",
+      "Example": "last_breakout_close = ta.valuewhen(close \u003e ta.highest(high, 20)[1], close, 0)",
+      "ReturnValue": "數值"
+    },
+    {
+      "Name": "ta.wma",
+      "Kind": "function",
+      "Params": [
+        "source",
+        "length"
+      ],
+      "Summary": "用於計算線性加權均線，近期資料權重較高。",
+      "Example": "weighted = ta.wma(close, 20)",
+      "ReturnValue": "series"
+    },
+    {
+      "Name": "universe.symbols",
+      "Kind": "function",
+      "Params": [
+        "code"
+      ],
+      "Summary": "用於取得 validate/run 階段展開並注入的 universe 成員標的。",
+      "Example": "symbols = universe.symbols(\"strong_momentum\")",
+      "ReturnValue": "陣列"
+    }
+  ]
+}

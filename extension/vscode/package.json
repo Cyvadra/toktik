@@ -1,0 +1,56 @@
+{
+  "name": "toktik-dsl-vscode",
+  "displayName": "Toktik DSL",
+  "description": "Syntax highlighting and completion support for Toktik strategy DSL files.",
+  "version": "0.0.1",
+  "publisher": "cyvadra",
+  "engines": {
+    "vscode": "^1.96.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "activationEvents": [
+    "onLanguage:toktik-dsl"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "toktik-dsl",
+        "aliases": [
+          "Toktik DSL",
+          "toktik-dsl"
+        ],
+        "extensions": [
+          ".toktik",
+          ".tdsl"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "toktik-dsl",
+        "scopeName": "source.toktik-dsl",
+        "path": "./syntaxes/toktik-dsl.tmLanguage.json"
+      }
+    ],
+    "snippets": [
+      {
+        "language": "toktik-dsl",
+        "path": "./snippets/toktik-dsl.code-snippets"
+      }
+    ]
+  },
+  "scripts": {
+    "generate": "go run ../../cmd/vscode-dsl-extension-data -output .",
+    "compile": "tsc -p ./",
+    "vscode:prepublish": "npm run generate && npm run compile"
+  },
+  "devDependencies": {
+    "@types/node": "^20.17.10",
+    "@types/vscode": "^1.96.0",
+    "typescript": "^5.7.2"
+  }
+}

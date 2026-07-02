@@ -4,6 +4,8 @@
 // expressions, extended with first-class options trading support.
 package token
 
+import "sort"
+
 // Type is the category of a lexical token.
 type Type int
 
@@ -258,4 +260,14 @@ func LookupIdent(ident string) Type {
 		return t
 	}
 	return Ident
+}
+
+// Keywords returns all reserved words recognized by the lexer.
+func Keywords() []string {
+	values := make([]string, 0, len(keywords))
+	for keyword := range keywords {
+		values = append(values, keyword)
+	}
+	sort.Strings(values)
+	return values
 }

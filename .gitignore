@@ -49,6 +49,14 @@ docs/swagger.yaml
 !web/data-browser/package-lock.json
 !web/data-browser/tsconfig.json
 !web/data-browser/tsconfig.node.json
+!extension/vscode/package.json
+!extension/vscode/package-lock.json
+!extension/vscode/tsconfig.json
+!extension/vscode/language-configuration.json
+!extension/vscode/data/
+!extension/vscode/data/*.json
+!extension/vscode/syntaxes/
+!extension/vscode/syntaxes/*.json
 *.csv
 *.npy
 
