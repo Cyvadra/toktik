@@ -881,7 +881,7 @@ Returns latest known values per (symbol, factor) at as_of. For us-stocks, price-
 | to | query | string | no | Snapshot window end (RFC3339 or YYYY-MM-DD); defaults to latest available snapshot |
 | interval | query | string | no | Chain interval (default 1d) |
 | include_latest | query | boolean | no | Merge Redis-cached provisional latest option-chain snapshot when interval=1d. This never calls upstream providers and defaults to false. |
-| limit | query | integer | no | Max contracts (default 100) |
+| snapshot_limit | query | integer | no | Max snapshots (default 100) |
 | cursor | query | string | no | Pagination cursor |
 
 #### Responses

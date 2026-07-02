@@ -286,6 +286,64 @@ func TestUSOptionsQuerySymbolsLatestRequiresOptIn(t *testing.T) {
 	}
 }
 
+func TestUSOptionsQuerySymbolsAllowsSearchOnly(t *testing.T) {
+	rows := &fakeForexRows{data: [][]any{
+		{"O:AAPL260619C00190000", "AAPL", "C", time.Date(2026, 6, 19, 0, 0, 0, 0, time.UTC), 190.0},
+	}}
+	conn := &fakeForexConn{rows: rows}
+	svc := NewUSOptionsService(chrepo.NewRepo(conn))
+
+	resp, err := svc.QuerySymbols(context.Background(), dto.USOptionSymbolRequest{Search: "AAPL", Limit: 10})
+	if err != nil {
+		t.Fatalf("QuerySymbols returned error: %v", err)
+	}
+	if len(resp.Data) != 1 || resp.Data[0].Symbol != "O:AAPL260619C00190000" {
+		t.Fatalf("unexpected search-only symbols: %#v", resp.Data)
+	}
+	if strings.Contains(conn.queryText, "underlying =") {
+		t.Fatalf("expected search-only query not to require underlying, got %s", conn.queryText)
+	}
+	if !strings.Contains(conn.queryText, "symbol ILIKE") {
+		t.Fatalf("expected search filter in query, got %s", conn.queryText)
+	}
+	if !rows.closed {
+		t.Fatal("expected rows to be closed")
+	}
+	if resp.NextCursor != "" {
+		t.Fatalf("expected empty next cursor, got %q", resp.NextCursor)
+	}
+	if resp.Data[0].Underlying != "AAPL" {
+		t.Fatalf("expected underlying AAPL, got %#v", resp.Data[0])
+	}
+	if resp.Data[0].Expiration.Location() != time.UTC {
+		t.Fatalf("expected expiration in UTC, got %v", resp.Data[0].Expiration.Location())
+	}
+	if resp.Data[0].Strike != 190 {
+		t.Fatalf("expected strike 190, got %#v", resp.Data[0])
+	}
+	if resp.Data[0].OptionType != "C" {
+		t.Fatalf("expected option type C, got %#v", resp.Data[0])
+	}
+	if resp.Data[0].Symbol == "" {
+		t.Fatalf("expected symbol in response, got %#v", resp.Data[0])
+	}
+	if resp.Data[0].Underlying == "" {
+		t.Fatalf("expected underlying in response, got %#v", resp.Data[0])
+	}
+	if resp.Data[0].Expiration.IsZero() {
+		t.Fatalf("expected expiration in response, got %#v", resp.Data[0])
+	}
+	if resp.Data[0].Strike <= 0 {
+		t.Fatalf("expected positive strike in response, got %#v", resp.Data[0])
+	}
+	if resp.Data[0].OptionType == "" {
+		t.Fatalf("expected option type in response, got %#v", resp.Data[0])
+	}
+	if resp.Data[0].Symbol != "O:AAPL260619C00190000" {
+		t.Fatalf("expected symbol O:AAPL260619C00190000, got %#v", resp.Data[0])
+	}
+}
+
 func TestClickHouseUSStockCompanyProfileProviderReadsPersistedProfiles(t *testing.T) {
 	marketCap := 123456789.0
 	rows := &fakeForexRows{data: [][]any{

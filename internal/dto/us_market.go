@@ -269,7 +269,7 @@ type USOptionChainRequest struct {
 	From          string `form:"from" binding:"omitempty"`
 	To            string `form:"to" binding:"omitempty"`
 	Interval      string `form:"interval" binding:"omitempty"`
-	Limit         int    `form:"limit" binding:"omitempty"`
+	SnapshotLimit int    `form:"snapshot_limit" binding:"omitempty"`
 	Cursor        string `form:"cursor" binding:"omitempty"`
 	IncludeLatest bool   `form:"include_latest" binding:"omitempty"`
 }

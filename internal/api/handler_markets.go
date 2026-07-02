@@ -397,7 +397,7 @@ func (h *Handler) GetUSOptionGreeks(c *gin.Context) {
 //	@Param			to				query		string	false	"Snapshot window end (RFC3339 or YYYY-MM-DD); defaults to latest available snapshot"
 //	@Param			interval		query		string	false	"Chain interval (default 1d)"	Enums(5m,15m,30m,1h,2h,4h,1d)
 //	@Param			include_latest	query		bool	false	"Merge Redis-cached provisional latest option-chain snapshot when interval=1d. This never calls upstream providers and defaults to false."
-//	@Param			limit			query		int		false	"Max contracts (default 100)"
+//	@Param			snapshot_limit	query		int		false	"Max snapshots (default 100)"
 //	@Param			cursor			query		string	false	"Pagination cursor"
 //	@Success		200				{object}	dto.USOptionChainResponse
 //	@Failure		400				{object}	dto.ErrorResponse

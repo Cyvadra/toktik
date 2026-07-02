@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -13,6 +14,20 @@ import (
 	"github.com/Cyvadra/toktik/pkg/dsl/parser"
 	"github.com/Cyvadra/toktik/pkg/dsl/runtime"
 )
+
+var indicatorTAFunctionPattern = regexp.MustCompile(`ta\.([A-Za-z_][A-Za-z0-9_]*)\s*\(`)
+
+var supportedIndicatorTAFunctions = map[string]struct{}{
+	"atr":         {},
+	"bb_lower":    {},
+	"bb_upper":    {},
+	"cci":         {},
+	"change":      {},
+	"ema":         {},
+	"percentrank": {},
+	"rsi":         {},
+	"sma":         {},
+}
 
 const maxIndicatorBars = 200000
 
@@ -276,6 +291,9 @@ func indicatorPlotsFromRequest(req dto.IndicatorSeriesRequest) ([]indicatorPlotS
 		if trimmed == "" {
 			continue
 		}
+		if err := validateIndicatorExpression(trimmed); err != nil {
+			return nil, err
+		}
 		if _, exists := seenTitles[trimmed]; exists {
 			continue
 		}
@@ -283,6 +301,21 @@ func indicatorPlotsFromRequest(req dto.IndicatorSeriesRequest) ([]indicatorPlotS
 		plots = append(plots, indicatorPlotSpec{Title: trimmed, Expression: trimmed})
 	}
 	return plots, nil
+}
+
+func validateIndicatorExpression(expression string) error {
+	matches := indicatorTAFunctionPattern.FindAllStringSubmatch(expression, -1)
+	for _, match := range matches {
+		if len(match) < 2 {
+			continue
+		}
+		name := strings.ToLower(strings.TrimSpace(match[1]))
+		if _, ok := supportedIndicatorTAFunctions[name]; ok {
+			continue
+		}
+		return dto.NewValidationError("unknown indicator function %q", "ta."+name)
+	}
+	return nil
 }
 
 func findIndicatorPreset(id string) (indicatorPresetSpec, bool) {

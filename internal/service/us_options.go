@@ -74,7 +74,8 @@ func (s *USOptionsService) WithLatestMarketCache(reader LatestUSMarketCacheReade
 func (s *USOptionsService) QuerySymbols(ctx context.Context, req dto.USOptionSymbolRequest) (*dto.USOptionSymbolResponse, error) {
 	limit := clamp(req.Limit, defaultSymbolLimit, maxSymbolLimit)
 	underlying := resolveUSOptionUnderlying(req.Underlying, req.Root)
-	if underlying == "" {
+	search := strings.TrimSpace(req.Search)
+	if underlying == "" && search == "" {
 		return nil, dto.NewValidationError("underlying is required")
 	}
 
@@ -85,9 +86,12 @@ func (s *USOptionsService) QuerySymbols(ctx context.Context, req dto.USOptionSym
 	expiration,
 	strike
 FROM us_options_bar_1m
-WHERE underlying = ` + clickhouseStringLiteral(underlying)
-	if req.Search != "" {
-		query += ` AND symbol ILIKE ` + clickhouseStringLiteral("%"+req.Search+"%")
+WHERE 1 = 1`
+	if underlying != "" {
+		query += ` AND underlying = ` + clickhouseStringLiteral(underlying)
+	}
+	if search != "" {
+		query += ` AND symbol ILIKE ` + clickhouseStringLiteral("%"+search+"%")
 	}
 	if req.Cursor != "" {
 		cursorSymbol, err := decodeCursorString(req.Cursor)
@@ -121,7 +125,7 @@ LIMIT %s`, clickhouseUInt32Literal(limit+1))
 		return nil, fmt.Errorf("iterate US option symbol rows: %w", err)
 	}
 	if s.shouldMergeLatestOptionSymbols(req, underlying) {
-		merged, err := s.mergeLatestOptionSymbols(ctx, underlying, req.Search, symbols)
+		merged, err := s.mergeLatestOptionSymbols(ctx, underlying, search, symbols)
 		if err != nil {
 			return nil, err
 		}
@@ -387,7 +391,7 @@ func (s *USOptionsService) QueryChain(ctx context.Context, req dto.USOptionChain
 	if err != nil {
 		return nil, err
 	}
-	limit := usBarLimit(req.Limit)
+	limit := usBarLimit(req.SnapshotLimit)
 
 	if strings.TrimSpace(req.From) == "" || strings.TrimSpace(req.To) == "" {
 		latest, hasData, err := s.latestUSOptionChainTimestamp(ctx, viewName, underlying)

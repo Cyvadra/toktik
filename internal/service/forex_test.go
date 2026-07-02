@@ -106,6 +106,36 @@ func (r *fakeForexRows) Scan(dest ...any) error {
 				return fmt.Errorf("column %d: want string, got %T", index, row[index])
 			}
 			*ptr = value
+		case *[]string:
+			value, ok := row[index].([]string)
+			if !ok {
+				return fmt.Errorf("column %d: want []string, got %T", index, row[index])
+			}
+			*ptr = append((*ptr)[:0], value...)
+		case *[]time.Time:
+			value, ok := row[index].([]time.Time)
+			if !ok {
+				return fmt.Errorf("column %d: want []time.Time, got %T", index, row[index])
+			}
+			*ptr = append((*ptr)[:0], value...)
+		case *[]float32:
+			value, ok := row[index].([]float32)
+			if !ok {
+				return fmt.Errorf("column %d: want []float32, got %T", index, row[index])
+			}
+			*ptr = append((*ptr)[:0], value...)
+		case *[]float64:
+			value, ok := row[index].([]float64)
+			if !ok {
+				return fmt.Errorf("column %d: want []float64, got %T", index, row[index])
+			}
+			*ptr = append((*ptr)[:0], value...)
+		case *[]uint64:
+			value, ok := row[index].([]uint64)
+			if !ok {
+				return fmt.Errorf("column %d: want []uint64, got %T", index, row[index])
+			}
+			*ptr = append((*ptr)[:0], value...)
 		case *sql.NullString:
 			if row[index] == nil {
 				*ptr = sql.NullString{}

@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -60,6 +61,23 @@ func TestRunIndicatorSeries_NotConfigured(t *testing.T) {
 
 	if w.Code != http.StatusNotImplemented {
 		t.Fatalf("expected 501, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestRunIndicatorSeries_ServiceValidationError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := NewRouter(&mockQuerier{}, &mockUSStocksQuerier{}, &mockUSOptionsQuerier{}, &mockInfra{}, &mockFeature{}, &mockIndicatorProvider{
+		err: dto.NewValidationError("unknown indicator function %q", "ta.not_a_real_function"),
+	}, nil, nil, nil, nil, nil, nil)
+
+	body := `{"market":"crypto-spot","symbol":"BTCUSDT","interval":"1h","from":"2024-01-01","to":"2024-01-02","indicators":["ta.not_a_real_function(close,5)"]}`
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("POST", "/api/v1/indicators/series", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
 	}
 }
 
@@ -200,6 +218,56 @@ func TestValidateStrategyBacktestRouteWithDSL(t *testing.T) {
 	}
 	if resp.Strategies[0].ProfileSource != "inferred" || len(resp.Strategies[0].Warnings) != 1 {
 		t.Fatalf("unexpected validate warnings/profile source: %+v", resp.Strategies[0])
+	}
+}
+
+func TestValidateStrategyBacktestRouteMapsPrepareValidationError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	mockBacktests := &mockStrategyBacktests{err: dto.NewValidationError("indicator %q depends on unknown series %q", "delta_ok", "delta")}
+	r := NewRouter(
+		&mockQuerier{},
+		&mockUSStocksQuerier{},
+		&mockUSOptionsQuerier{},
+		&mockInfra{},
+		&mockFeature{},
+		nil,
+		mockBacktests,
+		nil, nil, nil, nil, nil,
+	)
+
+	body := `{"asset":"BTC","from":"2026-01-01","to":"2026-02-01","capital":5,"strategy":"delta-filter"}`
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("POST", "/api/v1/backtests/validate", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestValidateStrategyBacktestRouteKeepsUnexpectedErrorsInternal(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	mockBacktests := &mockStrategyBacktests{err: errors.New("database unavailable")}
+	r := NewRouter(
+		&mockQuerier{},
+		&mockUSStocksQuerier{},
+		&mockUSOptionsQuerier{},
+		&mockInfra{},
+		&mockFeature{},
+		nil,
+		mockBacktests,
+		nil, nil, nil, nil, nil,
+	)
+
+	body := `{"asset":"BTC","from":"2026-01-01","to":"2026-02-01","capital":5,"strategy":"delta-filter"}`
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("POST", "/api/v1/backtests/validate", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d: %s", w.Code, w.Body.String())
 	}
 }
 

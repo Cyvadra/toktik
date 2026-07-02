@@ -87,6 +87,13 @@ func TestBuildIndicatorDSLSourceRejectsUnknownPreset(t *testing.T) {
 	}
 }
 
+func TestBuildIndicatorDSLSourceRejectsUnknownTAFunction(t *testing.T) {
+	_, err := buildIndicatorDSLSource(dto.IndicatorSeriesRequest{Indicators: []string{"ta.not_a_real_function(close,5)"}})
+	if err == nil || !strings.Contains(err.Error(), "unknown indicator function") {
+		t.Fatalf("expected unknown indicator function error, got %v", err)
+	}
+}
+
 func TestListIndicatorPresets(t *testing.T) {
 	svc := &IndicatorService{}
 	resp, err := svc.ListIndicatorPresets(t.Context())

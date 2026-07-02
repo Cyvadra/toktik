@@ -513,6 +513,34 @@ func TestUSOptionsSymbolsRouteAcceptsRootAlias(t *testing.T) {
 	}
 }
 
+func TestUSOptionsSymbolsRouteAllowsSearchOnly(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	mock := &mockUSOptionsQuerier{symbolsResp: &dto.USOptionSymbolResponse{Data: []dto.USOptionSymbolRow{{Symbol: "O:AAPL240119C00190000", Underlying: "AAPL", OptionType: "C", Strike: 190}}}}
+	r := NewRouter(
+		&mockQuerier{},
+		&mockUSStocksQuerier{},
+		mock,
+		&mockInfra{},
+		&mockFeature{},
+		nil,
+		nil, nil, nil, nil, nil,
+	)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/api/v1/markets/us-options/symbols?search=AAPL", nil)
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if mock.symbolsReq.Search != "AAPL" {
+		t.Fatalf("expected search to be forwarded, got %q", mock.symbolsReq.Search)
+	}
+	if mock.symbolsReq.Underlying != "" {
+		t.Fatalf("expected search-only request not to require underlying, got %q", mock.symbolsReq.Underlying)
+	}
+}
+
 func TestScreenOptionsRouteSupportsMinDTEAliases(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	mock := &mockScreener{optionsResp: &dto.ScreenOptionResponse{Data: []dto.ScreenedOption{}}}
@@ -668,6 +696,31 @@ func TestUSOptionsChainRouteAcceptsExpirationWithoutRange(t *testing.T) {
 	}
 	if mock.chainReq.Expiration != "2024-01-19" {
 		t.Fatalf("expected expiration to be forwarded, got %q", mock.chainReq.Expiration)
+	}
+}
+
+func TestUSOptionsChainRouteForwardsLimit(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	mock := &mockUSOptionsQuerier{chainResp: &dto.USOptionChainResponse{Data: []dto.USOptionChainSnapshot{}}}
+	r := NewRouter(
+		&mockQuerier{},
+		&mockUSStocksQuerier{},
+		mock,
+		&mockInfra{},
+		&mockFeature{},
+		nil,
+		nil, nil, nil, nil, nil,
+	)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/api/v1/markets/us-options/chain?underlying=AAPL&snapshot_limit=5", nil)
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if mock.chainReq.SnapshotLimit != 5 {
+		t.Fatalf("expected snapshot_limit to be forwarded, got %d", mock.chainReq.SnapshotLimit)
 	}
 }
 

@@ -225,7 +225,7 @@ aapl_iv_rank = request.security("us", "AAPL", "1d", iv_rank_base)
 | `alpha` | 20 |
 | `config` | 2 |
 | `contract` | 17 |
-| `core` | 16 |
+| `core` | 20 |
 | `event` | 12 |
 | `group` | 7 |
 | `input` | 4 |
@@ -306,16 +306,20 @@ aapl_iv_rank = request.security("us", "AAPL", "1d", iv_rank_base)
 | `bar_index` | `bar_index` | `常數` | `數值` | `ready = bar_index > 50` | 用於限制策略暖身期、排除前幾根資料不足的 bar。 |
 | `buy` | `buy(qty)` | `函數` | `na` | `buy(1)` | 用於快速送出基本買入指令，適合最小範例或不需要命名部位的腳本。 |
 | `close` | `close` | `常數` | `series` | `fast = ta.sma(close, 20)` | 用作主要價格序列，常拿來計算均線、動能、突破與下單價格。 |
+| `close_raw` | `close_raw` | `常數` | `series` | `itm = close_raw > option_strike` | 用於讀取未復權收盤價；涉及期權 strike、行權價比較或原始價格檢查時使用。 |
 | `high` | `high` | `常數` | `series` | `breakout = close > ta.highest(high, 20)[1]` | 用於偵測近期高點、突破條件或計算震幅類指標。 |
+| `high_raw` | `high_raw` | `常數` | `series` | `raw_range = high_raw - low_raw` | 用於讀取未復權最高價。 |
 | `input` | `input(defval, title, minval, maxval, step)` | `函數` | `值` | `risk = input(0.02, title="Risk", minval=0, maxval=1, step=0.01)` | 用於把策略參數暴露給 validate API 與回測請求，讓使用者能用 dsl_params 覆蓋預設值。 |
 | `len` | `len(value)` | `函數` | `數值` | `has_symbols = len(portfolio.symbols()) > 0` | 用於檢查陣列或字串長度，常搭配 portfolio、options.sort_by_delta 或字串拆分結果。 |
 | `low` | `low` | `常數` | `series` | `stop_price = ta.lowest(low, 10)` | 用於偵測近期低點、停損位置或回撤條件。 |
+| `low_raw` | `low_raw` | `常數` | `series` | `raw_range = high_raw - low_raw` | 用於讀取未復權最低價。 |
 | `math_e` | `math_e` | `常數` | `數值` | `one = math.log(math_e)` | 用於自然對數或指數模型中的 e 常數。 |
 | `math_phi` | `math_phi` | `常數` | `數值` | `target = close * math_phi` | 用於黃金比例相關的價格或比例計算。 |
 | `math_pi` | `math_pi` | `常數` | `數值` | `cycle = math_pi * 2` | 用於需要圓周率的自訂數學轉換。 |
 | `na` | `na(x)` | `函數` | `數值` | `warming_up = na(ta.sma(close, 50))` | 用於檢查值是否為 na。 |
 | `nz` | `nz(x, replacement)` | `函數` | `數值` | `safe_rsi = nz(ta.rsi(close, 14), 50)` | 用於把 na 替換成指定值，避免暖身期指標造成條件失效。 |
 | `open` | `open` | `常數` | `series` | `green_bar = close > open` | 用於判斷當根 K 線方向或估算開盤後價格變化。 |
+| `open_raw` | `open_raw` | `常數` | `series` | `gap_raw = open_raw / close_raw[1] - 1` | 用於讀取未復權開盤價。 |
 | `plot` | `plot(series, title, overlay, precision)` | `函數` | `值` | `plot(ta.sma(close, 20), title="SMA 20", overlay=true, precision=2)` | 用於把中間指標或交易條件輸出到回測結果，方便檢查策略為何進出場。 |
 | `sell` | `sell(qty)` | `函數` | `na` | `sell(1)` | 用於快速送出基本賣出指令，適合最小範例或不需要命名部位的腳本。 |
 | `volume` | `volume` | `常數` | `series` | `active_volume = volume > ta.sma(volume, 20)` | 用於成交量濾網、量能均線或流動性條件。 |
