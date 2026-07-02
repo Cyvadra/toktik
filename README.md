@@ -787,7 +787,7 @@ SIGNAL_LEVEL=12h go run ./cmd/backtest-portfolio/main.go \
 
 The repository now includes a runnable multi-symbol options DSL example plus a matching API payload:
 
-- `docs/examples/wheel-portfolio-us-sell-put.dsl`
+- `pkg/dsl/scripts/strategies/wheel-portfolio-us-sell-put.dsl`
 - `docs/examples/wheel-portfolio-us-sell-put.run.json`
 
 This example targets `QQQ 20% + GLD 10% + MSFT 15% + AAPL 10% + TSLA 30% + TQQQ 15%` and uses the current multi-symbol options runtime to rotate short puts per symbol. It models the put-writing leg of the wheel. Full assignment plus covered-call rotation is not modeled yet in the DSL/runtime, so the example intentionally stops at rolling cash-secured puts.

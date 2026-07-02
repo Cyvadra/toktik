@@ -9,6 +9,7 @@ import (
 	"github.com/Cyvadra/toktik/pkg/dsl/bridge"
 	"github.com/Cyvadra/toktik/pkg/dsl/configmap"
 	"github.com/Cyvadra/toktik/pkg/dsl/parser"
+	dslscripts "github.com/Cyvadra/toktik/pkg/dsl/scripts"
 	"github.com/Cyvadra/toktik/pkg/strategies/catalog"
 )
 
@@ -42,4 +43,31 @@ func RegisterDSLWithMetadata(reg catalog.Registration, source string) error {
 			return ds, nil
 		},
 	})
+}
+
+func mustRegisterDSLFile(name, fileName string) {
+	if err := registerDSLFile(name, fileName); err != nil {
+		panic(err)
+	}
+}
+
+func mustRegisterDSLFileWithMetadata(reg catalog.Registration, fileName string) {
+	if err := registerDSLFileWithMetadata(reg, fileName); err != nil {
+		panic(err)
+	}
+}
+
+func registerDSLFile(name, fileName string) error {
+	return registerDSLFileWithMetadata(catalog.Registration{
+		Name:   name,
+		Groups: []string{"dsl"},
+	}, fileName)
+}
+
+func registerDSLFileWithMetadata(reg catalog.Registration, fileName string) error {
+	source, err := dslscripts.ReadStrategy(fileName)
+	if err != nil {
+		return err
+	}
+	return RegisterDSLWithMetadata(reg, source)
 }
