@@ -243,7 +243,7 @@ func (h *Handler) GetStrategyBacktestReport(c *gin.Context) {
 //	@Success		202			{object}	dto.StrategyBacktestRunStatus
 //	@Failure		404			{object}	dto.ErrorResponse
 //	@Failure		409			{object}	dto.ErrorResponse
-//	@Failure		501		{object}	dto.ErrorResponse
+//	@Failure		501			{object}	dto.ErrorResponse
 //	@Failure		500			{object}	dto.ErrorResponse
 //	@Router			/backtests/runs/{runID}/reports/{reportID} [get]
 func (h *Handler) GetStrategyBacktestNamedReport(c *gin.Context) {

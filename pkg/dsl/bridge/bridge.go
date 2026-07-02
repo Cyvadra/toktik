@@ -266,6 +266,9 @@ func (ds *DslStrategy) Preload(ctx *backtest.PreloadContext) error {
 func (ds *DslStrategy) OnBar(ctx *backtest.BarContext) {
 	barEvents := signals.EventsAtTime(ds.events, ctx.Time())
 	ds.ip.Bridge = &barContextBridge{ctx: ctx, events: barEvents, config: ds.opts.Config, ds: ds, spreadPricing: ds.SpreadPricingConfig()}
+	for _, field := range defaultRawPriceFields() {
+		ds.ip.SetNamedField(field, ctx.Field(field))
+	}
 	for _, field := range ds.exposedFields() {
 		ds.ip.SetNamedField(field, ctx.Field(field))
 	}
@@ -428,6 +431,10 @@ func (ds *DslStrategy) exposedFields() []string {
 		fields = append(fields, "entry_signal")
 	}
 	return uniqStrings(fields)
+}
+
+func defaultRawPriceFields() []string {
+	return []string{"open_raw", "high_raw", "low_raw", "close_raw"}
 }
 
 func (ds *DslStrategy) requestSecurityBuiltin() func(args []runtime.Value) runtime.Value {

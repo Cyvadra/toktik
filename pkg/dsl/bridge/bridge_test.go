@@ -27,6 +27,7 @@ func (f *testDataFeed) Load(_ context.Context, req backtest.DataRequest) (*backt
 	high := make([]float64, nBars)
 	low := make([]float64, nBars)
 	closeCol := make([]float64, nBars)
+	rawClose := make([]float64, nBars)
 	volume := make([]float64, nBars)
 	step := time.Hour
 	if d, err := time.ParseDuration(strings.TrimSpace(req.Interval)); err == nil && d > 0 {
@@ -43,6 +44,7 @@ func (f *testDataFeed) Load(_ context.Context, req backtest.DataRequest) (*backt
 		high[i] = price + 1
 		low[i] = price - 1
 		closeCol[i] = price + 0.5
+		rawClose[i] = (price + 0.5) * 2
 		volume[i] = 1000
 	}
 	ds.SetTimestamps(ts)
@@ -50,6 +52,11 @@ func (f *testDataFeed) Load(_ context.Context, req backtest.DataRequest) (*backt
 	ds.AddColumn("high", high)
 	ds.AddColumn("low", low)
 	ds.AddColumn("close", closeCol)
+	for _, field := range f.fields {
+		if field == "close_raw" {
+			ds.AddColumn("close_raw", rawClose)
+		}
+	}
 	ds.AddColumn("volume", volume)
 	return ds, nil
 }
@@ -96,6 +103,27 @@ func runTestDSL(t *testing.T, src string, register func(*backtest.Engine)) (*bac
 		t.Fatalf("Run failed: %v", err)
 	}
 	return result, strategy
+}
+
+func TestDSLCanReadAdjustedAndRawCloseSeries(t *testing.T) {
+	src := `strategy("Raw Price DSL")
+plot(close, title="Adjusted Close")
+plot(close_raw, title="Raw Close")`
+	result, _ := runTestDSL(t, src, func(engine *backtest.Engine) {
+		engine.RegisterDataFeed("test", &testDataFeed{fields: []string{"open", "high", "low", "close", "close_raw", "volume"}})
+	})
+
+	adjusted := reportSeriesByLabel(t, result, "Adjusted Close")
+	raw := reportSeriesByLabel(t, result, "Raw Close")
+	if adjusted[0] != 100.5 {
+		t.Fatalf("adjusted close[0] = %v, want 100.5", adjusted[0])
+	}
+	if raw[0] != 201 {
+		t.Fatalf("raw close[0] = %v, want 201", raw[0])
+	}
+	if adjusted[0] == raw[0] {
+		t.Fatalf("expected adjusted and raw close series to be distinct, got %v", adjusted[0])
+	}
 }
 
 func (p *testOptionsChainProvider) AvailableContracts(t time.Time) []backtest.OptionContract {

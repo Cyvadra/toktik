@@ -13,6 +13,7 @@ type DataRequest struct {
 	Interval string    // "1m", "5m", "1h", etc.
 	From     time.Time // inclusive start
 	To       time.Time // exclusive end
+	Adjusted *bool     // nil preserves feed default; false requests raw unadjusted prices when supported
 }
 
 // DataFeed loads market data into columnar DataSets.

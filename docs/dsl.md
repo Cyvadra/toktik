@@ -230,8 +230,9 @@ aapl_iv_rank = request.security("us", "AAPL", "1d", iv_rank_base)
 | `group` | 7 |
 | `input` | 4 |
 | `leg` | 2 |
+| `market` | 9 |
 | `math` | 13 |
-| `options` | 13 |
+| `options` | 16 |
 | `order` | 10 |
 | `portfolio` | 6 |
 | `ref` | 6 |
@@ -242,6 +243,7 @@ aapl_iv_rank = request.security("us", "AAPL", "1d", iv_rank_base)
 | `str` | 8 |
 | `strategy` | 9 |
 | `ta` | 19 |
+| `universe` | 1 |
 
 ### alpha
 
@@ -363,6 +365,20 @@ aapl_iv_rank = request.security("us", "AAPL", "1d", iv_rank_base)
 | `leg.buy` | `leg.buy(contract, qty)` | `函數` | `leg` | `long_leg = leg.buy(contract, 1)` | 用於建立買方 leg，qty 表示期權合約張數；US options 的現金流與 PnL 會按 100 contract multiplier 計算。 |
 | `leg.sell` | `leg.sell(contract, qty)` | `函數` | `leg` | `short_leg = leg.sell(contract, 1)` | 用於建立賣方 leg，qty 表示期權合約張數；US options 的現金流與 PnL 會按 100 contract multiplier 計算。 |
 
+### market
+
+| 名稱 | 簽名 | 種類 | 回傳 | 範例 | 用途 |
+| --- | --- | --- | --- | --- | --- |
+| `market.context` | `market.context(rsi14, cci20, hv_percentile, iv_percentile, valuation_percentile)` | `函數` | `市場環境物件` | `ctx = market.context(rsi14, cci20, hvp, ivp, valp)` | 用於把策略已讀取或計算的真實因子轉成趨勢、波動、估值與情境分類。 |
+| `market.hv_state` | `market.hv_state(context)` | `函數` | `字串` | `hv_state = market.hv_state(ctx)` | 用於讀取 market.context 的 HV 狀態。 |
+| `market.iv_state` | `market.iv_state(context)` | `函數` | `字串` | `iv_state = market.iv_state(ctx)` | 用於讀取 market.context 的 IV 狀態。 |
+| `market.reason_codes` | `market.reason_codes()` | `函數` | `數值` | `market.reason_codes()` | 用於策略腳本中的資料處理、條件判斷或交易流程控制。 |
+| `market.risk_label` | `market.risk_label()` | `函數` | `數值` | `market.risk_label()` | 用於策略腳本中的資料處理、條件判斷或交易流程控制。 |
+| `market.scenario_label` | `market.scenario_label()` | `函數` | `數值` | `market.scenario_label()` | 用於策略腳本中的資料處理、條件判斷或交易流程控制。 |
+| `market.trend_state` | `market.trend_state(context)` | `函數` | `字串` | `trend = market.trend_state(ctx)` | 用於讀取 market.context 的趨勢狀態。 |
+| `market.valuation_state` | `market.valuation_state(context)` | `函數` | `字串` | `valuation = market.valuation_state(ctx)` | 用於讀取 market.context 的估值狀態。 |
+| `market.warnings` | `market.warnings()` | `函數` | `數值` | `market.warnings()` | 用於策略腳本中的資料處理、條件判斷或交易流程控制。 |
+
 ### math
 
 | 名稱 | 簽名 | 種類 | 回傳 | 範例 | 用途 |
@@ -386,6 +402,7 @@ aapl_iv_rank = request.security("us", "AAPL", "1d", iv_rank_base)
 | 名稱 | 簽名 | 種類 | 回傳 | 範例 | 用途 |
 | --- | --- | --- | --- | --- | --- |
 | `options.best_spread` | `options.best_spread(chain)` | `函數` | `期權鏈或值` | `contract = options.best_spread(options.puts(options.chain("us-options", "SPY")))` | 用於從期權鏈中篩出符合到期日、Delta、權利金或履約價條件的候選合約。 |
+| `options.build_strategy` | `options.build_strategy(chain, name, qty, target_delta)` | `函數` | `leg 陣列` | `legs = options.build_strategy(chain, "BUY_CALL", 1, 0.35)` | 用於把策略名稱和期權鏈轉成可檢查的標準 legs，不直接下單。 |
 | `options.calls` | `options.calls(chain)` | `函數` | `期權鏈` | `calls = options.calls(options.chain("us-options", "SPY"))` | 用於把期權鏈縮小到 call 合約。 |
 | `options.chain` | `options.chain(market, symbol)` | `函數` | `期權鏈` | `chain = options.chain("us-options", "SPY")` | 用於取得目前 bar 可用的期權鏈；多標的策略可指定市場與 underlying。 |
 | `options.delta_range` | `options.delta_range(chain, min_delta, max_delta)` | `函數` | `期權鏈或值` | `puts = options.delta_range(options.puts(options.chain("us-options", "SPY")), -0.35, -0.15)` | 用於從期權鏈中篩出符合到期日、Delta、權利金或履約價條件的候選合約。 |
@@ -395,8 +412,10 @@ aapl_iv_rank = request.security("us", "AAPL", "1d", iv_rank_base)
 | `options.expiry_range` | `options.expiry_range(chain, min_days, max_days)` | `函數` | `期權鏈或值` | `chain30 = options.expiry_range(options.chain("us-options", "SPY"), 20, 45)` | 用於從期權鏈中篩出符合到期日、Delta、權利金或履約價條件的候選合約。 |
 | `options.len` | `options.len(chain)` | `函數` | `期權鏈或值` | `count = options.len(options.chain("us-options", "SPY"))` | 用於從期權鏈中篩出符合到期日、Delta、權利金或履約價條件的候選合約。 |
 | `options.min_premium` | `options.min_premium(chain, min_bid)` | `函數` | `期權鏈或值` | `rich = options.min_premium(options.puts(options.chain("us-options", "SPY")), 1.0)` | 用於從期權鏈中篩出符合到期日、Delta、權利金或履約價條件的候選合約。 |
+| `options.open_strategy` | `options.open_strategy(chain, name, qty, target_delta, tag)` | `函數` | `spread id` | `sid = options.open_strategy(chain, "BUY_CALL", 1, 0.35, "momentum")` | 用於明確開啟由策略名稱生成的期權 spread。 |
 | `options.puts` | `options.puts(chain)` | `函數` | `期權鏈` | `puts = options.puts(options.chain("us-options", "SPY"))` | 用於把期權鏈縮小到 put 合約。 |
 | `options.sort_by_delta` | `options.sort_by_delta(chain, target)` | `函數` | `陣列` | `contracts = options.sort_by_delta(options.puts(options.chain("us-options", "SPY")), -0.3)` | 用於把候選合約依 Delta 接近目標值排序，方便取第一筆作交易。 |
+| `options.strategies` | `options.strategies(context, family)` | `函數` | `陣列` | `names = options.strategies(ctx, "momentum")` | 用於依市場環境分類挑選候選期權策略名稱。 |
 | `options.strike_range` | `options.strike_range(chain, min, max)` | `函數` | `期權鏈或值` | `near_money = options.strike_range(options.chain("us-options", "SPY"), close * 0.9, close * 1.1)` | 用於從期權鏈中篩出符合到期日、Delta、權利金或履約價條件的候選合約。 |
 
 ### order
@@ -540,6 +559,12 @@ aapl_iv_rank = request.security("us", "AAPL", "1d", iv_rank_base)
 | `ta.stdev` | `ta.stdev(source, length)` | `函數` | `series` | `vol = ta.stdev(close, 20)` | 用於衡量序列波動程度，常搭配均線形成通道。 |
 | `ta.valuewhen` | `ta.valuewhen(condition, source, occurrence)` | `函數` | `數值` | `last_breakout_close = ta.valuewhen(close > ta.highest(high, 20)[1], close, 0)` | 用於取得某條件第 N 次成立時的來源序列值。 |
 | `ta.wma` | `ta.wma(source, length)` | `函數` | `series` | `weighted = ta.wma(close, 20)` | 用於計算線性加權均線，近期資料權重較高。 |
+
+### universe
+
+| 名稱 | 簽名 | 種類 | 回傳 | 範例 | 用途 |
+| --- | --- | --- | --- | --- | --- |
+| `universe.symbols` | `universe.symbols(code)` | `函數` | `陣列` | `symbols = universe.symbols("strong_momentum")` | 用於取得 validate/run 階段展開並注入的 universe 成員標的。 |
 
 ## 提交與查詢範例
 
@@ -980,6 +1005,24 @@ data: {"run_id":"c40505f1a16f02f33380b4ccbe4f74db","status":"running","progress"
 | timestamp | string | no | Timestamp for this progress update in RFC3339 format. |
 | total | integer | no | Total units within the phase when known. |
 
+### StrategyBacktestResourcePlan
+
+- Schema: `github_com_Cyvadra_toktik_internal_dto.StrategyBacktestResourcePlan`
+- Type: `object`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| estimated_contracts | integer | no | - |
+| from | string | no | - |
+| interval | string | no | - |
+| min_dte | integer | no | - |
+| option_chain_underlyings | integer | no | - |
+| target_dte | integer | no | - |
+| to | string | no | - |
+| universe_codes | array<string> | no | - |
+| universe_size | integer | no | - |
+| warnings | array<string> | no | - |
+
 ### StrategyBacktestRunAccepted
 
 - Schema: `github_com_Cyvadra_toktik_internal_dto.StrategyBacktestRunAccepted`
@@ -1038,6 +1081,8 @@ data: {"run_id":"c40505f1a16f02f33380b4ccbe4f74db","status":"running","progress"
 | symbols | array<string> | no | Optional symbol universe. Used by portfolio helpers and dynamic option-chain preloading. |
 | target_expiry_days | integer | no | Strategy-specific target option expiry in days. |
 | to | string | yes | Inclusive backtest end date/time. Required. Use YYYY-MM-DD or RFC3339. |
+| universe_code | string | no | - |
+| universe_market | string | no | - |
 | weights | array<number> | no | Optional weights aligned with symbols. |
 
 ### StrategyBacktestRunResult
@@ -1165,6 +1210,7 @@ data: {"run_id":"c40505f1a16f02f33380b4ccbe4f74db","status":"running","progress"
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
+| resource_plan | [StrategyBacktestResourcePlan](#strategybacktestresourceplan) | no | - |
 | strategies | array<[StrategyBacktestValidationItem](#strategybacktestvalidationitem)> | no | Per-strategy validation details. |
 | strategy_count | integer | no | Number of strategies that would run for this request. |
 | strategy_label | string | no | Resolved request label, for example a strategy name, group, or DSL title. |

@@ -7,7 +7,6 @@
 - Source Swagger: `docs/swagger.json`
 - API title: `Toktik Options Platform API`
 - API version: `1.0`
-- Generated at: `2026-06-17T12:51:58Z`
 
 ## Scope
 
@@ -1761,6 +1760,7 @@ This section expands every request/response schema referenced by the endpoints a
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
+| as_of | string | no | - |
 | candidate_limit | integer | no | - |
 | data | array<[ScreenedUSTurnoverIntersectionRow](#screenedusturnoverintersectionrow)> | no | - |
 | limit | integer | no | - |
@@ -2040,6 +2040,23 @@ This section expands every request/response schema referenced by the endpoints a
 | strike | number | no | - |
 | total_open_interest | number | no | - |
 
+### USStockBarFreshnessMeta
+
+- Schema: `github_com_Cyvadra_toktik_internal_dto.USStockBarFreshnessMeta`
+- Type: `object`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| historical_last | string | no | - |
+| include_latest_requested | boolean | no | - |
+| latest_cache_as_of | string | no | - |
+| latest_cache_hit | boolean | no | - |
+| latest_cache_last | string | no | - |
+| latest_merged | boolean | no | - |
+| latest_provider | string | no | - |
+| status | string | no | - |
+| symbol | string | no | - |
+
 ### USStockBarFundamentalValue
 
 - Schema: `github_com_Cyvadra_toktik_internal_dto.USStockBarFundamentalValue`
@@ -2060,6 +2077,7 @@ This section expands every request/response schema referenced by the endpoints a
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
+| freshness | [USStockBarFreshnessMeta](#usstockbarfreshnessmeta) | no | - |
 | profile | [USStockCompanyProfile](#usstockcompanyprofile) | no | - |
 
 ### USStockBarResponse

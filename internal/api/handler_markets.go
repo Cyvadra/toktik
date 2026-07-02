@@ -112,7 +112,7 @@ func (h *Handler) GetGreeks(c *gin.Context) {
 //	@Param			interval		query		string		true	"Bar interval"
 //	@Param			from			query		string		true	"Start time (RFC3339 or YYYY-MM-DD)"
 //	@Param			to				query		string		true	"End time (RFC3339 or YYYY-MM-DD)"
-//	@Param			adjusted		query		bool	false	"Apply split adjustment to OHLC prices (defaults to true); set false for raw unadjusted prices."
+//	@Param			adjusted		query		bool		false	"Apply split adjustment to OHLC prices (defaults to true); set false for raw unadjusted prices."
 //	@Param			factor			query		[]string	false	"Optional fundamentals to align onto each bar (repeat or comma-separated, e.g. pe,pb). PE/PB are recomputed from each bar close using the latest known filing-derived denominator."
 //	@Param			include_latest	query		bool		false	"Merge Redis-cached provisional latest daily bars when interval=1d. This never calls upstream providers and defaults to false."
 //	@Param			limit			query		int			false	"Max rows (default 1000)"
