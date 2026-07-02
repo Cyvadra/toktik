@@ -47,10 +47,11 @@ type ScreenUnderlyingResponse struct {
 // ScreenUSTurnoverIntersectionRequest defines the query for the US
 // stocks/options turnover intersection screener.
 type ScreenUSTurnoverIntersectionRequest struct {
-	Limit         int   `form:"limit" binding:"omitempty"`
-	LookbackDays  int   `form:"lookback_days" binding:"omitempty"`
-	NonETFOnly    bool  `form:"non_etf_only" binding:"omitempty"`
-	IncludeLatest *bool `form:"include_latest" binding:"omitempty"`
+	Limit         int    `form:"limit" binding:"omitempty"`
+	LookbackDays  int    `form:"lookback_days" binding:"omitempty"`
+	NonETFOnly    bool   `form:"non_etf_only" binding:"omitempty"`
+	AsOf          string `form:"as_of" binding:"omitempty"`
+	IncludeLatest *bool  `form:"include_latest" binding:"omitempty"`
 }
 
 // ScreenedUSTurnoverIntersectionRow is one intersected US underlying result.
@@ -70,6 +71,7 @@ type ScreenUSTurnoverIntersectionResponse struct {
 	LookbackDays   int                                 `json:"lookback_days"`
 	Limit          int                                 `json:"limit"`
 	CandidateLimit int                                 `json:"candidate_limit"`
+	AsOf           string                              `json:"as_of,omitempty"`
 	Data           []ScreenedUSTurnoverIntersectionRow `json:"data"`
 }
 

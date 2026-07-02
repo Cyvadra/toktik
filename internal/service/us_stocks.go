@@ -271,7 +271,7 @@ func (s *USStocksService) QueryBars(ctx context.Context, req dto.USStockBarReque
 	var latestDiagnostic *dto.USStockBarFreshnessMeta
 	if s.shouldMergeLatestStockBars(req) {
 		latestDiagnostic = s.stockBarFreshnessDiagnostic(ctx, req.Symbol, fromT, toT, historicalLast)
-		if merged, changed, err := s.latest.MergeStockBars(ctx, req.Symbol, fromT, toT, bars); err != nil {
+		if merged, changed, err := s.latest.MergeStockBars(ctx, req.Symbol, fromT, toT, adjusted, bars); err != nil {
 			return nil, err
 		} else {
 			bars = merged

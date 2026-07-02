@@ -632,6 +632,62 @@ plot(close, title="Close")`,
 	}
 }
 
+func TestResolveBacktestPlanAllowsUniverseOnlyDSL(t *testing.T) {
+	from := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
+	svc := NewPortfolioBacktestService(nil, nil)
+	svc.universes = &stubPortfolioUniverseResolver{members: map[string][]dto.UniverseMember{
+		"strong_momentum": {{UniverseCode: "strong_momentum", Market: "us-stocks", Symbol: "AAPL", ValidFrom: from, ValidTo: to}},
+	}}
+
+	plan, err := svc.resolveBacktestPlan(context.Background(), nil, dto.StrategyBacktestRunRequest{
+		Market:           "us-stocks",
+		From:             "2026-01-01",
+		To:               "2026-01-02",
+		Capital:          100000,
+		Interval:         "1d",
+		MinExpiryDays:    14,
+		TargetExpiryDays: 45,
+		DSL: `strategy("Universe Only")
+symbols = universe.symbols("strong_momentum")
+plot(len(symbols), title="Universe Size")`,
+	}, false)
+	if err != nil {
+		t.Fatalf("resolveBacktestPlan returned error: %v", err)
+	}
+	if plan.asset != "AAPL" {
+		t.Fatalf("asset = %q, want AAPL", plan.asset)
+	}
+	if len(plan.universeSymbols) != 1 || plan.universeSymbols[0] != "AAPL" {
+		t.Fatalf("universe symbols = %v, want AAPL", plan.universeSymbols)
+	}
+	if len(plan.portfolioSymbols) != 1 || plan.portfolioSymbols[0] != "AAPL" {
+		t.Fatalf("portfolio symbols = %v, want primary universe asset only", plan.portfolioSymbols)
+	}
+	resourcePlan := buildStrategyBacktestResourcePlan(plan)
+	if resourcePlan.MinDTE != 14 || resourcePlan.TargetDTE != 45 {
+		t.Fatalf("resource DTE = %d/%d, want 14/45", resourcePlan.MinDTE, resourcePlan.TargetDTE)
+	}
+}
+
+func TestUniverseIntervalProviderSymbolsAtUsesValidInterval(t *testing.T) {
+	provider := &UniverseIntervalProvider{members: map[string][]dto.UniverseMember{
+		"strong_momentum": {
+			{Symbol: "AAPL", ValidFrom: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC), ValidTo: time.Date(2024, 2, 1, 0, 0, 0, 0, time.UTC)},
+			{Symbol: "NVDA", ValidFrom: time.Date(2024, 2, 1, 0, 0, 0, 0, time.UTC), ValidTo: time.Date(2024, 3, 1, 0, 0, 0, 0, time.UTC)},
+		},
+	}}
+
+	jan := provider.SymbolsAt("strong_momentum", time.Date(2024, 1, 15, 12, 0, 0, 0, time.UTC))
+	if strings.Join(jan, ",") != "AAPL" {
+		t.Fatalf("January symbols = %v, want AAPL", jan)
+	}
+	feb := provider.SymbolsAt("strong_momentum", time.Date(2024, 2, 15, 12, 0, 0, 0, time.UTC))
+	if strings.Join(feb, ",") != "NVDA" {
+		t.Fatalf("February symbols = %v, want NVDA", feb)
+	}
+}
+
 func ptrBool(v bool) *bool { return &v }
 
 type stubNamedStrategy struct{ name string }
@@ -644,6 +700,22 @@ func (s *stubNamedStrategy) OnBar(*backtest.BarContext) {}
 
 type validationTestFeed struct {
 	loads int
+}
+
+type stubPortfolioUniverseResolver struct {
+	members map[string][]dto.UniverseMember
+}
+
+func (s *stubPortfolioUniverseResolver) MemberIntervals(_ context.Context, req dto.UniverseMembersRequest) (*dto.UniverseMembersResponse, error) {
+	return &dto.UniverseMembersResponse{Market: req.Market, Code: req.Code, From: req.From, To: req.To, Data: append([]dto.UniverseMember(nil), s.members[req.Code]...)}, nil
+}
+
+func (s *stubPortfolioUniverseResolver) LoadProvider(_ context.Context, req dto.UniverseMembersRequest, codes []string) (*UniverseIntervalProvider, error) {
+	provider := &UniverseIntervalProvider{members: make(map[string][]dto.UniverseMember, len(codes))}
+	for _, code := range codes {
+		provider.members[code] = append([]dto.UniverseMember(nil), s.members[code]...)
+	}
+	return provider, nil
 }
 
 func (f *validationTestFeed) Fields() []string {

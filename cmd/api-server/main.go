@@ -36,7 +36,9 @@ import (
 	"github.com/Cyvadra/toktik/internal/chrepo"
 	appCli "github.com/Cyvadra/toktik/internal/cli"
 	"github.com/Cyvadra/toktik/internal/config"
+	"github.com/Cyvadra/toktik/internal/cryptooptions"
 	"github.com/Cyvadra/toktik/internal/service"
+	"github.com/Cyvadra/toktik/internal/universerepo"
 	_ "github.com/Cyvadra/toktik/pkg/dsl/catalog"
 	"github.com/Cyvadra/toktik/pkg/feeds"
 	"github.com/gin-gonic/gin"
@@ -99,6 +101,10 @@ func run() error {
 	if err := calendarRepo.AutoMigrate(ctx); err != nil {
 		return fmt.Errorf("migrate finance calendar tables: %w", err)
 	}
+	universeRepo := universerepo.New(gormDB)
+	if err := universeRepo.AutoMigrate(ctx); err != nil {
+		return fmt.Errorf("migrate universe control tables: %w", err)
+	}
 
 	conn, err := appCli.ConnectClickHouse(ctx, *dsn, &appCli.SchemaInit{
 		DDLFile:    ddlFile,
@@ -109,6 +115,13 @@ func run() error {
 	})
 	if err != nil {
 		return fmt.Errorf("connect clickhouse: %w", err)
+	}
+	universeDDLFile, err := appCli.ResolveSchemaFile("", appCli.UniverseSchemaFile)
+	if err != nil {
+		return fmt.Errorf("resolve universe schema: %w", err)
+	}
+	if err := cryptooptions.InitSchema(ctx, conn, universeDDLFile); err != nil {
+		return fmt.Errorf("initialize universe schema: %w", err)
 	}
 
 	factorStore, err := feeds.NewStore(ctx, *dsn)
@@ -132,7 +145,7 @@ func run() error {
 	}()
 
 	repo := chrepo.NewRepo(conn)
-	apiServices, err := buildAPICoreServices(runtimeCfg, repo, calendarRepo, cacheStore, factorStore)
+	apiServices, err := buildAPICoreServices(runtimeCfg, repo, calendarRepo, universeRepo, cacheStore, factorStore)
 	if err != nil {
 		return err
 	}

@@ -4,6 +4,14 @@ package runtime
 
 import "strings"
 
+const (
+	OptionStrategyBuyCall        = "BUY_CALL"
+	OptionStrategySellPut        = "SELL_PUT"
+	OptionStrategyBullCallSpread = "BULL_CALL_SPREAD"
+	OptionStrategyBullPutSpread  = "BULL_PUT_SPREAD"
+	OptionStrategyCalendarSpread = "CALENDAR_SPREAD"
+)
+
 // OptionsBridge extends Bridge with options trading capabilities.
 // The interpreter checks for this at runtime via type assertion.
 type OptionsBridge interface {
@@ -266,6 +274,57 @@ func RegisterOptionsBuiltins(ip *Interpreter) {
 			vals[i] = ObjVal(c)
 		}
 		return ArrayVal(vals)
+	})
+
+	// ------- options.strategies(context, family?) → array of strategy names -------
+	ip.RegisterBuiltinWithParams("options.strategies", []string{"context", "family"}, func(args []Value) Value {
+		ctx := marketContextArg(args)
+		family := strings.ToLower(strings.TrimSpace(argStr(args, 1, "")))
+		strategies := selectOptionStrategies(ctx, family)
+		vals := make([]Value, len(strategies))
+		for i, strategy := range strategies {
+			vals[i] = StringVal(strategy)
+		}
+		return ArrayVal(vals)
+	})
+
+	// ------- options.build_strategy(chain, name, qty?, target_delta?) → legs -------
+	ip.RegisterBuiltinWithParams("options.build_strategy", []string{"chain", "name", "qty", "target_delta"}, func(args []Value) Value {
+		b := ob()
+		if b == nil || len(args) < 2 {
+			return ArrayVal(nil)
+		}
+		qty := argFloat(args, 2, 1)
+		if qty <= 0 {
+			qty = 1
+		}
+		targetDelta := argFloat(args, 3, 0.35)
+		legs := buildOptionStrategyLegs(b, args[0].Obj(), strings.ToUpper(strings.TrimSpace(args[1].Str())), qty, targetDelta)
+		return ArrayVal(legs)
+	})
+
+	// ------- options.open_strategy(chain, name, qty?, target_delta?, tag?) → spread_id -------
+	ip.RegisterBuiltinWithParams("options.open_strategy", []string{"chain", "name", "qty", "target_delta", "tag"}, func(args []Value) Value {
+		if !ip.AllowSideEffect("options.open_strategy") {
+			return NaVal()
+		}
+		b := ob()
+		if b == nil || len(args) < 2 {
+			return NaVal()
+		}
+		qty := argFloat(args, 2, 1)
+		if qty <= 0 {
+			qty = 1
+		}
+		targetDelta := argFloat(args, 3, 0.35)
+		name := strings.ToUpper(strings.TrimSpace(args[1].Str()))
+		legs := buildOptionStrategyLegs(b, args[0].Obj(), name, qty, targetDelta)
+		inputs := parseLegInputs(legs)
+		if len(inputs) == 0 {
+			return NaVal()
+		}
+		tag := argStr(args, 4, name)
+		return FloatVal(float64(b.OpenSpread(inputs, tag)))
 	})
 
 	// ------- contract field accessors -------
@@ -787,6 +846,126 @@ func RegisterOptionsBuiltins(ip *Interpreter) {
 		}
 		return ArrayVal([]Value{args[0], StringVal("sell"), args[1]})
 	})
+}
+
+func selectOptionStrategies(ctx MarketContext, family string) []string {
+	strategies := make([]string, 0, 3)
+	add := func(name string) {
+		for _, existing := range strategies {
+			if existing == name {
+				return
+			}
+		}
+		strategies = append(strategies, name)
+	}
+	if family != "" && family != "trend" && family != "momentum" && family != "index" {
+		return strategies
+	}
+	switch ctx.TrendState {
+	case "up":
+		if ctx.ValuationState == "overvalued" {
+			if ctx.IVState == "low" {
+				add(OptionStrategyCalendarSpread)
+			} else {
+				add(OptionStrategyBullCallSpread)
+			}
+			add(OptionStrategyBullPutSpread)
+			return strategies
+		}
+		if ctx.HVState == "high" || ctx.IVState == "high" {
+			add(OptionStrategySellPut)
+			add(OptionStrategyBullPutSpread)
+		} else {
+			add(OptionStrategyBuyCall)
+			add(OptionStrategyCalendarSpread)
+		}
+	case "range":
+		add(OptionStrategyCalendarSpread)
+	case "down":
+		return strategies
+	default:
+		if ctx.IVState == "low" {
+			add(OptionStrategyBuyCall)
+		}
+	}
+	return strategies
+}
+
+func buildOptionStrategyLegs(b OptionsBridge, chain interface{}, name string, qty, targetDelta float64) []Value {
+	switch name {
+	case OptionStrategyBuyCall:
+		contract := bestContractByDelta(b, b.ChainCalls(chain), targetDelta)
+		return singleLeg(contract, "buy", qty)
+	case OptionStrategySellPut:
+		contract := bestContractByDelta(b, b.ChainPuts(chain), -targetDelta)
+		return singleLeg(contract, "sell", qty)
+	case OptionStrategyBullCallSpread:
+		short := bestContractByDelta(b, b.ChainCalls(chain), targetDelta/2)
+		long := bestContractByDelta(b, b.ChainCalls(chain), targetDelta)
+		return verticalLegs(b, long, short, "call", qty)
+	case OptionStrategyBullPutSpread:
+		short := bestContractByDelta(b, b.ChainPuts(chain), -targetDelta)
+		long := bestContractByDelta(b, b.ChainPuts(chain), -targetDelta/2)
+		return verticalLegs(b, long, short, "put", qty)
+	case OptionStrategyCalendarSpread:
+		front := bestContractByDelta(b, b.ChainCalls(chain), targetDelta)
+		back := fartherSameStrikeContract(b, b.ChainCalls(chain), front)
+		if front == nil || back == nil {
+			return nil
+		}
+		return []Value{ArrayVal([]Value{ObjVal(front), StringVal("sell"), FloatVal(qty)}), ArrayVal([]Value{ObjVal(back), StringVal("buy"), FloatVal(qty)})}
+	default:
+		return nil
+	}
+}
+
+func bestContractByDelta(b OptionsBridge, chain interface{}, targetDelta float64) interface{} {
+	contracts := b.ChainSortByDelta(chain, targetDelta)
+	for _, contract := range contracts {
+		if contractHasPrice(b, contract) {
+			return contract
+		}
+	}
+	return nil
+}
+
+func contractHasPrice(b OptionsBridge, contract interface{}) bool {
+	if contract == nil {
+		return false
+	}
+	return b.ContractMark(contract) > 0 || b.ContractBid(contract) > 0 || b.ContractAsk(contract) > 0
+}
+
+func singleLeg(contract interface{}, side string, qty float64) []Value {
+	if contract == nil {
+		return nil
+	}
+	return []Value{ArrayVal([]Value{ObjVal(contract), StringVal(side), FloatVal(qty)})}
+}
+
+func verticalLegs(b OptionsBridge, long, short interface{}, right string, qty float64) []Value {
+	if long == nil || short == nil || !strings.EqualFold(b.ContractType(long), right) || !strings.EqualFold(b.ContractType(short), right) {
+		return nil
+	}
+	return []Value{ArrayVal([]Value{ObjVal(long), StringVal("buy"), FloatVal(qty)}), ArrayVal([]Value{ObjVal(short), StringVal("sell"), FloatVal(qty)})}
+}
+
+func fartherSameStrikeContract(b OptionsBridge, chain interface{}, front interface{}) interface{} {
+	if front == nil {
+		return nil
+	}
+	targetStrike := b.ContractStrike(front)
+	frontDTE := b.ContractDTE(front)
+	contracts := b.ChainSortByDelta(chain, b.ContractDelta(front))
+	for _, candidate := range contracts {
+		if candidate == nil || !contractHasPrice(b, candidate) {
+			continue
+		}
+		if b.ContractStrike(candidate) == targetStrike && b.ContractDTE(candidate) >= frontDTE+7 {
+			return candidate
+		}
+	}
+	return nil
 }
 
 // parseLegInputs converts an array of [contract, side, qty] values to SpreadLegInput.

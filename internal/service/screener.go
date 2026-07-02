@@ -88,9 +88,13 @@ func (s *ScreenerService) WithLatestMarketCache(reader LatestUSMarketCacheReader
 
 func (s *ScreenerService) ScreenUSTurnoverIntersection(ctx context.Context, req dto.ScreenUSTurnoverIntersectionRequest) (*dto.ScreenUSTurnoverIntersectionResponse, error) {
 	limit := clamp(req.Limit, defaultSymbolLimit, maxSymbolLimit)
-	lookbackDays := clamp(req.LookbackDays, 20, 252)
+	lookbackDays := clamp(req.LookbackDays, 7, 252)
+	asOf, asOfSQL, err := resolveUSTurnoverIntersectionAsOf(req.AsOf)
+	if err != nil {
+		return nil, err
+	}
 	candidateLimit := turnoverIntersectionCandidateLimit(limit)
-	cacheKey := usTurnoverIntersectionCacheKey(lookbackDays, req.NonETFOnly)
+	cacheKey := usTurnoverIntersectionCacheKey(lookbackDays, req.NonETFOnly, asOfSQL)
 	stockUniverseFilter := ""
 	if req.NonETFOnly {
 		stockUniverseFilter = usStocksFundamentalsUniverseFilterClause("b.symbol")
@@ -100,7 +104,7 @@ func (s *ScreenerService) ScreenUSTurnoverIntersection(ctx context.Context, req 
 		return cached, nil
 	}
 
-	stockCandidates, err := s.loadUSTurnoverIntersectionStockCandidates(ctx, lookbackDays, candidateLimit, stockUniverseFilter)
+	stockCandidates, err := s.loadUSTurnoverIntersectionStockCandidates(ctx, lookbackDays, candidateLimit, stockUniverseFilter, asOfSQL)
 	if err != nil {
 		return nil, fmt.Errorf("screen us turnover intersection stock candidates: %w", err)
 	}
@@ -110,7 +114,7 @@ func (s *ScreenerService) ScreenUSTurnoverIntersection(ctx context.Context, req 
 		for _, candidate := range stockCandidates {
 			joinUnderlyings = append(joinUnderlyings, candidate.JoinUnderlying)
 		}
-		optionAggregates, err := s.loadUSTurnoverIntersectionOptionAggregates(ctx, lookbackDays, joinUnderlyings)
+		optionAggregates, err := s.loadUSTurnoverIntersectionOptionAggregates(ctx, lookbackDays, joinUnderlyings, asOfSQL)
 		if err != nil {
 			return nil, fmt.Errorf("screen us turnover intersection option aggregates: %w", err)
 		}
@@ -152,19 +156,21 @@ func (s *ScreenerService) ScreenUSTurnoverIntersection(ctx context.Context, req 
 		LookbackDays:   lookbackDays,
 		Limit:          limit,
 		CandidateLimit: candidateLimit,
+		AsOf:           asOf,
 		Data:           results,
 	}
 	_ = s.storeUSTurnoverIntersectionInCache(ctx, cacheKey, resp)
 	return resp, nil
 }
 
-func (s *ScreenerService) loadUSTurnoverIntersectionStockCandidates(ctx context.Context, lookbackDays, candidateLimit int, stockUniverseFilter string) ([]usTurnoverStockCandidate, error) {
+func (s *ScreenerService) loadUSTurnoverIntersectionStockCandidates(ctx context.Context, lookbackDays, candidateLimit int, stockUniverseFilter, asOfSQL string) ([]usTurnoverStockCandidate, error) {
 	query := fmt.Sprintf(`
 WITH stock_start_date AS (
 	SELECT min(market_ts) AS start_ts
 	FROM (
 		SELECT DISTINCT timestamp AS market_ts
 		FROM us_stocks_bar_1d
+		WHERE timestamp <= toDateTime(%s)
 		ORDER BY market_ts DESC
 		LIMIT %d
 	)
@@ -187,12 +193,13 @@ FROM (
 		SELECT start_ts
 		FROM stock_start_date
 	)
+	AND b.timestamp <= toDateTime(%s)
 	%s
 	GROUP BY b.symbol, b.timestamp, b.close, b.volume
 )
 GROUP BY underlying, join_underlying
 ORDER BY stock_turnover_usd DESC, underlying ASC
-LIMIT %d`, lookbackDays, stockUnderlyingOptionAliasExpr("underlying"), chquery.USStockAdjustedPriceSQL("b", "close", "sp"), chquery.USStockSplitJoinSQL("b", "sp"), stockUniverseFilter, candidateLimit)
+LIMIT %d`, asOfSQL, lookbackDays, stockUnderlyingOptionAliasExpr("underlying"), chquery.USStockAdjustedPriceSQL("b", "close", "sp"), chquery.USStockSplitJoinSQL("b", "sp"), asOfSQL, stockUniverseFilter, candidateLimit)
 
 	rows, err := s.repo.Query(ctx, query)
 	if err != nil {
@@ -222,7 +229,7 @@ LIMIT %d`, lookbackDays, stockUnderlyingOptionAliasExpr("underlying"), chquery.U
 	return results, nil
 }
 
-func (s *ScreenerService) loadUSTurnoverIntersectionOptionAggregates(ctx context.Context, lookbackDays int, joinUnderlyings []string) (map[string]usTurnoverOptionAggregate, error) {
+func (s *ScreenerService) loadUSTurnoverIntersectionOptionAggregates(ctx context.Context, lookbackDays int, joinUnderlyings []string, asOfSQL string) (map[string]usTurnoverOptionAggregate, error) {
 	if len(joinUnderlyings) == 0 {
 		return map[string]usTurnoverOptionAggregate{}, nil
 	}
@@ -232,6 +239,7 @@ WITH option_start_date AS (
 	FROM (
 		SELECT DISTINCT timestamp AS market_ts
 		FROM us_options_bar_1d
+		WHERE timestamp <= toDateTime(%s)
 		ORDER BY market_ts DESC
 		LIMIT %d
 	)
@@ -247,8 +255,9 @@ WHERE underlying IN ({underlyings:Array(String)})
 		SELECT start_ts
 		FROM option_start_date
 	)
+	AND timestamp <= toDateTime(%s)
 GROUP BY join_underlying
-ORDER BY option_turnover_usd DESC, join_underlying ASC`, lookbackDays)
+ORDER BY option_turnover_usd DESC, join_underlying ASC`, asOfSQL, lookbackDays, asOfSQL)
 
 	rows, err := s.repo.Query(ctx, query, clickhouse.Named("underlyings", joinUnderlyings))
 	if err != nil {
@@ -1011,8 +1020,21 @@ func canonicalUSTurnoverIntersectionCacheLimit(limit int) int {
 	return limit
 }
 
-func usTurnoverIntersectionCacheKey(lookbackDays int, nonETFOnly bool) string {
-	return fmt.Sprintf("screener:us-turnover-intersection:v6:lookback_days=%d:non_etf_only=%t", lookbackDays, nonETFOnly)
+func usTurnoverIntersectionCacheKey(lookbackDays int, nonETFOnly bool, asOf string) string {
+	return fmt.Sprintf("screener:us-turnover-intersection:v7:lookback_days=%d:non_etf_only=%t:as_of=%s", lookbackDays, nonETFOnly, asOf)
+}
+
+func resolveUSTurnoverIntersectionAsOf(raw string) (string, string, error) {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return "", clickhouseStringLiteral("2100-01-01 00:00:00"), nil
+	}
+	parsed, err := time.Parse("2006-01-02", value)
+	if err != nil {
+		return "", "", dto.NewValidationError("invalid as_of date %q (want YYYY-MM-DD)", raw)
+	}
+	asOf := parsed.UTC().Format("2006-01-02")
+	return asOf, clickhouseStringLiteral(asOf + " 23:59:59"), nil
 }
 
 func cachedUSTurnoverIntersectionCoverageLimit(resp *dto.ScreenUSTurnoverIntersectionResponse) int {

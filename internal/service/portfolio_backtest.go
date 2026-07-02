@@ -67,6 +67,7 @@ const (
 type PortfolioBacktestService struct {
 	repo          *chrepo.Repo
 	factorStore   *feeds.Store
+	universes     portfolioUniverseResolver
 	now           func() time.Time
 	chainLoader   func(context.Context, string, string, string, time.Time, time.Time) (backtest.OptionsChainProvider, error)
 	engineBuilder func(backtest.Config, backtest.OptionsChainProvider, bool) *backtest.Engine
@@ -79,6 +80,11 @@ type PortfolioBacktestService struct {
 
 	mu   sync.RWMutex
 	runs map[string]*portfolioBacktestRun
+}
+
+type portfolioUniverseResolver interface {
+	MemberIntervals(ctx context.Context, req dto.UniverseMembersRequest) (*dto.UniverseMembersResponse, error)
+	LoadProvider(ctx context.Context, req dto.UniverseMembersRequest, codes []string) (*UniverseIntervalProvider, error)
 }
 
 type optionsChainProviderCache struct {
@@ -161,6 +167,14 @@ func (s *PortfolioBacktestService) WithReportsRoot(root string) *PortfolioBackte
 	if trimmed := strings.TrimSpace(root); trimmed != "" {
 		s.reportsRoot = trimmed
 	}
+	return s
+}
+
+func (s *PortfolioBacktestService) WithUniverseService(universes *UniverseService) *PortfolioBacktestService {
+	if s == nil {
+		return nil
+	}
+	s.universes = universes
 	return s
 }
 
@@ -664,7 +678,7 @@ func registerFundamentalFactorFeeds(engine *backtest.Engine, fundamentalsSvc *Fu
 }
 
 func validateStrategyBacktestRunRequest(req dto.StrategyBacktestRunRequest) error {
-	if strings.TrimSpace(resolvePrimaryBacktestAsset(req)) == "" {
+	if strings.TrimSpace(resolvePrimaryBacktestAsset(req)) == "" && strings.TrimSpace(req.DSL) == "" {
 		return dto.NewValidationError("asset is required unless portfolio or symbols are provided")
 	}
 	if len(req.Weights) > 0 && len(req.Symbols) != len(req.Weights) {

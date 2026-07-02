@@ -27,6 +27,7 @@ type Deps struct {
 	CryptoSpot        CryptoSpotQuerier
 	Forex             ForexQuerier
 	Screener          ScreenerProvider
+	Universes         UniverseProvider
 	StrategyCatalog   StrategyCatalogProvider
 	Factors           FactorProvider
 	Fundamentals      FundamentalsProvider
@@ -215,6 +216,10 @@ func registerRoutes(v1 *gin.RouterGroup, h *Handler) {
 	screenerGroup.GET("/underlyings", h.ScreenUnderlyings)
 	screenerGroup.GET("/us-underlyings/turnover-intersection", h.ScreenUSTurnoverIntersection)
 	screenerGroup.GET("/options", h.ScreenOptions)
+
+	universeGroup := v1.Group("/universes")
+	universeGroup.GET("/:code/members", h.GetUniverseMembers)
+	universeGroup.POST("/rebuild", h.RebuildUniverse)
 
 	factorsGroup := v1.Group("/factors")
 	factorsGroup.GET("", h.ListFactors)

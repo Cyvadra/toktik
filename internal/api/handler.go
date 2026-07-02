@@ -34,6 +34,7 @@ type Handler struct {
 	cryptoSpot        CryptoSpotQuerier
 	forex             ForexQuerier
 	screener          ScreenerProvider
+	universes         UniverseProvider
 	strategyCatalog   StrategyCatalogProvider
 	factors           FactorProvider
 	fundamentals      FundamentalsProvider
@@ -41,6 +42,7 @@ type Handler struct {
 	financeCalendar   FinanceCalendarProvider
 	polygon           PolygonProvider
 	showInternalError bool
+	requireAPIKey     bool
 
 	// reportsRoot is the directory on disk under which all backtest
 	// HTML reports must live. Any path outside this root is rejected
@@ -70,6 +72,7 @@ func NewHandler(d Deps) *Handler {
 		cryptoSpot:        d.CryptoSpot,
 		forex:             d.Forex,
 		screener:          d.Screener,
+		universes:         d.Universes,
 		strategyCatalog:   d.StrategyCatalog,
 		factors:           d.Factors,
 		fundamentals:      d.Fundamentals,
@@ -77,6 +80,7 @@ func NewHandler(d Deps) *Handler {
 		financeCalendar:   d.FinanceCalendar,
 		polygon:           d.Polygon,
 		showInternalError: strings.EqualFold(strings.TrimSpace(d.Config.API.Environment), "dev"),
+		requireAPIKey:     len(d.Config.API.APIKeys) > 0,
 		reportsRoot:       root,
 	}
 }
@@ -346,25 +350,6 @@ func writeBacktestReportResponse(c *gin.Context, h *Handler, status *dto.Strateg
 	}
 	c.Data(http.StatusOK, "text/html; charset=utf-8", body)
 }
-
-// GetUSStockBars handles GET /api/v1/markets/us-stocks/bars.
-//
-//	@Summary		Get US stock bars
-//	@Description	Returns OHLCV bars for a US stock symbol, optionally enriched with point-in-time fundamentals aligned to each bar and cached company profile metadata when available.
-//	@Tags			USStocks
-//	@Produce		json
-//	@Param			symbol		query		string		true	"Stock ticker symbol"
-//	@Param			interval	query		string		true	"Bar interval"
-//	@Param			from		query		string		true	"Start time (RFC3339 or YYYY-MM-DD)"
-//	@Param			to			query		string		true	"End time (RFC3339 or YYYY-MM-DD)"
-//	@Param			adjusted	query		bool	false	"Apply split adjustment to OHLC prices (defaults to true); set false for raw unadjusted prices."
-//	@Param			factor		query		[]string	false	"Optional fundamentals to align onto each bar (repeat or comma-separated, e.g. pe,pb). PE/PB are recomputed from each bar close using the latest known filing-derived denominator."
-//	@Param			limit		query		int			false	"Max rows (default 1000)"
-//	@Param			cursor		query		string		false	"Pagination cursor"
-//	@Success		200			{object}	dto.USStockBarResponse
-//	@Failure		400			{object}	dto.ErrorResponse
-//	@Failure		500			{object}	dto.ErrorResponse
-//	@Router			/markets/us-stocks/bars [get]
 
 // GetUSStockSymbols handles GET /api/v1/markets/us-stocks/symbols.
 //

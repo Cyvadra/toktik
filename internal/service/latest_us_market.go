@@ -29,7 +29,7 @@ const (
 var latestUSMarketPoolLookbacks = []int{7, 20, 60, 120}
 
 type LatestUSMarketCacheReader interface {
-	MergeStockBars(ctx context.Context, symbol string, from, to time.Time, rows []dto.USStockBarRow) ([]dto.USStockBarRow, bool, error)
+	MergeStockBars(ctx context.Context, symbol string, from, to time.Time, adjusted bool, rows []dto.USStockBarRow) ([]dto.USStockBarRow, bool, error)
 	StockBarsDiagnostic(ctx context.Context, symbol string, from, to time.Time) (LatestUSStockDailyCache, bool, error)
 	MergeOptionBars(ctx context.Context, symbol string, from, to time.Time, rows []dto.USOptionBarRow) ([]dto.USOptionBarRow, bool, error)
 	MergeOptionChain(ctx context.Context, underlying string, expiration time.Time, from, to time.Time, rows []dto.USOptionChainSnapshot) ([]dto.USOptionChainSnapshot, bool, error)
@@ -46,6 +46,7 @@ type LatestUSStockDailyCache struct {
 	Provider    string                  `json:"provider"`
 	AsOf        time.Time               `json:"as_of"`
 	Provisional bool                    `json:"provisional"`
+	Adjusted    *bool                   `json:"adjusted,omitempty"`
 	Bars        []LatestUSStockDailyBar `json:"bars"`
 }
 
@@ -522,8 +523,10 @@ func refreshLatestUSStockBars(ctx context.Context, cacheReader *LatestUSMarketCa
 				}
 				var bars []LatestUSStockDailyBar
 				var err error
+				adjusted := false
 				if provider == "polygon" {
 					bars, err = fetchLatestUSStockBarsFromPolygon(ctx, cfg.Polygon, symbol, from, to)
+					adjusted = true
 				} else {
 					bars, err = fetchLatestUSStockBarsFromFMP(ctx, cfg.FMPClient, symbol, from, to)
 				}
@@ -537,7 +540,7 @@ func refreshLatestUSStockBars(ctx context.Context, cacheReader *LatestUSMarketCa
 				if len(bars) == 0 {
 					continue
 				}
-				if err := cacheReader.StoreStockBars(ctx, symbol, provider, bars); err != nil {
+				if err := cacheReader.StoreStockBars(ctx, symbol, provider, adjusted, bars); err != nil {
 					select {
 					case errCh <- err:
 					default:
@@ -918,8 +921,8 @@ func findChainContract(contracts []dto.USOptionChainContract, symbol string) dto
 	return dto.USOptionChainContract{Symbol: symbol}
 }
 
-func (c *LatestUSMarketCache) StoreStockBars(ctx context.Context, symbol, provider string, bars []LatestUSStockDailyBar) error {
-	payload := LatestUSStockDailyCache{Symbol: strings.ToUpper(strings.TrimSpace(symbol)), Provider: provider, AsOf: time.Now().UTC(), Provisional: true, Bars: bars}
+func (c *LatestUSMarketCache) StoreStockBars(ctx context.Context, symbol, provider string, adjusted bool, bars []LatestUSStockDailyBar) error {
+	payload := LatestUSStockDailyCache{Symbol: strings.ToUpper(strings.TrimSpace(symbol)), Provider: provider, AsOf: time.Now().UTC(), Provisional: true, Adjusted: &adjusted, Bars: bars}
 	return c.setJSON(ctx, latestUSStockKey(symbol), payload)
 }
 
@@ -933,10 +936,13 @@ func (c *LatestUSMarketCache) StoreOptionChain(ctx context.Context, underlying, 
 	return c.setJSON(ctx, latestUSOptionChainKey(underlying), payload)
 }
 
-func (c *LatestUSMarketCache) MergeStockBars(ctx context.Context, symbol string, from, to time.Time, rows []dto.USStockBarRow) ([]dto.USStockBarRow, bool, error) {
+func (c *LatestUSMarketCache) MergeStockBars(ctx context.Context, symbol string, from, to time.Time, adjusted bool, rows []dto.USStockBarRow) ([]dto.USStockBarRow, bool, error) {
 	var payload LatestUSStockDailyCache
 	if ok, err := c.getJSON(ctx, latestUSStockKey(symbol), &payload); err != nil || !ok {
 		return rows, false, err
+	}
+	if payload.Adjusted == nil || *payload.Adjusted != adjusted {
+		return rows, false, nil
 	}
 	latest := make([]dto.USStockBarRow, 0, len(payload.Bars))
 	for _, bar := range payload.Bars {

@@ -12,6 +12,8 @@ type StrategyBacktestRunRequest struct {
 	Portfolio                []StrategyBacktestPortfolioLeg `json:"portfolio,omitempty"`
 	Symbols                  []string                       `json:"symbols,omitempty"`
 	Weights                  []float64                      `json:"weights,omitempty"`
+	UniverseCode             string                         `json:"universe_code,omitempty"`
+	UniverseMarket           string                         `json:"universe_market,omitempty"`
 	Interval                 string                         `json:"interval,omitempty"`
 	From                     string                         `json:"from" binding:"required"`
 	To                       string                         `json:"to" binding:"required"`
@@ -118,6 +120,20 @@ type StrategyBacktestValidationResponse struct {
 	StrategyLabel string                           `json:"strategy_label,omitempty"`
 	StrategyCount int                              `json:"strategy_count"`
 	Strategies    []StrategyBacktestValidationItem `json:"strategies"`
+	ResourcePlan  *StrategyBacktestResourcePlan    `json:"resource_plan,omitempty"`
+}
+
+type StrategyBacktestResourcePlan struct {
+	UniverseSize           int      `json:"universe_size,omitempty"`
+	UniverseCodes          []string `json:"universe_codes,omitempty"`
+	OptionChainUnderlyings int      `json:"option_chain_underlyings,omitempty"`
+	MinDTE                 int      `json:"min_dte,omitempty"`
+	TargetDTE              int      `json:"target_dte,omitempty"`
+	EstimatedContracts     int      `json:"estimated_contracts,omitempty"`
+	From                   string   `json:"from,omitempty"`
+	To                     string   `json:"to,omitempty"`
+	Interval               string   `json:"interval,omitempty"`
+	Warnings               []string `json:"warnings,omitempty"`
 }
 
 type StrategyBacktestRunAccepted struct {

@@ -172,6 +172,27 @@ func TestNaBuiltinTreatsSeriesNaNAsNa(t *testing.T) {
 	}
 }
 
+func TestMarketContextRejectsRangeWhenCCIContradicts(t *testing.T) {
+	src := "ctx = market.context(50, 150, 40, 40, 50)\ntrend = market.trend_state(ctx)\nstrategies = options.strategies(ctx, \"momentum\")"
+	prog, errs := parser.Parse(src)
+	if len(errs) > 0 {
+		t.Fatal(errs)
+	}
+	ip := NewInterpreter(prog)
+	RegisterMarketBuiltins(ip)
+	RegisterOptionsBuiltins(ip)
+	ip.Init()
+	ip.OnBar()
+	trend, _ := ip.Global.Get("trend")
+	if trend.Str() != "unknown" {
+		t.Fatalf("trend = %q, want unknown", trend.Str())
+	}
+	strategies, _ := ip.Global.Get("strategies")
+	if len(strategies.Array()) != 0 {
+		t.Fatalf("strategies = %+v, want none for rejected range", strategies.Array())
+	}
+}
+
 func TestInterpreterEqAssignUpdatesVaripStorage(t *testing.T) {
 	src := "varip x = 0\nif 1 {\n  x = 7\n}\nout = x"
 	prog, errs := parser.Parse(src)

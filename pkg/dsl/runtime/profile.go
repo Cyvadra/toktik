@@ -33,6 +33,8 @@ type profileConfig struct {
 	order              bool
 	config             bool
 	portfolio          bool
+	universe           bool
+	market             bool
 	ref                bool
 }
 
@@ -60,6 +62,8 @@ func profileConfigFor(profile Profile) profileConfig {
 			order:     true,
 			config:    true,
 			portfolio: true,
+			universe:  true,
+			market:    true,
 			ref:       true,
 		}
 	}
@@ -94,6 +98,12 @@ func registerProfile(ip *Interpreter, cfg profileConfig) {
 	}
 	if cfg.portfolio {
 		RegisterPortfolioBuiltins(ip)
+	}
+	if cfg.universe {
+		RegisterUniverseBuiltins(ip)
+	}
+	if cfg.market {
+		RegisterMarketBuiltins(ip)
 	}
 	if cfg.ref {
 		RegisterRefBuiltins(ip)

@@ -32,6 +32,10 @@ func resolveRequestedStrategies(req dto.StrategyBacktestRunRequest, cfg strategi
 }
 
 func buildDynamicDSLResolvedStrategy(req dto.StrategyBacktestRunRequest, cfg strategies.Config) (strategies.ResolvedStrategy, error) {
+	return buildDynamicDSLResolvedStrategyWithConfig(req, cfg, nil, nil)
+}
+
+func buildDynamicDSLResolvedStrategyWithConfig(req dto.StrategyBacktestRunRequest, cfg strategies.Config, injectedConfig map[string]interface{}, universeProvider bridge.UniverseProvider) (strategies.ResolvedStrategy, error) {
 	dslSource := strings.TrimSpace(req.DSL)
 	params, err := normalizeBacktestDSLParams(req.DSLParams)
 	if err != nil {
@@ -39,12 +43,16 @@ func buildDynamicDSLResolvedStrategy(req dto.StrategyBacktestRunRequest, cfg str
 	}
 
 	config := backtestDSLConfigMap(cfg, req)
+	for key, value := range injectedConfig {
+		config[key] = value
+	}
 	signalSource := strings.TrimSpace(req.SignalSource)
 	spreadPricing := spreadPricingFromStrategyConfig(cfg)
 	baseOpts := bridge.Options{
-		SignalSource:  signalSource,
-		SpreadPricing: spreadPricing,
-		Config:        config,
+		SignalSource:     signalSource,
+		SpreadPricing:    spreadPricing,
+		Config:           config,
+		UniverseProvider: universeProvider,
 	}
 	parsed := bridge.NewWithOptions(dslSource, baseOpts)
 	if errs := parsed.ParseErrors(); len(errs) > 0 {
@@ -63,10 +71,11 @@ func buildDynamicDSLResolvedStrategy(req dto.StrategyBacktestRunRequest, cfg str
 
 	newStrategy := func() (*bridge.DslStrategy, error) {
 		strategy := bridge.NewWithOptions(dslSource, bridge.Options{
-			SignalSource:  signalSource,
-			SpreadPricing: spreadPricing,
-			Params:        validatedParams,
-			Config:        config,
+			SignalSource:     signalSource,
+			SpreadPricing:    spreadPricing,
+			Params:           validatedParams,
+			Config:           config,
+			UniverseProvider: universeProvider,
 		})
 		if errs := strategy.ParseErrors(); len(errs) > 0 {
 			return nil, dto.NewValidationError("invalid dsl: %s", strings.Join(errs, "; "))

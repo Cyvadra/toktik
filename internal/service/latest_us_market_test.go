@@ -14,7 +14,7 @@ func TestLatestUSMarketCacheMergeStockBars(t *testing.T) {
 	latest := NewLatestUSMarketCache(store, time.Hour)
 	ctx := context.Background()
 
-	if err := latest.StoreStockBars(ctx, "SPY", "fmp", []LatestUSStockDailyBar{{
+	if err := latest.StoreStockBars(ctx, "SPY", "fmp", false, []LatestUSStockDailyBar{{
 		Timestamp:    time.Date(2026, 6, 10, 0, 0, 0, 0, time.UTC),
 		Symbol:       "SPY",
 		Open:         733.39,
@@ -32,7 +32,7 @@ func TestLatestUSMarketCacheMergeStockBars(t *testing.T) {
 		Symbol:    "SPY",
 		Close:     737.05,
 	}}
-	merged, changed, err := latest.MergeStockBars(ctx, "SPY", time.Date(2026, 6, 9, 0, 0, 0, 0, time.UTC), time.Date(2026, 6, 11, 0, 0, 0, 0, time.UTC), rows)
+	merged, changed, err := latest.MergeStockBars(ctx, "SPY", time.Date(2026, 6, 9, 0, 0, 0, 0, time.UTC), time.Date(2026, 6, 11, 0, 0, 0, 0, time.UTC), false, rows)
 	if err != nil {
 		t.Fatalf("MergeStockBars failed: %v", err)
 	}
@@ -41,6 +41,33 @@ func TestLatestUSMarketCacheMergeStockBars(t *testing.T) {
 	}
 	if !merged[1].Timestamp.Equal(time.Date(2026, 6, 10, 0, 0, 0, 0, time.UTC)) || merged[1].Close != 737.21 {
 		t.Fatalf("unexpected latest row: %#v", merged[1])
+	}
+}
+
+func TestLatestUSMarketCacheMergeStockBarsSkipsMismatchedAdjustment(t *testing.T) {
+	store := cache.NewMemoryStore()
+	latest := NewLatestUSMarketCache(store, time.Hour)
+	ctx := context.Background()
+
+	if err := latest.StoreStockBars(ctx, "SPY", "fmp", false, []LatestUSStockDailyBar{{
+		Timestamp: time.Date(2026, 6, 10, 0, 0, 0, 0, time.UTC),
+		Symbol:    "SPY",
+		Close:     737.21,
+	}}); err != nil {
+		t.Fatalf("StoreStockBars failed: %v", err)
+	}
+
+	rows := []dto.USStockBarRow{{
+		Timestamp: time.Date(2026, 6, 9, 0, 0, 0, 0, time.UTC),
+		Symbol:    "SPY",
+		Close:     368.52,
+	}}
+	merged, changed, err := latest.MergeStockBars(ctx, "SPY", time.Date(2026, 6, 9, 0, 0, 0, 0, time.UTC), time.Date(2026, 6, 11, 0, 0, 0, 0, time.UTC), true, rows)
+	if err != nil {
+		t.Fatalf("MergeStockBars failed: %v", err)
+	}
+	if changed || len(merged) != 1 || merged[0].Close != rows[0].Close {
+		t.Fatalf("expected mismatched adjusted cache to be skipped, changed=%v rows=%#v", changed, merged)
 	}
 }
 

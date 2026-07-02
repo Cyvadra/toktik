@@ -76,3 +76,43 @@ pe = request.fundamental(symbol="AAPL", factor="pe", market="us-stocks")
 		t.Fatalf("unexpected named fundamental request: %+v", req)
 	}
 }
+
+func TestAnalyzeDetectsUniverseRequests(t *testing.T) {
+	prog, errs := parser.Parse(`strategy("Universe Request")
+symbols = universe.symbols("strong_momentum")
+`)
+	if len(errs) > 0 {
+		t.Fatalf("parse errors: %v", errs)
+	}
+	manifest := Analyze(prog)
+	requests := manifest.UniverseRequests()
+	if len(requests) != 1 {
+		t.Fatalf("expected 1 universe request, got %d", len(requests))
+	}
+	if requests[0].Code != "strong_momentum" || requests[0].Key != "strong_momentum" {
+		t.Fatalf("unexpected universe request: %+v", requests[0])
+	}
+}
+
+func TestAnalyzeDetectsDynamicUniverseRequests(t *testing.T) {
+	prog, errs := parser.Parse(`strategy("Dynamic Universe")
+code = config.string("universe_code", "strong_momentum")
+symbols = universe.symbols(code)
+`)
+	if len(errs) > 0 {
+		t.Fatalf("parse errors: %v", errs)
+	}
+	manifest := Analyze(prog)
+	if !manifest.HasDynamicUniverseRequest() {
+		t.Fatal("expected dynamic universe request")
+	}
+	found := false
+	for _, diagnostic := range manifest.Diagnostics {
+		if diagnostic.Code == "dsl.dynamic_universe" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("unexpected diagnostics: %+v", manifest.Diagnostics)
+	}
+}

@@ -62,7 +62,7 @@ func TestCanonicalUSTurnoverIntersectionCacheLimit(t *testing.T) {
 func TestStoreUSTurnoverIntersectionInCacheSkipsEmptyResponses(t *testing.T) {
 	store := cache.NewMemoryStore()
 	svc := NewScreenerService(nil, store)
-	key := usTurnoverIntersectionCacheKey(20, false)
+	key := usTurnoverIntersectionCacheKey(20, false, clickhouseStringLiteral("2100-01-01 00:00:00"))
 	resp := &dto.ScreenUSTurnoverIntersectionResponse{}
 
 	if err := svc.storeUSTurnoverIntersectionInCache(context.Background(), key, resp); err != nil {
@@ -78,7 +78,7 @@ func TestStoreUSTurnoverIntersectionInCacheSkipsEmptyResponses(t *testing.T) {
 func TestUSTurnoverIntersectionCacheRoundTrip(t *testing.T) {
 	store := cache.NewMemoryStore()
 	svc := NewScreenerService(nil, store)
-	key := usTurnoverIntersectionCacheKey(20, false)
+	key := usTurnoverIntersectionCacheKey(20, false, clickhouseStringLiteral("2100-01-01 00:00:00"))
 	want := &dto.ScreenUSTurnoverIntersectionResponse{
 		LookbackDays:   20,
 		Limit:          100,
@@ -109,7 +109,7 @@ func TestUSTurnoverIntersectionCacheRoundTrip(t *testing.T) {
 func TestUSTurnoverIntersectionCacheRoundTripCanServeSmallerLimit(t *testing.T) {
 	store := cache.NewMemoryStore()
 	svc := NewScreenerService(nil, store)
-	key := usTurnoverIntersectionCacheKey(20, true)
+	key := usTurnoverIntersectionCacheKey(20, true, clickhouseStringLiteral("2100-01-01 00:00:00"))
 	full := &dto.ScreenUSTurnoverIntersectionResponse{
 		LookbackDays:   20,
 		Limit:          60,
@@ -142,7 +142,7 @@ func TestUSTurnoverIntersectionCacheRoundTripCanServeSmallerLimit(t *testing.T) 
 func TestUSTurnoverIntersectionCacheMissesWhenRequestedLimitExceedsCachedCoverage(t *testing.T) {
 	store := cache.NewMemoryStore()
 	svc := NewScreenerService(nil, store)
-	key := usTurnoverIntersectionCacheKey(20, false)
+	key := usTurnoverIntersectionCacheKey(20, false, clickhouseStringLiteral("2100-01-01 00:00:00"))
 	full := &dto.ScreenUSTurnoverIntersectionResponse{
 		LookbackDays:   20,
 		Limit:          60,
@@ -166,7 +166,7 @@ func TestUSTurnoverIntersectionCacheMissesWhenRequestedLimitExceedsCachedCoverag
 func TestUSTurnoverIntersectionCacheCanServeLargerLimitWhenDatasetExhausted(t *testing.T) {
 	store := cache.NewMemoryStore()
 	svc := NewScreenerService(nil, store)
-	key := usTurnoverIntersectionCacheKey(20, false)
+	key := usTurnoverIntersectionCacheKey(20, false, clickhouseStringLiteral("2100-01-01 00:00:00"))
 	full := &dto.ScreenUSTurnoverIntersectionResponse{
 		LookbackDays:   20,
 		Limit:          60,
@@ -193,8 +193,8 @@ func TestUSTurnoverIntersectionCacheCanServeLargerLimitWhenDatasetExhausted(t *t
 }
 
 func TestUSTurnoverIntersectionCacheKeyIncludesUniverseFilter(t *testing.T) {
-	withETF := usTurnoverIntersectionCacheKey(20, false)
-	nonETFOnly := usTurnoverIntersectionCacheKey(20, true)
+	withETF := usTurnoverIntersectionCacheKey(20, false, clickhouseStringLiteral("2100-01-01 00:00:00"))
+	nonETFOnly := usTurnoverIntersectionCacheKey(20, true, clickhouseStringLiteral("2100-01-01 00:00:00"))
 
 	if withETF == nonETFOnly {
 		t.Fatalf("cache key should differ by universe filter: %q", withETF)
@@ -202,9 +202,17 @@ func TestUSTurnoverIntersectionCacheKeyIncludesUniverseFilter(t *testing.T) {
 }
 
 func TestUSTurnoverIntersectionCacheKeyIgnoresLimit(t *testing.T) {
-	key := usTurnoverIntersectionCacheKey(20, false)
-	if key != usTurnoverIntersectionCacheKey(20, false) {
+	key := usTurnoverIntersectionCacheKey(20, false, clickhouseStringLiteral("2100-01-01 00:00:00"))
+	if key != usTurnoverIntersectionCacheKey(20, false, clickhouseStringLiteral("2100-01-01 00:00:00")) {
 		t.Fatalf("cache key should be stable for the same lookback/universe")
+	}
+}
+
+func TestUSTurnoverIntersectionCacheKeyIncludesAsOf(t *testing.T) {
+	latest := usTurnoverIntersectionCacheKey(20, false, clickhouseStringLiteral("2100-01-01 00:00:00"))
+	historical := usTurnoverIntersectionCacheKey(20, false, clickhouseStringLiteral("2024-03-01 23:59:59"))
+	if latest == historical {
+		t.Fatalf("cache key should differ by as_of: %q", latest)
 	}
 }
 

@@ -19,6 +19,11 @@ type resolvedBacktestPlan struct {
 	asset            string
 	interval         string
 	portfolioSymbols []string
+	universeSymbols  []string
+	universeCodes    []string
+	universeProvider bridge.UniverseProvider
+	minDTE           int
+	targetDTE        int
 	strategyLabel    string
 	profileSource    string
 	warnings         []string
@@ -59,13 +64,39 @@ func (s *PortfolioBacktestService) resolveBacktestPlan(ctx context.Context, run 
 		return nil, err
 	}
 	asset := resolvePrimaryBacktestAsset(req)
-	if asset == "" {
+	if asset == "" && strings.TrimSpace(req.DSL) == "" {
 		return nil, dto.NewValidationError("asset is required unless portfolio or symbols are provided")
 	}
 	interval := defaultString(req.Interval, "1h")
-	resolved, strategyLabel, err := resolveRequestedStrategies(req, strategyCfg, asset)
+	strategyAsset := asset
+	if strategyAsset == "" {
+		strategyAsset = "UNIVERSE"
+	}
+	resolved, strategyLabel, err := resolveRequestedStrategies(req, strategyCfg, strategyAsset)
 	if err != nil {
 		return nil, err
+	}
+	injectedConfig := make(map[string]interface{})
+	var universeProvider bridge.UniverseProvider
+	var universeSymbols []string
+	var universeCodes []string
+	if strings.TrimSpace(req.DSL) != "" {
+		universeSymbols, universeCodes, universeProvider, err = s.resolveDSLUniverses(ctx, req, resolved, from, to)
+		if err != nil {
+			return nil, err
+		}
+		if asset == "" && len(universeSymbols) > 0 {
+			asset = universeSymbols[0]
+		}
+		if len(universeCodes) > 0 {
+			resolved, strategyLabel, err = resolveRequestedStrategiesWithConfig(req, strategyCfg, asset, injectedConfig, universeProvider)
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+	if asset == "" {
+		return nil, dto.NewValidationError("asset is required unless portfolio, symbols, or a non-empty universe are provided")
 	}
 	if err := validateInstrumentScope(tradeScope, resolved); err != nil {
 		return nil, err
@@ -83,7 +114,11 @@ func (s *PortfolioBacktestService) resolveBacktestPlan(ctx context.Context, run 
 	var targets []optionChainTarget
 	if shouldLoadOptionChain(tradeScope, resolved) {
 		var targetSymbols []string
-		targets, targetSymbols, err = collectOptionChainTargets(req, primaryMarket.name, asset, resolved)
+		chainScopeReq := req
+		if len(universeSymbols) > 0 {
+			chainScopeReq.Symbols = mergeSymbols(chainScopeReq.Symbols, universeSymbols)
+		}
+		targets, targetSymbols, err = collectOptionChainTargets(chainScopeReq, primaryMarket.name, asset, resolved)
 		if err != nil {
 			return nil, err
 		}
@@ -112,6 +147,11 @@ func (s *PortfolioBacktestService) resolveBacktestPlan(ctx context.Context, run 
 		asset:            asset,
 		interval:         interval,
 		portfolioSymbols: collectPortfolioSymbols(req, asset),
+		universeSymbols:  universeSymbols,
+		universeCodes:    universeCodes,
+		universeProvider: universeProvider,
+		minDTE:           req.MinExpiryDays,
+		targetDTE:        req.TargetExpiryDays,
 		strategyLabel:    strategyLabel,
 		profileSource:    validationProfileSource(req),
 		warnings:         validationWarnings(req),
@@ -122,6 +162,86 @@ func (s *PortfolioBacktestService) resolveBacktestPlan(ctx context.Context, run 
 		chainProvider:    chainProvider,
 		chainTargets:     targets,
 	}, nil
+}
+
+func resolveRequestedStrategiesWithConfig(req dto.StrategyBacktestRunRequest, cfg strategies.Config, asset string, injectedConfig map[string]interface{}, universeProvider bridge.UniverseProvider) ([]strategies.ResolvedStrategy, string, error) {
+	if strings.TrimSpace(req.DSL) == "" {
+		return resolveRequestedStrategies(req, cfg, asset)
+	}
+	resolved, err := buildDynamicDSLResolvedStrategyWithConfig(req, cfg, injectedConfig, universeProvider)
+	if err != nil {
+		return nil, "", err
+	}
+	return []strategies.ResolvedStrategy{resolved}, resolved.CanonicalName, nil
+}
+
+func (s *PortfolioBacktestService) resolveDSLUniverses(ctx context.Context, req dto.StrategyBacktestRunRequest, resolved []strategies.ResolvedStrategy, from, to time.Time) ([]string, []string, bridge.UniverseProvider, error) {
+	if s.universes == nil {
+		for _, item := range resolved {
+			if ds, ok := item.Strategy.(*bridge.DslStrategy); ok && len(ds.Manifest().UniverseRequests()) > 0 {
+				return nil, nil, nil, dto.NewValidationError("dsl uses universe.symbols but universe service is not configured")
+			}
+		}
+		return nil, nil, nil, nil
+	}
+	seenSymbols := make(map[string]struct{})
+	symbols := make([]string, 0)
+	seenCodes := make(map[string]struct{})
+	codes := make([]string, 0)
+	addUniverse := func(code, market string) error {
+		code = normalizeUniverseCode(code)
+		if code == "" {
+			return nil
+		}
+		if _, ok := seenCodes[code]; ok {
+			return nil
+		}
+		resp, err := s.universes.MemberIntervals(ctx, dto.UniverseMembersRequest{Market: market, Code: code, From: from, To: to, Limit: maxUniverseIntervalMembers})
+		if err != nil {
+			return err
+		}
+		for _, member := range resp.Data {
+			symbol := normalizeSymbol(member.Symbol)
+			if symbol == "" {
+				continue
+			}
+			if _, ok := seenSymbols[symbol]; !ok {
+				seenSymbols[symbol] = struct{}{}
+				symbols = append(symbols, symbol)
+			}
+		}
+		seenCodes[code] = struct{}{}
+		codes = append(codes, code)
+		return nil
+	}
+	if strings.TrimSpace(req.UniverseCode) != "" {
+		if err := addUniverse(req.UniverseCode, req.UniverseMarket); err != nil {
+			return nil, nil, nil, err
+		}
+	}
+	for _, item := range resolved {
+		dslStrategy, ok := item.Strategy.(*bridge.DslStrategy)
+		if !ok {
+			continue
+		}
+		manifest := dslStrategy.Manifest()
+		if manifest.HasDynamicUniverseRequest() {
+			return nil, nil, nil, dto.NewValidationError("dsl uses dynamic universe.symbols arguments; use literal universe codes so membership can be expanded before replay")
+		}
+		for _, universeReq := range manifest.UniverseRequests() {
+			if err := addUniverse(universeReq.Code, req.UniverseMarket); err != nil {
+				return nil, nil, nil, err
+			}
+		}
+	}
+	if len(codes) == 0 {
+		return symbols, codes, nil, nil
+	}
+	provider, err := s.universes.LoadProvider(ctx, dto.UniverseMembersRequest{Market: req.UniverseMarket, From: from, To: to, Limit: maxUniverseIntervalMembers}, codes)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return symbols, codes, provider, nil
 }
 
 func buildBacktestStrategyConfig(req dto.StrategyBacktestRunRequest) (strategies.Config, error) {
@@ -194,6 +314,29 @@ func collectPortfolioSymbols(req dto.StrategyBacktestRunRequest, primaryAsset st
 		appendSymbol(leg.Asset)
 	}
 	for _, symbol := range req.Symbols {
+		appendSymbol(symbol)
+	}
+	return out
+}
+
+func mergeSymbols(existing, extra []string) []string {
+	seen := make(map[string]struct{}, len(existing)+len(extra))
+	out := make([]string, 0, len(existing)+len(extra))
+	appendSymbol := func(symbol string) {
+		symbol = normalizeSymbol(symbol)
+		if symbol == "" {
+			return
+		}
+		if _, ok := seen[symbol]; ok {
+			return
+		}
+		seen[symbol] = struct{}{}
+		out = append(out, symbol)
+	}
+	for _, symbol := range existing {
+		appendSymbol(symbol)
+	}
+	for _, symbol := range extra {
 		appendSymbol(symbol)
 	}
 	return out
@@ -348,6 +491,33 @@ func buildStrategyBacktestValidationResponse(plan *resolvedBacktestPlan) *dto.St
 		StrategyLabel: describeResolvedStrategies(plan.resolved, plan.strategyLabel),
 		StrategyCount: len(items),
 		Strategies:    sliceOrEmpty(items),
+		ResourcePlan:  buildStrategyBacktestResourcePlan(plan),
+	}
+}
+
+func buildStrategyBacktestResourcePlan(plan *resolvedBacktestPlan) *dto.StrategyBacktestResourcePlan {
+	if plan == nil {
+		return nil
+	}
+	warnings := append([]string(nil), plan.warnings...)
+	if len(plan.universeCodes) > 0 && len(plan.universeSymbols) == 0 {
+		warnings = append(warnings, "universe resolved to zero symbols")
+	}
+	estimatedContracts := 0
+	if len(plan.chainTargets) > 0 {
+		estimatedContracts = len(plan.chainTargets) * 200
+	}
+	return &dto.StrategyBacktestResourcePlan{
+		UniverseSize:           len(plan.universeSymbols),
+		UniverseCodes:          sliceOrEmpty(append([]string(nil), plan.universeCodes...)),
+		OptionChainUnderlyings: len(plan.chainTargets),
+		MinDTE:                 plan.minDTE,
+		TargetDTE:              plan.targetDTE,
+		EstimatedContracts:     estimatedContracts,
+		From:                   plan.from.Format("2006-01-02"),
+		To:                     plan.to.Format("2006-01-02"),
+		Interval:               plan.interval,
+		Warnings:               sliceOrEmpty(warnings),
 	}
 }
 

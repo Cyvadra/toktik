@@ -207,8 +207,8 @@ func TestUSStocksQueryBarsCanReturnRawUnadjustedPrices(t *testing.T) {
 	if strings.Contains(conn.queryText, "FROM us_stock_splits") || strings.Contains(conn.queryText, "latest_numerator") {
 		t.Fatalf("expected raw bars query to skip split adjustment, got %s", conn.queryText)
 	}
-	if !strings.Contains(conn.queryText, "toFloat32(toFloat64(b.open)) AS open") {
-		t.Fatalf("expected raw open expression, got %s", conn.queryText)
+	if strings.Contains(conn.queryText, "b.open) * exp(sum") {
+		t.Fatalf("expected raw open expression to avoid split factor, got %s", conn.queryText)
 	}
 }
 

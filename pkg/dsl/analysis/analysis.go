@@ -90,6 +90,11 @@ type ChainRequestSpec struct {
 	Key    string
 }
 
+type UniverseRequestSpec struct {
+	Code string
+	Key  string
+}
+
 type Manifest struct {
 	StrategyName      string
 	Inputs            []ParamSchema
@@ -140,6 +145,34 @@ func (m Manifest) OptionChainRequests() []ChainRequestSpec {
 func (m Manifest) HasDynamicOptionChainRequest() bool {
 	for _, req := range m.Requests {
 		if req.Kind == "option_chain" && req.Dynamic {
+			return true
+		}
+	}
+	return false
+}
+
+func (m Manifest) UniverseRequests() []UniverseRequestSpec {
+	if len(m.Requests) == 0 {
+		return nil
+	}
+	out := make([]UniverseRequestSpec, 0, len(m.Requests))
+	seen := make(map[string]struct{}, len(m.Requests))
+	for _, req := range m.Requests {
+		if req.Kind != "universe" || req.Dynamic || req.Key == "" {
+			continue
+		}
+		if _, ok := seen[req.Key]; ok {
+			continue
+		}
+		seen[req.Key] = struct{}{}
+		out = append(out, UniverseRequestSpec{Code: req.Name, Key: req.Key})
+	}
+	return out
+}
+
+func (m Manifest) HasDynamicUniverseRequest() bool {
+	for _, req := range m.Requests {
+		if req.Kind == "universe" && req.Dynamic {
 			return true
 		}
 	}
@@ -343,6 +376,15 @@ func walkExpr(expr ast.Expr, m *Manifest) {
 					Hint:     "Prefer literal or input/config-resolvable chain arguments so option chains can be preloaded deterministically.",
 				})
 			}
+			if spec.Dynamic && spec.Kind == "universe" {
+				m.Diagnostics.Add(diagnostics.Diagnostic{
+					Severity: diagnostics.SeverityWarning,
+					Code:     "dsl.dynamic_universe",
+					Function: "universe.symbols",
+					Message:  "universe.symbols uses a runtime-dynamic code and cannot be expanded during validate/run planning",
+					Hint:     "Use a literal universe code so the backtest service can resolve membership and estimate resources before replay.",
+				})
+			}
 		}
 		walkExpr(node.Callee, m)
 		for _, arg := range node.Args {
@@ -462,6 +504,16 @@ func parseRequestSpec(call *ast.CallExpr) (RequestSpec, bool) {
 			mode = "filled"
 		}
 		return RequestSpec{Kind: "fundamental", Market: market, Symbol: symbol, Name: factor, Interval: "primary", Mode: mode, Field: "value", Key: RequestFundamentalKey(market, symbol, factor, mode), Tier: RequestTierStatic}, true
+	case "symbols":
+		if obj.Name != "universe" {
+			return RequestSpec{}, false
+		}
+		code, dynCode := get("code", 0)
+		if len(call.Args) == 0 || dynCode || code == "" {
+			return RequestSpec{Kind: "universe", Tier: requestTier(true), Dynamic: true}, true
+		}
+		code = strings.ToLower(strings.TrimSpace(code))
+		return RequestSpec{Kind: "universe", Name: code, Key: UniverseKey(code), Tier: RequestTierStatic}, true
 	default:
 		return RequestSpec{}, false
 	}
@@ -477,9 +529,15 @@ func requestDiagnosticFunction(kind string) string {
 		return "request.fundamental"
 	case "option_chain":
 		return "options.chain"
+	case "universe":
+		return "universe.symbols"
 	default:
 		return "request"
 	}
+}
+
+func UniverseKey(code string) string {
+	return strings.ToLower(strings.TrimSpace(code))
 }
 
 func RequestFundamentalKey(market, symbol, factor, mode string) string {

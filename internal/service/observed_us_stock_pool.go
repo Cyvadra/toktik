@@ -20,7 +20,7 @@ const defaultUSTurnoverIntersectionWarmupCooldown = 20 * time.Hour
 
 const usTurnoverIntersectionWarmupStateKey = "service:us_turnover_intersection:warmup_state:non_etf_only"
 
-var observedUSStockPoolLookbackDays = []int{20, 60, 120}
+var observedUSStockPoolLookbackDays = []int{7, 20, 60, 120}
 
 type turnoverIntersectionTicker interface {
 	Chan() <-chan time.Time

@@ -12,6 +12,7 @@ import (
 	"github.com/Cyvadra/toktik/internal/chrepo"
 	"github.com/Cyvadra/toktik/internal/config"
 	"github.com/Cyvadra/toktik/internal/service"
+	"github.com/Cyvadra/toktik/internal/universerepo"
 	"github.com/Cyvadra/toktik/pkg/feeds"
 	"github.com/Cyvadra/toktik/pkg/fmp"
 )
@@ -27,6 +28,7 @@ type apiCoreServices struct {
 	financeCalendar *service.FinanceCalendarService
 	usStocks        *service.USStocksService
 	screener        *service.ScreenerService
+	universes       *service.UniverseService
 	backtests       *service.PortfolioBacktestService
 	latestMarket    *service.LatestUSMarketCache
 	fmpClient       *fmp.Client
@@ -46,7 +48,7 @@ func (g apiRefresherGroup) Wait() {
 	}
 }
 
-func buildAPICoreServices(runtimeCfg config.Runtime, repo *chrepo.Repo, calendarRepo *calendarrepo.Repo, cacheStore cache.Store, factorStore *feeds.Store) (*apiCoreServices, error) {
+func buildAPICoreServices(runtimeCfg config.Runtime, repo *chrepo.Repo, calendarRepo *calendarrepo.Repo, universeRepo *universerepo.Repo, cacheStore cache.Store, factorStore *feeds.Store) (*apiCoreServices, error) {
 	fundamentalsSvc := service.NewFundamentalsService(repo)
 	macroSvc := service.NewMacroService(repo)
 	fmpAPIKey, err := runtimeCfg.FMPAPIKey()
@@ -57,7 +59,13 @@ func buildAPICoreServices(runtimeCfg config.Runtime, repo *chrepo.Repo, calendar
 	financeCalendarSvc := service.NewFinanceCalendarService(calendarRepo, fmpClient, cacheStore)
 	companyProfileProvider := service.NewClickHouseUSStockCompanyProfileProvider(repo)
 	latestMarket := service.NewLatestUSMarketCache(cacheStore, runtimeCfg.LatestMarketDataRedisTTL())
-	backtests := service.NewPortfolioBacktestService(repo, factorStore).WithReportsRoot(runtimeCfg.Paths.ReportsRoot)
+	screenerSvc := service.NewScreenerService(repo, cacheStore).
+		WithCompanyProfileProvider(companyProfileProvider).
+		WithLatestMarketCache(latestMarket)
+	universeSvc := service.NewUniverseService(repo, universeRepo).WithTurnoverScreener(screenerSvc)
+	backtests := service.NewPortfolioBacktestService(repo, factorStore).
+		WithReportsRoot(runtimeCfg.Paths.ReportsRoot).
+		WithUniverseService(universeSvc)
 
 	return &apiCoreServices{
 		fundamentals:    fundamentalsSvc,
@@ -66,9 +74,8 @@ func buildAPICoreServices(runtimeCfg config.Runtime, repo *chrepo.Repo, calendar
 		usStocks: service.NewUSStocksService(repo, fundamentalsSvc).
 			WithCompanyProfileProvider(companyProfileProvider).
 			WithLatestMarketCache(latestMarket),
-		screener: service.NewScreenerService(repo, cacheStore).
-			WithCompanyProfileProvider(companyProfileProvider).
-			WithLatestMarketCache(latestMarket),
+		screener:     screenerSvc,
+		universes:    universeSvc,
 		backtests:    backtests,
 		latestMarket: latestMarket,
 		fmpClient:    fmpClient,
@@ -89,6 +96,7 @@ func buildAPIDeps(runtimeCfg config.Runtime, repo *chrepo.Repo, factorStore *fee
 		CryptoSpot:        service.NewCryptoSpotService(repo),
 		Forex:             service.NewForexService(repo),
 		Screener:          services.screener,
+		Universes:         services.universes,
 		StrategyCatalog:   service.NewStrategyCatalogService(),
 		Factors:           service.NewFactorService(factorStore).WithMacroService(services.macro),
 		Fundamentals:      services.fundamentals,

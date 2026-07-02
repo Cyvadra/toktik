@@ -130,6 +130,14 @@ type mockScreener struct {
 	err             error
 }
 
+type mockUniverseProvider struct {
+	membersResp *dto.UniverseMembersResponse
+	rebuildResp *dto.UniverseRebuildResponse
+	membersReq  dto.UniverseMembersRequest
+	rebuildReq  dto.UniverseRebuildRequest
+	err         error
+}
+
 type mockMacroProvider struct {
 	factorsResp *dto.MacroFactorCatalogResponse
 	seriesResp  *dto.MacroSeriesResponse
@@ -151,6 +159,21 @@ func (m *mockQuerier) RunBacktest(_ context.Context, _ dto.BacktestRequest) (*ba
 }
 func (m *mockQuerier) QueryChain(_ context.Context, _ dto.CryptoOptionChainRequest) (*dto.CryptoOptionChainResponse, error) {
 	return nil, m.err
+}
+
+func (m *mockUniverseProvider) Members(_ context.Context, req dto.UniverseMembersRequest) (*dto.UniverseMembersResponse, error) {
+	m.membersReq = req
+	return m.membersResp, m.err
+}
+
+func (m *mockUniverseProvider) MemberIntervals(_ context.Context, req dto.UniverseMembersRequest) (*dto.UniverseMembersResponse, error) {
+	m.membersReq = req
+	return m.membersResp, m.err
+}
+
+func (m *mockUniverseProvider) Rebuild(_ context.Context, req dto.UniverseRebuildRequest) (*dto.UniverseRebuildResponse, error) {
+	m.rebuildReq = req
+	return m.rebuildResp, m.err
 }
 
 func (m *mockUSStocksQuerier) QueryBars(_ context.Context, req dto.USStockBarRequest) (*dto.USStockBarResponse, error) {
@@ -1004,5 +1027,90 @@ func TestGetMacroSeriesRoute(t *testing.T) {
 	}
 	if len(resp.Data) != 1 || resp.Data[0].Factor != "pe10" {
 		t.Fatalf("unexpected response payload: %+v", resp)
+	}
+}
+
+func TestRebuildUniverseAcceptsDateOnlyJSON(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	universes := &mockUniverseProvider{rebuildResp: &dto.UniverseRebuildResponse{Market: "us-stocks", Code: "strong_momentum"}}
+	cfg := config.DefaultRuntime()
+	cfg.API.APIKeys = []string{"test-key"}
+	r := NewRouterFromDeps(Deps{Config: cfg, Universes: universes})
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodPost, "/api/v1/universes/rebuild", strings.NewReader(`{"market":"us-stocks","code":"strong_momentum","from":"2024-01-01","to":"2024-01-03","dry_run":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-API-Key", "test-key")
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if got := universes.rebuildReq.From.Format("2006-01-02"); got != "2024-01-01" {
+		t.Fatalf("from = %s, want 2024-01-01", got)
+	}
+	if got := universes.rebuildReq.To.Format("2006-01-02"); got != "2024-01-03" {
+		t.Fatalf("to = %s, want 2024-01-03", got)
+	}
+}
+
+func TestRebuildUniverseRequiresConfiguredAPIKeys(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	universes := &mockUniverseProvider{rebuildResp: &dto.UniverseRebuildResponse{Market: "us-stocks", Code: "strong_momentum"}}
+	r := NewRouterFromDeps(Deps{Config: config.DefaultRuntime(), Universes: universes})
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodPost, "/api/v1/universes/rebuild", strings.NewReader(`{"market":"us-stocks","code":"strong_momentum","from":"2024-01-01","to":"2024-01-03"}`))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d: %s", w.Code, w.Body.String())
+	}
+	if !universes.rebuildReq.From.IsZero() {
+		t.Fatalf("rebuild should not be called without configured API keys: %+v", universes.rebuildReq)
+	}
+}
+
+func TestGetUniverseMembersRoutesAsOfToMembers(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	universes := &mockUniverseProvider{membersResp: &dto.UniverseMembersResponse{Market: "us-stocks", Code: "strong_momentum"}}
+	r := NewRouterFromDeps(Deps{Config: config.DefaultRuntime(), Universes: universes})
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodGet, "/api/v1/universes/strong_momentum/members?market=us-stocks&as_of=2024-02-01&limit=25", nil)
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if got := universes.membersReq.AsOf.Format("2006-01-02"); got != "2024-02-01" {
+		t.Fatalf("as_of = %s, want 2024-02-01", got)
+	}
+	if universes.membersReq.From.IsZero() == false || universes.membersReq.To.IsZero() == false {
+		t.Fatalf("as_of query should route to Members without range: %+v", universes.membersReq)
+	}
+	if universes.membersReq.Limit != 25 {
+		t.Fatalf("limit = %d, want 25", universes.membersReq.Limit)
+	}
+}
+
+func TestGetUniverseMembersRoutesRangeToMemberIntervals(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	universes := &mockUniverseProvider{membersResp: &dto.UniverseMembersResponse{Market: "us-stocks", Code: "strong_momentum"}}
+	r := NewRouterFromDeps(Deps{Config: config.DefaultRuntime(), Universes: universes})
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodGet, "/api/v1/universes/strong_momentum/members?from=2024-02-01&to=2024-03-01", nil)
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if got := universes.membersReq.From.Format("2006-01-02"); got != "2024-02-01" {
+		t.Fatalf("from = %s, want 2024-02-01", got)
+	}
+	if got := universes.membersReq.To.Format("2006-01-02"); got != "2024-03-01" {
+		t.Fatalf("to = %s, want 2024-03-01", got)
 	}
 }

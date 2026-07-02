@@ -102,6 +102,12 @@ type ScreenerProvider interface {
 	ScreenOptions(ctx context.Context, req dto.ScreenOptionRequest) (*dto.ScreenOptionResponse, error)
 }
 
+type UniverseProvider interface {
+	Members(ctx context.Context, req dto.UniverseMembersRequest) (*dto.UniverseMembersResponse, error)
+	MemberIntervals(ctx context.Context, req dto.UniverseMembersRequest) (*dto.UniverseMembersResponse, error)
+	Rebuild(ctx context.Context, req dto.UniverseRebuildRequest) (*dto.UniverseRebuildResponse, error)
+}
+
 // StrategyCatalogProvider defines operations for listing registered strategies.
 type StrategyCatalogProvider interface {
 	ListStrategies(ctx context.Context, req dto.StrategyCatalogListRequest) (*dto.StrategyCatalogResponse, error)

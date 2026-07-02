@@ -54,6 +54,7 @@ func (s *stubObservedUSStockPoolScreener) requestAt(index int) dto.ScreenUSTurno
 func TestResolveObservedUSStockPool(t *testing.T) {
 	screener := &stubObservedUSStockPoolScreener{
 		responses: map[int]*dto.ScreenUSTurnoverIntersectionResponse{
+			7:   {Data: []dto.ScreenedUSTurnoverIntersectionRow{{Underlying: "TSLA"}, {Underlying: "AAPL"}}},
 			20:  {Data: []dto.ScreenedUSTurnoverIntersectionRow{{Underlying: "AAPL"}, {Underlying: "MSFT"}}},
 			60:  {Data: []dto.ScreenedUSTurnoverIntersectionRow{{Underlying: "MSFT"}, {Underlying: "NVDA"}}},
 			120: {Data: []dto.ScreenedUSTurnoverIntersectionRow{{Underlying: "BRK.B"}, {Underlying: "AAPL"}}},
@@ -65,12 +66,12 @@ func TestResolveObservedUSStockPool(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveObservedUSStockPool() error = %v", err)
 	}
-	want := []string{"AAPL", "MSFT", "NVDA", "BRK.B"}
+	want := []string{"TSLA", "AAPL", "MSFT", "NVDA", "BRK.B"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("ResolveObservedUSStockPool() = %#v, want %#v", got, want)
 	}
-	if len(screener.requests) != 3 {
-		t.Fatalf("expected 3 screener requests, got %d", len(screener.requests))
+	if len(screener.requests) != 4 {
+		t.Fatalf("expected 4 screener requests, got %d", len(screener.requests))
 	}
 	for index, req := range screener.requests {
 		if req.Limit != observedUSStockPoolTopLimit || !req.NonETFOnly || req.LookbackDays != observedUSStockPoolLookbackDays[index] {

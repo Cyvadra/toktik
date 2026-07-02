@@ -135,6 +135,11 @@ func FundamentalsSchemaFile() (string, error) {
 	return FindSchemaFile(schemaCandidates("fundamentals.sql"))
 }
 
+// UniverseSchemaFile returns the path to the universe membership DDL file.
+func UniverseSchemaFile() (string, error) {
+	return FindSchemaFile(schemaCandidates("universe.sql"))
+}
+
 // EnvOrDefault returns the value of an environment variable, or the fallback
 // if the variable is empty or unset.
 func EnvOrDefault(key, fallback string) string {

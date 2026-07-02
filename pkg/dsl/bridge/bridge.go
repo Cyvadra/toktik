@@ -24,6 +24,8 @@ type Options struct {
 	Params map[string]interface{}
 	// Config provides catalog-level configuration values accessible via config.get().
 	Config map[string]interface{}
+	// UniverseProvider supplies point-in-time universe membership for universe.symbols().
+	UniverseProvider UniverseProvider
 	// InitHook is called during Init after standard setup, allowing strategies to
 	// register custom computed fields (via ctx.Register) that the DSL accesses via expose_fields.
 	InitHook func(ctx *backtest.SetupContext) error
@@ -45,6 +47,10 @@ type ChainRequestSpec struct {
 }
 
 type Manifest = analysis.Manifest
+
+type UniverseProvider interface {
+	SymbolsAt(code string, ts time.Time) []string
+}
 
 // DslStrategy implements backtest.Strategy by interpreting a Toktik DSL script.
 type DslStrategy struct {
@@ -324,6 +330,13 @@ func (b *barContextBridge) Low() float64                    { return b.ctx.Low()
 func (b *barContextBridge) Volume() float64                 { return b.ctx.Volume() }
 func (b *barContextBridge) Field(n string) float64          { return b.ctx.Field(n) }
 func (b *barContextBridge) FieldAt(n string, o int) float64 { return b.ctx.FieldAt(n, o) }
+
+func (b *barContextBridge) UniverseSymbols(code string) []string {
+	if b.ds == nil || b.ds.opts.UniverseProvider == nil {
+		return nil
+	}
+	return b.ds.opts.UniverseProvider.SymbolsAt(code, b.ctx.Time())
+}
 
 // SignalEvents implements runtime.SignalBridge for signal.* builtins.
 func (b *barContextBridge) SignalEvents() []signals.SignalEvent { return b.events }
