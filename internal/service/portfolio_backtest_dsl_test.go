@@ -285,6 +285,37 @@ plot(ta.sma(close, length), title="SMA")`,
 	}
 }
 
+func TestValidateStrategyBacktestMapsMissingIndicatorSeriesToValidationError(t *testing.T) {
+	feed := &validationTestFeed{}
+	svc := NewPortfolioBacktestService(nil, nil)
+	t.Cleanup(func() { _ = svc.Close() })
+	svc.engineBuilder = func(cfg backtest.Config, chainProvider backtest.OptionsChainProvider, usesOptions bool) *backtest.Engine {
+		engine := backtest.NewEngine(cfg)
+		engine.RegisterDataFeed(usUnderlyingFeed, feed)
+		return engine
+	}
+
+	_, err := svc.ValidateStrategyBacktest(context.Background(), dto.StrategyBacktestRunRequest{
+		Market:   "us",
+		Asset:    "AAPL",
+		Interval: "1d",
+		From:     "2026-06-01",
+		To:       "2026-06-22",
+		Capital:  100000,
+		Strategy: "delta-filter",
+	})
+	if err == nil {
+		t.Fatal("expected validation error")
+	}
+	var validationErr *dto.ValidationError
+	if !errors.As(err, &validationErr) {
+		t.Fatalf("expected dto.ValidationError, got %T: %v", err, err)
+	}
+	if !strings.Contains(err.Error(), "delta_ok") || !strings.Contains(err.Error(), "delta") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestStartStrategyBacktestSkipsSubmissionPreflightDataLoad(t *testing.T) {
 	feed := &validationTestFeed{}
 	svc := NewPortfolioBacktestService(nil, nil)

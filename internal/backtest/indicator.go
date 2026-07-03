@@ -1,10 +1,23 @@
 package backtest
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"sync"
 )
+
+var ErrUnknownIndicatorSeries = errors.New("unknown indicator series")
+
+type unknownIndicatorSeriesError struct {
+	message string
+}
+
+func (e unknownIndicatorSeriesError) Error() string { return e.message }
+
+func (e unknownIndicatorSeriesError) Is(target error) bool {
+	return target == ErrUnknownIndicatorSeries
+}
 
 // Indicator computes a derived series from one or more input series.
 // All indicators are computed in a preflight pass over the full data set
@@ -59,7 +72,7 @@ func resolveIndicators(registered map[string]Indicator, data map[string][]float6
 				inDegree[name]++
 				dependents[dep] = append(dependents[dep], name)
 			} else if _, hasData := data[dep]; !hasData {
-				return fmt.Errorf("indicator %q depends on unknown series %q", name, dep)
+				return unknownIndicatorSeriesError{message: fmt.Sprintf("indicator %q depends on unknown series %q", name, dep)}
 			}
 		}
 		// Optional deps: if present and from another indicator, wire them into the

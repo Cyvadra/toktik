@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -440,6 +441,9 @@ func (s *PortfolioBacktestService) preflightBacktestPlan(ctx context.Context, ru
 			TriggerMode:     backtest.TriggerPriceCanonical,
 		}, plan.chainProvider, item.Profile.UsesOptions)
 		if _, err := engine.Prepare(ctx, plan.primaryMarket.underlyingFeed, plan.asset, plan.interval, plan.from, plan.to, strategy, nil); err != nil {
+			if errors.Is(err, backtest.ErrUnknownIndicatorSeries) {
+				return dto.NewValidationError("prepare strategy %s: %v", strategy.Name(), err)
+			}
 			return fmt.Errorf("prepare strategy %s: %w", strategy.Name(), err)
 		}
 	}
