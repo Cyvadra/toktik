@@ -6,10 +6,12 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	clickhouse "github.com/ClickHouse/clickhouse-go/v2"
@@ -27,20 +29,15 @@ import (
 	"github.com/Cyvadra/toktik/internal/usmarket"
 	"github.com/Cyvadra/toktik/internal/usmarket/macro"
 	"github.com/Cyvadra/toktik/pkg/fmp"
+	"github.com/schollz/progressbar/v3"
 	"gopkg.in/yaml.v3"
 )
 
 const defaultPipelineConfigPath = "configs/data-sync-pipeline.yaml"
 
 type pipelineConfig struct {
-	Runner            runnerConfig            `yaml:"runner"`
-	MarketDataSources marketDataSourcesConfig `yaml:"market_data_sources"`
-	Jobs              map[string]jobConfig    `yaml:"jobs"`
-}
-
-type marketDataSourcesConfig struct {
-	USStocks  string `yaml:"us_stocks"`
-	USOptions string `yaml:"us_options"`
+	Runner runnerConfig         `yaml:"runner"`
+	Jobs   map[string]jobConfig `yaml:"jobs"`
 }
 
 type runnerConfig struct {
@@ -436,8 +433,13 @@ func runCommand(args []string) error {
 			return err
 		}
 	}
+	progress := newTerminalProgress(os.Stderr)
+	runnerLogger := slog.New(slog.NewTextHandler(progress.LogWriter(), &slog.HandlerOptions{Level: slog.LevelInfo}))
+	previousLogger := slog.Default()
+	slog.SetDefault(runnerLogger)
 	report, err := syncpipeline.NewRunner(conn, syncpipeline.RunnerOptions{
-		Logger:               slog.Default(),
+		Logger:               runnerLogger,
+		Progress:             progress,
 		MaxSourceConcurrency: maxWorkers,
 		DependencyMode:       dependencyMode,
 		DryRun:               *dryRun,
@@ -452,6 +454,8 @@ func runCommand(args []string) error {
 			MaxFindingsPerTarget: cfg.Runner.AuditMaxFindings,
 		},
 	}).Run(ctx, specs)
+	progress.Close()
+	slog.SetDefault(previousLogger)
 	if err != nil {
 		return err
 	}
@@ -463,6 +467,107 @@ func runCommand(args []string) error {
 		return err
 	}
 	return nil
+}
+
+type terminalProgress struct {
+	mu     sync.Mutex
+	out    io.Writer
+	bar    *progressbar.ProgressBar
+	active bool
+}
+
+type progressLogWriter struct {
+	progress *terminalProgress
+}
+
+func newTerminalProgress(out io.Writer) *terminalProgress {
+	if out == nil {
+		out = io.Discard
+	}
+	return &terminalProgress{out: out}
+}
+
+func (p *terminalProgress) LogWriter() io.Writer {
+	return progressLogWriter{progress: p}
+}
+
+func (w progressLogWriter) Write(data []byte) (int, error) {
+	w.progress.mu.Lock()
+	defer w.progress.mu.Unlock()
+	w.progress.clearForLogLocked()
+	_, err := w.progress.out.Write(data)
+	w.progress.renderAfterLogLocked()
+	return len(data), err
+}
+
+func (p *terminalProgress) StartJob(job string, totalSources int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.bar = progressbar.NewOptions(totalSources,
+		progressbar.OptionSetWriter(p.out),
+		progressbar.OptionSetDescription(job),
+		progressbar.OptionShowCount(),
+		progressbar.OptionShowIts(),
+		progressbar.OptionSetItsString("sources"),
+		progressbar.OptionSetWidth(28),
+		progressbar.OptionThrottle(100*time.Millisecond),
+		progressbar.OptionClearOnFinish(),
+	)
+	p.active = true
+	p.renderAfterLogLocked()
+}
+
+func (p *terminalProgress) SourceDone(job string, report syncpipeline.SourceReport, completedSources int, totalSources int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.bar == nil {
+		return
+	}
+	description := job
+	if report.SourceKey != "" {
+		description += " " + report.SourceKey
+	}
+	if report.Status != "" {
+		description += " " + string(report.Status)
+	}
+	p.bar.Describe(description)
+	_ = p.bar.Set(completedSources)
+	p.active = completedSources < totalSources
+}
+
+func (p *terminalProgress) FinishJob(job string, report syncpipeline.JobReport) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.bar != nil {
+		p.bar.Describe(fmt.Sprintf("%s %s", job, report.Status))
+		_ = p.bar.Finish()
+	}
+	p.active = false
+	p.bar = nil
+}
+
+func (p *terminalProgress) Close() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.bar != nil {
+		_ = p.bar.Clear()
+	}
+	p.active = false
+	p.bar = nil
+}
+
+func (p *terminalProgress) clearForLogLocked() {
+	if !p.active || p.bar == nil {
+		return
+	}
+	_ = p.bar.Clear()
+}
+
+func (p *terminalProgress) renderAfterLogLocked() {
+	if !p.active || p.bar == nil {
+		return
+	}
+	_ = p.bar.RenderBlank()
 }
 
 func statusCommand(args []string) error {
@@ -646,10 +751,6 @@ func loadPipelineConfig(path string) (pipelineConfig, error) {
 func defaultPipelineConfig() pipelineConfig {
 	cfg := pipelineConfig{
 		Runner: runnerConfig{MaxSourceConcurrency: 1, OverlapDays: 1, AuditEnabled: true, AuditLookbackDays: 7, AuditMaxFindings: 50, LockTTL: "2h"},
-		MarketDataSources: marketDataSourcesConfig{
-			USStocks:  "fmp",
-			USOptions: "polygon",
-		},
 		Jobs: map[string]jobConfig{
 			// Keep the Gurufocus job for macro CAPE/pe10 only. Symbol-level `pe`
 			// for ETF underlyings such as SPY/IWM/QQQ now comes from
@@ -677,39 +778,20 @@ func normalizePipelineConfig(cfg *pipelineConfig) error {
 	if cfg.Jobs == nil {
 		cfg.Jobs = map[string]jobConfig{}
 	}
-	stockSource := normalizeMarketDataSource(cfg.MarketDataSources.USStocks)
-	if stockSource == "" {
-		stockSource = "fmp"
-	}
-	optionSource := normalizeMarketDataSource(cfg.MarketDataSources.USOptions)
-	if optionSource == "" {
-		optionSource = "polygon"
-	}
-	if stockSource != "fmp" && stockSource != "polygon" {
-		return fmt.Errorf("market_data_sources.us_stocks must be one of fmp, polygon; got %q", cfg.MarketDataSources.USStocks)
-	}
-	if optionSource != "polygon" {
-		return fmt.Errorf("market_data_sources.us_options must be polygon; got %q", cfg.MarketDataSources.USOptions)
-	}
-	cfg.MarketDataSources.USStocks = stockSource
-	cfg.MarketDataSources.USOptions = optionSource
 	if cfg.Runner.MaxSourceConcurrency <= 0 && cfg.Runner.MaxJobConcurrency > 0 {
 		cfg.Runner.MaxSourceConcurrency = cfg.Runner.MaxJobConcurrency
 	}
 
 	polygonJob := cfg.Jobs["polygon_us_flatfiles"]
-	polygonJob.Enabled = polygonJob.Enabled || optionSource == "polygon" || stockSource == "polygon"
-	polygonJob.SyncStocks = stockSource == "polygon"
+	polygonJob.Enabled = true
+	polygonJob.SyncStocks = true
 	cfg.Jobs["polygon_us_flatfiles"] = polygonJob
 
 	fmpStocksJob := cfg.Jobs["fmp_us_stocks"]
-	fmpStocksJob.Enabled = stockSource == "fmp"
+	fmpStocksJob.Enabled = false
 	cfg.Jobs["fmp_us_stocks"] = fmpStocksJob
 
-	stockDependency := "fmp_us_stocks"
-	if stockSource == "polygon" {
-		stockDependency = "polygon_us_flatfiles"
-	}
+	stockDependency := "polygon_us_flatfiles"
 
 	if job, ok := cfg.Jobs["fmp_us_fundamentals"]; ok && job.Enabled {
 		job.DependsOn = replaceDependency(job.DependsOn, "fmp_us_stocks", stockDependency)
@@ -756,16 +838,6 @@ func containsString(values []string, target string) bool {
 		}
 	}
 	return false
-}
-
-func normalizeMarketDataSource(value string) string {
-	value = strings.ToLower(strings.TrimSpace(value))
-	switch value {
-	case "polygon_flatfiles", "polygon_flat_files", "polygon-flatfiles", "polygon-flat-files":
-		return "polygon"
-	default:
-		return value
-	}
 }
 
 func resolveOptionalBool(value *bool, fallback bool) bool {

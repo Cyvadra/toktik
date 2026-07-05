@@ -99,6 +99,7 @@ type JobSpec struct {
 
 type RunnerOptions struct {
 	Logger               *slog.Logger
+	Progress             ProgressReporter
 	MaxSourceConcurrency int
 	DependencyMode       DependencyMode
 	DryRun               bool
@@ -109,6 +110,12 @@ type RunnerOptions struct {
 	DBRetry              RetryOptions
 	AuditEnabled         bool
 	AuditOptions         AuditOptions
+}
+
+type ProgressReporter interface {
+	StartJob(job string, totalSources int)
+	SourceDone(job string, report SourceReport, completedSources int, totalSources int)
+	FinishJob(job string, report JobReport)
 }
 
 type Runner struct {
@@ -315,12 +322,20 @@ func (r *Runner) runJob(ctx context.Context, spec JobSpec) JobReport {
 	report := JobReport{Job: spec.Name, Status: JobStatusSuccess}
 	sourceConcurrency := r.sourceConcurrency(spec, len(keys))
 	r.opts.Logger.Info("sync job sources resolved", "job", spec.Name, "sources", len(keys), "source_concurrency", sourceConcurrency)
+	if r.opts.Progress != nil {
+		r.opts.Progress.StartJob(spec.Name, len(keys))
+	}
+	completedSources := 0
 	if sourceConcurrency <= 1 {
 		for _, rawKey := range keys {
 			key := NormalizeSourceKey(rawKey)
 			sourceReport := r.runSource(jobCtx, spec, ledger, key)
 			report.Sources = append(report.Sources, sourceReport)
 			report.RowsInserted += sourceReport.RowsInserted
+			completedSources++
+			if r.opts.Progress != nil {
+				r.opts.Progress.SourceDone(spec.Name, sourceReport, completedSources, len(keys))
+			}
 			if sourceReport.Status == JobStatusFailed {
 				report.Status = JobStatusFailed
 				report.Err = sourceReport.Err
@@ -371,6 +386,10 @@ func (r *Runner) runJob(ctx context.Context, spec JobSpec) JobReport {
 		for result := range results {
 			orderedReports[result.index] = result.report
 			report.RowsInserted += result.report.RowsInserted
+			completedSources++
+			if r.opts.Progress != nil {
+				r.opts.Progress.SourceDone(spec.Name, result.report, completedSources, len(keys))
+			}
 			if report.Status != JobStatusFailed && result.report.Status == JobStatusFailed {
 				report.Status = JobStatusFailed
 				report.Err = result.report.Err
@@ -380,6 +399,10 @@ func (r *Runner) runJob(ctx context.Context, spec JobSpec) JobReport {
 			if strings.TrimSpace(sourceReport.SourceKey) == "" {
 				sourceReport = canceledSourceReport(NormalizeSourceKey(keys[index]), jobCtx.Err())
 				orderedReports[index] = sourceReport
+				completedSources++
+				if r.opts.Progress != nil {
+					r.opts.Progress.SourceDone(spec.Name, sourceReport, completedSources, len(keys))
+				}
 			}
 			if report.Status != JobStatusFailed && sourceReport.Status == JobStatusFailed {
 				report.Status = JobStatusFailed
@@ -402,6 +425,9 @@ func (r *Runner) runJob(ctx context.Context, spec JobSpec) JobReport {
 		}
 	}
 	r.opts.Logger.Info("sync job finished", "job", spec.Name, "status", report.Status, "rows", report.RowsInserted, "sources", len(report.Sources), "audit_findings", len(report.AuditFindings), "elapsed", time.Since(jobStarted).Round(time.Second))
+	if r.opts.Progress != nil {
+		r.opts.Progress.FinishJob(spec.Name, report)
+	}
 	return report
 }
 
