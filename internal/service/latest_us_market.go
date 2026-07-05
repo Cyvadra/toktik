@@ -22,6 +22,7 @@ import (
 const (
 	latestUSMarketCacheVersion        = "latest_us_market:v1"
 	latestUSMarketStockWindowDays     = 7
+	latestUSMarketFMPStockInterval    = fmp.Interval1Hour
 	latestUSMarketTurnoverTopLimit    = 30
 	latestUSMarketRefreshLookbackDays = 7
 )
@@ -523,10 +524,9 @@ func refreshLatestUSStockBars(ctx context.Context, cacheReader *LatestUSMarketCa
 				}
 				var bars []LatestUSStockDailyBar
 				var err error
-				adjusted := false
+				adjusted := true
 				if provider == "polygon" {
 					bars, err = fetchLatestUSStockBarsFromPolygon(ctx, cfg.Polygon, symbol, from, to)
-					adjusted = true
 				} else {
 					bars, err = fetchLatestUSStockBarsFromFMP(ctx, cfg.FMPClient, symbol, from, to)
 				}
@@ -768,29 +768,74 @@ func fetchLatestUSStockBarsFromFMP(ctx context.Context, client *fmp.Client, symb
 	if client == nil {
 		return nil, fmt.Errorf("fmp client is required")
 	}
-	prices, err := client.HistoricalPrices(ctx, symbol, from.Format("2006-01-02"), to.Format("2006-01-02"))
+	intraday, err := client.IntradayPrices(ctx, symbol, latestUSMarketFMPStockInterval, from.Format("2006-01-02"), to.Format("2006-01-02"))
 	if err != nil {
 		return nil, err
 	}
-	bars := make([]LatestUSStockDailyBar, 0, len(prices))
-	for _, price := range prices {
-		day, err := time.Parse("2006-01-02", strings.TrimSpace(price.Date))
-		if err != nil {
+	return aggregateFMPIntradayStockBars(symbol, intraday), nil
+}
+
+func aggregateFMPIntradayStockBars(symbol string, intraday []fmp.IntradayBar) []LatestUSStockDailyBar {
+	type dailyBar struct {
+		bar       LatestUSStockDailyBar
+		firstSeen time.Time
+		lastSeen  time.Time
+	}
+
+	byDay := make(map[time.Time]dailyBar)
+	normalizedSymbol := strings.ToUpper(strings.TrimSpace(symbol))
+	for _, row := range intraday {
+		ts, ok := parseFMPIntradayEastern(row.Date)
+		if !ok {
 			continue
 		}
-		bars = append(bars, LatestUSStockDailyBar{
-			Timestamp: normalizeCalendarDate(day),
-			Symbol:    strings.ToUpper(strings.TrimSpace(price.Symbol)),
-			Open:      float32(price.Open),
-			High:      float32(price.High),
-			Low:       float32(price.Low),
-			Close:     float32(price.Close),
-			Volume:    float64(price.Volume),
-			Provider:  "fmp",
-		})
+		day := normalizeCalendarDate(ts)
+		current, exists := byDay[day]
+		if !exists {
+			current = dailyBar{bar: LatestUSStockDailyBar{Timestamp: day, Symbol: normalizedSymbol, Open: float32(row.Open), High: float32(row.High), Low: float32(row.Low), Close: float32(row.Close), Volume: row.Volume, Provider: "fmp"}, firstSeen: ts, lastSeen: ts}
+			byDay[day] = current
+			continue
+		}
+		if ts.Before(current.firstSeen) {
+			current.firstSeen = ts
+			current.bar.Open = float32(row.Open)
+		}
+		if ts.After(current.lastSeen) {
+			current.lastSeen = ts
+			current.bar.Close = float32(row.Close)
+		}
+		if high := float32(row.High); high > current.bar.High {
+			current.bar.High = high
+		}
+		if low := float32(row.Low); current.bar.Low == 0 || low < current.bar.Low {
+			current.bar.Low = low
+		}
+		current.bar.Volume += row.Volume
+		byDay[day] = current
 	}
-	sort.Slice(bars, func(i, j int) bool { return bars[i].Timestamp.Before(bars[j].Timestamp) })
-	return bars, nil
+
+	out := make([]LatestUSStockDailyBar, 0, len(byDay))
+	for _, current := range byDay {
+		out = append(out, current.bar)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Timestamp.Before(out[j].Timestamp) })
+	return out
+}
+
+func parseFMPIntradayEastern(value string) (time.Time, bool) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return time.Time{}, false
+	}
+	location, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		return time.Time{}, false
+	}
+	ts, err := time.ParseInLocation("2006-01-02 15:04:05", value, location)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return ts.UTC(), true
 }
 
 func fetchLatestUSStockBarsFromPolygon(ctx context.Context, provider latestUSMarketPolygonProvider, symbol string, from, to time.Time) ([]LatestUSStockDailyBar, error) {

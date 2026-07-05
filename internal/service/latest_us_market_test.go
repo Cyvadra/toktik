@@ -7,6 +7,7 @@ import (
 
 	"github.com/Cyvadra/toktik/internal/cache"
 	"github.com/Cyvadra/toktik/internal/dto"
+	"github.com/Cyvadra/toktik/pkg/fmp"
 )
 
 func TestLatestUSMarketCacheMergeStockBars(t *testing.T) {
@@ -68,6 +69,28 @@ func TestLatestUSMarketCacheMergeStockBarsSkipsMismatchedAdjustment(t *testing.T
 	}
 	if changed || len(merged) != 1 || merged[0].Close != rows[0].Close {
 		t.Fatalf("expected mismatched adjusted cache to be skipped, changed=%v rows=%#v", changed, merged)
+	}
+}
+
+func TestAggregateFMPIntradayStockBarsUsesSessionOrder(t *testing.T) {
+	bars := aggregateFMPIntradayStockBars("spy", []fmp.IntradayBar{
+		{Date: "2026-06-10 15:30:00", Open: 736, High: 738, Low: 735, Close: 737, Volume: 300},
+		{Date: "2026-06-10 09:30:00", Open: 733, High: 734, Low: 732, Close: 733.5, Volume: 100},
+		{Date: "2026-06-10 12:30:00", Open: 734, High: 736.5, Low: 733.25, Close: 736, Volume: 200},
+		{Date: "2026-06-11 09:30:00", Open: 739, High: 740, Low: 738.5, Close: 739.5, Volume: 400},
+	})
+	if len(bars) != 2 {
+		t.Fatalf("expected two daily bars, got %#v", bars)
+	}
+	first := bars[0]
+	if !first.Timestamp.Equal(time.Date(2026, 6, 10, 0, 0, 0, 0, time.UTC)) || first.Symbol != "SPY" {
+		t.Fatalf("unexpected first bar identity: %#v", first)
+	}
+	if first.Open != 733 || first.High != 738 || first.Low != 732 || first.Close != 737 || first.Volume != 600 {
+		t.Fatalf("unexpected first daily aggregation: %#v", first)
+	}
+	if !bars[1].Timestamp.Equal(time.Date(2026, 6, 11, 0, 0, 0, 0, time.UTC)) || bars[1].Close != 739.5 {
+		t.Fatalf("unexpected second daily aggregation: %#v", bars[1])
 	}
 }
 

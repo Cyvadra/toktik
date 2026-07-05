@@ -107,7 +107,7 @@ Runner 行為：
 重要風險：
 
 - `--force` 或 force unlock 類行為可能影響 pending ledger，使用前先查 status。
-- Polygon flat files 與 FMP job 可能資料來源重疊，需理解 `market_data_sources` 與 job dependency。
+- 行情資料固定由 Polygon flat files 更新；FMP stock job 只保留給最新行情補全等明確指定用途。
 - daily-only flatfile 模式會影響 greeks 與 feature store，config 註解已有提醒。
 - 大型 feature/fundamental integrity check 會使用 ClickHouse memory/thread settings；不要隨意放大。
 

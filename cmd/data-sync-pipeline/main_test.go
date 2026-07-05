@@ -97,9 +97,8 @@ func TestFormatOptionCoverageWarningSymbolsTruncates(t *testing.T) {
 	}
 }
 
-func TestNormalizePipelineConfigSelectsPolygonUSStocks(t *testing.T) {
+func TestNormalizePipelineConfigAlwaysSelectsPolygonUSStocks(t *testing.T) {
 	cfg := defaultPipelineConfig()
-	cfg.MarketDataSources.USStocks = "polygon"
 	if err := normalizePipelineConfig(&cfg); err != nil {
 		t.Fatal(err)
 	}
@@ -127,26 +126,21 @@ func TestNormalizePipelineConfigSelectsPolygonUSStocks(t *testing.T) {
 	}
 }
 
-func TestLoadPipelineConfigAcceptsPolygonSourceAliases(t *testing.T) {
-	path := writeTempPipelineConfig(t, `
-market_data_sources:
-  us_stocks: polygon_flatfiles
-  us_options: polygon
-jobs:
-  fmp_us_stocks:
-    enabled: true
-  polygon_us_flatfiles:
-    enabled: false
-`)
+func TestLoadPipelineConfigIgnoresLegacyMarketDataSources(t *testing.T) {
+	path := writeTempPipelineConfig(t, "market_data_sources:\n"+
+		"  us_stocks: unknown\n"+
+		"  us_options: unknown\n"+
+		"jobs:\n"+
+		"  fmp_us_stocks:\n"+
+		"    enabled: true\n"+
+		"  polygon_us_flatfiles:\n"+
+		"    enabled: false\n")
 	cfg, err := loadPipelineConfig(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.MarketDataSources.USStocks != "polygon" {
-		t.Fatalf("expected normalized polygon source, got %q", cfg.MarketDataSources.USStocks)
-	}
 	if cfg.Jobs["fmp_us_stocks"].Enabled {
-		t.Fatal("expected source selection to disable fmp_us_stocks")
+		t.Fatal("expected normalization to disable fmp_us_stocks")
 	}
 	if !cfg.Jobs["polygon_us_flatfiles"].Enabled || !cfg.Jobs["polygon_us_flatfiles"].SyncStocks {
 		t.Fatalf("expected polygon flatfiles enabled with stock sync, got %#v", cfg.Jobs["polygon_us_flatfiles"])
@@ -155,9 +149,6 @@ jobs:
 
 func TestLoadPipelineConfigAllowsPolygonStockOnlyFlatfiles(t *testing.T) {
 	path := writeTempPipelineConfig(t, `
-market_data_sources:
-  us_stocks: polygon
-  us_options: polygon
 jobs:
   polygon_us_flatfiles:
     sync_options: false
@@ -172,17 +163,6 @@ jobs:
 	}
 	if job.SyncOptions == nil || *job.SyncOptions {
 		t.Fatalf("expected polygon flatfiles sync_options=false, got %#v", job.SyncOptions)
-	}
-}
-
-func TestLoadPipelineConfigRejectsUnsupportedUSStockSource(t *testing.T) {
-	path := writeTempPipelineConfig(t, `
-market_data_sources:
-  us_stocks: unknown
-`)
-	_, err := loadPipelineConfig(path)
-	if err == nil || !strings.Contains(err.Error(), "market_data_sources.us_stocks") {
-		t.Fatalf("expected unsupported source error, got %v", err)
 	}
 }
 

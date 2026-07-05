@@ -11,14 +11,6 @@ runner:
   default_per_job_timeout: ""
   default_per_source_timeout: ""
 
-market_data_sources:
-  # US stock bars can come from FMP intraday APIs or Polygon flat files.
-  # Set us_stocks: polygon to import both US stocks and US options from
-  # Polygon flat files through polygon_us_flatfiles.
-  us_stocks: polygon
-  # US option minute bars are currently sourced from Polygon flat files.
-  us_options: polygon
-
 jobs:
   cboe_vix_macro:
     enabled: true
@@ -43,7 +35,7 @@ jobs:
 
   fmp_sp500_macro:
     enabled: true
-    depends_on: [fmp_us_stocks]
+    depends_on: [polygon_us_flatfiles]
     dataset: fmp-sp500-shiller
     constituent_universe: sp500
     price_symbol: SPY
@@ -56,7 +48,7 @@ jobs:
 
   fmp_nasdaq100_macro:
     enabled: true
-    depends_on: [fmp_us_stocks]
+    depends_on: [polygon_us_flatfiles]
     dataset: fmp-nasdaq100-shiller
     constituent_universe: nasdaq100
     price_symbol: QQQ
@@ -81,7 +73,7 @@ jobs:
     batch_size: 50000
 
   fmp_us_stocks:
-    enabled: true
+    enabled: false
     depends_on: [polygon_us_flatfiles]
     resolve_at_startup: true
     include_option_gap_mappings: true
@@ -90,7 +82,7 @@ jobs:
 
   fmp_us_stock_splits:
     enabled: true
-    depends_on: [fmp_us_stocks]
+    depends_on: [polygon_us_flatfiles]
     resolve_at_startup: true
     overlap_days: 3
     batch_size: 1000
@@ -98,7 +90,7 @@ jobs:
 
   fmp_us_stock_profiles:
     enabled: true
-    depends_on: [fmp_us_stocks]
+    depends_on: [polygon_us_flatfiles]
     resolve_at_startup: true
     include_option_gap_mappings: true
     batch_size: 25
@@ -106,7 +98,7 @@ jobs:
 
   fmp_us_fundamentals:
     enabled: true
-    depends_on: [fmp_us_stocks, fmp_us_stock_profiles]
+    depends_on: [polygon_us_flatfiles, fmp_us_stock_profiles]
     provider: fmp
     incremental_mode: sec-filings-financials
     discovery_page_size: 250
@@ -142,8 +134,8 @@ jobs:
     workers: 2
     risk_free_rate: 0.05
     force_download: false
-    # Usually managed by market_data_sources.us_stocks.
-    sync_stocks: false
+    # Stocks and options market data are imported from Polygon flat files.
+    sync_stocks: true
     sync_options: true
     # Source interval for Polygon flatfiles: "1m" (default, minute aggregates)
     # or "1d" (day aggregates). When set to "1d", the pipeline downloads and
@@ -155,7 +147,7 @@ jobs:
 
   polygon_us_greeks:
     enabled: true
-    depends_on: [polygon_us_flatfiles, fmp_us_stocks]
+    depends_on: [polygon_us_flatfiles]
     batch_size: 100000
     workers: 2
     risk_free_rate: 0.05
