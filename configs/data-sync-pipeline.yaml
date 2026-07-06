@@ -130,7 +130,7 @@ jobs:
 
   fmp_stock_earnings_calendar_backfill:
     enabled: false
-    calendar_chunk_days: 365
+    calendar_chunk_days: 1
     cold_start_floor: 1990-01-01
 
   polygon_us_flatfiles:

@@ -9,9 +9,11 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"os/signal"
 	"sort"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	clickhouse "github.com/ClickHouse/clickhouse-go/v2"
@@ -382,7 +384,8 @@ func runCommand(args []string) error {
 	auditEnabled := resolveAuditEnabled(cfg.Runner, auditFlag)
 	selected := selectedSet(*jobsCSV)
 	printMissingSelectedDependencyWarnings(cfg, selected)
-	ctx := context.Background()
+	ctx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stopSignals()
 	retryOpts, err := resolveDBRetryOptions(cfg.Runner, *dbRetryAttempts, *dbRetryInitialDelay, *dbRetryMaxDelay)
 	if err != nil {
 		return err
@@ -504,6 +507,18 @@ func (w progressLogWriter) Write(data []byte) (int, error) {
 func (p *terminalProgress) StartJob(job string, totalSources int) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if totalSources <= 1 {
+		p.bar = progressbar.NewOptions(-1,
+			progressbar.OptionSetWriter(p.out),
+			progressbar.OptionSetDescription(job+" running"),
+			progressbar.OptionSetWidth(28),
+			progressbar.OptionThrottle(100*time.Millisecond),
+			progressbar.OptionClearOnFinish(),
+		)
+		p.active = true
+		p.renderAfterLogLocked()
+		return
+	}
 	p.bar = progressbar.NewOptions(totalSources,
 		progressbar.OptionSetWriter(p.out),
 		progressbar.OptionSetDescription(job),
@@ -534,6 +549,44 @@ func (p *terminalProgress) SourceDone(job string, report syncpipeline.SourceRepo
 	p.bar.Describe(description)
 	_ = p.bar.Set(completedSources)
 	p.active = completedSources < totalSources
+}
+
+func (p *terminalProgress) StartUnitProgress(description, unit string, total int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if total <= 0 {
+		return
+	}
+	if p.bar != nil {
+		_ = p.bar.Clear()
+	}
+	if strings.TrimSpace(unit) == "" {
+		unit = "items"
+	}
+	p.bar = progressbar.NewOptions(total,
+		progressbar.OptionSetWriter(p.out),
+		progressbar.OptionSetDescription(description),
+		progressbar.OptionShowCount(),
+		progressbar.OptionShowIts(),
+		progressbar.OptionSetItsString(unit),
+		progressbar.OptionSetWidth(28),
+		progressbar.OptionThrottle(100*time.Millisecond),
+		progressbar.OptionClearOnFinish(),
+	)
+	p.active = true
+	p.renderAfterLogLocked()
+}
+
+func (p *terminalProgress) AdvanceUnitProgress(description string, completed int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.bar == nil {
+		return
+	}
+	if strings.TrimSpace(description) != "" {
+		p.bar.Describe(description)
+	}
+	_ = p.bar.Set(completed)
 }
 
 func (p *terminalProgress) FinishJob(job string, report syncpipeline.JobReport) {
@@ -1417,7 +1470,7 @@ func printPreRunSnapshotAndWait(ctx context.Context, conn driver.Conn, specs []s
 	}
 	fmt.Fprintln(os.Stderr, "latest records before sync:")
 	if len(rows) == 0 {
-		fmt.Fprintln(os.Stderr, "  no data tables selected")
+		fmt.Fprintln(os.Stderr, "  no ClickHouse data tables selected; selected jobs may write external storage such as MySQL")
 	} else {
 		fmt.Fprintf(os.Stderr, "  %-24s %-24s %-26s %-12s %s\n", "job", "dataset", "table", "rows", "latest")
 		for _, row := range rows {

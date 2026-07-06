@@ -1094,7 +1094,7 @@ func NewFMPStockEarningsCalendarBackfill(cfg FMPStockEarningsCalendarBackfillCon
 		return nil, fmt.Errorf("fmp_stock_earnings_calendar_backfill: MySQLDSN is required")
 	}
 	if cfg.ChunkDays <= 0 {
-		cfg.ChunkDays = 365
+		cfg.ChunkDays = 1
 	}
 	if cfg.ColdStartFloorUTC.IsZero() {
 		cfg.ColdStartFloorUTC = time.Date(1990, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -1141,11 +1141,18 @@ func (s *fmpStockEarningsCalendarBackfill) Sync(ctx context.Context, _ driver.Co
 	}
 	client := fmp.New(s.cfg.APIKey, options...)
 	chunks := calendarDateChunks(req.From, req.To, s.cfg.ChunkDays)
+	if req.Progress != nil {
+		req.Progress.StartUnitProgress(s.Name()+" chunks", "chunks", len(chunks))
+	}
 	events := []calendarrepo.CalendarEvent{}
-	for _, chunk := range chunks {
+	capHitChunks := 0
+	for index, chunk := range chunks {
 		rows, err := client.EarningsCalendar(ctx, formatCalendarDate(chunk.from), formatCalendarDate(chunk.to))
 		if err != nil {
-			return syncpipeline.SyncResult{SourceKey: req.SourceKey, From: req.From, To: req.To, RowsInserted: int64(len(events)), Notes: []string{fmt.Sprintf("chunks=%d", len(chunks))}}, fmt.Errorf("fetch FMP earnings calendar %s..%s: %w", formatCalendarDate(chunk.from), formatCalendarDate(chunk.to), err)
+			return syncpipeline.SyncResult{SourceKey: req.SourceKey, From: req.From, To: req.To, RowsInserted: int64(len(events)), Notes: earningsCalendarBackfillNotes(len(chunks), len(events), capHitChunks, req.DryRun)}, fmt.Errorf("fetch FMP earnings calendar %s..%s: %w", formatCalendarDate(chunk.from), formatCalendarDate(chunk.to), err)
+		}
+		if len(rows) >= 4000 {
+			capHitChunks++
 		}
 		for _, row := range rows {
 			event, ok := earningsCalendarEventToModel(row)
@@ -1153,9 +1160,12 @@ func (s *fmpStockEarningsCalendarBackfill) Sync(ctx context.Context, _ driver.Co
 				events = append(events, event)
 			}
 		}
+		if req.Progress != nil {
+			req.Progress.AdvanceUnitProgress(fmt.Sprintf("%s %s..%s rows=%d", s.Name(), formatCalendarDate(chunk.from), formatCalendarDate(chunk.to), len(rows)), index+1)
+		}
 	}
 	if req.DryRun || len(events) == 0 {
-		return syncpipeline.SyncResult{SourceKey: req.SourceKey, From: req.From, To: req.To, RowsInserted: int64(len(events)), Notes: []string{fmt.Sprintf("chunks=%d", len(chunks)), "dry-run or no rows; MySQL calendar_events not mutated"}}, nil
+		return syncpipeline.SyncResult{SourceKey: req.SourceKey, From: req.From, To: req.To, RowsInserted: int64(len(events)), Notes: earningsCalendarBackfillNotes(len(chunks), len(events), capHitChunks, req.DryRun)}, nil
 	}
 	gormDB, closeFn, err := openFinanceCalendarDB(s.cfg.MySQLDSN)
 	if err != nil {
@@ -1166,12 +1176,25 @@ func (s *fmpStockEarningsCalendarBackfill) Sync(ctx context.Context, _ driver.Co
 	if err := repo.UpsertEvents(ctx, events); err != nil {
 		return syncpipeline.SyncResult{SourceKey: req.SourceKey, From: req.From, To: req.To, RowsInserted: int64(len(events))}, fmt.Errorf("store earnings calendar backfill: %w", err)
 	}
-	return syncpipeline.SyncResult{SourceKey: req.SourceKey, From: req.From, To: req.To, RowsInserted: int64(len(events)), Notes: []string{fmt.Sprintf("chunks=%d", len(chunks))}}, nil
+	return syncpipeline.SyncResult{SourceKey: req.SourceKey, From: req.From, To: req.To, RowsInserted: int64(len(events)), Notes: earningsCalendarBackfillNotes(len(chunks), len(events), capHitChunks, req.DryRun)}, nil
 }
 func (s *fmpStockEarningsCalendarBackfill) AuditTargets(string) []syncpipeline.AuditTarget {
 	return nil
 }
 func (s *fmpStockEarningsCalendarBackfill) MaxConcurrency() int { return 1 }
+
+func earningsCalendarBackfillNotes(chunks, fetchedEvents, capHitChunks int, dryRun bool) []string {
+	notes := []string{fmt.Sprintf("chunks=%d", chunks), fmt.Sprintf("fetched_events=%d", fetchedEvents)}
+	if capHitChunks > 0 {
+		notes = append(notes, fmt.Sprintf("possible_fmp_cap_chunks=%d; reduce calendar_chunk_days and rerun this window", capHitChunks))
+	}
+	if dryRun || fetchedEvents == 0 {
+		notes = append(notes, "dry-run or no rows; MySQL calendar_events not mutated")
+	} else {
+		notes = append(notes, "MySQL calendar_events upsert attempted; rows reports fetched events, not net-new inserts")
+	}
+	return notes
+}
 
 type calendarDateChunk struct {
 	from time.Time

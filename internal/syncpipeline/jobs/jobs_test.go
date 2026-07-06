@@ -140,6 +140,19 @@ func TestFMPStockEarningsCalendarBackfillDefaultsAndSourceKeys(t *testing.T) {
 	if got := syncer.ColdStartFloor("_"); !got.Equal(time.Date(1990, 1, 1, 0, 0, 0, 0, time.UTC)) {
 		t.Fatalf("ColdStartFloor = %s, want 1990-01-01", got)
 	}
+	if got := syncer.(*fmpStockEarningsCalendarBackfill).cfg.ChunkDays; got != 1 {
+		t.Fatalf("ChunkDays = %d, want 1", got)
+	}
+}
+
+func TestEarningsCalendarBackfillNotesReportsCapHits(t *testing.T) {
+	notes := earningsCalendarBackfillNotes(3, 12000, 2, false)
+	joined := strings.Join(notes, "\n")
+	for _, want := range []string{"chunks=3", "fetched_events=12000", "possible_fmp_cap_chunks=2", "rows reports fetched events"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("notes %q missing %q", joined, want)
+		}
+	}
 }
 
 func TestCalendarDateChunksSplitsInclusiveRanges(t *testing.T) {
