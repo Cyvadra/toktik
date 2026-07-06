@@ -64,9 +64,10 @@ type schemaRef struct {
 }
 
 type endpointSpec struct {
-	Method string
-	Path   string
-	Label  string
+	Method       string
+	Path         string
+	Label        string
+	AbsolutePath bool
 }
 
 type sectionSpec struct {
@@ -122,6 +123,7 @@ var marketSections = []sectionSpec{
 		Endpoints: []endpointSpec{
 			{Method: "GET", Path: "/markets/us-stocks/bars", Label: "US stock bars"},
 			{Method: "GET", Path: "/markets/us-stocks/symbols", Label: "US stock symbols"},
+			{Method: "GET", Path: "/utils/us-stocks/logos/{symbol}", Label: "US stock logo image", AbsolutePath: true},
 			{Method: "POST", Path: "/markets/us-stocks/profiles", Label: "US stock company profiles"},
 			{Method: "POST", Path: "/markets/us-stocks/fundamentals", Label: "US stock fundamental metrics"},
 			{Method: "GET", Path: "/markets/us-stocks/splits", Label: "US stock split events"},
@@ -979,7 +981,11 @@ func writeEndpoint(builder *strings.Builder, doc *swaggerDoc, spec endpointSpec,
 	builder.WriteString("- Endpoint: `")
 	builder.WriteString(strings.ToUpper(spec.Method))
 	builder.WriteString(" ")
-	builder.WriteString(joinBasePath(doc.BasePath, spec.Path))
+	if spec.AbsolutePath {
+		builder.WriteString(spec.Path)
+	} else {
+		builder.WriteString(joinBasePath(doc.BasePath, spec.Path))
+	}
 	builder.WriteString("`\n")
 	if len(op.Tags) > 0 {
 		builder.WriteString("- Tags: `")

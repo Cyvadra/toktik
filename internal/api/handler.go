@@ -40,6 +40,7 @@ type Handler struct {
 	fundamentals      FundamentalsProvider
 	macro             MacroProvider
 	financeCalendar   FinanceCalendarProvider
+	logos             LogoProvider
 	polygon           PolygonProvider
 	showInternalError bool
 	requireAPIKey     bool
@@ -78,6 +79,7 @@ func NewHandler(d Deps) *Handler {
 		fundamentals:      d.Fundamentals,
 		macro:             d.Macro,
 		financeCalendar:   d.FinanceCalendar,
+		logos:             d.Logos,
 		polygon:           d.Polygon,
 		showInternalError: strings.EqualFold(strings.TrimSpace(d.Config.API.Environment), "dev"),
 		requireAPIKey:     len(d.Config.API.APIKeys) > 0,

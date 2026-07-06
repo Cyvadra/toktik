@@ -92,6 +92,10 @@ func APIKeyAuth(cfg config.API) gin.HandlerFunc {
 		return func(c *gin.Context) { c.Next() }
 	}
 	return func(c *gin.Context) {
+		if strings.HasPrefix(c.Request.URL.Path, "/utils/") {
+			c.Next()
+			return
+		}
 		apiKey := c.GetHeader("X-API-Key")
 		if apiKey == "" {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, dto.ErrorResponse{Error: "missing API key"})

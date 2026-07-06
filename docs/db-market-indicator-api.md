@@ -708,6 +708,29 @@ Returns latest known values per (symbol, factor) at as_of. For us-stocks, price-
 | 400 | [ErrorResponse](#errorresponse) | Bad Request |
 | 500 | [ErrorResponse](#errorresponse) | Internal Server Error |
 
+### US stock logo image
+
+- Endpoint: `GET /utils/us-stocks/logos/{symbol}`
+- Tags: `Utilities`
+- Produces: `image/png`
+- Summary: Get US stock logo image
+- Description: Returns a US stock logo as an image-like URL. Use `/utils/us-stocks/logos/AAPL.png` directly in image tags or clients. The endpoint does not require an API key. If the logo is cached in MySQL it is returned immediately; otherwise the server tries FMP in real time, stores the logo as base64 in MySQL, and returns it. Symbols that failed FMP lookup in the last 24 hours return a generated default PNG icon.
+
+#### Parameters
+
+| Name | In | Type | Required | Description |
+| --- | --- | --- | --- | --- |
+| symbol | path | string | yes | Ticker plus image suffix, for example AAPL.png. Supported suffixes: .png, .jpg, .jpeg, .svg, .webp. |
+
+#### Responses
+
+| Status | Schema | Description |
+| --- | --- | --- |
+| 200 | file | Logo image bytes |
+| 400 | [ErrorResponse](#errorresponse) | Bad Request |
+| 500 | [ErrorResponse](#errorresponse) | Internal Server Error |
+| 501 | [ErrorResponse](#errorresponse) | Not Implemented |
+
 ### US stock company profiles
 
 - Endpoint: `POST /api/v1/markets/us-stocks/profiles`

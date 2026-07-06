@@ -145,6 +145,11 @@ type mockMacroProvider struct {
 	err         error
 }
 
+type mockLogoProvider struct {
+	logo *dto.USStockLogoImage
+	err  error
+}
+
 func (m *mockQuerier) QueryBars(_ context.Context, _ dto.BarRequest) (*dto.BarResponse, error) {
 	return m.barsResp, m.err
 }
@@ -159,6 +164,13 @@ func (m *mockQuerier) RunBacktest(_ context.Context, _ dto.BacktestRequest) (*ba
 }
 func (m *mockQuerier) QueryChain(_ context.Context, _ dto.CryptoOptionChainRequest) (*dto.CryptoOptionChainResponse, error) {
 	return nil, m.err
+}
+
+func (m *mockLogoProvider) GetLogo(_ context.Context, symbol string) (*dto.USStockLogoImage, error) {
+	if m.logo != nil && m.logo.Symbol == "" {
+		m.logo.Symbol = symbol
+	}
+	return m.logo, m.err
 }
 
 func (m *mockUniverseProvider) Members(_ context.Context, req dto.UniverseMembersRequest) (*dto.UniverseMembersResponse, error) {
@@ -424,6 +436,33 @@ func (m *mockScreener) ScreenOptions(_ context.Context, req dto.ScreenOptionRequ
 func setupRouter(q CryptoOptionsQuerier) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	return NewRouter(q, &mockUSStocksQuerier{}, &mockUSOptionsQuerier{}, &mockInfra{}, &mockFeature{}, nil, nil, nil, nil, nil, nil)
+}
+
+func TestUtilsUSStockLogoBypassesAPIKeyAuth(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	cfg := config.DefaultRuntime()
+	cfg.API.APIKeys = []string{"secret"}
+	r := NewRouterFromDeps(Deps{
+		Config: cfg,
+		Logos: &mockLogoProvider{logo: &dto.USStockLogoImage{
+			ContentType: "image/png",
+			Data:        []byte("png-data"),
+		}},
+	})
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/utils/us-stocks/logos/AAPL.png", nil)
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	if got := w.Header().Get("Content-Type"); !strings.Contains(got, "image/png") {
+		t.Fatalf("content type = %q, want image/png", got)
+	}
+	if got := w.Body.String(); got != "png-data" {
+		t.Fatalf("body = %q, want png-data", got)
+	}
 }
 
 func TestGetPolygonStockSnapshot_Success(t *testing.T) {

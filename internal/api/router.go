@@ -33,6 +33,7 @@ type Deps struct {
 	Fundamentals      FundamentalsProvider
 	Macro             MacroProvider
 	FinanceCalendar   FinanceCalendarProvider
+	Logos             LogoProvider
 	Polygon           PolygonProvider // optional
 
 	// Stop is closed when the server shuts down. Long-lived middleware
@@ -73,6 +74,9 @@ func NewRouterFromDeps(d Deps) *gin.Engine {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
 	r.GET("/ready", h.GetReadiness)
+
+	utils := r.Group("/utils")
+	registerUtilsRoutes(utils, h)
 
 	v1 := r.Group("/api/v1")
 	registerRoutes(v1, h)
@@ -255,6 +259,10 @@ func registerRoutes(v1 *gin.RouterGroup, h *Handler) {
 	polygonOptions.GET("/trades", h.GetPolygonOptionTrades)
 
 	v1.GET("/strategies", h.ListStrategies)
+}
+
+func registerUtilsRoutes(utils *gin.RouterGroup, h *Handler) {
+	utils.GET("/us-stocks/logos/:symbol", h.GetUSStockLogo)
 }
 
 // isStreamingPath identifies endpoints that must not have a per-request

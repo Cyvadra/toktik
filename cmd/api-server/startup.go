@@ -11,6 +11,7 @@ import (
 	"github.com/Cyvadra/toktik/internal/calendarrepo"
 	"github.com/Cyvadra/toktik/internal/chrepo"
 	"github.com/Cyvadra/toktik/internal/config"
+	"github.com/Cyvadra/toktik/internal/logorepo"
 	"github.com/Cyvadra/toktik/internal/service"
 	"github.com/Cyvadra/toktik/internal/universerepo"
 	"github.com/Cyvadra/toktik/pkg/feeds"
@@ -31,6 +32,7 @@ type apiCoreServices struct {
 	universes       *service.UniverseService
 	backtests       *service.PortfolioBacktestService
 	latestMarket    *service.LatestUSMarketCache
+	logos           api.LogoProvider
 	fmpClient       *fmp.Client
 }
 
@@ -48,7 +50,7 @@ func (g apiRefresherGroup) Wait() {
 	}
 }
 
-func buildAPICoreServices(runtimeCfg config.Runtime, repo *chrepo.Repo, calendarRepo *calendarrepo.Repo, universeRepo *universerepo.Repo, cacheStore cache.Store, factorStore *feeds.Store) (*apiCoreServices, error) {
+func buildAPICoreServices(runtimeCfg config.Runtime, repo *chrepo.Repo, calendarRepo *calendarrepo.Repo, universeRepo *universerepo.Repo, logoRepo *logorepo.Repo, cacheStore cache.Store, factorStore *feeds.Store) (*apiCoreServices, error) {
 	fundamentalsSvc := service.NewFundamentalsService(repo)
 	macroSvc := service.NewMacroService(repo)
 	fmpAPIKey, err := runtimeCfg.FMPAPIKey()
@@ -78,6 +80,7 @@ func buildAPICoreServices(runtimeCfg config.Runtime, repo *chrepo.Repo, calendar
 		universes:    universeSvc,
 		backtests:    backtests,
 		latestMarket: latestMarket,
+		logos:        service.NewUSStockLogoService(logoRepo, fmpClient, cacheStore),
 		fmpClient:    fmpClient,
 	}, nil
 }
@@ -102,6 +105,7 @@ func buildAPIDeps(runtimeCfg config.Runtime, repo *chrepo.Repo, factorStore *fee
 		Fundamentals:      services.fundamentals,
 		Macro:             services.macro,
 		FinanceCalendar:   services.financeCalendar,
+		Logos:             services.logos,
 		Polygon:           polygonSvc,
 		Stop:              stop,
 	}

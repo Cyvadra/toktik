@@ -139,6 +139,10 @@ type FinanceCalendarProvider interface {
 	QueryStockCalendar(ctx context.Context, req dto.StockCalendarRequest) (*dto.StockCalendarResponse, error)
 }
 
+type LogoProvider interface {
+	GetLogo(ctx context.Context, symbol string) (*dto.USStockLogoImage, error)
+}
+
 type PolygonProvider interface {
 	QueryStockSnapshot(ctx context.Context, req dto.PolygonStockSnapshotRequest) (*dto.PolygonStockSnapshotResponse, error)
 	QueryStockAggregates(ctx context.Context, req dto.PolygonAggregateRequest) (*dto.PolygonAggregateResponse, error)

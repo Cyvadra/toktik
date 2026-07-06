@@ -37,6 +37,7 @@ import (
 	appCli "github.com/Cyvadra/toktik/internal/cli"
 	"github.com/Cyvadra/toktik/internal/config"
 	"github.com/Cyvadra/toktik/internal/cryptooptions"
+	"github.com/Cyvadra/toktik/internal/logorepo"
 	"github.com/Cyvadra/toktik/internal/service"
 	"github.com/Cyvadra/toktik/internal/universerepo"
 	_ "github.com/Cyvadra/toktik/pkg/dsl/catalog"
@@ -105,6 +106,10 @@ func run() error {
 	if err := universeRepo.AutoMigrate(ctx); err != nil {
 		return fmt.Errorf("migrate universe control tables: %w", err)
 	}
+	logoRepo := logorepo.New(gormDB)
+	if err := logoRepo.AutoMigrate(ctx); err != nil {
+		return fmt.Errorf("migrate US stock logo tables: %w", err)
+	}
 
 	conn, err := appCli.ConnectClickHouse(ctx, *dsn, &appCli.SchemaInit{
 		DDLFile:    ddlFile,
@@ -145,7 +150,7 @@ func run() error {
 	}()
 
 	repo := chrepo.NewRepo(conn)
-	apiServices, err := buildAPICoreServices(runtimeCfg, repo, calendarRepo, universeRepo, cacheStore, factorStore)
+	apiServices, err := buildAPICoreServices(runtimeCfg, repo, calendarRepo, universeRepo, logoRepo, cacheStore, factorStore)
 	if err != nil {
 		return err
 	}
