@@ -55,23 +55,44 @@ func (s *USStockLogoService) GetLogo(ctx context.Context, symbol string) (*dto.U
 	if normalized == "" {
 		return nil, fmt.Errorf("symbol is required")
 	}
-	if logo, ok, err := s.repo.Find(ctx, normalized); err != nil {
-		return nil, fmt.Errorf("query US stock logo: %w", err)
-	} else if ok {
-		return logoRecordToResponse(*logo, false)
+	candidates := usStockLogoSymbolCandidates(normalized)
+	for _, candidate := range candidates {
+		if logo, ok, err := s.repo.Find(ctx, candidate); err != nil {
+			return nil, fmt.Errorf("query US stock logo: %w", err)
+		} else if ok {
+			resp, err := logoRecordToResponse(*logo, false)
+			if err != nil {
+				return nil, err
+			}
+			if candidate != normalized {
+				_ = s.storeLogoAlias(ctx, normalized, *logo)
+				resp.Symbol = normalized
+			}
+			return resp, nil
+		}
 	}
-	if s.recentMiss(ctx, normalized) {
+	if s.allCandidatesRecentlyMissed(ctx, candidates) {
 		return defaultUSStockLogo(normalized), nil
 	}
-	logo, err := s.fetchAndStore(ctx, normalized)
-	if err == nil {
-		return logo, nil
+	for _, candidate := range candidates {
+		if s.recentMiss(ctx, candidate) {
+			continue
+		}
+		logo, err := s.fetchAndStore(ctx, candidate)
+		if err == nil {
+			if candidate != normalized {
+				_ = s.storeLogoAliasFromImage(ctx, normalized, candidate, logo)
+				logo.Symbol = normalized
+			}
+			return logo, nil
+		}
+		if errors.Is(err, errUSStockLogoNotFound) {
+			_ = s.rememberMiss(ctx, candidate)
+			continue
+		}
+		return nil, err
 	}
-	if errors.Is(err, errUSStockLogoNotFound) {
-		_ = s.rememberMiss(ctx, normalized)
-		return defaultUSStockLogo(normalized), nil
-	}
-	return nil, err
+	return defaultUSStockLogo(normalized), nil
 }
 
 func (s *USStockLogoService) fetchAndStore(ctx context.Context, symbol string) (*dto.USStockLogoImage, error) {
@@ -159,6 +180,84 @@ func (s *USStockLogoService) rememberMiss(ctx context.Context, symbol string) er
 
 func usStockLogoMissCacheKey(symbol string) string {
 	return "us-stocks:logo:miss:v1:" + normalizeUSStockCompanyProfileSymbol(symbol)
+}
+
+func (s *USStockLogoService) allCandidatesRecentlyMissed(ctx context.Context, candidates []string) bool {
+	if len(candidates) == 0 {
+		return false
+	}
+	for _, candidate := range candidates {
+		if !s.recentMiss(ctx, candidate) {
+			return false
+		}
+	}
+	return true
+}
+
+func (s *USStockLogoService) storeLogoAlias(ctx context.Context, alias string, source logorepo.StockLogo) error {
+	source.Symbol = normalizeUSStockCompanyProfileSymbol(alias)
+	if source.Symbol == "" {
+		return nil
+	}
+	return s.repo.Upsert(ctx, source)
+}
+
+func (s *USStockLogoService) storeLogoAliasFromImage(ctx context.Context, alias, sourceSymbol string, logo *dto.USStockLogoImage) error {
+	if logo == nil {
+		return nil
+	}
+	alias = normalizeUSStockCompanyProfileSymbol(alias)
+	if alias == "" {
+		return nil
+	}
+	return s.repo.Upsert(ctx, logorepo.StockLogo{
+		Symbol:      alias,
+		ContentType: logo.ContentType,
+		DataBase64:  base64.StdEncoding.EncodeToString(logo.Data),
+		SourceURL:   "alias:" + normalizeUSStockCompanyProfileSymbol(sourceSymbol),
+		Source:      "fmp",
+	})
+}
+
+func usStockLogoSymbolCandidates(symbol string) []string {
+	normalized := normalizeUSStockCompanyProfileSymbol(symbol)
+	if normalized == "" {
+		return nil
+	}
+	groups := [][]string{
+		{"SPY", "SPX"},
+		{"QQQ", "NDX"},
+		{"GOOGL", "GOOG"},
+		{"BRK.B", "BRK.A", "BRK-B", "BRK-A"},
+		{"BF.B", "BF.A", "BF-B", "BF-A"},
+		{"FOX", "FOXA"},
+		{"NWS", "NWSA"},
+	}
+	for _, group := range groups {
+		for _, item := range group {
+			if normalized == item {
+				return orderedLogoCandidates(normalized, group)
+			}
+		}
+	}
+	return []string{normalized}
+}
+
+func orderedLogoCandidates(symbol string, group []string) []string {
+	out := []string{symbol}
+	seen := map[string]struct{}{symbol: {}}
+	for _, item := range group {
+		item = normalizeUSStockCompanyProfileSymbol(item)
+		if item == "" {
+			continue
+		}
+		if _, ok := seen[item]; ok {
+			continue
+		}
+		seen[item] = struct{}{}
+		out = append(out, item)
+	}
+	return out
 }
 
 func logoRecordToResponse(record logorepo.StockLogo, isDefault bool) (*dto.USStockLogoImage, error) {

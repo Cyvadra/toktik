@@ -13,7 +13,7 @@ import (
 type Profile struct {
 	Symbol            string        `json:"symbol"`
 	Price             float64       `json:"price"`
-	MarketCap         int64         `json:"marketCap"`
+	MarketCap         flexibleInt64 `json:"marketCap"`
 	Beta              float64       `json:"beta"`
 	LastDividend      float64       `json:"lastDividend"`
 	Range             string        `json:"range"`

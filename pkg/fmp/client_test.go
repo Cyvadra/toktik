@@ -61,6 +61,27 @@ func TestProfilesAcceptsFractionalVolumeFields(t *testing.T) {
 	}
 }
 
+func TestProfilesAcceptsFractionalMarketCap(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`[{
+			"symbol":"GOOG",
+			"marketCap":4353064766971.0005,
+			"image":"https://images.financialmodelingprep.com/symbol/GOOG.png"
+		}]`))
+	}))
+	defer server.Close()
+
+	client := New("test-key", WithHTTPClient(server.Client()), WithBaseURL(server.URL))
+	profile, err := client.Profile(context.Background(), "GOOG")
+	if err != nil {
+		t.Fatalf("profile: %v", err)
+	}
+	if profile.MarketCap != 4353064766971 {
+		t.Fatalf("marketCap = %d, want 4353064766971", profile.MarketCap)
+	}
+}
+
 func TestClientUsesDiskCache(t *testing.T) {
 	var attempts int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
