@@ -123,6 +123,8 @@ type jobConfig struct {
 	MinQuarters              int               `yaml:"min_quarters"`
 	ColdStartFloor           string            `yaml:"cold_start_floor"`
 	CalendarChunkDays        int               `yaml:"calendar_chunk_days"`
+	RepairFrom               string            `yaml:"repair_from"`
+	RepairTo                 string            `yaml:"repair_to"`
 }
 
 type optionalBoolFlag struct {
@@ -1087,7 +1089,7 @@ func buildCalendarSyncer(buildCtx syncerBuildContext, name string, job jobConfig
 		syncer, err := pipelinejobs.NewFMPObservedStockCalendar(pipelinejobs.FMPObservedStockCalendarConfig{APIKey: calendarCfg.APIKey, FMPCacheDir: calendarCfg.FMPCacheDir, MySQLDSN: calendarCfg.MySQLDSN, Cache: calendarCfg.Cache, ColdStartFloorUTC: calendarCfg.ColdStartFloorUTC})
 		return syncer, true, err
 	case "fmp_stock_earnings_calendar_backfill":
-		syncer, err := pipelinejobs.NewFMPStockEarningsCalendarBackfill(pipelinejobs.FMPStockEarningsCalendarBackfillConfig{APIKey: calendarCfg.APIKey, FMPCacheDir: calendarCfg.FMPCacheDir, MySQLDSN: calendarCfg.MySQLDSN, ChunkDays: job.CalendarChunkDays, ColdStartFloorUTC: calendarCfg.ColdStartFloorUTC})
+		syncer, err := pipelinejobs.NewFMPStockEarningsCalendarBackfill(pipelinejobs.FMPStockEarningsCalendarBackfillConfig{APIKey: calendarCfg.APIKey, FMPCacheDir: calendarCfg.FMPCacheDir, MySQLDSN: calendarCfg.MySQLDSN, ChunkDays: job.CalendarChunkDays, RepairFromUTC: parseColdStart(job.RepairFrom), RepairToUTC: parseColdStart(job.RepairTo), ColdStartFloorUTC: calendarCfg.ColdStartFloorUTC})
 		return syncer, true, err
 	default:
 		return nil, false, nil

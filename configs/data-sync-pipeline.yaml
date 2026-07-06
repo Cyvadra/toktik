@@ -132,6 +132,10 @@ jobs:
     enabled: false
     calendar_chunk_days: 1
     cold_start_floor: 1990-01-01
+    # Set repair_from/repair_to to backfill or correct historical ranges as
+    # independent chunk source keys, e.g. 2026-04-07..2026-10-04.
+    # repair_from: 2026-04-07
+    # repair_to: 2026-10-04
 
   polygon_us_flatfiles:
     enabled: true

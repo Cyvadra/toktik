@@ -11,6 +11,7 @@ import (
 	"image/draw"
 	"image/png"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -65,7 +66,9 @@ func (s *USStockLogoService) GetLogo(ctx context.Context, symbol string) (*dto.U
 				return nil, err
 			}
 			if candidate != normalized {
-				_ = s.storeLogoAlias(ctx, normalized, *logo)
+				if err := s.storeLogoAlias(ctx, normalized, *logo); err != nil {
+					slog.Warn("store US stock logo alias failed", "symbol", normalized, "source_symbol", candidate, "err", err)
+				}
 				resp.Symbol = normalized
 			}
 			return resp, nil
@@ -81,7 +84,9 @@ func (s *USStockLogoService) GetLogo(ctx context.Context, symbol string) (*dto.U
 		logo, err := s.fetchAndStore(ctx, candidate)
 		if err == nil {
 			if candidate != normalized {
-				_ = s.storeLogoAliasFromImage(ctx, normalized, candidate, logo)
+				if err := s.storeLogoAliasFromImage(ctx, normalized, candidate, logo); err != nil {
+					slog.Warn("store US stock logo alias failed", "symbol", normalized, "source_symbol", candidate, "err", err)
+				}
 				logo.Symbol = normalized
 			}
 			return logo, nil

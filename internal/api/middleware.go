@@ -92,7 +92,7 @@ func APIKeyAuth(cfg config.API) gin.HandlerFunc {
 		return func(c *gin.Context) { c.Next() }
 	}
 	return func(c *gin.Context) {
-		if strings.HasPrefix(c.Request.URL.Path, "/utils/") {
+		if isPublicPath(c.Request.URL.Path) {
 			c.Next()
 			return
 		}
@@ -110,6 +110,10 @@ func APIKeyAuth(cfg config.API) gin.HandlerFunc {
 		}
 		c.AbortWithStatusJSON(http.StatusUnauthorized, dto.ErrorResponse{Error: "invalid API key"})
 	}
+}
+
+func isPublicPath(path string) bool {
+	return strings.HasPrefix(path, "/utils/us-stocks/logos/")
 }
 
 // rateBucket is one token bucket entry.

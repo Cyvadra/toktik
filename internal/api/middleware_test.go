@@ -65,6 +65,33 @@ func TestCORSMiddlewareExplicitOriginsOverrideLANDefault(t *testing.T) {
 	}
 }
 
+func TestAPIKeyAuthOnlyBypassesExplicitPublicPaths(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	r := gin.New()
+	r.Use(APIKeyAuth(config.API{APIKeys: []string{"secret"}}))
+	r.GET("/utils/us-stocks/logos/:symbol", func(c *gin.Context) {
+		c.Status(http.StatusOK)
+	})
+	r.GET("/utils/other", func(c *gin.Context) {
+		c.Status(http.StatusOK)
+	})
+
+	publicReq := httptest.NewRequest(http.MethodGet, "/utils/us-stocks/logos/AAPL.png", nil)
+	publicResp := httptest.NewRecorder()
+	r.ServeHTTP(publicResp, publicReq)
+	if publicResp.Code != http.StatusOK {
+		t.Fatalf("expected logo utility to bypass auth, got status %d", publicResp.Code)
+	}
+
+	privateReq := httptest.NewRequest(http.MethodGet, "/utils/other", nil)
+	privateResp := httptest.NewRecorder()
+	r.ServeHTTP(privateResp, privateReq)
+	if privateResp.Code != http.StatusUnauthorized {
+		t.Fatalf("expected unrelated utility route to require auth, got status %d", privateResp.Code)
+	}
+}
+
 func TestRateLimitMiddlewareBypassesLocalClients(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

@@ -145,10 +145,32 @@ func TestFMPStockEarningsCalendarBackfillDefaultsAndSourceKeys(t *testing.T) {
 	}
 }
 
+func TestFMPStockEarningsCalendarBackfillRepairSourceKeysUseChunks(t *testing.T) {
+	syncer, err := NewFMPStockEarningsCalendarBackfill(FMPStockEarningsCalendarBackfillConfig{
+		APIKey:        "test-key",
+		MySQLDSN:      "user:pass@tcp(localhost:3306)/toktik",
+		ChunkDays:     2,
+		RepairFromUTC: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
+		RepairToUTC:   time.Date(2024, 1, 5, 0, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("NewFMPStockEarningsCalendarBackfill returned error: %v", err)
+	}
+
+	keys, err := syncer.SourceKeys(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("SourceKeys returned error: %v", err)
+	}
+	want := []string{"2024-01-01..2024-01-02", "2024-01-03..2024-01-04", "2024-01-05..2024-01-05"}
+	if !reflect.DeepEqual(keys, want) {
+		t.Fatalf("SourceKeys = %#v, want %#v", keys, want)
+	}
+}
+
 func TestEarningsCalendarBackfillNotesReportsCapHits(t *testing.T) {
-	notes := earningsCalendarBackfillNotes(3, 12000, 2, false)
+	notes := earningsCalendarBackfillNotes(4000, 3999, true, false)
 	joined := strings.Join(notes, "\n")
-	for _, want := range []string{"chunks=3", "fetched_events=12000", "possible_fmp_cap_chunks=2", "rows reports fetched events"} {
+	for _, want := range []string{"fetched_events=4000", "valid_events=3999", "possible_fmp_cap=true", "upsert attempted"} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("notes %q missing %q", joined, want)
 		}
