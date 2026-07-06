@@ -37,6 +37,10 @@ import (
 
 const defaultPipelineConfigPath = "configs/data-sync-pipeline.yaml"
 
+type usStockSourcePolicy string
+
+const usStockSourcePolygon usStockSourcePolicy = "polygon"
+
 type pipelineConfig struct {
 	Runner runnerConfig         `yaml:"runner"`
 	Jobs   map[string]jobConfig `yaml:"jobs"`
@@ -838,38 +842,28 @@ func normalizePipelineConfig(cfg *pipelineConfig) error {
 		cfg.Runner.MaxSourceConcurrency = cfg.Runner.MaxJobConcurrency
 	}
 
-	polygonJob := cfg.Jobs["polygon_us_flatfiles"]
-	polygonJob.Enabled = true
-	polygonJob.SyncStocks = true
-	cfg.Jobs["polygon_us_flatfiles"] = polygonJob
-
-	fmpStocksJob := cfg.Jobs["fmp_us_stocks"]
-	fmpStocksJob.Enabled = false
-	cfg.Jobs["fmp_us_stocks"] = fmpStocksJob
-
-	stockDependency := "polygon_us_flatfiles"
+	applyUSStockSourcePolicy(cfg, usStockSourcePolygon)
 
 	if job, ok := cfg.Jobs["fmp_us_fundamentals"]; ok && job.Enabled {
-		job.DependsOn = replaceDependency(job.DependsOn, "fmp_us_stocks", stockDependency)
+		job.DependsOn = dependOnPolygonStockSource(job.DependsOn)
 		cfg.Jobs["fmp_us_fundamentals"] = job
 	}
 	if job, ok := cfg.Jobs["fmp_us_stock_splits"]; ok && job.Enabled {
-		job.DependsOn = replaceDependency(job.DependsOn, "fmp_us_stocks", stockDependency)
+		job.DependsOn = dependOnPolygonStockSource(job.DependsOn)
 		cfg.Jobs["fmp_us_stock_splits"] = job
 	}
 	if job, ok := cfg.Jobs["fmp_us_stock_profiles"]; ok && job.Enabled {
-		job.DependsOn = replaceDependency(job.DependsOn, "fmp_us_stocks", stockDependency)
+		job.DependsOn = dependOnPolygonStockSource(job.DependsOn)
 		cfg.Jobs["fmp_us_stock_profiles"] = job
 	}
 	for _, name := range []string{"fmp_sp500_macro", "fmp_nasdaq100_macro"} {
 		if job, ok := cfg.Jobs[name]; ok && job.Enabled {
-			job.DependsOn = replaceDependency(job.DependsOn, "fmp_us_stocks", stockDependency)
+			job.DependsOn = dependOnPolygonStockSource(job.DependsOn)
 			cfg.Jobs[name] = job
 		}
 	}
 	if job, ok := cfg.Jobs["polygon_us_greeks"]; ok && job.Enabled {
-		job.DependsOn = replaceDependency(job.DependsOn, "fmp_us_stocks", stockDependency)
-		job.DependsOn = ensureDependency(job.DependsOn, "polygon_us_flatfiles")
+		job.DependsOn = dependOnPolygonStockSource(job.DependsOn)
 		cfg.Jobs["polygon_us_greeks"] = job
 	}
 	if job, ok := cfg.Jobs["feature_store_backfill"]; ok && job.Enabled {
@@ -885,6 +879,20 @@ func normalizePipelineConfig(cfg *pipelineConfig) error {
 		cfg.Jobs["feature_store_backfill"] = job
 	}
 	return nil
+}
+
+func applyUSStockSourcePolicy(cfg *pipelineConfig, policy usStockSourcePolicy) {
+	if cfg == nil || policy != usStockSourcePolygon {
+		return
+	}
+	polygonJob := cfg.Jobs["polygon_us_flatfiles"]
+	polygonJob.Enabled = true
+	polygonJob.SyncStocks = true
+	cfg.Jobs["polygon_us_flatfiles"] = polygonJob
+
+	fmpStocksJob := cfg.Jobs["fmp_us_stocks"]
+	fmpStocksJob.Enabled = false
+	cfg.Jobs["fmp_us_stocks"] = fmpStocksJob
 }
 
 func containsString(values []string, target string) bool {
@@ -931,7 +939,7 @@ func resolveSourceConcurrency(cfg runnerConfig, override int) int {
 	return concurrency
 }
 
-func replaceDependency(deps []string, oldName, newName string) []string {
+func dependOnPolygonStockSource(deps []string) []string {
 	out := make([]string, 0, len(deps)+1)
 	seen := map[string]struct{}{}
 	for _, dep := range deps {
@@ -939,8 +947,8 @@ func replaceDependency(deps []string, oldName, newName string) []string {
 		if candidate == "" {
 			continue
 		}
-		if candidate == oldName {
-			candidate = newName
+		if candidate == "fmp_us_stocks" {
+			candidate = "polygon_us_flatfiles"
 		}
 		if _, ok := seen[candidate]; ok {
 			continue
@@ -948,8 +956,8 @@ func replaceDependency(deps []string, oldName, newName string) []string {
 		seen[candidate] = struct{}{}
 		out = append(out, candidate)
 	}
-	if _, ok := seen[newName]; !ok {
-		out = append(out, newName)
+	if _, ok := seen["polygon_us_flatfiles"]; !ok {
+		out = append(out, "polygon_us_flatfiles")
 	}
 	return out
 }

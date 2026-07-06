@@ -2,11 +2,14 @@ package api
 
 import (
 	"net/http"
+	"regexp"
 	"strings"
 
 	"github.com/Cyvadra/toktik/internal/dto"
 	"github.com/gin-gonic/gin"
 )
+
+var usStockLogoSymbolPattern = regexp.MustCompile(`^[A-Z0-9][A-Z0-9.-]{0,15}$`)
 
 // GetUSStockLogo handles GET /utils/us-stocks/logos/{symbol}.{ext}.
 //
@@ -28,6 +31,11 @@ func (h *Handler) GetUSStockLogo(c *gin.Context) {
 	symbol, ok := trimImageSuffix(c.Param("symbol"))
 	if !ok {
 		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: "logo URL must end with an image suffix"})
+		return
+	}
+	symbol = strings.ToUpper(strings.TrimSpace(symbol))
+	if !usStockLogoSymbolPattern.MatchString(symbol) {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: "invalid stock symbol"})
 		return
 	}
 	logo, err := h.logos.GetLogo(c.Request.Context(), symbol)

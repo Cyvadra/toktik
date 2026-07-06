@@ -146,8 +146,10 @@ type mockMacroProvider struct {
 }
 
 type mockLogoProvider struct {
-	logo *dto.USStockLogoImage
-	err  error
+	logo       *dto.USStockLogoImage
+	err        error
+	called     bool
+	lastSymbol string
 }
 
 func (m *mockQuerier) QueryBars(_ context.Context, _ dto.BarRequest) (*dto.BarResponse, error) {
@@ -167,6 +169,8 @@ func (m *mockQuerier) QueryChain(_ context.Context, _ dto.CryptoOptionChainReque
 }
 
 func (m *mockLogoProvider) GetLogo(_ context.Context, symbol string) (*dto.USStockLogoImage, error) {
+	m.called = true
+	m.lastSymbol = symbol
 	if m.logo != nil && m.logo.Symbol == "" {
 		m.logo.Symbol = symbol
 	}
@@ -462,6 +466,23 @@ func TestUtilsUSStockLogoBypassesAPIKeyAuth(t *testing.T) {
 	}
 	if got := w.Body.String(); got != "png-data" {
 		t.Fatalf("body = %q, want png-data", got)
+	}
+}
+
+func TestUtilsUSStockLogoRejectsInvalidSymbolBeforeProvider(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	provider := &mockLogoProvider{logo: &dto.USStockLogoImage{ContentType: "image/png", Data: []byte("png-data")}}
+	r := NewRouterFromDeps(Deps{Logos: provider})
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/utils/us-stocks/logos/BAD_SYMBOL.png", nil)
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body=%s", w.Code, w.Body.String())
+	}
+	if provider.called {
+		t.Fatalf("logo provider should not be called for invalid public symbol, got %q", provider.lastSymbol)
 	}
 }
 

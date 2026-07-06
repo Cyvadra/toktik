@@ -31,10 +31,15 @@ const (
 var errUSStockLogoNotFound = errors.New("us stock logo not found")
 
 type USStockLogoService struct {
-	repo       *logorepo.Repo
+	repo       usStockLogoStore
 	fmpClient  fmpCompanyProfiler
 	cache      cache.Store
 	httpClient *http.Client
+}
+
+type usStockLogoStore interface {
+	Find(ctx context.Context, symbol string) (*logorepo.StockLogo, bool, error)
+	Upsert(ctx context.Context, logo logorepo.StockLogo) error
 }
 
 func NewUSStockLogoService(repo *logorepo.Repo, fmpClient *fmp.Client, cacheStore cache.Store) *USStockLogoService {
@@ -77,6 +82,15 @@ func (s *USStockLogoService) GetLogo(ctx context.Context, symbol string) (*dto.U
 	if s.allCandidatesRecentlyMissed(ctx, candidates) {
 		return defaultUSStockLogo(normalized), nil
 	}
+	return defaultUSStockLogo(normalized), nil
+}
+
+func (s *USStockLogoService) RefreshLogo(ctx context.Context, symbol string) (*dto.USStockLogoImage, error) {
+	normalized := normalizeUSStockCompanyProfileSymbol(symbol)
+	if normalized == "" {
+		return nil, fmt.Errorf("symbol is required")
+	}
+	candidates := usStockLogoSymbolCandidates(normalized)
 	for _, candidate := range candidates {
 		if s.recentMiss(ctx, candidate) {
 			continue
