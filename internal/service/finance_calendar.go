@@ -19,7 +19,16 @@ const (
 	financeCalendarDateLayout     = "2006-01-02"
 	financeCalendarDateTimeLayout = "2006-01-02 15:04:05"
 	financeCalendarSyncCacheTTL   = 12 * time.Hour
+	stockCalendarPastDays         = 60
+	stockCalendarFutureDays       = 100
+	stockCalendarEarningsOverlap  = 1
+	stockCalendarChunkDays        = 1
 )
+
+type financeCalendarDateChunk struct {
+	from time.Time
+	to   time.Time
+}
 
 type FinanceCalendarService struct {
 	repo                   *calendarrepo.Repo
@@ -89,7 +98,25 @@ func (s *FinanceCalendarService) economicWindow() (time.Time, time.Time) {
 
 func (s *FinanceCalendarService) stockWindow() (time.Time, time.Time) {
 	now := dateOnly(s.now())
-	return now.AddDate(0, 0, -30), now.AddDate(0, 0, 90)
+	return now.AddDate(0, 0, -stockCalendarPastDays), now.AddDate(0, 0, stockCalendarFutureDays)
+}
+
+func (s *FinanceCalendarService) stockEarningsSyncFrom(ctx context.Context, fallback time.Time) (time.Time, error) {
+	if s == nil || s.repo == nil {
+		return fallback, nil
+	}
+	latest, ok, err := s.repo.LatestStockEventAt(ctx, calendarrepo.EventTypeEarnings)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("query latest stock earnings calendar date: %w", err)
+	}
+	if !ok {
+		return fallback, nil
+	}
+	from := dateOnly(latest).AddDate(0, 0, -stockCalendarEarningsOverlap)
+	if from.After(fallback) {
+		return fallback, nil
+	}
+	return from, nil
 }
 
 func (s *FinanceCalendarService) SyncEconomicCalendar(ctx context.Context) (int, error) {
@@ -112,6 +139,10 @@ func (s *FinanceCalendarService) SyncEconomicCalendar(ctx context.Context) (int,
 }
 
 func (s *FinanceCalendarService) SyncStockCalendar(ctx context.Context, symbols []string) (int, error) {
+	return s.SyncStockCalendarDryRun(ctx, symbols, false)
+}
+
+func (s *FinanceCalendarService) SyncStockCalendarDryRun(ctx context.Context, symbols []string, dryRun bool) (int, error) {
 	if s == nil || s.repo == nil || s.fmp == nil {
 		return 0, fmt.Errorf("finance calendar service not configured")
 	}
@@ -120,13 +151,20 @@ func (s *FinanceCalendarService) SyncStockCalendar(ctx context.Context, symbols 
 		return 0, dto.NewValidationError("symbols must be non-empty")
 	}
 	from, to := s.stockWindow()
-	cacheKey := financeCalendarStockSyncCacheKey(normalized, from, to)
+	earningsFrom, err := s.stockEarningsSyncFrom(ctx, from)
+	if err != nil {
+		return 0, err
+	}
+	cacheKey := financeCalendarStockSyncCacheKey(normalized, earningsFrom, to)
 	if fresh, _ := s.loadSyncMarker(ctx, cacheKey); fresh {
 		return 0, nil
 	}
-	rows, err := s.runSyncStockCalendar(ctx, from, to, normalized)
+	rows, err := s.runSyncStockCalendarWithEarningsWindow(ctx, from, to, earningsFrom, to, normalized, dryRun)
 	if err != nil {
 		return 0, err
+	}
+	if dryRun {
+		return rows, nil
 	}
 	if err := s.storeSyncMarker(ctx, cacheKey); err != nil {
 		return rows, fmt.Errorf("store stock calendar sync marker: %w", err)
@@ -176,6 +214,13 @@ func (s *FinanceCalendarService) runSyncStockCalendar(ctx context.Context, from,
 	return s.syncStockCalendar(ctx, from, to, symbols)
 }
 
+func (s *FinanceCalendarService) runSyncStockCalendarWithEarningsWindow(ctx context.Context, from, to, earningsFrom, earningsTo time.Time, symbols []string, dryRun bool) (int, error) {
+	if s != nil && s.syncStockCalendarFn != nil {
+		return s.syncStockCalendarFn(ctx, earningsFrom, earningsTo, symbols)
+	}
+	return s.syncStockCalendarWithEarningsWindow(ctx, from, to, earningsFrom, earningsTo, symbols, dryRun)
+}
+
 func (s *FinanceCalendarService) syncEconomicCalendar(ctx context.Context, from, to time.Time) (int, error) {
 	rows, err := s.fmp.EconomicCalendar(ctx, formatDate(from), formatDate(to), "")
 	if err != nil {
@@ -192,6 +237,10 @@ func (s *FinanceCalendarService) syncEconomicCalendar(ctx context.Context, from,
 }
 
 func (s *FinanceCalendarService) syncStockCalendar(ctx context.Context, from, to time.Time, symbols []string) (int, error) {
+	return s.syncStockCalendarWithEarningsWindow(ctx, from, to, from, to, symbols, false)
+}
+
+func (s *FinanceCalendarService) syncStockCalendarWithEarningsWindow(ctx context.Context, from, to, earningsFrom, earningsTo time.Time, symbols []string, dryRun bool) (int, error) {
 	fromDate := formatDate(from)
 	toDate := formatDate(to)
 	allowed := make(map[string]struct{}, len(symbols))
@@ -200,13 +249,15 @@ func (s *FinanceCalendarService) syncStockCalendar(ctx context.Context, from, to
 	}
 	events := []calendarrepo.CalendarEvent{}
 
-	earnings, err := s.fmp.EarningsCalendar(ctx, fromDate, toDate)
-	if err != nil {
-		return 0, fmt.Errorf("fetch FMP earnings calendar: %w", err)
-	}
-	for _, row := range earnings {
-		if _, ok := allowed[normalizeSymbol(row.Symbol)]; ok {
-			events = append(events, earningsEventToModel(row))
+	for _, chunk := range financeCalendarDateChunks(earningsFrom, earningsTo, stockCalendarChunkDays) {
+		earnings, err := s.fmp.EarningsCalendar(ctx, formatDate(chunk.from), formatDate(chunk.to))
+		if err != nil {
+			return 0, fmt.Errorf("fetch FMP earnings calendar %s..%s: %w", formatDate(chunk.from), formatDate(chunk.to), err)
+		}
+		for _, row := range earnings {
+			if _, ok := allowed[normalizeSymbol(row.Symbol)]; ok {
+				events = append(events, earningsEventToModel(row))
+			}
 		}
 	}
 
@@ -250,6 +301,9 @@ func (s *FinanceCalendarService) syncStockCalendar(ctx context.Context, from, to
 		}
 	}
 
+	if dryRun {
+		return len(events), nil
+	}
 	if err := s.repo.UpsertEvents(ctx, events); err != nil {
 		return 0, fmt.Errorf("store stock calendar: %w", err)
 	}
@@ -562,6 +616,23 @@ func financeFloatPtr(value float64) *float64 {
 func dateOnly(value time.Time) time.Time {
 	date := value.In(time.UTC)
 	return time.Date(date.Year(), date.Month(), date.Day(), 0, 0, 0, 0, time.UTC)
+}
+
+func financeCalendarDateChunks(from, to time.Time, chunkDays int) []financeCalendarDateChunk {
+	from = dateOnly(from)
+	to = dateOnly(to)
+	if chunkDays <= 0 {
+		chunkDays = 1
+	}
+	chunks := []financeCalendarDateChunk{}
+	for cursor := from; !cursor.After(to); cursor = cursor.AddDate(0, 0, chunkDays) {
+		chunkTo := cursor.AddDate(0, 0, chunkDays-1)
+		if chunkTo.After(to) {
+			chunkTo = to
+		}
+		chunks = append(chunks, financeCalendarDateChunk{from: cursor, to: chunkTo})
+	}
+	return chunks
 }
 
 func formatDate(value time.Time) string {

@@ -27,6 +27,8 @@ type fmpStockEarningsCalendarBackfill struct {
 	cfg FMPStockEarningsCalendarBackfillConfig
 }
 
+var newFMPClient = fmp.New
+
 func NewFMPStockEarningsCalendarBackfill(cfg FMPStockEarningsCalendarBackfillConfig) (syncpipeline.Syncer, error) {
 	if strings.TrimSpace(cfg.APIKey) == "" {
 		return nil, fmt.Errorf("fmp_stock_earnings_calendar_backfill: APIKey is required")
@@ -96,36 +98,50 @@ func (s *fmpStockEarningsCalendarBackfill) Sync(ctx context.Context, _ driver.Co
 	if strings.TrimSpace(s.cfg.FMPCacheDir) != "" {
 		options = append(options, fmp.WithCacheDir(strings.TrimSpace(s.cfg.FMPCacheDir)))
 	}
-	client := fmp.New(s.cfg.APIKey, options...)
-	chunk := calendarDateChunk{from: req.From, to: req.To}
+	client := newFMPClient(s.cfg.APIKey, options...)
+	from, to := req.From, req.To
+	chunks := calendarDateChunks(from, to, s.cfg.ChunkDays)
 	if parsed, ok := parseCalendarDateChunkKey(req.SourceKey); ok {
-		chunk = parsed
+		chunks = []calendarDateChunk{parsed}
+		from, to = parsed.from, parsed.to
+	}
+	resultNotes := func(fetchedEvents, validEvents int, capHit bool) []string {
+		notes := earningsCalendarBackfillNotes(fetchedEvents, validEvents, capHit, req.DryRun)
+		notes = append(notes, fmt.Sprintf("sync_window=%s..%s", formatCalendarDate(from), formatCalendarDate(to)), fmt.Sprintf("chunks=%d", len(chunks)))
+		return notes
 	}
 	events := []calendarrepo.CalendarEvent{}
-	rows, err := client.EarningsCalendar(ctx, formatCalendarDate(chunk.from), formatCalendarDate(chunk.to))
-	if err != nil {
-		return syncpipeline.SyncResult{SourceKey: req.SourceKey, From: chunk.from, To: chunk.to, Notes: earningsCalendarBackfillNotes(len(rows), len(events), false, req.DryRun)}, fmt.Errorf("fetch FMP earnings calendar %s: %w", chunk.String(), err)
-	}
-	capHit := len(rows) >= 4000
-	for _, row := range rows {
-		event, ok := earningsCalendarEventToModel(row)
-		if ok {
-			events = append(events, event)
+	fetchedEvents := 0
+	capHit := false
+	for _, chunk := range chunks {
+		rows, err := client.EarningsCalendar(ctx, formatCalendarDate(chunk.from), formatCalendarDate(chunk.to))
+		fetchedEvents += len(rows)
+		if len(rows) >= 4000 {
+			capHit = true
+		}
+		if err != nil {
+			return syncpipeline.SyncResult{SourceKey: req.SourceKey, From: from, To: to, Notes: resultNotes(fetchedEvents, len(events), capHit)}, fmt.Errorf("fetch FMP earnings calendar %s: %w", chunk.String(), err)
+		}
+		for _, row := range rows {
+			event, ok := earningsCalendarEventToModel(row)
+			if ok {
+				events = append(events, event)
+			}
 		}
 	}
 	if req.DryRun || len(events) == 0 {
-		return syncpipeline.SyncResult{SourceKey: req.SourceKey, From: chunk.from, To: chunk.to, Notes: earningsCalendarBackfillNotes(len(rows), len(events), capHit, req.DryRun)}, nil
+		return syncpipeline.SyncResult{SourceKey: req.SourceKey, From: from, To: to, Notes: resultNotes(fetchedEvents, len(events), capHit)}, nil
 	}
 	gormDB, closeFn, err := openFinanceCalendarDB(s.cfg.MySQLDSN)
 	if err != nil {
-		return syncpipeline.SyncResult{SourceKey: req.SourceKey, From: chunk.from, To: chunk.to, Notes: earningsCalendarBackfillNotes(len(rows), len(events), capHit, req.DryRun)}, err
+		return syncpipeline.SyncResult{SourceKey: req.SourceKey, From: from, To: to, Notes: resultNotes(fetchedEvents, len(events), capHit)}, err
 	}
 	defer closeFn()
 	repo := calendarrepo.New(gormDB)
 	if err := repo.UpsertEvents(ctx, events); err != nil {
-		return syncpipeline.SyncResult{SourceKey: req.SourceKey, From: chunk.from, To: chunk.to, Notes: earningsCalendarBackfillNotes(len(rows), len(events), capHit, req.DryRun)}, fmt.Errorf("store earnings calendar backfill: %w", err)
+		return syncpipeline.SyncResult{SourceKey: req.SourceKey, From: from, To: to, Notes: resultNotes(fetchedEvents, len(events), capHit)}, fmt.Errorf("store earnings calendar backfill: %w", err)
 	}
-	return syncpipeline.SyncResult{SourceKey: req.SourceKey, From: chunk.from, To: chunk.to, Notes: earningsCalendarBackfillNotes(len(rows), len(events), capHit, req.DryRun)}, nil
+	return syncpipeline.SyncResult{SourceKey: req.SourceKey, From: from, To: to, RowsInserted: int64(len(events)), Notes: resultNotes(fetchedEvents, len(events), capHit)}, nil
 }
 
 func (s *fmpStockEarningsCalendarBackfill) AuditTargets(string) []syncpipeline.AuditTarget {

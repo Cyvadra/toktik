@@ -2,7 +2,10 @@ package jobs
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -11,6 +14,7 @@ import (
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+	"github.com/Cyvadra/toktik/internal/syncpipeline"
 	"github.com/Cyvadra/toktik/pkg/fmp"
 )
 
@@ -164,6 +168,59 @@ func TestFMPStockEarningsCalendarBackfillRepairSourceKeysUseChunks(t *testing.T)
 	want := []string{"2024-01-01..2024-01-02", "2024-01-03..2024-01-04", "2024-01-05..2024-01-05"}
 	if !reflect.DeepEqual(keys, want) {
 		t.Fatalf("SourceKeys = %#v, want %#v", keys, want)
+	}
+}
+
+func TestFMPStockEarningsCalendarBackfillSyncChunksDefaultWindow(t *testing.T) {
+	requests := []string{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/earnings-calendar" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		from := r.URL.Query().Get("from")
+		to := r.URL.Query().Get("to")
+		requests = append(requests, from+".."+to)
+		rows := []map[string]string{{"symbol": "AAPL", "date": from, "lastUpdated": from}}
+		if err := json.NewEncoder(w).Encode(rows); err != nil {
+			t.Fatalf("encode response: %v", err)
+		}
+	}))
+	defer server.Close()
+
+	previousNewFMPClient := newFMPClient
+	newFMPClient = func(apiKey string, opts ...fmp.Option) *fmp.Client {
+		options := append(opts, fmp.WithBaseURL(server.URL), fmp.WithCacheDir(""))
+		return fmp.New(apiKey, options...)
+	}
+	t.Cleanup(func() { newFMPClient = previousNewFMPClient })
+
+	syncer, err := NewFMPStockEarningsCalendarBackfill(FMPStockEarningsCalendarBackfillConfig{
+		APIKey:    "test-key",
+		MySQLDSN:  "user:pass@tcp(localhost:3306)/toktik",
+		ChunkDays: 2,
+	})
+	if err != nil {
+		t.Fatalf("NewFMPStockEarningsCalendarBackfill returned error: %v", err)
+	}
+
+	result, err := syncer.Sync(context.Background(), nil, syncpipeline.SyncRequest{
+		SourceKey: syncpipeline.SingletonSourceKey,
+		From:      time.Date(2026, 7, 28, 12, 0, 0, 0, time.UTC),
+		To:        time.Date(2026, 8, 1, 12, 0, 0, 0, time.UTC),
+		DryRun:    true,
+	})
+	if err != nil {
+		t.Fatalf("Sync returned error: %v", err)
+	}
+	wantRequests := []string{"2026-07-28..2026-07-29", "2026-07-30..2026-07-31", "2026-08-01..2026-08-01"}
+	if !reflect.DeepEqual(requests, wantRequests) {
+		t.Fatalf("FMP requests = %#v, want %#v", requests, wantRequests)
+	}
+	joinedNotes := strings.Join(result.Notes, "\n")
+	for _, want := range []string{"fetched_events=3", "valid_events=3", "dry-run or no rows"} {
+		if !strings.Contains(joinedNotes, want) {
+			t.Fatalf("notes %q missing %q", joinedNotes, want)
+		}
 	}
 }
 

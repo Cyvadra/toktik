@@ -37,6 +37,19 @@ func TestFinanceCalendarStockSyncCacheKeyCanonicalizesSymbols(t *testing.T) {
 	}
 }
 
+func TestFinanceCalendarStockWindowUsesSixtyPastHundredFutureDays(t *testing.T) {
+	svc := NewFinanceCalendarService(nil, nil)
+	svc.now = func() time.Time { return time.Date(2026, 7, 6, 13, 0, 0, 0, time.UTC) }
+
+	from, to := svc.stockWindow()
+	if want := time.Date(2026, 5, 7, 0, 0, 0, 0, time.UTC); !from.Equal(want) {
+		t.Fatalf("stockWindow from = %s, want %s", from, want)
+	}
+	if want := time.Date(2026, 10, 14, 0, 0, 0, 0, time.UTC); !to.Equal(want) {
+		t.Fatalf("stockWindow to = %s, want %s", to, want)
+	}
+}
+
 func TestFinanceCalendarEnsureEconomicCalendarSyncedUsesMarkerCache(t *testing.T) {
 	store := cache.NewMemoryStore()
 	svc := NewFinanceCalendarService(nil, nil, store)

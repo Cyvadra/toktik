@@ -108,6 +108,22 @@ func (r *Repo) ListStockEvents(ctx context.Context, symbols []string, from, to t
 	return r.ListStockEventsByTypes(ctx, symbols, from, to, nil)
 }
 
+func (r *Repo) LatestStockEventAt(ctx context.Context, eventType EventType) (time.Time, bool, error) {
+	var latest time.Time
+	err := r.db.WithContext(ctx).
+		Model(&CalendarEvent{}).
+		Where("event_type = ? AND event_at IS NOT NULL", eventType).
+		Select("MAX(event_at)").
+		Scan(&latest).Error
+	if err != nil {
+		return time.Time{}, false, err
+	}
+	if latest.IsZero() {
+		return time.Time{}, false, nil
+	}
+	return latest, true, nil
+}
+
 func (r *Repo) ListStockEventsByTypes(ctx context.Context, symbols []string, from, to time.Time, eventTypes []string) ([]CalendarEvent, error) {
 	var events []CalendarEvent
 	query := r.db.WithContext(ctx).
