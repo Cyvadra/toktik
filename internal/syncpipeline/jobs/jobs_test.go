@@ -120,6 +120,43 @@ func TestFMPUSStockSplitsCursorUsesPersistedSplitDate(t *testing.T) {
 	}
 }
 
+func TestFMPStockEarningsCalendarBackfillDefaultsAndSourceKeys(t *testing.T) {
+	syncer, err := NewFMPStockEarningsCalendarBackfill(FMPStockEarningsCalendarBackfillConfig{
+		APIKey:   "test-key",
+		MySQLDSN: "user:pass@tcp(localhost:3306)/toktik",
+	})
+	if err != nil {
+		t.Fatalf("NewFMPStockEarningsCalendarBackfill returned error: %v", err)
+	}
+
+	keys, err := syncer.SourceKeys(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("SourceKeys returned error: %v", err)
+	}
+	want := []string{"_default"}
+	if !reflect.DeepEqual(keys, want) {
+		t.Fatalf("SourceKeys = %#v, want %#v", keys, want)
+	}
+	if got := syncer.ColdStartFloor("_"); !got.Equal(time.Date(1990, 1, 1, 0, 0, 0, 0, time.UTC)) {
+		t.Fatalf("ColdStartFloor = %s, want 1990-01-01", got)
+	}
+}
+
+func TestCalendarDateChunksSplitsInclusiveRanges(t *testing.T) {
+	from := time.Date(2024, 1, 1, 10, 0, 0, 0, time.FixedZone("test", 8*3600))
+	to := time.Date(2024, 1, 5, 23, 0, 0, 0, time.FixedZone("test", 8*3600))
+	chunks := calendarDateChunks(from, to, 2)
+
+	want := []calendarDateChunk{
+		{from: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC), to: time.Date(2024, 1, 2, 0, 0, 0, 0, time.UTC)},
+		{from: time.Date(2024, 1, 3, 0, 0, 0, 0, time.UTC), to: time.Date(2024, 1, 4, 0, 0, 0, 0, time.UTC)},
+		{from: time.Date(2024, 1, 5, 0, 0, 0, 0, time.UTC), to: time.Date(2024, 1, 5, 0, 0, 0, 0, time.UTC)},
+	}
+	if !reflect.DeepEqual(chunks, want) {
+		t.Fatalf("calendarDateChunks = %#v, want %#v", chunks, want)
+	}
+}
+
 type queryRowConn struct {
 	driver.Conn
 	query string

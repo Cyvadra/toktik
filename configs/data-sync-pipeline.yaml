@@ -128,6 +128,11 @@ jobs:
     depends_on: [fmp_us_fundamentals, fmp_us_stock_profiles]
     cold_start_floor: 2026-01-01
 
+  fmp_stock_earnings_calendar_backfill:
+    enabled: false
+    calendar_chunk_days: 365
+    cold_start_floor: 1990-01-01
+
   polygon_us_flatfiles:
     enabled: true
     batch_size: 100000

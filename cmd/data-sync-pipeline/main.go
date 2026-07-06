@@ -120,6 +120,7 @@ type jobConfig struct {
 	RollingQuarters          int               `yaml:"rolling_quarters"`
 	MinQuarters              int               `yaml:"min_quarters"`
 	ColdStartFloor           string            `yaml:"cold_start_floor"`
+	CalendarChunkDays        int               `yaml:"calendar_chunk_days"`
 }
 
 type optionalBoolFlag struct {
@@ -1032,6 +1033,9 @@ func buildCalendarSyncer(buildCtx syncerBuildContext, name string, job jobConfig
 	case "fmp_observed_stock_calendar":
 		syncer, err := pipelinejobs.NewFMPObservedStockCalendar(pipelinejobs.FMPObservedStockCalendarConfig{APIKey: calendarCfg.APIKey, FMPCacheDir: calendarCfg.FMPCacheDir, MySQLDSN: calendarCfg.MySQLDSN, Cache: calendarCfg.Cache, ColdStartFloorUTC: calendarCfg.ColdStartFloorUTC})
 		return syncer, true, err
+	case "fmp_stock_earnings_calendar_backfill":
+		syncer, err := pipelinejobs.NewFMPStockEarningsCalendarBackfill(pipelinejobs.FMPStockEarningsCalendarBackfillConfig{APIKey: calendarCfg.APIKey, FMPCacheDir: calendarCfg.FMPCacheDir, MySQLDSN: calendarCfg.MySQLDSN, ChunkDays: job.CalendarChunkDays, ColdStartFloorUTC: calendarCfg.ColdStartFloorUTC})
+		return syncer, true, err
 	default:
 		return nil, false, nil
 	}
@@ -1039,7 +1043,7 @@ func buildCalendarSyncer(buildCtx syncerBuildContext, name string, job jobConfig
 
 func newCalendarSyncerConfig(buildCtx syncerBuildContext, name string, job jobConfig) (pipelinejobs.FMPEconomicCalendarConfig, bool, error) {
 	switch name {
-	case "fmp_economic_calendar", "fmp_observed_stock_calendar":
+	case "fmp_economic_calendar", "fmp_observed_stock_calendar", "fmp_stock_earnings_calendar_backfill":
 		calendarCfg, err := newCalendarPipelineConfig(buildCtx.Runtime, buildCtx.APIKey, parseColdStart(job.ColdStartFloor))
 		return calendarCfg, true, err
 	default:

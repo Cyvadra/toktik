@@ -33,14 +33,14 @@ func (r *Repo) AutoMigrate(ctx context.Context) error {
 
 func (r *Repo) Find(ctx context.Context, symbol string) (*StockLogo, bool, error) {
 	var logo StockLogo
-	err := r.db.WithContext(ctx).Where("symbol = ?", symbol).First(&logo).Error
-	if err == nil {
+	result := r.db.WithContext(ctx).Where("symbol = ?", symbol).Limit(1).Find(&logo)
+	if result.Error != nil {
+		return nil, false, result.Error
+	}
+	if result.RowsAffected > 0 {
 		return &logo, true, nil
 	}
-	if err == gorm.ErrRecordNotFound {
-		return nil, false, nil
-	}
-	return nil, false, err
+	return nil, false, nil
 }
 
 func (r *Repo) Upsert(ctx context.Context, logo StockLogo) error {

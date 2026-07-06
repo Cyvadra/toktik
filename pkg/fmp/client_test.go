@@ -236,6 +236,32 @@ func TestEarningsCalendarUsesDateWindow(t *testing.T) {
 	}
 }
 
+func TestEarningsCalendarAcceptsDecimalRevenueFields(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/earnings-calendar" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`[{"symbol":"TEST","date":"2022-12-31","revenueActual":-151152.62,"revenueEstimated":9304174784.4,"lastUpdated":"2026-03-13"}]`))
+	}))
+	defer server.Close()
+
+	client := New("test-key", WithHTTPClient(server.Client()), WithBaseURL(server.URL))
+	rows, err := client.EarningsCalendar(context.Background(), "2022-01-01", "2022-12-31")
+	if err != nil {
+		t.Fatalf("earnings calendar: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(rows))
+	}
+	if rows[0].RevenueActual == nil || *rows[0].RevenueActual != -151153 {
+		t.Fatalf("RevenueActual = %v, want -151153", rows[0].RevenueActual)
+	}
+	if rows[0].RevenueEstimated == nil || *rows[0].RevenueEstimated != 9304174784 {
+		t.Fatalf("RevenueEstimated = %v, want 9304174784", rows[0].RevenueEstimated)
+	}
+}
+
 func TestSecFilingsFinancialsUsesPaginationAndWindow(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/sec-filings-financials" {

@@ -2,8 +2,11 @@ package fmp
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"math"
 	"net/url"
+	"strings"
 )
 
 // EarningsCalendarEntry is one row returned by FMP's earnings-calendar
@@ -16,6 +19,40 @@ type EarningsCalendarEntry struct {
 	RevenueActual    *int64   `json:"revenueActual"`
 	RevenueEstimated *int64   `json:"revenueEstimated"`
 	LastUpdated      string   `json:"lastUpdated"`
+}
+
+func (e *EarningsCalendarEntry) UnmarshalJSON(data []byte) error {
+	type wire struct {
+		Symbol           string          `json:"symbol"`
+		Date             string          `json:"date"`
+		EPSActual        *float64        `json:"epsActual"`
+		EPSEstimated     *float64        `json:"epsEstimated"`
+		RevenueActual    json.RawMessage `json:"revenueActual"`
+		RevenueEstimated json.RawMessage `json:"revenueEstimated"`
+		LastUpdated      string          `json:"lastUpdated"`
+	}
+	var row wire
+	if err := json.Unmarshal(data, &row); err != nil {
+		return err
+	}
+	revenueActual, err := decodeFMPInt64Number(row.RevenueActual)
+	if err != nil {
+		return fmt.Errorf("revenueActual: %w", err)
+	}
+	revenueEstimated, err := decodeFMPInt64Number(row.RevenueEstimated)
+	if err != nil {
+		return fmt.Errorf("revenueEstimated: %w", err)
+	}
+	*e = EarningsCalendarEntry{
+		Symbol:           row.Symbol,
+		Date:             row.Date,
+		EPSActual:        row.EPSActual,
+		EPSEstimated:     row.EPSEstimated,
+		RevenueActual:    revenueActual,
+		RevenueEstimated: revenueEstimated,
+		LastUpdated:      row.LastUpdated,
+	}
+	return nil
 }
 
 // SecFilingsFinancial is one row returned by FMP's sec-filings-financials
@@ -43,6 +80,22 @@ func (c *Client) EarningsCalendar(ctx context.Context, from, to string) ([]Earni
 		return nil, err
 	}
 	return out, nil
+}
+
+func decodeFMPInt64Number(raw json.RawMessage) (*int64, error) {
+	value := strings.TrimSpace(string(raw))
+	if value == "" || value == "null" {
+		return nil, nil
+	}
+	var number float64
+	if err := json.Unmarshal(raw, &number); err != nil {
+		return nil, err
+	}
+	if math.IsNaN(number) || math.IsInf(number, 0) {
+		return nil, fmt.Errorf("invalid number %v", number)
+	}
+	rounded := int64(math.Round(number))
+	return &rounded, nil
 }
 
 // SecFilingsFinancials returns market-wide filing rows within the requested

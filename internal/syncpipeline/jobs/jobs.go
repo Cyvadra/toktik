@@ -1026,6 +1026,14 @@ type FMPObservedStockCalendarConfig struct {
 	ColdStartFloorUTC time.Time
 }
 
+type FMPStockEarningsCalendarBackfillConfig struct {
+	APIKey            string
+	FMPCacheDir       string
+	MySQLDSN          string
+	ChunkDays         int
+	ColdStartFloorUTC time.Time
+}
+
 type fmpObservedStockCalendar struct {
 	cfg FMPObservedStockCalendarConfig
 }
@@ -1074,12 +1082,176 @@ func (s *fmpObservedStockCalendar) Sync(ctx context.Context, conn driver.Conn, r
 func (s *fmpObservedStockCalendar) AuditTargets(string) []syncpipeline.AuditTarget { return nil }
 func (s *fmpObservedStockCalendar) MaxConcurrency() int                            { return 1 }
 
+type fmpStockEarningsCalendarBackfill struct {
+	cfg FMPStockEarningsCalendarBackfillConfig
+}
+
+func NewFMPStockEarningsCalendarBackfill(cfg FMPStockEarningsCalendarBackfillConfig) (syncpipeline.Syncer, error) {
+	if strings.TrimSpace(cfg.APIKey) == "" {
+		return nil, fmt.Errorf("fmp_stock_earnings_calendar_backfill: APIKey is required")
+	}
+	if strings.TrimSpace(cfg.MySQLDSN) == "" {
+		return nil, fmt.Errorf("fmp_stock_earnings_calendar_backfill: MySQLDSN is required")
+	}
+	if cfg.ChunkDays <= 0 {
+		cfg.ChunkDays = 365
+	}
+	if cfg.ColdStartFloorUTC.IsZero() {
+		cfg.ColdStartFloorUTC = time.Date(1990, 1, 1, 0, 0, 0, 0, time.UTC)
+	}
+	return &fmpStockEarningsCalendarBackfill{cfg: cfg}, nil
+}
+
+func (s *fmpStockEarningsCalendarBackfill) Name() string {
+	return "fmp_stock_earnings_calendar_backfill"
+}
+func (s *fmpStockEarningsCalendarBackfill) SourceKeys(context.Context, driver.Conn) ([]string, error) {
+	return []string{syncpipeline.SingletonSourceKey}, nil
+}
+func (s *fmpStockEarningsCalendarBackfill) ResolveCursor(context.Context, driver.Conn, string) (time.Time, bool, error) {
+	gormDB, closeFn, err := openFinanceCalendarDB(s.cfg.MySQLDSN)
+	if err != nil {
+		return time.Time{}, false, err
+	}
+	defer closeFn()
+	var latest string
+	err = gormDB.Model(&calendarrepo.CalendarEvent{}).
+		Where("event_type = ? AND event_at IS NOT NULL", calendarrepo.EventTypeEarnings).
+		Select("DATE_FORMAT(MAX(event_at), '%Y-%m-%d')").
+		Scan(&latest).Error
+	if err != nil {
+		return time.Time{}, false, fmt.Errorf("query latest earnings calendar date: %w", err)
+	}
+	if strings.TrimSpace(latest) == "" {
+		return time.Time{}, false, nil
+	}
+	parsed, err := time.ParseInLocation("2006-01-02", latest, time.UTC)
+	if err != nil {
+		return time.Time{}, false, fmt.Errorf("parse latest earnings calendar date %q: %w", latest, err)
+	}
+	return parsed, true, nil
+}
+func (s *fmpStockEarningsCalendarBackfill) ColdStartFloor(string) time.Time {
+	return s.cfg.ColdStartFloorUTC
+}
+func (s *fmpStockEarningsCalendarBackfill) Sync(ctx context.Context, _ driver.Conn, req syncpipeline.SyncRequest) (syncpipeline.SyncResult, error) {
+	options := []fmp.Option{}
+	if strings.TrimSpace(s.cfg.FMPCacheDir) != "" {
+		options = append(options, fmp.WithCacheDir(strings.TrimSpace(s.cfg.FMPCacheDir)))
+	}
+	client := fmp.New(s.cfg.APIKey, options...)
+	chunks := calendarDateChunks(req.From, req.To, s.cfg.ChunkDays)
+	events := []calendarrepo.CalendarEvent{}
+	for _, chunk := range chunks {
+		rows, err := client.EarningsCalendar(ctx, formatCalendarDate(chunk.from), formatCalendarDate(chunk.to))
+		if err != nil {
+			return syncpipeline.SyncResult{SourceKey: req.SourceKey, From: req.From, To: req.To, RowsInserted: int64(len(events)), Notes: []string{fmt.Sprintf("chunks=%d", len(chunks))}}, fmt.Errorf("fetch FMP earnings calendar %s..%s: %w", formatCalendarDate(chunk.from), formatCalendarDate(chunk.to), err)
+		}
+		for _, row := range rows {
+			event, ok := earningsCalendarEventToModel(row)
+			if ok {
+				events = append(events, event)
+			}
+		}
+	}
+	if req.DryRun || len(events) == 0 {
+		return syncpipeline.SyncResult{SourceKey: req.SourceKey, From: req.From, To: req.To, RowsInserted: int64(len(events)), Notes: []string{fmt.Sprintf("chunks=%d", len(chunks)), "dry-run or no rows; MySQL calendar_events not mutated"}}, nil
+	}
+	gormDB, closeFn, err := openFinanceCalendarDB(s.cfg.MySQLDSN)
+	if err != nil {
+		return syncpipeline.SyncResult{SourceKey: req.SourceKey, From: req.From, To: req.To, RowsInserted: int64(len(events))}, err
+	}
+	defer closeFn()
+	repo := calendarrepo.New(gormDB)
+	if err := repo.UpsertEvents(ctx, events); err != nil {
+		return syncpipeline.SyncResult{SourceKey: req.SourceKey, From: req.From, To: req.To, RowsInserted: int64(len(events))}, fmt.Errorf("store earnings calendar backfill: %w", err)
+	}
+	return syncpipeline.SyncResult{SourceKey: req.SourceKey, From: req.From, To: req.To, RowsInserted: int64(len(events)), Notes: []string{fmt.Sprintf("chunks=%d", len(chunks))}}, nil
+}
+func (s *fmpStockEarningsCalendarBackfill) AuditTargets(string) []syncpipeline.AuditTarget {
+	return nil
+}
+func (s *fmpStockEarningsCalendarBackfill) MaxConcurrency() int { return 1 }
+
+type calendarDateChunk struct {
+	from time.Time
+	to   time.Time
+}
+
+func calendarDateChunks(from, to time.Time, chunkDays int) []calendarDateChunk {
+	from = dateOnlyUTC(from)
+	to = dateOnlyUTC(to)
+	if chunkDays <= 0 {
+		chunkDays = 365
+	}
+	chunks := []calendarDateChunk{}
+	for cursor := from; !cursor.After(to); cursor = cursor.AddDate(0, 0, chunkDays) {
+		chunkTo := cursor.AddDate(0, 0, chunkDays-1)
+		if chunkTo.After(to) {
+			chunkTo = to
+		}
+		chunks = append(chunks, calendarDateChunk{from: cursor, to: chunkTo})
+	}
+	return chunks
+}
+
+func earningsCalendarEventToModel(row fmp.EarningsCalendarEvent) (calendarrepo.CalendarEvent, bool) {
+	symbol := strings.ToUpper(strings.TrimSpace(row.Symbol))
+	date := strings.TrimSpace(row.Date)
+	if symbol == "" || date == "" {
+		return calendarrepo.CalendarEvent{}, false
+	}
+	eventAt, err := time.ParseInLocation("2006-01-02", date, time.UTC)
+	if err != nil {
+		return calendarrepo.CalendarEvent{}, false
+	}
+	return calendarrepo.CalendarEvent{
+		EventType:        string(calendarrepo.EventTypeEarnings),
+		Symbol:           symbol,
+		EventDate:        date,
+		EventAt:          &eventAt,
+		Title:            symbol + " earnings",
+		EPSActual:        row.EPSActual,
+		EPSEstimated:     row.EPSEstimated,
+		RevenueActual:    row.RevenueActual,
+		RevenueEstimated: row.RevenueEstimated,
+		RawJSON:          calendarRawJSON(row),
+		Source:           "fmp",
+	}, true
+}
+
+func calendarRawJSON(value any) string {
+	data, err := json.Marshal(value)
+	if err != nil || len(data) == 0 {
+		return "{}"
+	}
+	return string(data)
+}
+
+func formatCalendarDate(value time.Time) string {
+	return dateOnlyUTC(value).Format("2006-01-02")
+}
+
+func dateOnlyUTC(value time.Time) time.Time {
+	utc := value.UTC()
+	return time.Date(utc.Year(), utc.Month(), utc.Day(), 0, 0, 0, 0, time.UTC)
+}
+
 func openFinanceCalendarService(cfg FMPEconomicCalendarConfig) (*service.FinanceCalendarService, func(), error) {
 	options := []fmp.Option{}
 	if strings.TrimSpace(cfg.FMPCacheDir) != "" {
 		options = append(options, fmp.WithCacheDir(strings.TrimSpace(cfg.FMPCacheDir)))
 	}
-	gormDB, err := gorm.Open(mysql.Open(cfg.MySQLDSN), &gorm.Config{})
+	gormDB, closeFn, err := openFinanceCalendarDB(cfg.MySQLDSN)
+	if err != nil {
+		return nil, nil, err
+	}
+	client := fmp.New(cfg.APIKey, options...)
+	return service.NewFinanceCalendarService(calendarrepo.New(gormDB), client, cfg.Cache), closeFn, nil
+}
+
+func openFinanceCalendarDB(mysqlDSN string) (*gorm.DB, func(), error) {
+	gormDB, err := gorm.Open(mysql.Open(mysqlDSN), &gorm.Config{})
 	if err != nil {
 		return nil, nil, fmt.Errorf("connect mysql: %w", err)
 	}
@@ -1095,8 +1267,7 @@ func openFinanceCalendarService(cfg FMPEconomicCalendarConfig) (*service.Finance
 	closeFn := func() {
 		_ = sqlDB.Close()
 	}
-	client := fmp.New(cfg.APIKey, options...)
-	return service.NewFinanceCalendarService(repo, client, cfg.Cache), closeFn, nil
+	return gormDB, closeFn, nil
 }
 
 func queryLatestDate(ctx context.Context, conn driver.Conn, table, dateExpr, where string, args ...any) (time.Time, bool, error) {

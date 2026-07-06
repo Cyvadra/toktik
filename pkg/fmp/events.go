@@ -2,6 +2,7 @@ package fmp
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/url"
 )
@@ -16,6 +17,40 @@ type EarningsEvent struct {
 	RevenueActual    *int64   `json:"revenueActual"`
 	RevenueEstimated *int64   `json:"revenueEstimated"`
 	LastUpdated      string   `json:"lastUpdated"`
+}
+
+func (e *EarningsEvent) UnmarshalJSON(data []byte) error {
+	type wire struct {
+		Symbol           string          `json:"symbol"`
+		Date             string          `json:"date"`
+		EPSActual        *float64        `json:"epsActual"`
+		EPSEstimated     *float64        `json:"epsEstimated"`
+		RevenueActual    json.RawMessage `json:"revenueActual"`
+		RevenueEstimated json.RawMessage `json:"revenueEstimated"`
+		LastUpdated      string          `json:"lastUpdated"`
+	}
+	var row wire
+	if err := json.Unmarshal(data, &row); err != nil {
+		return err
+	}
+	revenueActual, err := decodeFMPInt64Number(row.RevenueActual)
+	if err != nil {
+		return fmt.Errorf("revenueActual: %w", err)
+	}
+	revenueEstimated, err := decodeFMPInt64Number(row.RevenueEstimated)
+	if err != nil {
+		return fmt.Errorf("revenueEstimated: %w", err)
+	}
+	*e = EarningsEvent{
+		Symbol:           row.Symbol,
+		Date:             row.Date,
+		EPSActual:        row.EPSActual,
+		EPSEstimated:     row.EPSEstimated,
+		RevenueActual:    revenueActual,
+		RevenueEstimated: revenueEstimated,
+		LastUpdated:      row.LastUpdated,
+	}
+	return nil
 }
 
 // Earnings returns earnings calendar entries for a symbol, newest first.
