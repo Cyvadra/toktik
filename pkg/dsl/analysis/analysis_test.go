@@ -31,6 +31,53 @@ for symbol in symbols {
 	}
 }
 
+func TestAnalyzeResolvesStringAliasOptionChain(t *testing.T) {
+	prog, errs := parser.Parse(`strategy("Static Alias Chain")
+symbol = input.string("TSLA", title="Target")
+chain = options.chain("us", symbol)
+`)
+	if len(errs) > 0 {
+		t.Fatalf("parse errors: %v", errs)
+	}
+	manifest := Analyze(prog)
+	if manifest.HasDynamicOptionChainRequest() {
+		t.Fatalf("expected aliased input string option chain to be static: %+v", manifest.Requests)
+	}
+	requests := manifest.OptionChainRequests()
+	if len(requests) != 1 {
+		t.Fatalf("expected 1 option chain request, got %+v", requests)
+	}
+	if requests[0].Market != "us" || requests[0].Symbol != "TSLA" || requests[0].Key != "us|TSLA" {
+		t.Fatalf("unexpected option chain request: %+v", requests[0])
+	}
+	for _, diagnostic := range manifest.Diagnostics {
+		if diagnostic.Code == "dsl.dynamic_option_chain" {
+			t.Fatalf("unexpected dynamic chain diagnostic: %+v", manifest.Diagnostics)
+		}
+	}
+}
+
+func TestAnalyzeResolvesConfigStringUniverse(t *testing.T) {
+	prog, errs := parser.Parse(`strategy("Static Alias Universe")
+code = config.string("universe_code", "strong_momentum")
+symbols = universe.symbols(code)
+`)
+	if len(errs) > 0 {
+		t.Fatalf("parse errors: %v", errs)
+	}
+	manifest := Analyze(prog)
+	if manifest.HasDynamicUniverseRequest() {
+		t.Fatalf("expected aliased config string universe to be static: %+v", manifest.Requests)
+	}
+	requests := manifest.UniverseRequests()
+	if len(requests) != 1 {
+		t.Fatalf("expected 1 universe request, got %+v", requests)
+	}
+	if requests[0].Code != "strong_momentum" || requests[0].Key != "strong_momentum" {
+		t.Fatalf("unexpected universe request: %+v", requests[0])
+	}
+}
+
 func TestAnalyzeDetectsFundamentalRequests(t *testing.T) {
 	prog, errs := parser.Parse(`strategy("Fundamental Request")
 pe = request.fundamental("us-stocks", "AAPL", "pe")
@@ -96,7 +143,7 @@ symbols = universe.symbols("strong_momentum")
 
 func TestAnalyzeDetectsDynamicUniverseRequests(t *testing.T) {
 	prog, errs := parser.Parse(`strategy("Dynamic Universe")
-code = config.string("universe_code", "strong_momentum")
+code = close > open ? "strong_momentum" : "value_allocation"
 symbols = universe.symbols(code)
 `)
 	if len(errs) > 0 {

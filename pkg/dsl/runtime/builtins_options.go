@@ -2,7 +2,10 @@ package runtime
 
 // When changing DSL builtin behavior here, update builtins_docs.go so generated DSL docs stay accurate.
 
-import "strings"
+import (
+	"math"
+	"strings"
+)
 
 const (
 	OptionStrategyBuyCall           = "BUY_CALL"
@@ -945,59 +948,64 @@ func selectValueOptionStrategies(ctx MarketContext, add func(string)) {
 }
 
 func buildOptionStrategyLegs(b OptionsBridge, chain interface{}, name string, qty, targetDelta float64) []Value {
+	var legs []Value
 	switch name {
 	case OptionStrategyBuyCall:
 		contract := bestContractByDelta(b, b.ChainCalls(chain), targetDelta)
-		return singleLeg(contract, "buy", qty)
+		legs = singleLeg(contract, "buy", qty)
 	case OptionStrategyBuyPut:
 		contract := bestContractByDelta(b, b.ChainPuts(chain), -targetDelta)
-		return singleLeg(contract, "buy", qty)
+		legs = singleLeg(contract, "buy", qty)
 	case OptionStrategySellPut:
 		contract := bestContractByDelta(b, b.ChainPuts(chain), -targetDelta)
-		return singleLeg(contract, "sell", qty)
+		legs = singleLeg(contract, "sell", qty)
 	case OptionStrategySellCall, OptionStrategyCoveredCall:
 		contract := bestContractByDelta(b, b.ChainCalls(chain), targetDelta)
-		return singleLeg(contract, "sell", qty)
+		legs = singleLeg(contract, "sell", qty)
 	case OptionStrategyBullCallSpread:
 		short := bestContractByDelta(b, b.ChainCalls(chain), targetDelta/2)
 		long := bestContractByDelta(b, b.ChainCalls(chain), targetDelta)
-		return verticalLegs(b, long, short, "call", qty)
+		legs = verticalLegs(b, long, short, "call", qty)
 	case OptionStrategyBullPutSpread:
 		short := bestContractByDelta(b, b.ChainPuts(chain), -targetDelta)
 		long := bestContractByDelta(b, b.ChainPuts(chain), -targetDelta/2)
-		return verticalLegs(b, long, short, "put", qty)
+		legs = verticalLegs(b, long, short, "put", qty)
 	case OptionStrategyBearCallSpread:
 		short := bestContractByDelta(b, b.ChainCalls(chain), targetDelta)
 		long := fartherOTMContract(b, b.ChainCalls(chain), short)
-		return verticalLegs(b, long, short, "call", qty)
+		legs = verticalLegs(b, long, short, "call", qty)
 	case OptionStrategyShortStrangle:
 		call := bestContractByDelta(b, b.ChainCalls(chain), targetDelta)
 		put := bestContractByDelta(b, b.ChainPuts(chain), -targetDelta)
-		return twoLegs(call, "sell", put, "sell", qty)
+		legs = twoLegs(call, "sell", put, "sell", qty)
 	case OptionStrategyIronCondor:
 		shortCall := bestContractByDelta(b, b.ChainCalls(chain), targetDelta)
 		longCall := fartherOTMContract(b, b.ChainCalls(chain), shortCall)
 		shortPut := bestContractByDelta(b, b.ChainPuts(chain), -targetDelta)
 		longPut := fartherOTMContract(b, b.ChainPuts(chain), shortPut)
-		return fourLegs(longPut, "buy", shortPut, "sell", shortCall, "sell", longCall, "buy", qty)
+		legs = fourLegs(longPut, "buy", shortPut, "sell", shortCall, "sell", longCall, "buy", qty)
 	case OptionStrategyBuyStraddle:
 		call := bestContractByDelta(b, b.ChainCalls(chain), targetDelta)
 		put := bestContractByDelta(b, b.ChainPuts(chain), -targetDelta)
-		return twoLegs(call, "buy", put, "buy", qty)
+		legs = twoLegs(call, "buy", put, "buy", qty)
 	case OptionStrategyBuySkewedStraddle:
 		call := bestContractByDelta(b, b.ChainCalls(chain), targetDelta/2)
 		put := bestContractByDelta(b, b.ChainPuts(chain), -targetDelta)
-		return twoLegs(call, "buy", put, "buy", qty)
+		legs = twoLegs(call, "buy", put, "buy", qty)
 	case OptionStrategyCalendarSpread:
 		front := bestContractByDelta(b, b.ChainCalls(chain), targetDelta)
 		back := fartherSameStrikeContract(b, b.ChainCalls(chain), front)
 		if front == nil || back == nil {
 			return nil
 		}
-		return []Value{ArrayVal([]Value{ObjVal(front), StringVal("sell"), FloatVal(qty)}), ArrayVal([]Value{ObjVal(back), StringVal("buy"), FloatVal(qty)})}
+		legs = []Value{ArrayVal([]Value{ObjVal(front), StringVal("sell"), FloatVal(qty)}), ArrayVal([]Value{ObjVal(back), StringVal("buy"), FloatVal(qty)})}
 	default:
 		return nil
 	}
+	if !validateOptionStrategyLegs(b, name, parseLegInputs(legs)) {
+		return nil
+	}
+	return legs
 }
 
 func twoLegs(first interface{}, firstSide string, second interface{}, secondSide string, qty float64) []Value {
@@ -1101,13 +1109,73 @@ func parseLegInputs(legs []Value) []SpreadLegInput {
 		if len(arr) < 3 {
 			continue
 		}
+		side := strings.ToLower(strings.TrimSpace(arr[1].Str()))
+		qty := arr[2].Float()
+		if arr[0].Obj() == nil || (side != "buy" && side != "sell") || math.IsNaN(qty) || qty <= 0 {
+			continue
+		}
 		out = append(out, SpreadLegInput{
 			Contract: arr[0].Obj(),
-			Side:     arr[1].Str(),
-			Qty:      arr[2].Float(),
+			Side:     side,
+			Qty:      qty,
 		})
 	}
 	return out
+}
+
+func validateOptionStrategyLegs(b OptionsBridge, name string, legs []SpreadLegInput) bool {
+	if b == nil || len(legs) == 0 {
+		return false
+	}
+	for _, leg := range legs {
+		if leg.Contract == nil || leg.Qty <= 0 || (leg.Side != "buy" && leg.Side != "sell") || !contractHasPrice(b, leg.Contract) {
+			return false
+		}
+	}
+	if len(legs) == 1 {
+		return true
+	}
+	if !sameScopeAndExpiry(b, legs) {
+		return false
+	}
+	side := func(index int) string { return legs[index].Side }
+	right := func(index int) string {
+		return strings.ToLower(strings.TrimSpace(b.ContractType(legs[index].Contract)))
+	}
+	strike := func(index int) float64 { return b.ContractStrike(legs[index].Contract) }
+	switch name {
+	case OptionStrategyBullCallSpread:
+		return len(legs) == 2 && side(0) == "buy" && side(1) == "sell" && right(0) == "call" && right(1) == "call" && strike(0) < strike(1)
+	case OptionStrategyBearCallSpread:
+		return len(legs) == 2 && side(0) == "buy" && side(1) == "sell" && right(0) == "call" && right(1) == "call" && strike(0) > strike(1)
+	case OptionStrategyBullPutSpread:
+		return len(legs) == 2 && side(0) == "buy" && side(1) == "sell" && right(0) == "put" && right(1) == "put" && strike(0) < strike(1)
+	case OptionStrategyShortStrangle:
+		return len(legs) == 2 && side(0) == "sell" && side(1) == "sell" && right(0) == "call" && right(1) == "put" && strike(1) < strike(0)
+	case OptionStrategyIronCondor:
+		return len(legs) == 4 && side(0) == "buy" && side(1) == "sell" && side(2) == "sell" && side(3) == "buy" && right(0) == "put" && right(1) == "put" && right(2) == "call" && right(3) == "call" && strike(0) < strike(1) && strike(1) < strike(2) && strike(2) < strike(3)
+	case OptionStrategyBuyStraddle, OptionStrategyBuySkewedStraddle:
+		return len(legs) == 2 && side(0) == "buy" && side(1) == "buy" && right(0) == "call" && right(1) == "put"
+	case OptionStrategyCalendarSpread:
+		return len(legs) == 2 && side(0) == "sell" && side(1) == "buy" && right(0) == right(1) && b.ContractStrike(legs[0].Contract) == b.ContractStrike(legs[1].Contract) && b.ContractDTE(legs[1].Contract) >= b.ContractDTE(legs[0].Contract)+7
+	default:
+		return len(legs) == 1
+	}
+}
+
+func sameScopeAndExpiry(b OptionsBridge, legs []SpreadLegInput) bool {
+	if len(legs) == 0 {
+		return false
+	}
+	market := strings.TrimSpace(b.ContractMarket(legs[0].Contract))
+	underlying := strings.TrimSpace(b.ContractUnderlying(legs[0].Contract))
+	expiry := b.ContractExpiry(legs[0].Contract)
+	for _, leg := range legs[1:] {
+		if !strings.EqualFold(strings.TrimSpace(b.ContractMarket(leg.Contract)), market) || !strings.EqualFold(strings.TrimSpace(b.ContractUnderlying(leg.Contract)), underlying) || math.Abs(b.ContractExpiry(leg.Contract)-expiry) > 1e-9 {
+			return false
+		}
+	}
+	return true
 }
 
 func spreadLegsMatchScope(b OptionsBridge, legs []SpreadLegInput, market, underlying string) bool {

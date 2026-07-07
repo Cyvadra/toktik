@@ -122,6 +122,33 @@ func TestBuildExpandedOptionStrategyLegs(t *testing.T) {
 	}
 }
 
+func TestBuildOptionStrategyLegsRejectsMixedExpiryVertical(t *testing.T) {
+	bridge := &testOptionsBridge{chain: []testOptionContract{
+		{symbol: "C105", underlying: "SPY", market: "us-stocks", right: "call", strike: 105, dte: 30, delta: 0.35, mark: 3},
+		{symbol: "C110B", underlying: "SPY", market: "us-stocks", right: "call", strike: 110, dte: 60, delta: 0.18, mark: 2},
+	}}
+	legs := buildOptionStrategyLegs(bridge, bridge.OptionsChain(), OptionStrategyBearCallSpread, 1, 0.35)
+	if len(legs) != 0 {
+		t.Fatalf("expected mixed-expiry vertical to be rejected, got %#v", legs)
+	}
+}
+
+func TestParseLegInputsRejectsMalformedLegs(t *testing.T) {
+	contract := testOptionContract{symbol: "C105", underlying: "SPY", market: "us-stocks", right: "call", strike: 105, dte: 30, delta: 0.35, mark: 3}
+	legs := parseLegInputs([]Value{
+		ArrayVal([]Value{ObjVal(contract), StringVal("sell"), FloatVal(1)}),
+		ArrayVal([]Value{ObjVal(contract), StringVal("hold"), FloatVal(1)}),
+		ArrayVal([]Value{ObjVal(contract), StringVal("buy"), FloatVal(0)}),
+		ArrayVal([]Value{ObjVal(nil), StringVal("buy"), FloatVal(1)}),
+	})
+	if len(legs) != 1 {
+		t.Fatalf("valid leg count = %d, want 1: %#v", len(legs), legs)
+	}
+	if legs[0].Side != "sell" || legs[0].Qty != 1 || legs[0].Contract == nil {
+		t.Fatalf("unexpected parsed leg: %#v", legs[0])
+	}
+}
+
 func sameStrings(got, want []string) bool {
 	if len(got) != len(want) {
 		return false

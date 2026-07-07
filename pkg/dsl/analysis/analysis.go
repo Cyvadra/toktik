@@ -113,11 +113,12 @@ func Analyze(prog *ast.Program) Manifest {
 	if prog == nil {
 		return m
 	}
+	stringBindings := collectStaticStringBindings(prog)
 	for _, stmt := range prog.Stmts {
 		if sd, ok := stmt.(*ast.StrategyDecl); ok {
 			extractStrategyMetadata(sd, &m.Metadata)
 		}
-		walkStmt(stmt, &m)
+		walkStmt(stmt, &m, stringBindings)
 	}
 	m.Metadata.Requests = append([]RequestSpec(nil), m.Requests...)
 	return m
@@ -266,88 +267,140 @@ func extractStrategyMetadata(sd *ast.StrategyDecl, meta *SignalMetadata) {
 	}
 }
 
-func walkStmt(stmt ast.Stmt, m *Manifest) {
+func collectStaticStringBindings(prog *ast.Program) map[string]string {
+	if prog == nil {
+		return nil
+	}
+	out := make(map[string]string)
+	for _, stmt := range prog.Stmts {
+		decl, ok := stmt.(*ast.VarDecl)
+		if !ok || decl.Persist || decl.Varip || strings.TrimSpace(decl.Name) == "" {
+			continue
+		}
+		if value := staticString(decl.Value, out); value != "" {
+			out[decl.Name] = value
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func staticString(expr ast.Expr, bindings map[string]string) string {
+	switch node := expr.(type) {
+	case *ast.StringLit:
+		return strings.TrimSpace(node.Value)
+	case *ast.IdentExpr:
+		if bindings == nil {
+			return ""
+		}
+		return strings.TrimSpace(bindings[node.Name])
+	case *ast.CallExpr:
+		name := qualifiedName(node.Callee)
+		if name != "input.string" && name != "config.string" {
+			return ""
+		}
+		for _, arg := range node.Args {
+			if name == "config.string" && arg.Name == "defval" {
+				return staticString(arg.Value, bindings)
+			}
+			if name == "input.string" && arg.Name == "defval" {
+				return staticString(arg.Value, bindings)
+			}
+		}
+		if name == "config.string" && len(node.Args) >= 2 && node.Args[1].Name == "" {
+			return staticString(node.Args[1].Value, bindings)
+		}
+		if name == "input.string" && len(node.Args) >= 1 && node.Args[0].Name == "" {
+			return staticString(node.Args[0].Value, bindings)
+		}
+	}
+	return ""
+}
+
+func walkStmt(stmt ast.Stmt, m *Manifest, stringBindings map[string]string) {
 	if stmt == nil || m == nil {
 		return
 	}
 	switch node := stmt.(type) {
 	case *ast.StrategyDecl:
 		for _, arg := range node.Args {
-			walkExpr(arg.Value, m)
+			walkExpr(arg.Value, m, stringBindings)
 		}
 	case *ast.InputDecl:
 		for _, arg := range node.Args {
-			walkExpr(arg.Value, m)
+			walkExpr(arg.Value, m, stringBindings)
 		}
 	case *ast.VarDecl:
-		walkExpr(node.Value, m)
+		walkExpr(node.Value, m, stringBindings)
 	case *ast.AssignStmt:
-		walkExpr(node.Value, m)
+		walkExpr(node.Value, m, stringBindings)
 	case *ast.IndexAssignStmt:
-		walkExpr(node.Left, m)
-		walkExpr(node.Index, m)
-		walkExpr(node.Value, m)
+		walkExpr(node.Left, m, stringBindings)
+		walkExpr(node.Index, m, stringBindings)
+		walkExpr(node.Value, m, stringBindings)
 	case *ast.TupleAssign:
-		walkExpr(node.Value, m)
+		walkExpr(node.Value, m, stringBindings)
 	case *ast.ExprStmt:
-		walkExpr(node.Expression, m)
+		walkExpr(node.Expression, m, stringBindings)
 	case *ast.IfStmt:
-		walkExpr(node.Condition, m)
-		walkBlock(node.Body, m)
+		walkExpr(node.Condition, m, stringBindings)
+		walkBlock(node.Body, m, stringBindings)
 		for _, branch := range node.ElseIfs {
-			walkExpr(branch.Condition, m)
-			walkBlock(branch.Body, m)
+			walkExpr(branch.Condition, m, stringBindings)
+			walkBlock(branch.Body, m, stringBindings)
 		}
-		walkBlock(node.Else, m)
+		walkBlock(node.Else, m, stringBindings)
 	case *ast.ForStmt:
-		walkExpr(node.Start, m)
-		walkExpr(node.End, m)
-		walkExpr(node.Step, m)
-		walkBlock(node.Body, m)
+		walkExpr(node.Start, m, stringBindings)
+		walkExpr(node.End, m, stringBindings)
+		walkExpr(node.Step, m, stringBindings)
+		walkBlock(node.Body, m, stringBindings)
 	case *ast.ForInStmt:
-		walkExpr(node.Collection, m)
-		walkBlock(node.Body, m)
+		walkExpr(node.Collection, m, stringBindings)
+		walkBlock(node.Body, m, stringBindings)
 	case *ast.WhileStmt:
-		walkExpr(node.Condition, m)
-		walkBlock(node.Body, m)
+		walkExpr(node.Condition, m, stringBindings)
+		walkBlock(node.Body, m, stringBindings)
 	case *ast.SwitchStmt:
-		walkExpr(node.Tag, m)
+		walkExpr(node.Tag, m, stringBindings)
 		for _, switchCase := range node.Cases {
-			walkExpr(switchCase.Value, m)
-			walkBlock(switchCase.Body, m)
+			walkExpr(switchCase.Value, m, stringBindings)
+			walkBlock(switchCase.Body, m, stringBindings)
 		}
-		walkBlock(node.Default, m)
+		walkBlock(node.Default, m, stringBindings)
 	case *ast.FnDecl:
 		for _, param := range node.Params {
-			walkExpr(param.Default, m)
+			walkExpr(param.Default, m, stringBindings)
 		}
-		walkBlock(node.Body, m)
+		walkBlock(node.Body, m, stringBindings)
 	case *ast.ReturnStmt:
-		walkExpr(node.Value, m)
+		walkExpr(node.Value, m, stringBindings)
 	case *ast.Block:
-		walkBlock(node, m)
+		walkBlock(node, m, stringBindings)
 	}
 }
 
-func walkBlock(block *ast.Block, m *Manifest) {
+func walkBlock(block *ast.Block, m *Manifest, stringBindings map[string]string) {
 	if block == nil {
 		return
 	}
 	for _, stmt := range block.Stmts {
-		walkStmt(stmt, m)
+		walkStmt(stmt, m, stringBindings)
 	}
 }
 
-func walkExpr(expr ast.Expr, m *Manifest) {
+func walkExpr(expr ast.Expr, m *Manifest, stringBindings map[string]string) {
 	if expr == nil || m == nil {
 		return
 	}
 	switch node := expr.(type) {
 	case *ast.BinaryExpr:
-		walkExpr(node.Left, m)
-		walkExpr(node.Right, m)
+		walkExpr(node.Left, m, stringBindings)
+		walkExpr(node.Right, m, stringBindings)
 	case *ast.UnaryExpr:
-		walkExpr(node.Operand, m)
+		walkExpr(node.Operand, m, stringBindings)
 	case *ast.CallExpr:
 		name := qualifiedName(node.Callee)
 		if isOptionsReference(name) {
@@ -356,7 +409,7 @@ func walkExpr(expr ast.Expr, m *Manifest) {
 		if isRegularTradeCall(name) {
 			m.UsesRegularOrders = true
 		}
-		if spec, ok := parseRequestSpec(node); ok {
+		if spec, ok := parseRequestSpec(node, stringBindings); ok {
 			m.Requests = append(m.Requests, spec)
 			if spec.Tier == RequestTierRuntimeDynamic && spec.Kind != "option_chain" {
 				m.Diagnostics.Add(diagnostics.Diagnostic{
@@ -386,33 +439,33 @@ func walkExpr(expr ast.Expr, m *Manifest) {
 				})
 			}
 		}
-		walkExpr(node.Callee, m)
+		walkExpr(node.Callee, m, stringBindings)
 		for _, arg := range node.Args {
-			walkExpr(arg.Value, m)
+			walkExpr(arg.Value, m, stringBindings)
 		}
 	case *ast.DotExpr:
 		name := qualifiedName(node)
 		if isOptionsReference(name) {
 			m.UsesOptions = true
 		}
-		walkExpr(node.Object, m)
+		walkExpr(node.Object, m, stringBindings)
 	case *ast.IndexExpr:
-		walkExpr(node.Left, m)
-		walkExpr(node.Index, m)
+		walkExpr(node.Left, m, stringBindings)
+		walkExpr(node.Index, m, stringBindings)
 	case *ast.TernaryExpr:
-		walkExpr(node.Condition, m)
-		walkExpr(node.Then, m)
-		walkExpr(node.Else, m)
+		walkExpr(node.Condition, m, stringBindings)
+		walkExpr(node.Then, m, stringBindings)
+		walkExpr(node.Else, m, stringBindings)
 	case *ast.ArrayLit:
 		for _, element := range node.Elements {
-			walkExpr(element, m)
+			walkExpr(element, m, stringBindings)
 		}
 	case *ast.LambdaExpr:
-		walkExpr(node.Body, m)
+		walkExpr(node.Body, m, stringBindings)
 	}
 }
 
-func parseRequestSpec(call *ast.CallExpr) (RequestSpec, bool) {
+func parseRequestSpec(call *ast.CallExpr, stringBindings map[string]string) (RequestSpec, bool) {
 	dot, ok := call.Callee.(*ast.DotExpr)
 	if !ok {
 		return RequestSpec{}, false
@@ -440,7 +493,7 @@ func parseRequestSpec(call *ast.CallExpr) (RequestSpec, bool) {
 		if expr == nil {
 			return "", true
 		}
-		value := literalString(expr)
+		value := staticString(expr, stringBindings)
 		return value, value == ""
 	}
 	switch dot.Field {

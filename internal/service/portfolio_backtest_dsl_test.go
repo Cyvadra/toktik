@@ -615,7 +615,7 @@ func TestResolveBacktestPlanRejectsDynamicOptionChainWithoutScope(t *testing.T) 
 		To:      "2026-01-02",
 		Capital: 100000,
 		DSL: `strategy("Dynamic Chain")
-symbol = config.string("target_symbol", "MSFT")
+symbol = close > open ? "MSFT" : "AAPL"
 chain = options.chain("us", symbol)
 plot(close, title="Close")`,
 		DSLProfile: &dto.StrategyBacktestDSLProfile{UsesOptions: ptrBool(true), RegularTrade: "none"},
