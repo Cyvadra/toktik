@@ -1,0 +1,53 @@
+//@version=6
+strategy("index-options-dsl")
+
+top_n = input.int(2, title="Top N", minval=1, maxval=2)
+target_delta = input.float(0.35, title="Target Delta", minval=0.05, maxval=0.8, step=0.01)
+qty = input.float(1, title="Contracts", minval=1, maxval=20, step=1)
+market_name = input.string("us", title="Options Market", options=["us"])
+
+symbols = ["SPY", "QQQ"]
+spy_valuation = request.fundamental("us-stocks", "SPY", "pe10_live", "filled")
+qqq_valuation = request.fundamental("us-stocks", "QQQ", "pe", "filled")
+hv30 = request.factor("volatility", "1d", "hv30")
+ivp = request.factor("volatility", "1d", "iv_percentile")
+hvp = ta.percentrank(hv30, 80)
+rsi14 = ta.rsi(close, 14)
+cci20 = ta.cci(high, low, close, 20)
+
+plot(spread.count(), title="open_spreads", precision=0)
+
+opened_count = 0
+
+for symbol in symbols
+    state_key = str.format("index_options_%s", symbol)
+    if not ref.has(state_key) and opened_count < top_n
+        valuation_percentile = symbol == "SPY" ? spy_valuation : qqq_valuation
+
+        if not na(valuation_percentile) and not na(ivp) and not na(hvp)
+            ctx = market.context(rsi14, cci20, hvp, ivp, valuation_percentile)
+            strategies = options.strategies(ctx, "index")
+
+            if len(strategies) == 0
+                trend_ctx = market.context(rsi14, cci20, hvp, 50, 50)
+                strategies = options.strategies(trend_ctx, "index")
+
+            if len(strategies) > 0
+                name = strategies[0]
+                if valuation_percentile >= 80 and market.trend_state(ctx) == "up" and name == "BUY_CALL"
+                    name = ivp <= 40 ? "CALENDAR_SPREAD" : "BULL_CALL_SPREAD"
+                if valuation_percentile >= 80 and market.trend_state(ctx) == "up" and name == "SELL_PUT"
+                    name = "BULL_PUT_SPREAD"
+                if valuation_percentile >= 80 and ivp <= 30 and market.iv_state(ctx) == "low"
+                    name = "BUY_PUT"
+                if valuation_percentile < 80 and ivp <= 30 and market.iv_state(ctx) == "low"
+                    name = "BUY_STRADDLE"
+
+                chain = options.chain(market_name, symbol)
+                if chain != na and options.len(chain) > 0
+                    legs = options.build_strategy(chain, name, qty, target_delta)
+                    if len(legs) > 0
+                        sid = spread.open_on(market_name, symbol, legs, state_key)
+                        if sid != na
+                            ref.set(state_key, sid)
+                            opened_count = opened_count + 1

@@ -5,11 +5,19 @@ package runtime
 import "strings"
 
 const (
-	OptionStrategyBuyCall        = "BUY_CALL"
-	OptionStrategySellPut        = "SELL_PUT"
-	OptionStrategyBullCallSpread = "BULL_CALL_SPREAD"
-	OptionStrategyBullPutSpread  = "BULL_PUT_SPREAD"
-	OptionStrategyCalendarSpread = "CALENDAR_SPREAD"
+	OptionStrategyBuyCall           = "BUY_CALL"
+	OptionStrategyBuyPut            = "BUY_PUT"
+	OptionStrategySellPut           = "SELL_PUT"
+	OptionStrategySellCall          = "SELL_CALL"
+	OptionStrategyCoveredCall       = "COVERED_CALL"
+	OptionStrategyBullCallSpread    = "BULL_CALL_SPREAD"
+	OptionStrategyBullPutSpread     = "BULL_PUT_SPREAD"
+	OptionStrategyBearCallSpread    = "BEAR_CALL_SPREAD"
+	OptionStrategyShortStrangle     = "SHORT_STRANGLE"
+	OptionStrategyIronCondor        = "IRON_CONDOR"
+	OptionStrategyBuyStraddle       = "BUY_STRADDLE"
+	OptionStrategyBuySkewedStraddle = "BUY_SKEWED_STRADDLE"
+	OptionStrategyCalendarSpread    = "CALENDAR_SPREAD"
 )
 
 // OptionsBridge extends Bridge with options trading capabilities.
@@ -858,7 +866,11 @@ func selectOptionStrategies(ctx MarketContext, family string) []string {
 		}
 		strategies = append(strategies, name)
 	}
-	if family != "" && family != "trend" && family != "momentum" && family != "index" {
+	if family != "" && family != "trend" && family != "momentum" && family != "index" && family != "value" {
+		return strategies
+	}
+	if family == "value" {
+		selectValueOptionStrategies(ctx, add)
 		return strategies
 	}
 	switch ctx.TrendState {
@@ -880,9 +892,20 @@ func selectOptionStrategies(ctx MarketContext, family string) []string {
 			add(OptionStrategyCalendarSpread)
 		}
 	case "range":
-		add(OptionStrategyCalendarSpread)
+		if family == "index" && ctx.HVState == "high" {
+			add(OptionStrategyIronCondor)
+			add(OptionStrategyShortStrangle)
+		} else if family == "index" && ctx.HVState == "low" {
+			add(OptionStrategyBuyStraddle)
+			add(OptionStrategyCalendarSpread)
+		} else {
+			add(OptionStrategyCalendarSpread)
+		}
 	case "down":
-		return strategies
+		if family == "index" || family == "trend" {
+			add(OptionStrategyBuyPut)
+			add(OptionStrategyBearCallSpread)
+		}
 	default:
 		if ctx.IVState == "low" {
 			add(OptionStrategyBuyCall)
@@ -891,13 +914,49 @@ func selectOptionStrategies(ctx MarketContext, family string) []string {
 	return strategies
 }
 
+func selectValueOptionStrategies(ctx MarketContext, add func(string)) {
+	switch ctx.ValuationState {
+	case "undervalued":
+		if ctx.IVState == "high" {
+			add(OptionStrategySellPut)
+			add(OptionStrategyCoveredCall)
+		} else if ctx.IVState == "low" {
+			if ctx.HVState == "high" {
+				add(OptionStrategyBuySkewedStraddle)
+			} else {
+				add(OptionStrategyBuyCall)
+			}
+		}
+	case "overvalued":
+		if ctx.IVState == "low" {
+			add(OptionStrategyBuyPut)
+		} else if ctx.IVState == "high" {
+			add(OptionStrategySellCall)
+			add(OptionStrategyBearCallSpread)
+		}
+	case "fair":
+		if ctx.IVState == "high" {
+			add(OptionStrategyShortStrangle)
+			add(OptionStrategyIronCondor)
+		} else if ctx.IVState == "low" {
+			add(OptionStrategyCalendarSpread)
+		}
+	}
+}
+
 func buildOptionStrategyLegs(b OptionsBridge, chain interface{}, name string, qty, targetDelta float64) []Value {
 	switch name {
 	case OptionStrategyBuyCall:
 		contract := bestContractByDelta(b, b.ChainCalls(chain), targetDelta)
 		return singleLeg(contract, "buy", qty)
+	case OptionStrategyBuyPut:
+		contract := bestContractByDelta(b, b.ChainPuts(chain), -targetDelta)
+		return singleLeg(contract, "buy", qty)
 	case OptionStrategySellPut:
 		contract := bestContractByDelta(b, b.ChainPuts(chain), -targetDelta)
+		return singleLeg(contract, "sell", qty)
+	case OptionStrategySellCall, OptionStrategyCoveredCall:
+		contract := bestContractByDelta(b, b.ChainCalls(chain), targetDelta)
 		return singleLeg(contract, "sell", qty)
 	case OptionStrategyBullCallSpread:
 		short := bestContractByDelta(b, b.ChainCalls(chain), targetDelta/2)
@@ -907,6 +966,28 @@ func buildOptionStrategyLegs(b OptionsBridge, chain interface{}, name string, qt
 		short := bestContractByDelta(b, b.ChainPuts(chain), -targetDelta)
 		long := bestContractByDelta(b, b.ChainPuts(chain), -targetDelta/2)
 		return verticalLegs(b, long, short, "put", qty)
+	case OptionStrategyBearCallSpread:
+		short := bestContractByDelta(b, b.ChainCalls(chain), targetDelta)
+		long := fartherOTMContract(b, b.ChainCalls(chain), short)
+		return verticalLegs(b, long, short, "call", qty)
+	case OptionStrategyShortStrangle:
+		call := bestContractByDelta(b, b.ChainCalls(chain), targetDelta)
+		put := bestContractByDelta(b, b.ChainPuts(chain), -targetDelta)
+		return twoLegs(call, "sell", put, "sell", qty)
+	case OptionStrategyIronCondor:
+		shortCall := bestContractByDelta(b, b.ChainCalls(chain), targetDelta)
+		longCall := fartherOTMContract(b, b.ChainCalls(chain), shortCall)
+		shortPut := bestContractByDelta(b, b.ChainPuts(chain), -targetDelta)
+		longPut := fartherOTMContract(b, b.ChainPuts(chain), shortPut)
+		return fourLegs(longPut, "buy", shortPut, "sell", shortCall, "sell", longCall, "buy", qty)
+	case OptionStrategyBuyStraddle:
+		call := bestContractByDelta(b, b.ChainCalls(chain), targetDelta)
+		put := bestContractByDelta(b, b.ChainPuts(chain), -targetDelta)
+		return twoLegs(call, "buy", put, "buy", qty)
+	case OptionStrategyBuySkewedStraddle:
+		call := bestContractByDelta(b, b.ChainCalls(chain), targetDelta/2)
+		put := bestContractByDelta(b, b.ChainPuts(chain), -targetDelta)
+		return twoLegs(call, "buy", put, "buy", qty)
 	case OptionStrategyCalendarSpread:
 		front := bestContractByDelta(b, b.ChainCalls(chain), targetDelta)
 		back := fartherSameStrikeContract(b, b.ChainCalls(chain), front)
@@ -916,6 +997,28 @@ func buildOptionStrategyLegs(b OptionsBridge, chain interface{}, name string, qt
 		return []Value{ArrayVal([]Value{ObjVal(front), StringVal("sell"), FloatVal(qty)}), ArrayVal([]Value{ObjVal(back), StringVal("buy"), FloatVal(qty)})}
 	default:
 		return nil
+	}
+}
+
+func twoLegs(first interface{}, firstSide string, second interface{}, secondSide string, qty float64) []Value {
+	if first == nil || second == nil {
+		return nil
+	}
+	return []Value{
+		ArrayVal([]Value{ObjVal(first), StringVal(firstSide), FloatVal(qty)}),
+		ArrayVal([]Value{ObjVal(second), StringVal(secondSide), FloatVal(qty)}),
+	}
+}
+
+func fourLegs(first interface{}, firstSide string, second interface{}, secondSide string, third interface{}, thirdSide string, fourth interface{}, fourthSide string, qty float64) []Value {
+	if first == nil || second == nil || third == nil || fourth == nil {
+		return nil
+	}
+	return []Value{
+		ArrayVal([]Value{ObjVal(first), StringVal(firstSide), FloatVal(qty)}),
+		ArrayVal([]Value{ObjVal(second), StringVal(secondSide), FloatVal(qty)}),
+		ArrayVal([]Value{ObjVal(third), StringVal(thirdSide), FloatVal(qty)}),
+		ArrayVal([]Value{ObjVal(fourth), StringVal(fourthSide), FloatVal(qty)}),
 	}
 }
 
@@ -962,6 +1065,28 @@ func fartherSameStrikeContract(b OptionsBridge, chain interface{}, front interfa
 			continue
 		}
 		if b.ContractStrike(candidate) == targetStrike && b.ContractDTE(candidate) >= frontDTE+7 {
+			return candidate
+		}
+	}
+	return nil
+}
+
+func fartherOTMContract(b OptionsBridge, chain interface{}, anchor interface{}) interface{} {
+	if anchor == nil {
+		return nil
+	}
+	anchorStrike := b.ContractStrike(anchor)
+	anchorType := strings.ToLower(strings.TrimSpace(b.ContractType(anchor)))
+	contracts := b.ChainSortByDelta(chain, b.ContractDelta(anchor)/2)
+	for _, candidate := range contracts {
+		if candidate == nil || !contractHasPrice(b, candidate) || !strings.EqualFold(b.ContractType(candidate), anchorType) {
+			continue
+		}
+		strike := b.ContractStrike(candidate)
+		if anchorType == "call" && strike > anchorStrike {
+			return candidate
+		}
+		if anchorType == "put" && strike < anchorStrike {
 			return candidate
 		}
 	}

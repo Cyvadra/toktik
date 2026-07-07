@@ -1,0 +1,50 @@
+//@version=6
+strategy("value-allocation-dsl")
+
+universe_code = input.string("value_allocation", title="Universe Code")
+top_n = input.int(5, title="Top N", minval=1, maxval=12)
+target_delta = input.float(0.35, title="Target Delta", minval=0.05, maxval=0.8, step=0.01)
+qty = input.float(1, title="Contracts", minval=1, maxval=20, step=1)
+market_name = input.string("us", title="Options Market", options=["us"])
+max_candidates = input.int(12, title="Max Candidates", minval=1, maxval=12)
+
+symbols = universe.symbols("value_allocation")
+
+plot(len(symbols), title="universe_size", precision=0)
+plot(spread.count(), title="open_spreads", precision=0)
+
+opened_count = 0
+matched_count = 0
+pe_percentile = request.fundamental("us-stocks", "SPY", "pe", "filled")
+pb_percentile = request.fundamental("us-stocks", "SPY", "pb", "filled")
+fallback_valuation = math.min(pe_percentile, pb_percentile)
+hv30 = request.factor("volatility", "1d", "hv30")
+ivp = request.factor("volatility", "1d", "iv_percentile")
+hvp = ta.percentrank(hv30, 80)
+rsi14 = ta.rsi(close, 14)
+cci20 = ta.cci(high, low, close, 20)
+
+for symbol in symbols
+    upper_symbol = str.upper(symbol)
+    excluded = upper_symbol == "SPY" or upper_symbol == "QQQ" or upper_symbol == "IBIT"
+    state_key = str.format("value_allocation_%s", symbol)
+
+    if not excluded and not ref.has(state_key) and opened_count < top_n and matched_count < max_candidates
+        valuation_percentile = fallback_valuation
+
+        valid_metrics = not na(valuation_percentile) and not na(ivp) and not na(hvp)
+        if valid_metrics
+            ctx = market.context(rsi14, cci20, hvp, ivp, valuation_percentile)
+            strategies = options.strategies(ctx, "value")
+            chain = options.chain(market_name, symbol)
+            chain_ok = chain != na and options.len(chain) > 0
+
+            if len(strategies) > 0 and chain_ok
+                matched_count = matched_count + 1
+                name = strategies[0]
+                legs = options.build_strategy(chain, name, qty, target_delta)
+                if len(legs) > 0
+                    sid = spread.open_on(market_name, symbol, legs, state_key)
+                    if sid != na
+                        ref.set(state_key, sid)
+                        opened_count = opened_count + 1
