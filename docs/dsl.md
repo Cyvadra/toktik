@@ -406,7 +406,7 @@ aapl_iv_rank = request.security("us", "AAPL", "1d", iv_rank_base)
 | 名稱 | 簽名 | 種類 | 回傳 | 範例 | 用途 |
 | --- | --- | --- | --- | --- | --- |
 | `options.best_spread` | `options.best_spread(chain)` | `函數` | `期權鏈或值` | `contract = options.best_spread(options.puts(options.chain("us-options", "SPY")))` | 用於從期權鏈中篩出符合到期日、Delta、權利金或履約價條件的候選合約。 |
-| `options.build_strategy` | `options.build_strategy(chain, name, qty, target_delta)` | `函數` | `leg 陣列` | `legs = options.build_strategy(chain, "BUY_CALL", 1, 0.35)` | 用於把策略名稱和期權鏈轉成可檢查的標準 legs，不直接下單。 |
+| `options.build_strategy` | `options.build_strategy(chain, name, qty, target_delta)` | `函數` | `leg 陣列` | `legs = options.build_strategy(chain, "IRON_CONDOR", 1, 0.35)` | 用於把 BUY_CALL、BUY_PUT、SELL_PUT、SELL_CALL、價差、跨式與鐵兀鷹等策略名稱轉成可檢查的標準 legs，不直接下單。 |
 | `options.calls` | `options.calls(chain)` | `函數` | `期權鏈` | `calls = options.calls(options.chain("us-options", "SPY"))` | 用於把期權鏈縮小到 call 合約。 |
 | `options.chain` | `options.chain(market, symbol)` | `函數` | `期權鏈` | `chain = options.chain("us-options", "SPY")` | 用於取得目前 bar 可用的期權鏈；多標的策略可指定市場與 underlying。 |
 | `options.delta_range` | `options.delta_range(chain, min_delta, max_delta)` | `函數` | `期權鏈或值` | `puts = options.delta_range(options.puts(options.chain("us-options", "SPY")), -0.35, -0.15)` | 用於從期權鏈中篩出符合到期日、Delta、權利金或履約價條件的候選合約。 |
@@ -419,7 +419,7 @@ aapl_iv_rank = request.security("us", "AAPL", "1d", iv_rank_base)
 | `options.open_strategy` | `options.open_strategy(chain, name, qty, target_delta, tag)` | `函數` | `spread id` | `sid = options.open_strategy(chain, "BUY_CALL", 1, 0.35, "momentum")` | 用於明確開啟由策略名稱生成的期權 spread。 |
 | `options.puts` | `options.puts(chain)` | `函數` | `期權鏈` | `puts = options.puts(options.chain("us-options", "SPY"))` | 用於把期權鏈縮小到 put 合約。 |
 | `options.sort_by_delta` | `options.sort_by_delta(chain, target)` | `函數` | `陣列` | `contracts = options.sort_by_delta(options.puts(options.chain("us-options", "SPY")), -0.3)` | 用於把候選合約依 Delta 接近目標值排序，方便取第一筆作交易。 |
-| `options.strategies` | `options.strategies(context, family)` | `函數` | `陣列` | `names = options.strategies(ctx, "momentum")` | 用於依市場環境分類挑選候選期權策略名稱。 |
+| `options.strategies` | `options.strategies(context, family)` | `函數` | `陣列` | `names = options.strategies(ctx, "value")` | 用於依市場環境分類挑選候選期權策略名稱，支援 momentum、trend、index、value family。 |
 | `options.strike_range` | `options.strike_range(chain, min, max)` | `函數` | `期權鏈或值` | `near_money = options.strike_range(options.chain("us-options", "SPY"), close * 0.9, close * 1.1)` | 用於從期權鏈中篩出符合到期日、Delta、權利金或履約價條件的候選合約。 |
 
 ### order
