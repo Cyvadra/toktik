@@ -30,6 +30,10 @@ type Config struct {
 	ExitPriceMode      backtest.OptionPriceMode
 	ValuationPriceMode backtest.OptionPriceMode
 
+	UniverseProvider interface {
+		SymbolsAt(code string, ts time.Time) []string
+	}
+
 	FastPeriod    int
 	SlowPeriod    int
 	EntryTWAPBars int

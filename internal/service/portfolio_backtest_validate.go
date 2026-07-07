@@ -81,19 +81,18 @@ func (s *PortfolioBacktestService) resolveBacktestPlan(ctx context.Context, run 
 	var universeProvider bridge.UniverseProvider
 	var universeSymbols []string
 	var universeCodes []string
-	if strings.TrimSpace(req.DSL) != "" {
-		universeSymbols, universeCodes, universeProvider, err = s.resolveDSLUniverses(ctx, req, resolved, from, to)
+	universeSymbols, universeCodes, universeProvider, err = s.resolveDSLUniverses(ctx, req, resolved, from, to)
+	if err != nil {
+		return nil, err
+	}
+	if asset == "" && len(universeSymbols) > 0 {
+		asset = universeSymbols[0]
+	}
+	if len(universeCodes) > 0 {
+		strategyCfg.UniverseProvider = universeProvider
+		resolved, strategyLabel, err = resolveRequestedStrategiesWithConfig(req, strategyCfg, asset, injectedConfig, universeProvider)
 		if err != nil {
 			return nil, err
-		}
-		if asset == "" && len(universeSymbols) > 0 {
-			asset = universeSymbols[0]
-		}
-		if len(universeCodes) > 0 {
-			resolved, strategyLabel, err = resolveRequestedStrategiesWithConfig(req, strategyCfg, asset, injectedConfig, universeProvider)
-			if err != nil {
-				return nil, err
-			}
 		}
 	}
 	if asset == "" {

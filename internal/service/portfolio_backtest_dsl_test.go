@@ -13,6 +13,7 @@ import (
 	"github.com/Cyvadra/toktik/internal/backtest"
 	"github.com/Cyvadra/toktik/internal/dto"
 	"github.com/Cyvadra/toktik/pkg/dsl/bridge"
+	_ "github.com/Cyvadra/toktik/pkg/dsl/catalog"
 	"github.com/Cyvadra/toktik/pkg/strategies"
 )
 
@@ -718,6 +719,53 @@ plot(len(symbols), title="Universe Size")`,
 	resourcePlan := buildStrategyBacktestResourcePlan(plan)
 	if resourcePlan.UniverseSize != 2 || resourcePlan.OptionChainUnderlyings != 2 {
 		t.Fatalf("resource plan universe/underlyings = %d/%d, want 2/2", resourcePlan.UniverseSize, resourcePlan.OptionChainUnderlyings)
+	}
+}
+
+func TestResolveBacktestPlanUsesUniverseSymbolsForCatalogDSL(t *testing.T) {
+	from := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
+	svc := NewPortfolioBacktestService(nil, nil)
+	svc.universes = &stubPortfolioUniverseResolver{members: map[string][]dto.UniverseMember{
+		"strong_momentum": {
+			{UniverseCode: "strong_momentum", Market: "us-stocks", Symbol: "AAPL", ValidFrom: from, ValidTo: to},
+			{UniverseCode: "strong_momentum", Market: "us-stocks", Symbol: "NVDA", ValidFrom: from, ValidTo: to},
+		},
+	}}
+	loaded := make([]string, 0, 3)
+	svc.chainLoader = func(_ context.Context, marketName, asset, interval string, from, to time.Time) (backtest.OptionsChainProvider, error) {
+		loaded = append(loaded, marketName+":"+asset)
+		return &stubOptionsChainProvider{}, nil
+	}
+
+	plan, err := svc.resolveBacktestPlan(context.Background(), nil, dto.StrategyBacktestRunRequest{
+		Market:   "us-stocks",
+		Asset:    "SPY",
+		From:     "2026-01-01",
+		To:       "2026-01-02",
+		Capital:  100000,
+		Interval: "1d",
+		Strategy: "strong-momentum-dsl",
+	}, true)
+	if err != nil {
+		t.Fatalf("resolveBacktestPlan returned error: %v", err)
+	}
+	if len(loaded) != 3 {
+		t.Fatalf("expected primary and universe chain loads, got %v", loaded)
+	}
+	want := map[string]bool{"us:SPY": true, "us:AAPL": true, "us:NVDA": true}
+	for _, got := range loaded {
+		if !want[got] {
+			t.Fatalf("unexpected loaded target %q from %v", got, loaded)
+		}
+		delete(want, got)
+	}
+	if len(want) != 0 {
+		t.Fatalf("missing expected targets: %+v", want)
+	}
+	resourcePlan := buildStrategyBacktestResourcePlan(plan)
+	if resourcePlan.UniverseSize != 2 || resourcePlan.OptionChainUnderlyings != 3 {
+		t.Fatalf("resource plan universe/underlyings = %d/%d, want 2/3", resourcePlan.UniverseSize, resourcePlan.OptionChainUnderlyings)
 	}
 }
 
