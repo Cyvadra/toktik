@@ -24,7 +24,6 @@ const (
 	EnvMySQLDatabase                         = "MYSQL_DATABASE"
 	EnvListenAddr                            = "LISTEN_ADDR"
 	EnvCORSOrigins                           = "CORS_ORIGINS"
-	EnvAPIKeys                               = "API_KEYS"
 	EnvRateLimitRPS                          = "RATE_LIMIT_RPS"
 	EnvAPIEnvironment                        = "TOKTIK_API_ENVIRONMENT"
 	EnvSchemaDir                             = "TOKTIK_SCHEMA_DIR"
@@ -130,7 +129,6 @@ type APIServer struct {
 
 type API struct {
 	CORSOrigins           []string `yaml:"cors_origins"`
-	APIKeys               []string `yaml:"api_keys"`
 	RateLimitRPS          float64  `yaml:"rate_limit_rps"`
 	TrustedProxies        []string `yaml:"trusted_proxies"`
 	RequestTimeoutSeconds int      `yaml:"request_timeout_seconds"`
@@ -455,9 +453,6 @@ func (c *Runtime) applyEnvOverrides() {
 	if value := strings.TrimSpace(os.Getenv(EnvCORSOrigins)); value != "" {
 		c.API.CORSOrigins = splitCSV(value)
 	}
-	if value := strings.TrimSpace(os.Getenv(EnvAPIKeys)); value != "" {
-		c.API.APIKeys = splitCSV(value)
-	}
 	if value := strings.TrimSpace(os.Getenv(EnvRateLimitRPS)); value != "" {
 		if parsed, err := strconv.ParseFloat(value, 64); err == nil {
 			c.API.RateLimitRPS = parsed
@@ -687,7 +682,6 @@ func (c *Runtime) normalize() {
 		c.APIServer.WarmupCooldownHours = 20
 	}
 	c.API.CORSOrigins = normalizeCSVList(c.API.CORSOrigins)
-	c.API.APIKeys = normalizeCSVList(c.API.APIKeys)
 	c.API.TrustedProxies = normalizeCSVList(c.API.TrustedProxies)
 	if c.API.RateLimitRPS <= 0 {
 		c.API.RateLimitRPS = 50

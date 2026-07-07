@@ -85,7 +85,7 @@ func buildAPICoreServices(runtimeCfg config.Runtime, repo *chrepo.Repo, calendar
 	}, nil
 }
 
-func buildAPIDeps(runtimeCfg config.Runtime, repo *chrepo.Repo, factorStore *feeds.Store, services *apiCoreServices, polygonSvc *service.PolygonService, cacheStore cache.Store, stop chan struct{}) api.Deps {
+func buildAPIDeps(runtimeCfg config.Runtime, repo *chrepo.Repo, factorStore *feeds.Store, services *apiCoreServices, polygonSvc *service.PolygonService, cacheStore cache.Store, apiKeyAuth api.APIKeyAuthenticator, stop chan struct{}) api.Deps {
 	return api.Deps{
 		Config:            runtimeCfg,
 		CryptoOptions:     service.NewCryptoOptionsService(repo),
@@ -107,6 +107,7 @@ func buildAPIDeps(runtimeCfg config.Runtime, repo *chrepo.Repo, factorStore *fee
 		FinanceCalendar:   services.financeCalendar,
 		Logos:             services.logos,
 		Polygon:           polygonSvc,
+		APIKeys:           apiKeyAuth,
 		Stop:              stop,
 	}
 }

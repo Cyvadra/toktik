@@ -1,13 +1,28 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
+	"github.com/Cyvadra/toktik/internal/apikeyauth"
 	"github.com/Cyvadra/toktik/internal/config"
 	"github.com/gin-gonic/gin"
 )
+
+type fakeAPIKeyAuthenticator struct {
+	keys map[string]apikeyauth.Principal
+	err  error
+}
+
+func (f fakeAPIKeyAuthenticator) AuthenticateAPIKey(_ context.Context, plaintext string) (apikeyauth.Principal, bool, error) {
+	if f.err != nil {
+		return apikeyauth.Principal{}, false, f.err
+	}
+	principal, ok := f.keys[plaintext]
+	return principal, ok, nil
+}
 
 func TestCORSMiddlewareDefaultsToLANOrigins(t *testing.T) {
 	gin.SetMode(gin.TestMode)
@@ -69,7 +84,9 @@ func TestAPIKeyAuthOnlyBypassesExplicitPublicPaths(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	r := gin.New()
-	r.Use(APIKeyAuth(config.API{APIKeys: []string{"secret"}}))
+	r.Use(APIKeyAuth(fakeAPIKeyAuthenticator{keys: map[string]apikeyauth.Principal{
+		"secret": {ID: 1, KeyDigest: "secret-digest"},
+	}}))
 	r.GET("/utils/us-stocks/logos/:symbol", func(c *gin.Context) {
 		c.Status(http.StatusOK)
 	})
@@ -89,6 +106,67 @@ func TestAPIKeyAuthOnlyBypassesExplicitPublicPaths(t *testing.T) {
 	r.ServeHTTP(privateResp, privateReq)
 	if privateResp.Code != http.StatusUnauthorized {
 		t.Fatalf("expected unrelated utility route to require auth, got status %d", privateResp.Code)
+	}
+}
+
+func TestAPIKeyAuthRequiresKeysForLANClients(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	tests := []struct {
+		name   string
+		remote string
+		want   int
+	}{
+		{name: "loopback", remote: "127.0.0.1:1234", want: http.StatusUnauthorized},
+		{name: "private", remote: "192.168.1.10:1234", want: http.StatusUnauthorized},
+		{name: "public", remote: "8.8.8.8:1234", want: http.StatusUnauthorized},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := gin.New()
+			r.Use(APIKeyAuth(fakeAPIKeyAuthenticator{keys: map[string]apikeyauth.Principal{
+				"secret": {ID: 1, KeyDigest: "secret-digest"},
+			}}))
+			r.GET("/api/v1/test", func(c *gin.Context) {
+				c.Status(http.StatusOK)
+			})
+
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/test", nil)
+			req.RemoteAddr = tt.remote
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, req)
+
+			if w.Code != tt.want {
+				t.Fatalf("expected status %d, got %d", tt.want, w.Code)
+			}
+		})
+	}
+}
+
+func TestAPIKeyAuthAcceptsValidKey(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	r := gin.New()
+	r.Use(APIKeyAuth(fakeAPIKeyAuthenticator{keys: map[string]apikeyauth.Principal{
+		"secret": {ID: 1, KeyDigest: "secret-digest"},
+	}}))
+	r.GET("/api/v1/test", func(c *gin.Context) {
+		principal, ok := getAPIKeyPrincipal(c)
+		if !ok || principal.ID != 1 {
+			c.Status(http.StatusInternalServerError)
+			return
+		}
+		c.Status(http.StatusOK)
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/test", nil)
+	req.Header.Set("X-API-Key", "secret")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected valid key to pass, got status %d", w.Code)
 	}
 }
 
@@ -135,6 +213,38 @@ func TestRateLimitMiddlewareStillLimitsPublicClients(t *testing.T) {
 	stop := make(chan struct{})
 	defer close(stop)
 	r.Use(RateLimitMiddleware(config.API{RateLimitRPS: 1}, stop))
+	r.GET("/test", func(c *gin.Context) {
+		c.Status(http.StatusOK)
+	})
+
+	for i := range 3 {
+		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+		req.RemoteAddr = "8.8.8.8:1234"
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		want := http.StatusOK
+		if i == 2 {
+			want = http.StatusTooManyRequests
+		}
+		if w.Code != want {
+			t.Fatalf("request %d: expected status %d, got %d", i+1, want, w.Code)
+		}
+	}
+}
+
+func TestRateLimitMiddlewareUsesPrincipalRateLimit(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	r := gin.New()
+	stop := make(chan struct{})
+	defer close(stop)
+	keyRPS := 1.0
+	r.Use(func(c *gin.Context) {
+		setAPIKeyPrincipal(c, apikeyauth.Principal{ID: 1, KeyDigest: "digest-1", RateLimitRPS: &keyRPS})
+		c.Next()
+	})
+	r.Use(RateLimitMiddleware(config.API{RateLimitRPS: 100}, stop))
 	r.GET("/test", func(c *gin.Context) {
 		c.Status(http.StatusOK)
 	})

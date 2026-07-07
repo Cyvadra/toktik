@@ -65,7 +65,7 @@ func (h *Handler) RebuildUniverse(c *gin.Context) {
 		return
 	}
 	if !h.requireAPIKey {
-		c.JSON(http.StatusForbidden, dto.ErrorResponse{Error: "universe rebuild requires configured API keys"})
+		c.JSON(http.StatusForbidden, dto.ErrorResponse{Error: "universe rebuild requires API key authentication"})
 		return
 	}
 	var req dto.UniverseRebuildRequest

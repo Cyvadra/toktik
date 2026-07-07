@@ -80,7 +80,6 @@ go run ./cmd/api-server
 - `CLICKHOUSE_DSN`
 - `MYSQL_DSN` 或 `MYSQL_HOST`、`MYSQL_USER`、`MYSQL_PASSWORD`、`MYSQL_DATABASE`
 - `LISTEN_ADDR`
-- `API_KEYS`
 - `CORS_ORIGINS`
 - `RATE_LIMIT_RPS`
 - `TOKTIK_SCHEMA_DIR`
@@ -89,7 +88,7 @@ go run ./cmd/api-server
 - `TOKTIK_REDIS_ENABLED`、`TOKTIK_REDIS_ADDR`、`TOKTIK_REDIS_PASSWORD`
 - `TOKTIK_AES_KEY`
 
-API server 需要 ClickHouse 與 MySQL；Redis 可關閉。沒有設定 `api.api_keys` 時 API key middleware 是 no-op。
+API server 需要 ClickHouse 與 MySQL；Redis 可關閉。API key 儲存在 MySQL，使用 `go run ./cmd/api-keys create ...` 建立，呼叫 API 時放在 `X-API-Key` header。
 
 ## 修改功能時的路徑
 

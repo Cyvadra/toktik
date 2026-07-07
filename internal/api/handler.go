@@ -82,7 +82,7 @@ func NewHandler(d Deps) *Handler {
 		logos:             d.Logos,
 		polygon:           d.Polygon,
 		showInternalError: strings.EqualFold(strings.TrimSpace(d.Config.API.Environment), "dev"),
-		requireAPIKey:     len(d.Config.API.APIKeys) > 0,
+		requireAPIKey:     d.APIKeys != nil,
 		reportsRoot:       root,
 	}
 }

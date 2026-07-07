@@ -2,9 +2,6 @@ package api
 
 import (
 	"context"
-	"crypto/sha256"
-	"crypto/subtle"
-	"encoding/hex"
 	"log/slog"
 	"net"
 	"net/http"
@@ -14,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Cyvadra/toktik/internal/apikeyauth"
 	"github.com/Cyvadra/toktik/internal/config"
 	"github.com/Cyvadra/toktik/internal/dto"
 	"github.com/gin-contrib/cors"
@@ -27,8 +25,13 @@ const (
 	// rateLimitBucketTTL is how long an idle bucket survives before eviction.
 	rateLimitBucketTTL = 10 * time.Minute
 	// rateLimitEvictInterval is how frequently the eviction sweep runs.
-	rateLimitEvictInterval = 5 * time.Minute
+	rateLimitEvictInterval    = 5 * time.Minute
+	apiKeyPrincipalContextKey = "api_key_principal"
 )
+
+type APIKeyAuthenticator interface {
+	AuthenticateAPIKey(ctx context.Context, plaintext string) (apikeyauth.Principal, bool, error)
+}
 
 // CORSMiddleware returns a gin middleware that handles CORS using the
 // supplied API config. If no origins are configured, browser access is limited
@@ -71,24 +74,11 @@ func isLANOrigin(origin string) bool {
 	return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast()
 }
 
-// APIKeyAuth returns a gin middleware that checks the X-API-Key header.
-// Keys are stored as SHA-256 digests so a process memory dump does not
-// leak plaintext credentials. Comparison is constant time.
-//
-// If cfg.APIKeys is empty the returned middleware is a no-op.
-func APIKeyAuth(cfg config.API) gin.HandlerFunc {
-	if len(cfg.APIKeys) == 0 {
-		return func(c *gin.Context) { c.Next() }
-	}
-	digests := make([][]byte, 0, len(cfg.APIKeys))
-	for _, key := range cfg.APIKeys {
-		if key == "" {
-			continue
-		}
-		sum := sha256.Sum256([]byte(key))
-		digests = append(digests, sum[:])
-	}
-	if len(digests) == 0 {
+// APIKeyAuth returns a gin middleware that checks the X-API-Key header using
+// the supplied authenticator. A nil authenticator leaves auth disabled, which
+// is useful for tests and binaries that intentionally expose only public routes.
+func APIKeyAuth(authenticator APIKeyAuthenticator) gin.HandlerFunc {
+	if authenticator == nil {
 		return func(c *gin.Context) { c.Next() }
 	}
 	return func(c *gin.Context) {
@@ -101,15 +91,32 @@ func APIKeyAuth(cfg config.API) gin.HandlerFunc {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, dto.ErrorResponse{Error: "missing API key"})
 			return
 		}
-		sum := sha256.Sum256([]byte(apiKey))
-		for _, d := range digests {
-			if subtle.ConstantTimeCompare(sum[:], d) == 1 {
-				c.Next()
-				return
-			}
+		principal, ok, err := authenticator.AuthenticateAPIKey(c.Request.Context(), apiKey)
+		if err != nil {
+			slog.Error("authenticate api key", "error", err)
+			c.AbortWithStatusJSON(http.StatusInternalServerError, dto.ErrorResponse{Error: "api key authentication failed"})
+			return
 		}
-		c.AbortWithStatusJSON(http.StatusUnauthorized, dto.ErrorResponse{Error: "invalid API key"})
+		if !ok {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, dto.ErrorResponse{Error: "invalid API key"})
+			return
+		}
+		setAPIKeyPrincipal(c, principal)
+		c.Next()
 	}
+}
+
+func setAPIKeyPrincipal(c *gin.Context, principal apikeyauth.Principal) {
+	c.Set(apiKeyPrincipalContextKey, principal)
+}
+
+func getAPIKeyPrincipal(c *gin.Context) (apikeyauth.Principal, bool) {
+	value, ok := c.Get(apiKeyPrincipalContextKey)
+	if !ok {
+		return apikeyauth.Principal{}, false
+	}
+	principal, ok := value.(apikeyauth.Principal)
+	return principal, ok
 }
 
 func isPublicPath(path string) bool {
@@ -134,13 +141,6 @@ type rateBucket struct {
 // to prevent memory exhaustion via spoofed identifiers. The eviction
 // goroutine stops when the supplied stop channel is closed.
 func RateLimitMiddleware(cfg config.API, stop <-chan struct{}) gin.HandlerFunc {
-	rps := cfg.RateLimitRPS
-	if rps <= 0 {
-		// Misconfiguration: disable instead of dividing by zero.
-		return func(c *gin.Context) { c.Next() }
-	}
-	burst := rps * 2
-
 	var mu sync.Mutex
 	buckets := make(map[string]*rateBucket)
 
@@ -170,13 +170,27 @@ func RateLimitMiddleware(cfg config.API, stop <-chan struct{}) gin.HandlerFunc {
 			return
 		}
 
-		key := c.GetHeader("X-API-Key")
-		if key == "" {
-			key = c.ClientIP()
+		rps := cfg.RateLimitRPS
+		bucketKey := c.ClientIP()
+		if principal, ok := getAPIKeyPrincipal(c); ok {
+			bucketKey = principal.KeyDigest
+			if bucketKey == "" {
+				bucketKey = principal.KeyPrefix
+			}
+			if principal.RateLimitRPS != nil && *principal.RateLimitRPS > 0 {
+				rps = *principal.RateLimitRPS
+			}
+		} else if rawKey := c.GetHeader("X-API-Key"); rawKey != "" {
+			bucketKey = rawKey
 		}
+		if rps <= 0 || bucketKey == "" {
+			c.Next()
+			return
+		}
+		burst := rps * 2
 
 		mu.Lock()
-		b, ok := buckets[key]
+		b, ok := buckets[bucketKey]
 		if !ok {
 			if len(buckets) >= rateLimitMaxBuckets {
 				// Drop the oldest entry to bound memory.
@@ -191,7 +205,7 @@ func RateLimitMiddleware(cfg config.API, stop <-chan struct{}) gin.HandlerFunc {
 				delete(buckets, oldestKey)
 			}
 			b = &rateBucket{tokens: burst, lastRefill: time.Now()}
-			buckets[key] = b
+			buckets[bucketKey] = b
 		}
 
 		now := time.Now()
@@ -300,11 +314,4 @@ func SlogRequestLogger() gin.HandlerFunc {
 			"client_ip", c.ClientIP(),
 		)
 	}
-}
-
-// keyDigestHex returns a short hex prefix of a key's SHA-256 digest,
-// for use in diagnostic logs that must not leak the key itself.
-func keyDigestHex(key string) string {
-	sum := sha256.Sum256([]byte(key))
-	return hex.EncodeToString(sum[:8])
 }

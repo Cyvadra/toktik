@@ -32,6 +32,8 @@ import (
 	"time"
 
 	"github.com/Cyvadra/toktik/internal/api"
+	"github.com/Cyvadra/toktik/internal/apikeyauth"
+	"github.com/Cyvadra/toktik/internal/apikeyrepo"
 	"github.com/Cyvadra/toktik/internal/calendarrepo"
 	"github.com/Cyvadra/toktik/internal/chrepo"
 	appCli "github.com/Cyvadra/toktik/internal/cli"
@@ -110,6 +112,11 @@ func run() error {
 	if err := logoRepo.AutoMigrate(ctx); err != nil {
 		return fmt.Errorf("migrate US stock logo tables: %w", err)
 	}
+	apiKeyRepo := apikeyrepo.New(gormDB)
+	if err := apiKeyRepo.AutoMigrate(ctx); err != nil {
+		return fmt.Errorf("migrate API key tables: %w", err)
+	}
+	apiKeyAuth := apikeyauth.New(apiKeyRepo)
 
 	conn, err := appCli.ConnectClickHouse(ctx, *dsn, &appCli.SchemaInit{
 		DDLFile:    ddlFile,
@@ -167,7 +174,7 @@ func run() error {
 
 	stop := make(chan struct{})
 	defer close(stop)
-	deps := buildAPIDeps(runtimeCfg, repo, factorStore, apiServices, polygonSvc, cacheStore, stop)
+	deps := buildAPIDeps(runtimeCfg, repo, factorStore, apiServices, polygonSvc, cacheStore, apiKeyAuth, stop)
 
 	router := api.NewRouterFromDeps(deps)
 

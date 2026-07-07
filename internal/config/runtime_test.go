@@ -22,9 +22,6 @@ func TestLoadRuntimeFromPathYAML(t *testing.T) {
 		"  cors_origins:\n" +
 		"    - \"https://one.example\"\n" +
 		"    - \"https://two.example\"\n" +
-		"  api_keys:\n" +
-		"    - \"alpha\"\n" +
-		"    - \"beta\"\n" +
 		"  rate_limit_rps: 125\n" +
 		"  environment: \"dev\"\n" +
 		"mysql:\n" +
@@ -92,9 +89,6 @@ func TestLoadRuntimeFromPathYAML(t *testing.T) {
 	}
 	if !reflect.DeepEqual(cfg.API.CORSOrigins, []string{"https://one.example", "https://two.example"}) {
 		t.Fatalf("unexpected cors origins: %#v", cfg.API.CORSOrigins)
-	}
-	if !reflect.DeepEqual(cfg.API.APIKeys, []string{"alpha", "beta"}) {
-		t.Fatalf("unexpected api keys: %#v", cfg.API.APIKeys)
 	}
 	if cfg.API.RateLimitRPS != 125 {
 		t.Fatalf("unexpected api rate limit: %v", cfg.API.RateLimitRPS)
@@ -176,7 +170,6 @@ func TestLoadRuntimeFromPathEnvOverrides(t *testing.T) {
 	t.Setenv(EnvClickHouseDSN, "clickhouse://env@clickhouse:9000/envdb")
 	t.Setenv(EnvListenAddr, ":9090")
 	t.Setenv(EnvCORSOrigins, "https://alpha.example, https://beta.example")
-	t.Setenv(EnvAPIKeys, "key-a, key-b")
 	t.Setenv(EnvRateLimitRPS, "75")
 	t.Setenv(EnvMySQLHost, "mysql-env.internal:3307")
 	t.Setenv(EnvMySQLUser, "env-user")
@@ -221,9 +214,6 @@ func TestLoadRuntimeFromPathEnvOverrides(t *testing.T) {
 	}
 	if !reflect.DeepEqual(cfg.API.CORSOrigins, []string{"https://alpha.example", "https://beta.example"}) {
 		t.Fatalf("unexpected cors overrides: %#v", cfg.API.CORSOrigins)
-	}
-	if !reflect.DeepEqual(cfg.API.APIKeys, []string{"key-a", "key-b"}) {
-		t.Fatalf("unexpected api key overrides: %#v", cfg.API.APIKeys)
 	}
 	if cfg.API.RateLimitRPS != 75 {
 		t.Fatalf("unexpected rate limit override: %v", cfg.API.RateLimitRPS)

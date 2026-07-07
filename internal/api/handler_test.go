@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Cyvadra/toktik/internal/apikeyauth"
 	"github.com/Cyvadra/toktik/internal/backtest"
 	"github.com/Cyvadra/toktik/internal/config"
 	"github.com/Cyvadra/toktik/internal/dto"
@@ -445,9 +446,9 @@ func setupRouter(q CryptoOptionsQuerier) *gin.Engine {
 func TestUtilsUSStockLogoBypassesAPIKeyAuth(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	cfg := config.DefaultRuntime()
-	cfg.API.APIKeys = []string{"secret"}
 	r := NewRouterFromDeps(Deps{
-		Config: cfg,
+		Config:  cfg,
+		APIKeys: fakeAPIKeyAuthenticator{keys: map[string]apikeyauth.Principal{"secret": {ID: 1, KeyDigest: "secret-digest"}}},
 		Logos: &mockLogoProvider{logo: &dto.USStockLogoImage{
 			ContentType: "image/png",
 			Data:        []byte("png-data"),
@@ -1094,8 +1095,13 @@ func TestRebuildUniverseAcceptsDateOnlyJSON(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	universes := &mockUniverseProvider{rebuildResp: &dto.UniverseRebuildResponse{Market: "us-stocks", Code: "strong_momentum"}}
 	cfg := config.DefaultRuntime()
-	cfg.API.APIKeys = []string{"test-key"}
-	r := NewRouterFromDeps(Deps{Config: cfg, Universes: universes})
+	r := NewRouterFromDeps(Deps{
+		Config:    cfg,
+		Universes: universes,
+		APIKeys: fakeAPIKeyAuthenticator{keys: map[string]apikeyauth.Principal{
+			"test-key": {ID: 1, KeyDigest: "test-digest"},
+		}},
+	})
 
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest(http.MethodPost, "/api/v1/universes/rebuild", strings.NewReader(`{"market":"us-stocks","code":"strong_momentum","from":"2024-01-01","to":"2024-01-03","dry_run":true}`))
@@ -1114,7 +1120,7 @@ func TestRebuildUniverseAcceptsDateOnlyJSON(t *testing.T) {
 	}
 }
 
-func TestRebuildUniverseRequiresConfiguredAPIKeys(t *testing.T) {
+func TestRebuildUniverseRequiresAPIKeyAuthenticator(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	universes := &mockUniverseProvider{rebuildResp: &dto.UniverseRebuildResponse{Market: "us-stocks", Code: "strong_momentum"}}
 	r := NewRouterFromDeps(Deps{Config: config.DefaultRuntime(), Universes: universes})
@@ -1128,7 +1134,7 @@ func TestRebuildUniverseRequiresConfiguredAPIKeys(t *testing.T) {
 		t.Fatalf("expected 403, got %d: %s", w.Code, w.Body.String())
 	}
 	if !universes.rebuildReq.From.IsZero() {
-		t.Fatalf("rebuild should not be called without configured API keys: %+v", universes.rebuildReq)
+		t.Fatalf("rebuild should not be called without API key auth: %+v", universes.rebuildReq)
 	}
 }
 

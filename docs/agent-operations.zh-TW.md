@@ -27,7 +27,13 @@ curl http://localhost:9010/health
 curl http://localhost:9010/ready
 ```
 
-若設定了 `api.api_keys` 或 `API_KEYS`，請帶：
+API key 儲存在 MySQL。首次啟動前可先建立一把本機 key：
+
+```bash
+go run ./cmd/api-keys create --name local-dev --owner-type service --owner-id local --user-type internal --auth-level admin
+```
+
+呼叫受保護 API 時請帶：
 
 ```bash
 curl -H 'X-API-Key: <key>' http://localhost:9010/api/v1/infra/markets
@@ -60,7 +66,6 @@ TOKTIK_CONFIG=/path/to/toktik.yaml go run ./cmd/api-server
 - `MYSQL_DSN`
 - `MYSQL_PASSWORD`
 - `LISTEN_ADDR`
-- `API_KEYS`
 - `CORS_ORIGINS`
 - `FMP_API_KEY`
 - `TOKTIK_FMP_CACHE_DIR`

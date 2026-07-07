@@ -35,6 +35,7 @@ type Deps struct {
 	FinanceCalendar   FinanceCalendarProvider
 	Logos             LogoProvider
 	Polygon           PolygonProvider // optional
+	APIKeys           APIKeyAuthenticator
 
 	// Stop is closed when the server shuts down. Long-lived middleware
 	// goroutines watch it to exit cleanly. May be nil; in that case
@@ -63,8 +64,8 @@ func NewRouterFromDeps(d Deps) *gin.Engine {
 	// out so they are not killed mid-stream.
 	r.Use(RequestTimeoutMiddleware(d.Config.APIRequestTimeout(), isStreamingPath))
 
-	// Auth + rate limiting. Both are no-ops when not configured.
-	r.Use(APIKeyAuth(d.Config.API))
+	// Auth + rate limiting. Auth is enabled when an authenticator is supplied.
+	r.Use(APIKeyAuth(d.APIKeys))
 	r.Use(RateLimitMiddleware(d.Config.API, d.Stop))
 
 	h := NewHandler(d)

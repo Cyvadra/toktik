@@ -23,7 +23,6 @@ api_server:
 
 api:
   cors_origins: []
-  api_keys: []
   rate_limit_rps: 50
   request_timeout_seconds: 180
   # "dev" or "prod"
