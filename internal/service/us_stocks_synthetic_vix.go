@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	clickhouse "github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/Cyvadra/toktik/internal/chquery"
 	"github.com/Cyvadra/toktik/internal/dto"
 )
@@ -37,11 +38,112 @@ func isSyntheticVIXSymbol(symbol string) bool {
 	return strings.EqualFold(strings.TrimSpace(symbol), "VIX")
 }
 
+func (s *USStocksService) mergeLatestSyntheticVIXBars(ctx context.Context, fromT, toT time.Time, rows []dto.USStockBarRow) ([]dto.USStockBarRow, bool, error) {
+	model, err := s.loadSyntheticVIXModel(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+	model = resolveSyntheticVIXModel(model)
+	base := rows
+	if official, err := s.queryCBOEVIXMacroBars(ctx, fromT, toT); err != nil {
+		return nil, false, err
+	} else if len(official) > 0 {
+		base = official
+	}
+	latest, err := s.buildLatestSyntheticVIXBars(ctx, fromT, toT, model)
+	if err != nil || len(latest) == 0 {
+		return base, len(base) != len(rows), err
+	}
+	beforeLast := latestUSStockBarTimestamp(base)
+	merged := mergeLatestBarsByDate(base, latest, func(row dto.USStockBarRow) time.Time { return row.Timestamp })
+	changed := len(merged) != len(base) || len(base) != len(rows)
+	if !changed {
+		afterLast := latestUSStockBarTimestamp(merged)
+		changed = (beforeLast == nil && afterLast != nil) || (beforeLast != nil && afterLast != nil && !beforeLast.Equal(*afterLast))
+	}
+	return merged, changed, nil
+}
+
+func (s *USStocksService) queryCBOEVIXMacroBars(ctx context.Context, fromT, toT time.Time) ([]dto.USStockBarRow, error) {
+	query := fmt.Sprintf(`SELECT
+	toDateTime(period_start, 'UTC') AS timestamp,
+	toFloat32(anyIf(value, factor_code = 'open')) AS open,
+	toFloat32(anyIf(value, factor_code = 'high')) AS high,
+	toFloat32(anyIf(value, factor_code = 'low')) AS low,
+	toFloat32(anyIf(value, factor_code = 'close')) AS close
+FROM %s
+WHERE dataset = {dataset:String}
+	AND source = {source:String}
+	AND factor_code IN ('open', 'high', 'low', 'close')
+	AND period_start >= toDateTime({from:String}, 'UTC')
+	AND period_start < toDateTime({to:String}, 'UTC')
+GROUP BY period_start
+HAVING countDistinct(factor_code) = 4
+ORDER BY timestamp`, chquery.MacroObservation)
+	rows, err := s.repo.Query(ctx, query,
+		clickhouse.Named("dataset", macroDatasetCBOEVIX),
+		clickhouse.Named("source", "cboe"),
+		clickhouse.Named("from", fromT.UTC().Format("2006-01-02 15:04:05")),
+		clickhouse.Named("to", toT.UTC().Format("2006-01-02 15:04:05")),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query CBOE VIX macro bars: %w", err)
+	}
+	defer rows.Close()
+
+	bars := make([]dto.USStockBarRow, 0)
+	for rows.Next() {
+		var row dto.USStockBarRow
+		if err := rows.Scan(&row.Timestamp, &row.Open, &row.High, &row.Low, &row.Close); err != nil {
+			return nil, fmt.Errorf("scan CBOE VIX macro bar: %w", err)
+		}
+		row.Symbol = "VIX"
+		bars = append(bars, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate CBOE VIX macro bars: %w", err)
+	}
+	return bars, nil
+}
+
 func syntheticVIXFetchLimit(limit int) int {
 	if limit <= 0 {
 		return defaultBarLimit*4 + 1
 	}
 	return limit*4 + 1
+}
+
+func (s *USStocksService) buildLatestSyntheticVIXBars(ctx context.Context, fromT, toT time.Time, model *syntheticVIXModel) ([]dto.USStockBarRow, error) {
+	if s == nil || s.latest == nil || model == nil {
+		return nil, nil
+	}
+	series := make(map[time.Time]map[string]dto.USStockBarRow)
+	for _, symbol := range model.Symbols {
+		payload, ok, err := s.latest.StockBarsDiagnostic(ctx, symbol, fromT, toT)
+		if err != nil {
+			return nil, err
+		}
+		if !ok || payload.Adjusted == nil || !*payload.Adjusted {
+			return nil, nil
+		}
+		for _, bar := range payload.Bars {
+			ts := normalizeCalendarDate(bar.Timestamp)
+			bucket := series[ts]
+			if bucket == nil {
+				bucket = make(map[string]dto.USStockBarRow, len(model.Symbols))
+				series[ts] = bucket
+			}
+			bucket[symbol] = dto.USStockBarRow{Timestamp: ts, Symbol: symbol, Open: bar.Open, High: bar.High, Low: bar.Low, Close: bar.Close, Volume: bar.Volume, Transactions: bar.Transactions}
+		}
+	}
+	latest := make([]dto.USStockBarRow, 0, len(series))
+	for _, ts := range sortedSyntheticVIXTimestamps(series) {
+		row, ok := buildSyntheticVIXBar(ts, model, series[ts])
+		if ok {
+			latest = append(latest, row)
+		}
+	}
+	return latest, nil
 }
 
 func (s *USStocksService) mergeSyntheticVIXBars(ctx context.Context, tableName string, fromT, toT time.Time, session string, limit int, adjusted bool, actual []dto.USStockBarRow) ([]dto.USStockBarRow, error) {

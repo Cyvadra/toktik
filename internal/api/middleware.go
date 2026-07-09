@@ -77,12 +77,16 @@ func isLANOrigin(origin string) bool {
 // APIKeyAuth returns a gin middleware that checks the X-API-Key header using
 // the supplied authenticator. A nil authenticator leaves auth disabled, which
 // is useful for tests and binaries that intentionally expose only public routes.
-func APIKeyAuth(authenticator APIKeyAuthenticator) gin.HandlerFunc {
+func APIKeyAuth(cfg config.API, authenticator APIKeyAuthenticator) gin.HandlerFunc {
 	if authenticator == nil {
 		return func(c *gin.Context) { c.Next() }
 	}
 	return func(c *gin.Context) {
 		if isPublicPath(c.Request.URL.Path) {
+			c.Next()
+			return
+		}
+		if cfg.BypassAuthForLocalClients && isLocalClientIP(c.ClientIP()) {
 			c.Next()
 			return
 		}

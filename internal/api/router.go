@@ -65,7 +65,7 @@ func NewRouterFromDeps(d Deps) *gin.Engine {
 	r.Use(RequestTimeoutMiddleware(d.Config.APIRequestTimeout(), isStreamingPath))
 
 	// Auth + rate limiting. Auth is enabled when an authenticator is supplied.
-	r.Use(APIKeyAuth(d.APIKeys))
+	r.Use(APIKeyAuth(d.Config.API, d.APIKeys))
 	r.Use(RateLimitMiddleware(d.Config.API, d.Stop))
 
 	h := NewHandler(d)

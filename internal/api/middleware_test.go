@@ -84,7 +84,7 @@ func TestAPIKeyAuthOnlyBypassesExplicitPublicPaths(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	r := gin.New()
-	r.Use(APIKeyAuth(fakeAPIKeyAuthenticator{keys: map[string]apikeyauth.Principal{
+	r.Use(APIKeyAuth(config.API{}, fakeAPIKeyAuthenticator{keys: map[string]apikeyauth.Principal{
 		"secret": {ID: 1, KeyDigest: "secret-digest"},
 	}}))
 	r.GET("/utils/us-stocks/logos/:symbol", func(c *gin.Context) {
@@ -125,7 +125,7 @@ func TestAPIKeyAuthRequiresKeysForLANClients(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			r := gin.New()
-			r.Use(APIKeyAuth(fakeAPIKeyAuthenticator{keys: map[string]apikeyauth.Principal{
+			r.Use(APIKeyAuth(config.API{}, fakeAPIKeyAuthenticator{keys: map[string]apikeyauth.Principal{
 				"secret": {ID: 1, KeyDigest: "secret-digest"},
 			}}))
 			r.GET("/api/v1/test", func(c *gin.Context) {
@@ -148,7 +148,7 @@ func TestAPIKeyAuthAcceptsValidKey(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	r := gin.New()
-	r.Use(APIKeyAuth(fakeAPIKeyAuthenticator{keys: map[string]apikeyauth.Principal{
+	r.Use(APIKeyAuth(config.API{}, fakeAPIKeyAuthenticator{keys: map[string]apikeyauth.Principal{
 		"secret": {ID: 1, KeyDigest: "secret-digest"},
 	}}))
 	r.GET("/api/v1/test", func(c *gin.Context) {
@@ -167,6 +167,41 @@ func TestAPIKeyAuthAcceptsValidKey(t *testing.T) {
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected valid key to pass, got status %d", w.Code)
+	}
+}
+
+func TestAPIKeyAuthCanBypassLocalClientsWhenConfigured(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	tests := []struct {
+		name   string
+		remote string
+		want   int
+	}{
+		{name: "loopback", remote: "127.0.0.1:1234", want: http.StatusOK},
+		{name: "private", remote: "192.168.1.10:1234", want: http.StatusOK},
+		{name: "public", remote: "8.8.8.8:1234", want: http.StatusUnauthorized},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := gin.New()
+			r.Use(APIKeyAuth(config.API{BypassAuthForLocalClients: true}, fakeAPIKeyAuthenticator{keys: map[string]apikeyauth.Principal{
+				"secret": {ID: 1, KeyDigest: "secret-digest"},
+			}}))
+			r.GET("/api/v1/test", func(c *gin.Context) {
+				c.Status(http.StatusOK)
+			})
+
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/test", nil)
+			req.RemoteAddr = tt.remote
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, req)
+
+			if w.Code != tt.want {
+				t.Fatalf("expected status %d, got %d", tt.want, w.Code)
+			}
+		})
 	}
 }
 

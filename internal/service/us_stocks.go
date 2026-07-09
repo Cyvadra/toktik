@@ -277,6 +277,13 @@ func (s *USStocksService) QueryBars(ctx context.Context, req dto.USStockBarReque
 			bars = merged
 			latestMerged = changed
 		}
+	} else if s.shouldMergeLatestSyntheticVIXBars(req) {
+		if merged, changed, err := s.mergeLatestSyntheticVIXBars(ctx, fromT, toT, bars); err != nil {
+			return nil, err
+		} else {
+			bars = merged
+			latestMerged = changed
+		}
 	}
 
 	resp := &dto.USStockBarResponse{Data: make([]dto.USStockBarRow, 0)}
@@ -300,6 +307,10 @@ func (s *USStocksService) QueryBars(ctx context.Context, req dto.USStockBarReque
 
 func (s *USStocksService) shouldMergeLatestStockBars(req dto.USStockBarRequest) bool {
 	return s != nil && s.latest != nil && req.IncludeLatest && req.Interval == "1d" && !isSyntheticVIXSymbol(req.Symbol)
+}
+
+func (s *USStocksService) shouldMergeLatestSyntheticVIXBars(req dto.USStockBarRequest) bool {
+	return s != nil && s.repo != nil && s.latest != nil && req.IncludeLatest && req.Interval == "1d" && isSyntheticVIXSymbol(req.Symbol)
 }
 
 func usStockBarsAdjusted(adjusted *bool) bool {

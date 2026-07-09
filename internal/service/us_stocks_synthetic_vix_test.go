@@ -1,10 +1,14 @@
 package service
 
 import (
+	"context"
 	"math"
 	"testing"
 	"time"
 
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+	"github.com/Cyvadra/toktik/internal/cache"
+	"github.com/Cyvadra/toktik/internal/chrepo"
 	"github.com/Cyvadra/toktik/internal/dto"
 )
 
@@ -91,5 +95,52 @@ func TestResolveSyntheticVIXModelKeepsFittedModel(t *testing.T) {
 	}
 	if got := resolveSyntheticVIXModel(fitted); got != fitted {
 		t.Fatalf("expected fitted model to be preserved, got %#v", got)
+	}
+}
+
+func TestQueryBarsIncludeLatestVIXSynthesizesFromLatestProxyBars(t *testing.T) {
+	first := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
+	latest := time.Date(2026, 7, 8, 0, 0, 0, 0, time.UTC)
+	conn := &fakeForexConn{rowSets: []driver.Rows{
+		&fakeForexRows{data: [][]any{{first, "VIX", float32(17), float32(18), float32(16), float32(17.5), 0.0, uint64(0)}}},
+		&fakeForexRows{},
+		&fakeForexRows{},
+		&fakeForexRows{},
+		&fakeForexRows{},
+		&fakeForexRows{},
+		&fakeForexRows{},
+		&fakeForexRows{},
+		&fakeForexRows{},
+		&fakeForexRows{},
+		&fakeForexRows{},
+		&fakeForexRows{data: [][]any{{first, float32(16.8), float32(18.2), float32(16.1), float32(17.7)}}},
+	}}
+	latestCache := NewLatestUSMarketCache(cache.NewMemoryStore(), time.Hour)
+	for _, symbol := range syntheticVIXProxySymbols {
+		if err := latestCache.StoreStockBars(context.Background(), symbol, "fmp", true, []LatestUSStockDailyBar{{
+			Timestamp: latest,
+			Symbol:    symbol,
+			Open:      10,
+			High:      12,
+			Low:       9,
+			Close:     11,
+		}}); err != nil {
+			t.Fatalf("StoreStockBars(%s) failed: %v", symbol, err)
+		}
+	}
+	svc := NewUSStocksService(chrepo.NewRepo(conn)).WithLatestMarketCache(latestCache)
+
+	resp, err := svc.QueryBars(context.Background(), dto.USStockBarRequest{Symbol: "VIX", Interval: "1d", From: "2026-07-01", To: "2026-07-09", IncludeLatest: true})
+	if err != nil {
+		t.Fatalf("QueryBars returned error: %v", err)
+	}
+	if len(resp.Data) != 2 {
+		t.Fatalf("expected two VIX rows, got %#v", resp.Data)
+	}
+	if !resp.Data[0].Timestamp.Equal(first) || resp.Data[0].Close != float32(17.7) {
+		t.Fatalf("expected CBOE macro base row, got %#v", resp.Data[0])
+	}
+	if !resp.Data[1].Timestamp.Equal(latest) || resp.Data[1].Close <= 0 || resp.Data[1].Volume != 0 {
+		t.Fatalf("unexpected latest synthetic VIX bar: %#v", resp.Data[1])
 	}
 }

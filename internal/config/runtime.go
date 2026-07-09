@@ -25,6 +25,7 @@ const (
 	EnvListenAddr                            = "LISTEN_ADDR"
 	EnvCORSOrigins                           = "CORS_ORIGINS"
 	EnvRateLimitRPS                          = "RATE_LIMIT_RPS"
+	EnvBypassAuthForLocalClients             = "TOKTIK_BYPASS_AUTH_FOR_LOCAL_CLIENTS"
 	EnvAPIEnvironment                        = "TOKTIK_API_ENVIRONMENT"
 	EnvSchemaDir                             = "TOKTIK_SCHEMA_DIR"
 	EnvDeribitBaseURL                        = "DERIBIT_BASE_URL"
@@ -82,6 +83,7 @@ var defaultLatestMarketDataAlwaysRefreshSymbols = []string{
 	"IBIT", "TLT", "USO", "VTI", "DIA",
 	"VGK", "EWU", "EWJ", "EWH", "FXI", "EWA", "EWZ",
 	"BE", "SMCI", "CRM", "IBM", "JPM", "ETHU", "ETHA", "MSTR", "ASHR", "MCHI", "KWEB", "VIX",
+	"VXX", "UVXY", "SVXY", "SVIX", "UVIX", "VIXY", "VIXM", "VXZ",
 	"SHOP", "MELI", "BRK.B", "SPOT", "NET", "SE", "BAC", "OXY", "TME", "TEM", "MCO", "PDD", "CRCL", "MCD", "CRWD",
 	"PANW", "VST",
 }
@@ -128,11 +130,12 @@ type APIServer struct {
 }
 
 type API struct {
-	CORSOrigins           []string `yaml:"cors_origins"`
-	RateLimitRPS          float64  `yaml:"rate_limit_rps"`
-	TrustedProxies        []string `yaml:"trusted_proxies"`
-	RequestTimeoutSeconds int      `yaml:"request_timeout_seconds"`
-	Environment           string   `yaml:"environment"`
+	CORSOrigins               []string `yaml:"cors_origins"`
+	RateLimitRPS              float64  `yaml:"rate_limit_rps"`
+	TrustedProxies            []string `yaml:"trusted_proxies"`
+	BypassAuthForLocalClients bool     `yaml:"bypass_auth_for_local_clients"`
+	RequestTimeoutSeconds     int      `yaml:"request_timeout_seconds"`
+	Environment               string   `yaml:"environment"`
 }
 
 type Paths struct {
@@ -456,6 +459,11 @@ func (c *Runtime) applyEnvOverrides() {
 	if value := strings.TrimSpace(os.Getenv(EnvRateLimitRPS)); value != "" {
 		if parsed, err := strconv.ParseFloat(value, 64); err == nil {
 			c.API.RateLimitRPS = parsed
+		}
+	}
+	if value := strings.TrimSpace(os.Getenv(EnvBypassAuthForLocalClients)); value != "" {
+		if parsed, err := strconv.ParseBool(value); err == nil {
+			c.API.BypassAuthForLocalClients = parsed
 		}
 	}
 	if value := strings.TrimSpace(os.Getenv(EnvAPIEnvironment)); value != "" {

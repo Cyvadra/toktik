@@ -39,6 +39,8 @@ go run ./cmd/api-keys create --name local-dev --owner-type service --owner-id lo
 curl -H 'X-API-Key: <key>' http://localhost:9010/api/v1/infra/markets
 ```
 
+若本機開發環境需要讓 loopback、RFC1918/private 或 link-local 來源免帶 API key，可在 `toktik.yaml` 設定 `api.bypass_auth_for_local_clients: true`，或設定環境變數 `TOKTIK_BYPASS_AUTH_FOR_LOCAL_CLIENTS=true`。預設為 `false`。
+
 ## 本機啟動資料瀏覽器
 
 ```bash

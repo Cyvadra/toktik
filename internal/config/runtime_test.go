@@ -23,6 +23,7 @@ func TestLoadRuntimeFromPathYAML(t *testing.T) {
 		"    - \"https://one.example\"\n" +
 		"    - \"https://two.example\"\n" +
 		"  rate_limit_rps: 125\n" +
+		"  bypass_auth_for_local_clients: true\n" +
 		"  environment: \"dev\"\n" +
 		"mysql:\n" +
 		"  host: \"mysql.internal\"\n" +
@@ -92,6 +93,9 @@ func TestLoadRuntimeFromPathYAML(t *testing.T) {
 	}
 	if cfg.API.RateLimitRPS != 125 {
 		t.Fatalf("unexpected api rate limit: %v", cfg.API.RateLimitRPS)
+	}
+	if !cfg.API.BypassAuthForLocalClients {
+		t.Fatalf("expected local client auth bypass to be enabled")
 	}
 	if cfg.API.Environment != "dev" {
 		t.Fatalf("unexpected api environment: %q", cfg.API.Environment)
@@ -171,6 +175,7 @@ func TestLoadRuntimeFromPathEnvOverrides(t *testing.T) {
 	t.Setenv(EnvListenAddr, ":9090")
 	t.Setenv(EnvCORSOrigins, "https://alpha.example, https://beta.example")
 	t.Setenv(EnvRateLimitRPS, "75")
+	t.Setenv(EnvBypassAuthForLocalClients, "true")
 	t.Setenv(EnvMySQLHost, "mysql-env.internal:3307")
 	t.Setenv(EnvMySQLUser, "env-user")
 	t.Setenv(EnvMySQLPassword, "env-pass")
@@ -217,6 +222,9 @@ func TestLoadRuntimeFromPathEnvOverrides(t *testing.T) {
 	}
 	if cfg.API.RateLimitRPS != 75 {
 		t.Fatalf("unexpected rate limit override: %v", cfg.API.RateLimitRPS)
+	}
+	if !cfg.API.BypassAuthForLocalClients {
+		t.Fatalf("expected local client auth bypass env override")
 	}
 	mysqlPassword, err := cfg.MySQLPassword()
 	if err != nil {
@@ -298,7 +306,7 @@ func TestDefaultLatestMarketDataAlwaysRefreshSymbolsCoverOptoPickCriticalSymbols
 	for _, symbol := range cfg.LatestMarketData.AlwaysRefreshSymbols {
 		symbols[symbol] = true
 	}
-	for _, symbol := range []string{"IBIT", "TLT", "USO", "VTI", "DIA", "VGK", "EWU", "EWH", "BE", "SMCI", "BRK.B", "PANW"} {
+	for _, symbol := range []string{"IBIT", "TLT", "USO", "VTI", "DIA", "VGK", "EWU", "EWH", "BE", "SMCI", "BRK.B", "PANW", "VXX", "UVXY", "SVXY", "SVIX", "UVIX", "VIXY", "VIXM", "VXZ"} {
 		if !symbols[symbol] {
 			t.Fatalf("expected default latest market always-refresh symbols to include %s, got %#v", symbol, cfg.LatestMarketData.AlwaysRefreshSymbols)
 		}
