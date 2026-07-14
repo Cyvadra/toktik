@@ -4,9 +4,11 @@ import "time"
 
 // FeatureVolatilitySnapshotRequest defines the query for the first feature-store API.
 type FeatureVolatilitySnapshotRequest struct {
-	Market       string `form:"market" binding:"required"`
-	Underlying   string `form:"underlying" binding:"required"`
-	LookbackDays int    `form:"lookback_days" binding:"omitempty"`
+	Market                        string `form:"market" binding:"required"`
+	Underlying                    string `form:"underlying" binding:"required"`
+	LookbackDays                  int    `form:"lookback_days" binding:"omitempty"`
+	HVPercentileWindowNaturalDays int    `form:"hv_percentile_window_natural_days" binding:"omitempty"`
+	HVPercentileWindowBars        int    `form:"hv_percentile_window_bars" binding:"omitempty"`
 }
 
 // FeatureVolatilityHistoryRequest defines the query for volatility feature history.
@@ -224,19 +226,32 @@ type FeatureSkewSnapshotResponse struct {
 
 // FeatureVolatilitySnapshotResponse returns current HV and IV regime metrics.
 type FeatureVolatilitySnapshotResponse struct {
-	Market            string     `json:"market"`
-	Underlying        string     `json:"underlying"`
-	LookbackDays      int        `json:"lookback_days"`
-	PriceAsOf         *time.Time `json:"price_as_of,omitempty"`
-	IVAsOf            *time.Time `json:"iv_as_of,omitempty"`
-	PriceObservations int        `json:"price_observations"`
-	IVObservations    int        `json:"iv_observations"`
-	HV10              *float64   `json:"hv10,omitempty"`
-	HV20              *float64   `json:"hv20,omitempty"`
-	HV30              *float64   `json:"hv30,omitempty"`
-	CurrentIV         *float64   `json:"current_iv,omitempty"`
-	IVPercentile      *float64   `json:"iv_percentile,omitempty"`
-	IVRank            *float64   `json:"iv_rank,omitempty"`
+	Market                     string     `json:"market"`
+	Underlying                 string     `json:"underlying"`
+	LookbackDays               int        `json:"lookback_days"`
+	PriceAsOf                  *time.Time `json:"price_as_of,omitempty"`
+	IVAsOf                     *time.Time `json:"iv_as_of,omitempty"`
+	PriceObservations          int        `json:"price_observations"`
+	IVObservations             int        `json:"iv_observations"`
+	HVAnnualizationPeriods     int        `json:"hv_annualization_periods"`
+	HVPercentileMethod         string     `json:"hv_percentile_method,omitempty"`
+	HVPercentileWindowType     string     `json:"hv_percentile_window_type,omitempty"`
+	HVPercentileWindowValue    int        `json:"hv_percentile_window_value,omitempty"`
+	HV10                       *float64   `json:"hv10,omitempty"`
+	HV10Percentile             *float64   `json:"hv10_percentile,omitempty"`
+	HV10PercentileSampleCount  int        `json:"hv10_percentile_sample_count,omitempty"`
+	HV10PercentileCoverageDays int        `json:"hv10_percentile_coverage_natural_days,omitempty"`
+	HV20                       *float64   `json:"hv20,omitempty"`
+	HV20Percentile             *float64   `json:"hv20_percentile,omitempty"`
+	HV20PercentileSampleCount  int        `json:"hv20_percentile_sample_count,omitempty"`
+	HV20PercentileCoverageDays int        `json:"hv20_percentile_coverage_natural_days,omitempty"`
+	HV30                       *float64   `json:"hv30,omitempty"`
+	HV30Percentile             *float64   `json:"hv30_percentile,omitempty"`
+	HV30PercentileSampleCount  int        `json:"hv30_percentile_sample_count,omitempty"`
+	HV30PercentileCoverageDays int        `json:"hv30_percentile_coverage_natural_days,omitempty"`
+	CurrentIV                  *float64   `json:"current_iv,omitempty"`
+	IVPercentile               *float64   `json:"iv_percentile,omitempty"`
+	IVRank                     *float64   `json:"iv_rank,omitempty"`
 }
 
 // FeatureTermStructureHistoryRequest defines a range query for IV term structure history.

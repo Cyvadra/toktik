@@ -16,6 +16,8 @@ import (
 //	@Param			market			query		string	true	"Market (crypto-options, us-options)"
 //	@Param			underlying		query		string	true	"Underlying asset symbol"
 //	@Param			lookback_days	query		int		false	"IV percentile lookback window (default 252)"
+//	@Param			hv_percentile_window_natural_days	query	int	false	"HV percentile lookback in natural days; mutually exclusive with hv_percentile_window_bars"
+//	@Param			hv_percentile_window_bars	query	int	false	"HV percentile lookback in valid daily HV observations; mutually exclusive with hv_percentile_window_natural_days"
 //	@Success		200				{object}	dto.FeatureVolatilitySnapshotResponse
 //	@Failure		400				{object}	dto.ErrorResponse
 //	@Failure		500				{object}	dto.ErrorResponse

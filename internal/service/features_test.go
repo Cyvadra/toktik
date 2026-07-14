@@ -42,6 +42,45 @@ func TestRollingHistoricalVolatility(t *testing.T) {
 	}
 }
 
+func TestHistoricalVolatilityPercentileBars(t *testing.T) {
+	hv10a, hv10b, hv10c, hv10d := 0.10, 0.20, 0.30, 0.20
+	history := []dto.FeatureVolatilityHistoryRow{
+		{Date: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC), HV10: &hv10a},
+		{Date: time.Date(2026, 1, 5, 0, 0, 0, 0, time.UTC), HV10: &hv10b},
+		{Date: time.Date(2026, 1, 6, 0, 0, 0, 0, time.UTC), HV10: &hv10c},
+		{Date: time.Date(2026, 1, 7, 0, 0, 0, 0, time.UTC), HV10: &hv10d},
+	}
+	percentile, sampleCount, coverageDays := historicalVolatilityPercentile(history, time.Date(2026, 1, 7, 0, 0, 0, 0, time.UTC), 3, "bars", func(row dto.FeatureVolatilityHistoryRow) *float64 { return row.HV10 })
+	if percentile == nil || math.Abs(*percentile-200.0/3) > 1e-12 || sampleCount != 3 || coverageDays != 2 {
+		t.Fatalf("unexpected bars percentile: percentile=%v samples=%d coverage=%d", percentile, sampleCount, coverageDays)
+	}
+}
+
+func TestHistoricalVolatilityPercentileNaturalDays(t *testing.T) {
+	hv10a, hv10b, hv10c, hv10d := 0.10, 0.20, 0.30, 0.20
+	history := []dto.FeatureVolatilityHistoryRow{
+		{Date: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC), HV10: &hv10a},
+		{Date: time.Date(2026, 1, 5, 0, 0, 0, 0, time.UTC), HV10: &hv10b},
+		{Date: time.Date(2026, 1, 6, 0, 0, 0, 0, time.UTC), HV10: &hv10c},
+		{Date: time.Date(2026, 1, 7, 0, 0, 0, 0, time.UTC), HV10: &hv10d},
+	}
+	percentile, sampleCount, coverageDays := historicalVolatilityPercentile(history, time.Date(2026, 1, 7, 0, 0, 0, 0, time.UTC), 2, "natural_days", func(row dto.FeatureVolatilityHistoryRow) *float64 { return row.HV10 })
+	if percentile == nil || math.Abs(*percentile-200.0/3) > 1e-12 || sampleCount != 3 || coverageDays != 2 {
+		t.Fatalf("unexpected natural-days percentile: percentile=%v samples=%d coverage=%d", percentile, sampleCount, coverageDays)
+	}
+}
+
+func TestNormalizeHVPercentileWindow(t *testing.T) {
+	window, windowType, err := normalizeHVPercentileWindow(dto.FeatureVolatilitySnapshotRequest{HVPercentileWindowBars: 1500})
+	if err != nil || window != 1500 || windowType != "bars" {
+		t.Fatalf("unexpected bars window: window=%d type=%q err=%v", window, windowType, err)
+	}
+	_, _, err = normalizeHVPercentileWindow(dto.FeatureVolatilitySnapshotRequest{HVPercentileWindowBars: 1500, HVPercentileWindowNaturalDays: 2000})
+	if err == nil {
+		t.Fatal("expected mutually exclusive percentile windows to fail")
+	}
+}
+
 func TestImpliedVolatilityMetrics(t *testing.T) {
 	values := []featurePoint{
 		{Date: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC), Value: 0.20},

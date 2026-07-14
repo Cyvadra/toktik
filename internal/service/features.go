@@ -21,6 +21,7 @@ import (
 const (
 	defaultFeatureLookbackDays = 252
 	maxFeatureLookbackDays     = 2000
+	maxHVPercentileWindow      = 10000
 	featureSnapshotTable       = "feature_volatility_snapshot_daily"
 	featureTermStructureTable  = "feature_term_structure_snapshot_daily"
 	featureSkewTable           = "feature_skew_snapshot_daily"
@@ -253,10 +254,22 @@ func (s *FeatureService) QueryVolatilitySnapshot(ctx context.Context, req dto.Fe
 	if err != nil {
 		return nil, err
 	}
+	percentileWindow, percentileWindowType, err := normalizeHVPercentileWindow(req)
+	if err != nil {
+		return nil, err
+	}
 
 	if precomputed, ok, err := s.queryPrecomputedVolatilitySnapshot(ctx, market, underlying, lookbackDays); err != nil {
 		return nil, err
 	} else if ok {
+		if percentileWindow == 0 {
+			return precomputed, nil
+		}
+		history, err := s.queryPrecomputedHVPercentileHistory(ctx, market, underlying, lookbackDays)
+		if err != nil {
+			return nil, err
+		}
+		applyHVPercentiles(precomputed, history, percentileWindow, percentileWindowType)
 		return precomputed, nil
 	}
 
@@ -265,11 +278,12 @@ func (s *FeatureService) QueryVolatilitySnapshot(ctx context.Context, req dto.Fe
 		return nil, err
 	}
 	resp := &dto.FeatureVolatilitySnapshotResponse{
-		Market:            market,
-		Underlying:        underlying,
-		LookbackDays:      lookbackDays,
-		PriceObservations: len(priceSeries),
-		IVObservations:    len(ivSeries),
+		Market:                 market,
+		Underlying:             underlying,
+		LookbackDays:           lookbackDays,
+		HVAnnualizationPeriods: int(annualizationDays(market)),
+		PriceObservations:      len(priceSeries),
+		IVObservations:         len(ivSeries),
 	}
 	if len(priceSeries) > 0 {
 		priceAsOf := priceSeries[len(priceSeries)-1].Date.UTC()
@@ -298,6 +312,9 @@ func (s *FeatureService) QueryVolatilitySnapshot(ctx context.Context, req dto.Fe
 	if last.CurrentIV != nil || last.IVPercentile != nil || last.IVRank != nil {
 		date := last.Date.UTC()
 		resp.IVAsOf = &date
+	}
+	if percentileWindow > 0 {
+		applyHVPercentiles(resp, history, percentileWindow, percentileWindowType)
 	}
 	return resp, nil
 }
@@ -1914,6 +1931,25 @@ func (p FeaturePolicy) normalizeFeatureRequest(market, underlying string, lookba
 	return normalizedMarket, normalizedUnderlying, clamp(lookbackDays, p.DefaultLookbackDays, p.MaxLookbackDays), nil
 }
 
+func normalizeHVPercentileWindow(req dto.FeatureVolatilitySnapshotRequest) (int, string, error) {
+	if req.HVPercentileWindowNaturalDays > 0 && req.HVPercentileWindowBars > 0 {
+		return 0, "", dto.NewValidationError("only one HV percentile window may be specified")
+	}
+	if req.HVPercentileWindowNaturalDays < 0 || req.HVPercentileWindowBars < 0 {
+		return 0, "", dto.NewValidationError("HV percentile window must be positive")
+	}
+	if req.HVPercentileWindowNaturalDays > maxHVPercentileWindow || req.HVPercentileWindowBars > maxHVPercentileWindow {
+		return 0, "", dto.NewValidationError("HV percentile window must not exceed %d", maxHVPercentileWindow)
+	}
+	if req.HVPercentileWindowNaturalDays > 0 {
+		return req.HVPercentileWindowNaturalDays, "natural_days", nil
+	}
+	if req.HVPercentileWindowBars > 0 {
+		return req.HVPercentileWindowBars, "bars", nil
+	}
+	return 0, "", nil
+}
+
 func normalizeFeatureMarket(market string) (string, error) {
 	value := strings.ToLower(strings.TrimSpace(market))
 	switch value {
@@ -2223,9 +2259,10 @@ LIMIT %d`, featureSnapshotTable, s.policy.FallbackWindowDays),
 	}
 	priceRow, ivRow := latestValidVolatilitySnapshotRows(historyDesc, s.policy.FallbackWindowDays)
 	resp := &dto.FeatureVolatilitySnapshotResponse{
-		Market:       market,
-		Underlying:   underlying,
-		LookbackDays: lookbackDays,
+		Market:                 market,
+		Underlying:             underlying,
+		LookbackDays:           lookbackDays,
+		HVAnnualizationPeriods: int(annualizationDays(market)),
 	}
 	if priceRow != nil {
 		resp.PriceObservations = priceRow.PriceObservations
@@ -2298,6 +2335,45 @@ ORDER BY as_of_date ASC`, featureSnapshotTable),
 		return nil, false, nil
 	}
 	return &dto.FeatureVolatilityHistoryResponse{Market: market, Underlying: underlying, LookbackDays: lookbackDays, Data: history}, true, nil
+}
+
+func (s *FeatureService) queryPrecomputedHVPercentileHistory(ctx context.Context, market, underlying string, lookbackDays int) ([]dto.FeatureVolatilityHistoryRow, error) {
+	rows, err := s.repo.Query(ctx, fmt.Sprintf(`SELECT
+	as_of_date,
+	price_observations,
+	iv_observations,
+	hv10,
+	hv20,
+	hv30,
+	current_iv,
+	iv_percentile,
+	iv_rank
+FROM %s
+WHERE market = {market:String}
+  AND underlying = {underlying:String}
+  AND lookback_days = {lookback_days:UInt16}
+ORDER BY as_of_date ASC`, featureSnapshotTable),
+		clickhouse.Named("market", market),
+		clickhouse.Named("underlying", underlying),
+		clickhouse.Named("lookback_days", uint16(lookbackDays)),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query precomputed hv percentile history: %w", err)
+	}
+	defer rows.Close()
+
+	history := make([]dto.FeatureVolatilityHistoryRow, 0)
+	for rows.Next() {
+		row, err := scanFeatureHistoryRow(rows)
+		if err != nil {
+			return nil, err
+		}
+		history = append(history, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate precomputed hv percentile history: %w", err)
+	}
+	return history, nil
 }
 
 func (s *FeatureService) queryPrecomputedTermStructureSnapshot(ctx context.Context, market, underlying string, minDTE, maxDTE int32) (*dto.FeatureTermStructureSnapshotResponse, bool, error) {
@@ -4255,6 +4331,56 @@ func rollingHistoricalVolatilityAt(prices []featurePoint, endIndex, window int, 
 	}
 	value := stddev * math.Sqrt(annualization)
 	return &value
+}
+
+func applyHVPercentiles(resp *dto.FeatureVolatilitySnapshotResponse, history []dto.FeatureVolatilityHistoryRow, window int, windowType string) {
+	if resp == nil || window <= 0 || resp.PriceAsOf == nil {
+		return
+	}
+	resp.HVPercentileMethod = "inclusive empirical percentile: 100 * count(values <= current) / sample_count"
+	resp.HVPercentileWindowType = windowType
+	resp.HVPercentileWindowValue = window
+	resp.HV10Percentile, resp.HV10PercentileSampleCount, resp.HV10PercentileCoverageDays = historicalVolatilityPercentile(history, resp.PriceAsOf.UTC(), window, windowType, func(row dto.FeatureVolatilityHistoryRow) *float64 { return row.HV10 })
+	resp.HV20Percentile, resp.HV20PercentileSampleCount, resp.HV20PercentileCoverageDays = historicalVolatilityPercentile(history, resp.PriceAsOf.UTC(), window, windowType, func(row dto.FeatureVolatilityHistoryRow) *float64 { return row.HV20 })
+	resp.HV30Percentile, resp.HV30PercentileSampleCount, resp.HV30PercentileCoverageDays = historicalVolatilityPercentile(history, resp.PriceAsOf.UTC(), window, windowType, func(row dto.FeatureVolatilityHistoryRow) *float64 { return row.HV30 })
+}
+
+func historicalVolatilityPercentile(history []dto.FeatureVolatilityHistoryRow, asOf time.Time, window int, windowType string, valueOf func(dto.FeatureVolatilityHistoryRow) *float64) (*float64, int, int) {
+	values := make([]float64, 0, window)
+	var firstDate time.Time
+	windowStart := normalizeCalendarDate(asOf).AddDate(0, 0, -window)
+	for index := len(history) - 1; index >= 0; index-- {
+		row := history[index]
+		date := normalizeCalendarDate(row.Date)
+		if date.After(asOf) {
+			continue
+		}
+		if windowType == "natural_days" && date.Before(windowStart) {
+			break
+		}
+		value := valueOf(row)
+		if value == nil || !isFinitePositive(*value) {
+			continue
+		}
+		values = append(values, *value)
+		firstDate = date
+		if windowType == "bars" && len(values) == window {
+			break
+		}
+	}
+	if len(values) == 0 {
+		return nil, 0, 0
+	}
+	current := values[0]
+	lessOrEqual := 0
+	for _, value := range values {
+		if value <= current {
+			lessOrEqual++
+		}
+	}
+	percentile := float64(lessOrEqual) / float64(len(values)) * 100
+	coverageDays := int(normalizeCalendarDate(asOf).Sub(firstDate).Hours() / 24)
+	return &percentile, len(values), coverageDays
 }
 
 func impliedVolatilityPercentile(values []featurePoint) *float64 {
