@@ -83,7 +83,7 @@ SELECT
 FROM api_traffic_minute FINAL
 WHERE minute_ts >= {from:DateTime('UTC')} AND minute_ts < {to:DateTime('UTC')}
 GROUP BY timestamp
-ORDER BY timestamp`, clickhouse.Named("from", from), clickhouse.Named("to", to))
+ORDER BY timestamp`, clickhouse.Named("from", trafficDateTimeParam(from)), clickhouse.Named("to", trafficDateTimeParam(to)))
 	if err != nil {
 		return nil, fmt.Errorf("query API traffic hours: %w", err)
 	}
@@ -111,7 +111,7 @@ SELECT
     max(peak_ingress_bytes), max(peak_egress_bytes), max(peak_total_bytes)
 FROM api_traffic_minute FINAL
 WHERE minute_ts >= {from:DateTime('UTC')} AND minute_ts < {to:DateTime('UTC')}`,
-		clickhouse.Named("from", from), clickhouse.Named("to", to))
+		clickhouse.Named("from", trafficDateTimeParam(from)), clickhouse.Named("to", trafficDateTimeParam(to)))
 	if err != nil {
 		return summary, fmt.Errorf("query API traffic summary: %w", err)
 	}
@@ -136,4 +136,8 @@ WHERE minute_ts >= {from:DateTime('UTC')} AND minute_ts < {to:DateTime('UTC')}`,
 
 func bytesPerFiveSecondsToMbps(bytes uint64) float64 {
 	return float64(bytes) * 8 / (5 * 1_000_000)
+}
+
+func trafficDateTimeParam(value time.Time) string {
+	return value.UTC().Format("2006-01-02 15:04:05")
 }
