@@ -385,6 +385,8 @@ Returns latest known values per (symbol, factor) at as_of. For us-stocks, price-
 | market | query | string | yes | Market (crypto-options, us-options) |
 | underlying | query | string | yes | Underlying asset symbol |
 | lookback_days | query | integer | no | IV percentile lookback window (default 252) |
+| hv_percentile_window_natural_days | query | integer | no | HV percentile lookback in natural days; mutually exclusive with hv_percentile_window_bars |
+| hv_percentile_window_bars | query | integer | no | HV percentile lookback in valid daily HV observations; mutually exclusive with hv_percentile_window_natural_days |
 
 #### Responses
 
@@ -1491,8 +1493,21 @@ This section expands every request/response schema referenced by the endpoints a
 | --- | --- | --- | --- |
 | current_iv | number | no | - |
 | hv10 | number | no | - |
+| hv10_percentile | number | no | - |
+| hv10_percentile_coverage_natural_days | integer | no | - |
+| hv10_percentile_sample_count | integer | no | - |
 | hv20 | number | no | - |
+| hv20_percentile | number | no | - |
+| hv20_percentile_coverage_natural_days | integer | no | - |
+| hv20_percentile_sample_count | integer | no | - |
 | hv30 | number | no | - |
+| hv30_percentile | number | no | - |
+| hv30_percentile_coverage_natural_days | integer | no | - |
+| hv30_percentile_sample_count | integer | no | - |
+| hv_annualization_periods | integer | no | - |
+| hv_percentile_method | string | no | - |
+| hv_percentile_window_type | string | no | - |
+| hv_percentile_window_value | integer | no | - |
 | iv_as_of | string | no | - |
 | iv_observations | integer | no | - |
 | iv_percentile | number | no | - |

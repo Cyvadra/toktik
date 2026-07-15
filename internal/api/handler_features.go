@@ -13,14 +13,14 @@ import (
 //	@Description	Returns current HV and IV regime metrics for an underlying. When the latest precomputed feature row has empty volatility fields, the server scans up to the prior 7 calendar days and uses the nearest valid values.
 //	@Tags			Features
 //	@Produce		json
-//	@Param			market			query		string	true	"Market (crypto-options, us-options)"
-//	@Param			underlying		query		string	true	"Underlying asset symbol"
-//	@Param			lookback_days	query		int		false	"IV percentile lookback window (default 252)"
-//	@Param			hv_percentile_window_natural_days	query	int	false	"HV percentile lookback in natural days; mutually exclusive with hv_percentile_window_bars"
-//	@Param			hv_percentile_window_bars	query	int	false	"HV percentile lookback in valid daily HV observations; mutually exclusive with hv_percentile_window_natural_days"
-//	@Success		200				{object}	dto.FeatureVolatilitySnapshotResponse
-//	@Failure		400				{object}	dto.ErrorResponse
-//	@Failure		500				{object}	dto.ErrorResponse
+//	@Param			market								query		string	true	"Market (crypto-options, us-options)"
+//	@Param			underlying							query		string	true	"Underlying asset symbol"
+//	@Param			lookback_days						query		int		false	"IV percentile lookback window (default 252)"
+//	@Param			hv_percentile_window_natural_days	query		int		false	"HV percentile lookback in natural days; mutually exclusive with hv_percentile_window_bars"
+//	@Param			hv_percentile_window_bars			query		int		false	"HV percentile lookback in valid daily HV observations; mutually exclusive with hv_percentile_window_natural_days"
+//	@Success		200									{object}	dto.FeatureVolatilitySnapshotResponse
+//	@Failure		400									{object}	dto.ErrorResponse
+//	@Failure		500									{object}	dto.ErrorResponse
 //	@Router			/features/volatility-snapshot [get]
 func (h *Handler) GetVolatilitySnapshot(c *gin.Context) {
 	var req dto.FeatureVolatilitySnapshotRequest

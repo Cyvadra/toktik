@@ -74,5 +74,6 @@ polygon-env.sh
 
 toktik.yaml
 
-
-
+# DAMN
+__pycache__/
+*.pyc
