@@ -12,8 +12,19 @@
 
 本文檔匯出策略回測與 DSL 工作流 API。內容包含請求驗證、非同步回測建立、狀態輪詢、SSE 進度串流、HTML 報告取得、策略目錄查詢，以及讀取完成回測結果所需的 response schema。API 摘要與欄位描述來自 Swagger 註釋；教學、範例與使用建議由本生成器模板輸出。
 
+## Authentication
+
+The API server authenticates requests with an API key in the `X-API-Key` HTTP header. Create a key with `go run ./cmd/api-keys create --name <name>`; the command prints the plaintext `api_key` once, so store it securely and do not commit it. Send the same value with every request to protected endpoints, for example:
+
+```bash
+curl -H 'X-API-Key: <api_key>' http://localhost:9010/api/v1/infra/markets
+```
+
+The server hashes the supplied key and accepts it only when the matching database record is active and not expired. Missing or invalid keys return `401 Unauthorized`; an authenticator/database failure returns `500`. The API key is not sent as a query parameter or as a bearer token. The stock logo utility at `/utils/us-stocks/logos/{symbol}` is public. Local-client bypass is available only when `api.bypass_auth_for_local_clients` (or `TOKTIK_BYPASS_AUTH_FOR_LOCAL_CLIENTS`) is explicitly enabled; it is disabled by default.
+
 ## Contents
 
+- [Authentication](#authentication)
 - [使用流程總覽](#使用流程總覽)
 - [DSL 快速教學](#dsl-快速教學)
 - [DSL 語法速查](#dsl-語法速查)

@@ -12,8 +12,19 @@
 
 This document exports the database-backed market data, technical indicator, feature-store analytics, symbol-bound fundamentals, and screener APIs. It intentionally excludes external proxy endpoints such as Polygon, and also excludes backtest and other non-query operational endpoints.
 
+## Authentication
+
+The API server authenticates requests with an API key in the `X-API-Key` HTTP header. Create a key with `go run ./cmd/api-keys create --name <name>`; the command prints the plaintext `api_key` once, so store it securely and do not commit it. Send the same value with every request to protected endpoints, for example:
+
+```bash
+curl -H 'X-API-Key: <api_key>' http://localhost:9010/api/v1/infra/markets
+```
+
+The server hashes the supplied key and accepts it only when the matching database record is active and not expired. Missing or invalid keys return `401 Unauthorized`; an authenticator/database failure returns `500`. The API key is not sent as a query parameter or as a bearer token. The stock logo utility at `/utils/us-stocks/logos/{symbol}` is public. Local-client bypass is available only when `api.bypass_auth_for_local_clients` (or `TOKTIK_BYPASS_AUTH_FOR_LOCAL_CLIENTS`) is explicitly enabled; it is disabled by default.
+
 ## Contents
 
+- [Authentication](#authentication)
 - [Technical Indicators](#technical-indicators)
 - [Fundamentals](#fundamentals)
 - [Macro](#macro)
