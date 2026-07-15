@@ -27,6 +27,8 @@ const (
 	EnvRateLimitRPS                          = "RATE_LIMIT_RPS"
 	EnvBypassAuthForLocalClients             = "TOKTIK_BYPASS_AUTH_FOR_LOCAL_CLIENTS"
 	EnvAPIEnvironment                        = "TOKTIK_API_ENVIRONMENT"
+	EnvAPITrafficEnabled                     = "TOKTIK_API_TRAFFIC_ENABLED"
+	EnvAPITrafficFlushSeconds                = "TOKTIK_API_TRAFFIC_FLUSH_SECONDS"
 	EnvSchemaDir                             = "TOKTIK_SCHEMA_DIR"
 	EnvDeribitBaseURL                        = "DERIBIT_BASE_URL"
 	EnvFMPAPIKey                             = "FMP_API_KEY"
@@ -136,6 +138,8 @@ type API struct {
 	BypassAuthForLocalClients bool     `yaml:"bypass_auth_for_local_clients"`
 	RequestTimeoutSeconds     int      `yaml:"request_timeout_seconds"`
 	Environment               string   `yaml:"environment"`
+	TrafficEnabled            bool     `yaml:"traffic_enabled"`
+	TrafficFlushSeconds       int      `yaml:"traffic_flush_seconds"`
 }
 
 type Paths struct {
@@ -347,6 +351,8 @@ func DefaultRuntime() Runtime {
 		API: API{
 			RateLimitRPS:          50,
 			RequestTimeoutSeconds: 180,
+			TrafficEnabled:        true,
+			TrafficFlushSeconds:   15,
 		},
 		Paths: Paths{
 			SchemaDir:   defaultSchemaDir,
@@ -468,6 +474,16 @@ func (c *Runtime) applyEnvOverrides() {
 	}
 	if value := strings.TrimSpace(os.Getenv(EnvAPIEnvironment)); value != "" {
 		c.API.Environment = value
+	}
+	if value := strings.TrimSpace(os.Getenv(EnvAPITrafficEnabled)); value != "" {
+		if parsed, err := strconv.ParseBool(value); err == nil {
+			c.API.TrafficEnabled = parsed
+		}
+	}
+	if value := strings.TrimSpace(os.Getenv(EnvAPITrafficFlushSeconds)); value != "" {
+		if parsed, err := strconv.Atoi(value); err == nil {
+			c.API.TrafficFlushSeconds = parsed
+		}
 	}
 	if value := strings.TrimSpace(os.Getenv(EnvSchemaDir)); value != "" {
 		c.Paths.SchemaDir = value
@@ -696,6 +712,9 @@ func (c *Runtime) normalize() {
 	}
 	if c.API.RequestTimeoutSeconds <= 0 {
 		c.API.RequestTimeoutSeconds = 180
+	}
+	if c.API.TrafficFlushSeconds <= 0 {
+		c.API.TrafficFlushSeconds = 15
 	}
 	c.API.Environment = strings.ToLower(strings.TrimSpace(c.API.Environment))
 	if c.API.Environment == "" {

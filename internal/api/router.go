@@ -20,6 +20,7 @@ type Deps struct {
 	USStocks          USStocksQuerier
 	USOptions         USOptionsQuerier
 	Infra             InfraProvider
+	TrafficStats      TrafficStatsProvider
 	DataBrowser       DataBrowserProvider
 	Features          FeatureProvider
 	Indicators        IndicatorSeriesProvider
@@ -36,6 +37,7 @@ type Deps struct {
 	Logos             LogoProvider
 	Polygon           PolygonProvider // optional
 	APIKeys           APIKeyAuthenticator
+	TrafficMeter      *TrafficMeter
 
 	// Stop is closed when the server shuts down. Long-lived middleware
 	// goroutines watch it to exit cleanly. May be nil; in that case
@@ -57,6 +59,9 @@ func NewRouterFromDeps(d Deps) *gin.Engine {
 
 	r.Use(SlogRecoveryMiddleware())
 	r.Use(SlogRequestLogger())
+	if d.TrafficMeter != nil {
+		r.Use(TrafficMeterMiddleware(d.TrafficMeter))
+	}
 	r.Use(SecurityHeadersMiddleware())
 	r.Use(CORSMiddleware(d.Config.API))
 
@@ -159,6 +164,7 @@ func registerRoutes(v1 *gin.RouterGroup, h *Handler) {
 	infraGroup := v1.Group("/infra")
 	infraGroup.GET("/markets", h.GetMarkets)
 	infraGroup.GET("/datasets", h.GetDatasets)
+	infraGroup.GET("/traffic", h.GetTrafficStats)
 
 	browserGroup := v1.Group("/browser")
 	browserGroup.GET("/presets", h.ListBrowserPresets)

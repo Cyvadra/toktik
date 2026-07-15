@@ -26,6 +26,10 @@ api:
   rate_limit_rps: 50
   bypass_auth_for_local_clients: false
   request_timeout_seconds: 180
+  # Application HTTP payload traffic accounting. Values exclude headers,
+  # TLS/TCP overhead, proxies, and CDN traffic.
+  traffic_enabled: true
+  traffic_flush_seconds: 15
   # "dev" or "prod"
   environment: "prod"
 

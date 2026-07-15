@@ -140,6 +140,11 @@ func UniverseSchemaFile() (string, error) {
 	return FindSchemaFile(schemaCandidates("universe.sql"))
 }
 
+// APITrafficSchemaFile returns the path to the API traffic DDL file.
+func APITrafficSchemaFile() (string, error) {
+	return FindSchemaFile(schemaCandidates("api_traffic.sql"))
+}
+
 // EnvOrDefault returns the value of an environment variable, or the fallback
 // if the variable is empty or unset.
 func EnvOrDefault(key, fallback string) string {

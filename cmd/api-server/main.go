@@ -135,6 +135,13 @@ func run() error {
 	if err := cryptooptions.InitSchema(ctx, conn, universeDDLFile); err != nil {
 		return fmt.Errorf("initialize universe schema: %w", err)
 	}
+	trafficDDLFile, err := appCli.ResolveSchemaFile("", appCli.APITrafficSchemaFile)
+	if err != nil {
+		return fmt.Errorf("resolve API traffic schema: %w", err)
+	}
+	if err := cryptooptions.InitSchema(ctx, conn, trafficDDLFile); err != nil {
+		return fmt.Errorf("initialize API traffic schema: %w", err)
+	}
 
 	factorStore, err := feeds.NewStore(ctx, *dsn)
 	if err != nil {
@@ -175,6 +182,13 @@ func run() error {
 	stop := make(chan struct{})
 	defer close(stop)
 	deps := buildAPIDeps(runtimeCfg, repo, factorStore, apiServices, polygonSvc, cacheStore, apiKeyAuth, stop)
+	if runtimeCfg.API.TrafficEnabled {
+		trafficMeter := api.NewTrafficMeter()
+		trafficStats := service.NewTrafficStatsService(repo)
+		deps.TrafficMeter = trafficMeter
+		deps.TrafficStats = trafficStats
+		api.StartTrafficMeterFlusher(trafficMeter, trafficStats, time.Duration(runtimeCfg.API.TrafficFlushSeconds)*time.Second, stop)
+	}
 
 	router := api.NewRouterFromDeps(deps)
 

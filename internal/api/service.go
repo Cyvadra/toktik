@@ -49,6 +49,11 @@ type InfraProvider interface {
 	ListDatasets(ctx context.Context, req dto.DatasetQueryRequest) (*dto.DatasetCatalogResponse, error)
 }
 
+// TrafficStatsProvider exposes API-server application payload traffic data.
+type TrafficStatsProvider interface {
+	QueryTrafficStats(ctx context.Context, req dto.TrafficStatsRequest) (*dto.TrafficStatsResponse, error)
+}
+
 // DataBrowserProvider exposes server-approved database inspection queries.
 type DataBrowserProvider interface {
 	ListBrowserPresets(ctx context.Context) (*dto.BrowserPresetResponse, error)

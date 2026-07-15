@@ -27,6 +27,7 @@ type Handler struct {
 	usStocks          USStocksQuerier
 	usOptions         USOptionsQuerier
 	infra             InfraProvider
+	trafficStats      TrafficStatsProvider
 	dataBrowser       DataBrowserProvider
 	features          FeatureProvider
 	indicators        IndicatorSeriesProvider
@@ -66,6 +67,7 @@ func NewHandler(d Deps) *Handler {
 		usStocks:          d.USStocks,
 		usOptions:         d.USOptions,
 		infra:             d.Infra,
+		trafficStats:      d.TrafficStats,
 		dataBrowser:       d.DataBrowser,
 		features:          d.Features,
 		indicators:        d.Indicators,

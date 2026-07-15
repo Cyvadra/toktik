@@ -319,3 +319,53 @@ func SlogRequestLogger() gin.HandlerFunc {
 		)
 	}
 }
+
+// TrafficMeterMiddleware records application request and response body bytes.
+// It must run before CORS, authentication, and rate limiting to include every
+// request that reaches api-server.
+func TrafficMeterMiddleware(meter *TrafficMeter) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		request := meter.NewRequest()
+		if c.Request.Body != nil && c.Request.ContentLength < 0 {
+			c.Request.Body = &trafficReadCloser{ReadCloser: c.Request.Body, request: request, now: time.Now}
+		}
+		writer := &trafficResponseWriter{ResponseWriter: c.Writer, request: request, now: time.Now}
+		c.Writer = writer
+
+		c.Next()
+		if c.Request.ContentLength > 0 {
+			request.addIngress(time.Now(), uint64(c.Request.ContentLength))
+		}
+		route := c.FullPath()
+		if route == "" {
+			route = "unmatched"
+		}
+		request.Finish(TrafficRecord{
+			Method:      c.Request.Method,
+			Route:       route,
+			StatusClass: uint16((c.Writer.Status() / 100) * 100),
+		})
+	}
+}
+
+type trafficResponseWriter struct {
+	gin.ResponseWriter
+	request *TrafficRequest
+	now     func() time.Time
+}
+
+func (w *trafficResponseWriter) Write(data []byte) (int, error) {
+	n, err := w.ResponseWriter.Write(data)
+	if n > 0 {
+		w.request.addEgress(w.now(), uint64(n))
+	}
+	return n, err
+}
+
+func (w *trafficResponseWriter) WriteString(value string) (int, error) {
+	n, err := w.ResponseWriter.WriteString(value)
+	if n > 0 {
+		w.request.addEgress(w.now(), uint64(n))
+	}
+	return n, err
+}
