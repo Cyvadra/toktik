@@ -210,7 +210,7 @@ aapl_iv_rank = request.security("us", "AAPL", "1d", iv_rank_base)
 - `alpha.rank`、`alpha.zscore`、`alpha.decay_linear`、`alpha.ts_rank`、`alpha.ts_corr`、`alpha.ts_delta`、`alpha.ts_mean`、`alpha.log_return` 等時序因子函數
 - `portfolio.symbols()`、`portfolio.weights()`、`portfolio.items()`、`portfolio.weight(symbol, defval)`
 - `portfolio.*` 讀取的是回測請求中的 `portfolio` / `symbols` / `weights` 配置。這些符號會用於策略配置與期權鏈預載，但一般股票訂單函數（`strategy.entry`、`buy/sell`、`order.*`）目前仍下在 primary asset；若要交易不同 underlying 的期權，請使用 `options.chain(market, symbol)` 搭配 `spread.open_on(...)`。
-- `request.security(...)` 的 market/symbol/interval 參數，以及 `request.factor(...)`、`request.fundamental(...)` 的識別參數需使用字面量，validate 階段才能預先註冊依賴；動態 `request.security("us", portfolio.symbol(0), ...)` 不會自動載入額外資料。`request.security` 表達式模式目前支援純表達式與簡單 request.factor 別名；下單等副作用應留在主上下文。
+- `request.security(...)` 的 market/symbol/interval 參數，以及 `request.factor(...)`、`request.fundamental(...)` 的識別參數通常需使用字面量，validate 階段才能確定預載依賴。例外是遍歷 `universe.symbols(code)` 時，以迴圈 symbol 呼叫 `request.*` 的模板會按該 universe 成員展開；其他 runtime-dynamic 參數（例如 `portfolio.symbol(0)`）會因無法確定性預載而被 validation 拒絕。`request.security` 表達式模式目前支援純表達式與簡單 request.factor 別名；下單等副作用應留在主上下文。
 - `config.get(name, defval)`、`config.string(name, defval)`、`ref.set/get/has/clear/inc/dec`
 
 ### 期權與價差
@@ -713,7 +713,7 @@ Toktik DSL 不是完整 TradingView Pine Script v6 實作；語法風格接近 P
 
 目前普通股票/現貨交易指令只針對 primary asset 建倉與平倉；`portfolio` / `symbols` 主要用於策略配置與可枚舉的期權鏈預載。若要在同一策略中交易多個股票 underlying 的期權，請用 `options.chain(market, symbol)` 取得各 underlying 的合約，再用 `spread.open_on(market, underlying, legs, tag)` 或 `spread.open_in_group_on(...)` 建立期權部位。
 
-`request.security(...)`、`request.factor(...)`、`request.fundamental(...)` 目前依賴 validate 階段的靜態分析，因此參數應使用字面量。`request.factor("volatility", "1d", field)` 讀取目前回測主標的的 IV/HV 特徵；若需要同一腳本中讀取多個不同美股 symbol 的 HV，需要先擴展 symbol-bound volatility factor 或新增專用 DSL builtin。`contract.iv(contract)` 則可透過不同 `options.chain(market, symbol)` 讀取各 underlying 候選期權合約的 IV。
+`request.security(...)`、`request.factor(...)`、`request.fundamental(...)` 依賴 validate/run 規劃階段的確定性預載，因此識別參數應使用字面量；以 `universe.symbols(code)` 成員作為 symbol 的迴圈 request 模板可由規劃器展開。其他 runtime-dynamic request 會在 validation 時被拒絕，資源規劃可透過 `runtime.static_data_requests` 與 `runtime.runtime_dynamic_requests` 檢查。`request.factor("volatility", "1d", field)` 讀取目前回測主標的的 IV/HV 特徵；若需要同一腳本中讀取多個不同美股 symbol 的 HV，需要先擴展 symbol-bound volatility factor 或新增專用 DSL builtin。`contract.iv(contract)` 則可透過不同 `options.chain(market, symbol)` 讀取各 underlying 候選期權合約的 IV。
 
 ## 回測流程 API
 
@@ -1027,16 +1027,18 @@ data: {"run_id":"c40505f1a16f02f33380b4ccbe4f74db","status":"running","progress"
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
-| estimated_contracts | integer | no | - |
-| from | string | no | - |
-| interval | string | no | - |
-| min_dte | integer | no | - |
-| option_chain_underlyings | integer | no | - |
-| target_dte | integer | no | - |
-| to | string | no | - |
-| universe_codes | array<string> | no | - |
-| universe_size | integer | no | - |
-| warnings | array<string> | no | - |
+| estimated_contracts | integer | no | Estimated number of option contracts to preload. |
+| from | string | no | Inclusive start date used by the resource plan. |
+| interval | string | no | Primary bar interval used by the resource plan. |
+| min_dte | integer | no | Minimum option expiry days used for option-chain planning. |
+| option_chain_underlyings | integer | no | Number of underlyings whose option chains will be preloaded. |
+| runtime_dynamic_requests | integer | no | Number of DSL data requests whose arguments remain runtime-dynamic and cannot use deterministic preload. Validation rejects runs when this value is non-zero. |
+| static_data_requests | integer | no | Number of DSL security, factor, and fundamental requests resolved for deterministic preload, including universe-expanded templates. |
+| target_dte | integer | no | Target option expiry days used for option-chain planning. |
+| to | string | no | Inclusive end date used by the resource plan. |
+| universe_codes | array<string> | no | Universe codes resolved during validation and run planning. |
+| universe_size | integer | no | Number of distinct symbols resolved from requested DSL universes. |
+| warnings | array<string> | no | Resource planning warnings that do not block submission. |
 
 ### StrategyBacktestRunAccepted
 
