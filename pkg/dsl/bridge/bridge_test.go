@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Cyvadra/toktik/internal/backtest"
+	"github.com/Cyvadra/toktik/pkg/dsl/diagnostics"
 )
 
 type testDataFeed struct {
@@ -87,6 +88,14 @@ type testFundamentalFactorFeed struct {
 }
 
 type testOptionsChainProvider struct{}
+
+type testUniverseProvider struct {
+	symbols map[string][]string
+}
+
+func (p testUniverseProvider) SymbolsAt(code string, _ time.Time) []string {
+	return append([]string(nil), p.symbols[code]...)
+}
 
 func runTestDSL(t *testing.T, src string, register func(*backtest.Engine)) (*backtest.Result, *DslStrategy) {
 	t.Helper()
@@ -872,6 +881,64 @@ plot(alt_close, title="ALT Close", precision=1)
 	series := result.Series[result.ReportColumns[0].Source]
 	if series[0] != 200.5 || series[1] != 201.5 {
 		t.Fatalf("unexpected request.security plot series: first=%v second=%v", series[0], series[1])
+	}
+}
+
+func TestDslStrategyPreloadsUniverseRequestTemplates(t *testing.T) {
+	src := `strategy("Universe Security Request")
+symbols = universe.symbols("test_universe")
+for symbol in symbols {
+  external_close = request.security("test", symbol, "1h", "close")
+}
+plot(external_close, title="External Close", precision=1)
+`
+	strategy := NewWithOptions(src, Options{
+		Universe: &UniverseSnapshot{
+			Provider: testUniverseProvider{symbols: map[string][]string{"test_universe": {"TEST", "ALT"}}},
+			Members:  map[string][]string{"test_universe": {"TEST", "ALT"}},
+		},
+	})
+	engine := backtest.NewEngine(backtest.Config{InitialCapital: 10000})
+	engine.RegisterDataFeed("test", &testDataFeed{fields: []string{"open", "high", "low", "close", "volume"}})
+	from := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	to := from.Add(6 * time.Hour)
+	result, err := engine.Run(context.Background(), "test", "TEST", "1h", from, to, strategy, nil)
+	if err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+	series := result.Series[result.ReportColumns[0].Source]
+	if series[0] != 200.5 {
+		t.Fatalf("external close[0] = %v, want 200.5", series[0])
+	}
+	for _, diagnostic := range strategy.Diagnostics() {
+		if diagnostic.Code == "dsl.request_not_preloaded" {
+			t.Fatalf("unexpected missing-preload diagnostic: %+v", diagnostic)
+		}
+	}
+}
+
+func TestDslStrategyDynamicSecurityRequestReportsMissingPreload(t *testing.T) {
+	src := `strategy("Dynamic Security Request")
+symbol = close > open ? "ALT" : "OTHER"
+external_close = request.security("test", symbol, "1h", "close")
+plot(external_close, title="External Close", precision=1)
+`
+
+	_, strategy := runTestDSL(t, src, nil)
+	count := 0
+	for _, diagnostic := range strategy.Diagnostics() {
+		if diagnostic.Code == "dsl.request_not_preloaded" && diagnostic.Function == "request.security" {
+			count++
+			if diagnostic.Severity != diagnostics.SeverityError {
+				t.Fatalf("missing-preload severity = %q, want %q", diagnostic.Severity, diagnostics.SeverityError)
+			}
+		}
+	}
+	if count != 1 {
+		t.Fatalf("missing-preload diagnostics = %d, want 1: %+v", count, strategy.Diagnostics())
+	}
+	if !diagnostics.List(strategy.Diagnostics()).HasErrors() {
+		t.Fatalf("expected HasErrors() to report the missing-preload diagnostic as an error: %+v", strategy.Diagnostics())
 	}
 }
 

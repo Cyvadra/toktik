@@ -722,9 +722,6 @@ func snapshotContainerValue(v Value) Value {
 	case TagSeries:
 		return FloatVal(v.Float())
 	case TagArray:
-		if v.obj != nil {
-			return v
-		}
 		cloned := make([]Value, len(v.array))
 		for i := range v.array {
 			cloned[i] = snapshotContainerValue(v.array[i])

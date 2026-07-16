@@ -11,12 +11,12 @@ func RegisterCoreBuiltins(ip *Interpreter) {
 		value := args[0]
 		switch value.tag {
 		case TagArray:
-			if value.obj != nil {
-				if sized, ok := value.obj.(interface{ Len() int }); ok {
-					return FloatVal(float64(sized.Len()))
-				}
-			}
 			return FloatVal(float64(len(value.array)))
+		case TagObject:
+			if sized, ok := value.obj.(interface{ Len() int }); ok {
+				return FloatVal(float64(sized.Len()))
+			}
+			return FloatVal(0)
 		case TagString:
 			return FloatVal(float64(len(value.sval)))
 		}

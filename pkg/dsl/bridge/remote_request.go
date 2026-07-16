@@ -31,6 +31,7 @@ func (b *barContextBridge) EvalSpecialForm(ip *runtime.Interpreter, call *ast.Ca
 	if field, ok := fieldExpr.(*ast.StringLit); ok {
 		ref, found := b.ds.secRefs[requestSecurityKey(market, symbol, interval)]
 		if !found {
+			b.ds.addMissingRequestDiagnostic("request.security", requestSecurityKey(market, symbol, interval), b.ctx.BarIndex())
 			return runtime.NaVal(), true
 		}
 		value := b.ctx.Security(ref).Field(strings.TrimSpace(field.Value))
@@ -39,6 +40,7 @@ func (b *barContextBridge) EvalSpecialForm(ip *runtime.Interpreter, call *ast.Ca
 	key := requestSecurityKey(market, symbol, interval)
 	ref, found := b.ds.secRefs[key]
 	if !found {
+		b.ds.addMissingRequestDiagnostic("request.security", key, b.ctx.BarIndex())
 		return runtime.NaVal(), true
 	}
 	expr := b.ds.resolveRemoteExpr(fieldExpr)
@@ -164,6 +166,7 @@ func (r *remoteContextBridge) evalRemoteFactor(ip *runtime.Interpreter, call *as
 	field := strings.TrimSpace(ip.EvalExpression(args[2], scope).Str())
 	ref, ok := r.parent.ds.remoteFacRefs[remoteFactorKey(r.securityKey, requestSpec{Name: name, Interval: interval})]
 	if !ok {
+		r.parent.ds.addMissingRequestDiagnostic("request.factor", remoteFactorKey(r.securityKey, requestSpec{Name: name, Interval: interval}), r.parent.ctx.BarIndex())
 		return runtime.NaVal(), true
 	}
 	value := r.parent.ctx.Factor(ref).Field(field)
@@ -196,6 +199,7 @@ func (r *remoteContextBridge) evalRemoteFundamental(ip *runtime.Interpreter, cal
 	}
 	ref, ok := r.parent.ds.remoteFacRefs[remoteFactorKey(r.securityKey, requestSpec{Market: market, Symbol: symbol, Name: factor, Interval: "primary", Mode: mode})]
 	if !ok {
+		r.parent.ds.addMissingRequestDiagnostic("request.fundamental", remoteFactorKey(r.securityKey, requestSpec{Market: market, Symbol: symbol, Name: factor, Interval: "primary", Mode: mode}), r.parent.ctx.BarIndex())
 		return runtime.NaVal(), true
 	}
 	value := r.parent.ctx.Factor(ref).Field("value")

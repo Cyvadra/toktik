@@ -52,3 +52,13 @@ func (l List) Strings() []string {
 	}
 	return out
 }
+
+// HasErrors reports whether the list contains any Error-severity diagnostic.
+func (l List) HasErrors() bool {
+	for _, item := range l {
+		if item.Severity == SeverityError {
+			return true
+		}
+	}
+	return false
+}

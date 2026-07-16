@@ -35,7 +35,7 @@ func buildDynamicDSLResolvedStrategy(req dto.StrategyBacktestRunRequest, cfg str
 	return buildDynamicDSLResolvedStrategyWithConfig(req, cfg, nil, nil)
 }
 
-func buildDynamicDSLResolvedStrategyWithConfig(req dto.StrategyBacktestRunRequest, cfg strategies.Config, injectedConfig map[string]interface{}, universeProvider bridge.UniverseProvider) (strategies.ResolvedStrategy, error) {
+func buildDynamicDSLResolvedStrategyWithConfig(req dto.StrategyBacktestRunRequest, cfg strategies.Config, injectedConfig map[string]interface{}, universe *bridge.UniverseSnapshot) (strategies.ResolvedStrategy, error) {
 	dslSource := strings.TrimSpace(req.DSL)
 	params, err := normalizeBacktestDSLParams(req.DSLParams)
 	if err != nil {
@@ -48,34 +48,28 @@ func buildDynamicDSLResolvedStrategyWithConfig(req dto.StrategyBacktestRunReques
 	}
 	signalSource := strings.TrimSpace(req.SignalSource)
 	spreadPricing := spreadPricingFromStrategyConfig(cfg)
-	baseOpts := bridge.Options{
-		SignalSource:     signalSource,
-		SpreadPricing:    spreadPricing,
-		Config:           config,
-		UniverseProvider: universeProvider,
-	}
-	parsed := bridge.NewWithOptions(dslSource, baseOpts)
-	if errs := parsed.ParseErrors(); len(errs) > 0 {
-		return strategies.ResolvedStrategy{}, dto.NewValidationError("invalid dsl: %s", strings.Join(errs, "; "))
-	}
-	manifest := parsed.Manifest()
 
-	validatedParams, err := validateBacktestDSLParams(manifest.Inputs, params)
+	// Input schema and syntax errors don't depend on param overrides, so a
+	// bare parse is enough to validate the request-supplied DSLParams. The
+	// override-sensitive manifest (dependency planning, profile detection)
+	// is built exactly once below, from validatedParams, so there is a
+	// single source of truth for what the DSL actually depends on.
+	inputSchema, err := parseDSLInputSchema(dslSource)
 	if err != nil {
 		return strategies.ResolvedStrategy{}, err
 	}
-	profile, err := resolveDynamicDSLProfile(manifest, req.DSLProfile)
+	validatedParams, err := validateBacktestDSLParams(inputSchema, params)
 	if err != nil {
 		return strategies.ResolvedStrategy{}, err
 	}
 
 	newStrategy := func() (*bridge.DslStrategy, error) {
 		strategy := bridge.NewWithOptions(dslSource, bridge.Options{
-			SignalSource:     signalSource,
-			SpreadPricing:    spreadPricing,
-			Params:           validatedParams,
-			Config:           config,
-			UniverseProvider: universeProvider,
+			SignalSource:  signalSource,
+			SpreadPricing: spreadPricing,
+			Params:        validatedParams,
+			Config:        config,
+			Universe:      universe,
 		})
 		if errs := strategy.ParseErrors(); len(errs) > 0 {
 			return nil, dto.NewValidationError("invalid dsl: %s", strings.Join(errs, "; "))
@@ -83,6 +77,10 @@ func buildDynamicDSLResolvedStrategyWithConfig(req dto.StrategyBacktestRunReques
 		return strategy, nil
 	}
 	strategy, err := newStrategy()
+	if err != nil {
+		return strategies.ResolvedStrategy{}, err
+	}
+	profile, err := resolveDynamicDSLProfile(strategy.Manifest(), req.DSLProfile)
 	if err != nil {
 		return strategies.ResolvedStrategy{}, err
 	}
@@ -105,6 +103,17 @@ func buildDynamicDSLResolvedStrategyWithConfig(req dto.StrategyBacktestRunReques
 			ProfileLabel:  profile.Label(),
 		},
 	}, nil
+}
+
+// parseDSLInputSchema parses the DSL source and returns its declared input
+// schema, without applying any param overrides (input declarations don't
+// depend on override values).
+func parseDSLInputSchema(dslSource string) ([]bridge.ParamSchema, error) {
+	parsed := bridge.New(dslSource)
+	if errs := parsed.ParseErrors(); len(errs) > 0 {
+		return nil, dto.NewValidationError("invalid dsl: %s", strings.Join(errs, "; "))
+	}
+	return parsed.Manifest().Inputs, nil
 }
 
 func spreadPricingFromStrategyConfig(cfg strategies.Config) backtest.SpreadPricingConfig {

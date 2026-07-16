@@ -24,8 +24,9 @@ type Options struct {
 	Params map[string]interface{}
 	// Config provides catalog-level configuration values accessible via config.get().
 	Config map[string]interface{}
-	// UniverseProvider supplies point-in-time universe membership for universe.symbols().
-	UniverseProvider UniverseProvider
+	// Universe is the single point-in-time snapshot used for both runtime
+	// membership and dependency preloading.
+	Universe *UniverseSnapshot
 	// InitHook is called during Init after standard setup, allowing strategies to
 	// register custom computed fields (via ctx.Register) that the DSL accesses via expose_fields.
 	InitHook func(ctx *backtest.SetupContext) error
@@ -52,6 +53,55 @@ type UniverseProvider interface {
 	SymbolsAt(code string, ts time.Time) []string
 }
 
+type UniverseSnapshot struct {
+	Provider UniverseProvider
+	Members  map[string][]string
+}
+
+type DependencyPlan struct {
+	Universe *UniverseSnapshot
+	Requests []analysis.RequestSpec
+}
+
+func buildDependencyPlan(manifest analysis.Manifest, universe *UniverseSnapshot) DependencyPlan {
+	plan := DependencyPlan{Universe: universe}
+	seen := make(map[string]struct{})
+	add := func(request analysis.RequestSpec) {
+		if request.Dynamic || request.Key == "" {
+			return
+		}
+		key := request.Kind + ":" + request.Key
+		if _, ok := seen[key]; ok {
+			return
+		}
+		seen[key] = struct{}{}
+		plan.Requests = append(plan.Requests, request)
+	}
+	for _, request := range manifest.Requests {
+		if !request.IsUniverseExpanded() {
+			add(request)
+			continue
+		}
+		if universe == nil {
+			continue
+		}
+		for _, symbol := range universe.Members[request.UniverseCode] {
+			concrete := request
+			concrete.Symbol = strings.TrimSpace(symbol)
+			concrete.Dynamic = false
+			concrete.Tier = analysis.RequestTierStatic
+			switch concrete.Kind {
+			case "security":
+				concrete.Key = requestSecurityKey(concrete.Market, concrete.Symbol, concrete.Interval)
+			case "fundamental":
+				concrete.Key = analysis.RequestFundamentalKey(concrete.Market, concrete.Symbol, concrete.Name, concrete.Mode)
+			}
+			add(concrete)
+		}
+	}
+	return plan
+}
+
 // DslStrategy implements backtest.Strategy by interpreting a Toktik DSL script.
 type DslStrategy struct {
 	source             string
@@ -61,12 +111,14 @@ type DslStrategy struct {
 	errs               []string
 	opts               Options
 	manifest           analysis.Manifest
+	dependencyPlan     DependencyPlan
 	meta               strategyMetadata
 	secRefs            map[string]backtest.SecurityRef
 	facRefs            map[string]backtest.FactorRef
 	remoteFacRefs      map[string]backtest.FactorRef
 	aliasExprs         map[string]ast.Expr
 	runtimeDiagnostics diagnostics.List
+	missingRequestKeys map[string]struct{}
 	events             []signals.SignalEvent // structured events loaded during Preload
 }
 
@@ -78,23 +130,25 @@ func New(source string) *DslStrategy {
 // NewWithOptions creates a DslStrategy with runtime configuration overrides.
 func NewWithOptions(source string, opts Options) *DslStrategy {
 	prog, errs := parser.Parse(source)
-	manifest := analysis.Analyze(prog)
+	manifest := analysis.AnalyzeWithParams(prog, opts.Params)
 	name := manifest.StrategyName
 	if name == "" {
 		name = "dsl_strategy"
 	}
 	return &DslStrategy{
-		source:        source,
-		name:          name,
-		prog:          prog,
-		errs:          errs,
-		opts:          opts,
-		manifest:      manifest,
-		meta:          manifest.Metadata,
-		secRefs:       make(map[string]backtest.SecurityRef),
-		facRefs:       make(map[string]backtest.FactorRef),
-		remoteFacRefs: make(map[string]backtest.FactorRef),
-		aliasExprs:    collectAliasExprs(prog),
+		source:             source,
+		name:               name,
+		prog:               prog,
+		errs:               errs,
+		opts:               opts,
+		manifest:           manifest,
+		dependencyPlan:     buildDependencyPlan(manifest, opts.Universe),
+		meta:               manifest.Metadata,
+		secRefs:            make(map[string]backtest.SecurityRef),
+		facRefs:            make(map[string]backtest.FactorRef),
+		remoteFacRefs:      make(map[string]backtest.FactorRef),
+		aliasExprs:         collectAliasExprs(prog),
+		missingRequestKeys: make(map[string]struct{}),
 	}
 }
 
@@ -136,47 +190,9 @@ func (ds *DslStrategy) Init(ctx *backtest.SetupContext) error {
 	ds.secRefs = make(map[string]backtest.SecurityRef)
 	ds.facRefs = make(map[string]backtest.FactorRef)
 	ds.remoteFacRefs = make(map[string]backtest.FactorRef)
-	for _, req := range ds.meta.Requests {
-		switch req.Kind {
-		case "security":
-			if _, ok := ds.secRefs[req.Key]; !ok {
-				ds.secRefs[req.Key] = ctx.AddSecurity(req.Market, req.Symbol, req.Interval)
-			}
-			if req.ExpressionMode {
-				expr := ds.resolveRemoteExpr(req.Expression)
-				for _, factor := range collectRemoteFactorRequests(expr) {
-					key := remoteFactorKey(req.Key, factor)
-					if _, ok := ds.remoteFacRefs[key]; ok {
-						continue
-					}
-					interval := factor.Interval
-					if strings.TrimSpace(strings.ToLower(interval)) == "primary" {
-						interval = req.Interval
-					}
-					market := strings.TrimSpace(factor.Market)
-					if market == "" {
-						market = req.Market
-					}
-					symbol := strings.TrimSpace(factor.Symbol)
-					if symbol == "" {
-						symbol = req.Symbol
-					}
-					ds.remoteFacRefs[key] = ctx.AddSymbolFactor(factor.Name, market, symbol, interval, factor.Mode)
-				}
-			}
-		case "factor":
-			if _, ok := ds.facRefs[req.Key]; !ok {
-				ds.facRefs[req.Key] = ctx.AddFactor(req.Name, req.Interval)
-			}
-		case "fundamental":
-			if _, ok := ds.facRefs[req.Key]; !ok {
-				interval := req.Interval
-				if strings.TrimSpace(strings.ToLower(interval)) == "primary" {
-					interval = ctx.PrimaryRef().Interval
-				}
-				ds.facRefs[req.Key] = ctx.AddSymbolFactor(req.Name, req.Market, req.Symbol, interval, req.Mode)
-			}
-		}
+	ds.missingRequestKeys = make(map[string]struct{})
+	for _, req := range ds.dependencyPlan.Requests {
+		ds.registerRequest(ctx, req)
 	}
 	ds.ip = runtime.NewInterpreter(ds.prog)
 	ds.runtimeDiagnostics = nil
@@ -190,6 +206,50 @@ func (ds *DslStrategy) Init(ctx *backtest.SetupContext) error {
 		}
 	}
 	return nil
+}
+
+func (ds *DslStrategy) registerRequest(ctx *backtest.SetupContext, req requestSpec) {
+	switch req.Kind {
+	case "security":
+		if _, ok := ds.secRefs[req.Key]; !ok {
+			ds.secRefs[req.Key] = ctx.AddSecurity(req.Market, req.Symbol, req.Interval)
+		}
+		if !req.ExpressionMode {
+			return
+		}
+		expr := ds.resolveRemoteExpr(req.Expression)
+		for _, factor := range collectRemoteFactorRequests(expr) {
+			key := remoteFactorKey(req.Key, factor)
+			if _, ok := ds.remoteFacRefs[key]; ok {
+				continue
+			}
+			interval := factor.Interval
+			if strings.TrimSpace(strings.ToLower(interval)) == "primary" {
+				interval = req.Interval
+			}
+			market := strings.TrimSpace(factor.Market)
+			if market == "" {
+				market = req.Market
+			}
+			symbol := strings.TrimSpace(factor.Symbol)
+			if symbol == "" {
+				symbol = req.Symbol
+			}
+			ds.remoteFacRefs[key] = ctx.AddSymbolFactor(factor.Name, market, symbol, interval, factor.Mode)
+		}
+	case "factor":
+		if _, ok := ds.facRefs[req.Key]; !ok {
+			ds.facRefs[req.Key] = ctx.AddFactor(req.Name, req.Interval)
+		}
+	case "fundamental":
+		if _, ok := ds.facRefs[req.Key]; !ok {
+			interval := req.Interval
+			if strings.TrimSpace(strings.ToLower(interval)) == "primary" {
+				interval = ctx.PrimaryRef().Interval
+			}
+			ds.facRefs[req.Key] = ctx.AddSymbolFactor(req.Name, req.Market, req.Symbol, interval, req.Mode)
+		}
+	}
 }
 
 // Preload implements backtest.StrategyPreloader for signal-driven DSL scripts.
@@ -335,10 +395,20 @@ func (b *barContextBridge) Field(n string) float64          { return b.ctx.Field
 func (b *barContextBridge) FieldAt(n string, o int) float64 { return b.ctx.FieldAt(n, o) }
 
 func (b *barContextBridge) UniverseSymbols(code string) []string {
-	if b.ds == nil || b.ds.opts.UniverseProvider == nil {
+	if b.ds == nil || b.ds.dependencyPlan.Universe == nil || b.ds.dependencyPlan.Universe.Provider == nil {
 		return nil
 	}
-	return b.ds.opts.UniverseProvider.SymbolsAt(code, b.ctx.Time())
+	return b.ds.dependencyPlan.Universe.Provider.SymbolsAt(code, b.ctx.Time())
+}
+
+func (ds *DslStrategy) ConcreteDataRequestCount() int {
+	count := 0
+	for _, request := range ds.dependencyPlan.Requests {
+		if request.Kind == "security" || request.Kind == "factor" || request.Kind == "fundamental" {
+			count++
+		}
+	}
+	return count
 }
 
 // SignalEvents implements runtime.SignalBridge for signal.* builtins.
@@ -449,6 +519,9 @@ func (ds *DslStrategy) requestSecurityBuiltin() func(args []runtime.Value) runti
 		key := requestSecurityKey(market, symbol, interval)
 		ref, ok := ds.secRefs[key]
 		if !ok || ds.ip == nil || ds.ip.Bridge == nil {
+			if !ok {
+				ds.addMissingRequestDiagnostic("request.security", key, -1)
+			}
 			return runtime.NaVal()
 		}
 		bridge, ok := ds.ip.Bridge.(*barContextBridge)
@@ -471,6 +544,9 @@ func (ds *DslStrategy) requestFactorBuiltin() func(args []runtime.Value) runtime
 		key := requestFactorKey(name, interval)
 		ref, ok := ds.facRefs[key]
 		if !ok || ds.ip == nil || ds.ip.Bridge == nil {
+			if !ok {
+				ds.addMissingRequestDiagnostic("request.factor", key, -1)
+			}
 			return runtime.NaVal()
 		}
 		bridge, ok := ds.ip.Bridge.(*barContextBridge)
@@ -503,6 +579,9 @@ func (ds *DslStrategy) requestFundamentalBuiltin() func(args []runtime.Value) ru
 		key := analysis.RequestFundamentalKey(market, symbol, factor, mode)
 		ref, ok := ds.facRefs[key]
 		if !ok || ds.ip == nil || ds.ip.Bridge == nil {
+			if !ok {
+				ds.addMissingRequestDiagnostic("request.fundamental", key, -1)
+			}
 			return runtime.NaVal()
 		}
 		bridge, ok := ds.ip.Bridge.(*barContextBridge)
@@ -512,6 +591,29 @@ func (ds *DslStrategy) requestFundamentalBuiltin() func(args []runtime.Value) ru
 		value := bridge.ctx.Factor(ref).Field("value")
 		return ds.ip.CaptureSeries("request.fundamental."+key+".value", value)
 	}
+}
+
+func (ds *DslStrategy) addMissingRequestDiagnostic(function, key string, barIndex int) {
+	if ds == nil || key == "" {
+		return
+	}
+	diagnosticKey := function + ":" + key
+	if _, seen := ds.missingRequestKeys[diagnosticKey]; seen {
+		return
+	}
+	ds.missingRequestKeys[diagnosticKey] = struct{}{}
+	var barIndexPtr *int
+	if barIndex >= 0 {
+		barIndexPtr = &barIndex
+	}
+	ds.runtimeDiagnostics.Add(diagnostics.Diagnostic{
+		Severity: diagnostics.SeverityError,
+		Code:     "dsl.request_not_preloaded",
+		Function: function,
+		Message:  fmt.Sprintf("request dependency %q was not preloaded", key),
+		BarIndex: barIndexPtr,
+		Hint:     "Use static request arguments or provide a preloaded universe/runtime request provider.",
+	})
 }
 
 func literalString(expr ast.Expr) string {

@@ -9,6 +9,7 @@ import (
 
 	"github.com/Cyvadra/toktik/internal/backtest"
 	"github.com/Cyvadra/toktik/internal/dto"
+	"github.com/Cyvadra/toktik/pkg/dsl/analysis"
 	"github.com/Cyvadra/toktik/pkg/dsl/bridge"
 	"github.com/Cyvadra/toktik/pkg/dsl/diagnostics"
 	"github.com/Cyvadra/toktik/pkg/strategies"
@@ -22,7 +23,7 @@ type resolvedBacktestPlan struct {
 	portfolioSymbols []string
 	universeSymbols  []string
 	universeCodes    []string
-	universeProvider bridge.UniverseProvider
+	universe         *bridge.UniverseSnapshot
 	minDTE           int
 	targetDTE        int
 	strategyLabel    string
@@ -77,11 +78,14 @@ func (s *PortfolioBacktestService) resolveBacktestPlan(ctx context.Context, run 
 	if err != nil {
 		return nil, err
 	}
+	if err := validatePreloadableDSLRequests(resolved); err != nil {
+		return nil, err
+	}
 	injectedConfig := make(map[string]interface{})
-	var universeProvider bridge.UniverseProvider
 	var universeSymbols []string
 	var universeCodes []string
-	universeSymbols, universeCodes, universeProvider, err = s.resolveDSLUniverses(ctx, req, resolved, from, to)
+	var universe *bridge.UniverseSnapshot
+	universeSymbols, universeCodes, universe, err = s.resolveDSLUniverses(ctx, req, resolved, from, to)
 	if err != nil {
 		return nil, err
 	}
@@ -89,9 +93,15 @@ func (s *PortfolioBacktestService) resolveBacktestPlan(ctx context.Context, run 
 		asset = universeSymbols[0]
 	}
 	if len(universeCodes) > 0 {
-		strategyCfg.UniverseProvider = universeProvider
-		resolved, strategyLabel, err = resolveRequestedStrategiesWithConfig(req, strategyCfg, asset, injectedConfig, universeProvider)
+		if universe != nil {
+			strategyCfg.UniverseProvider = universe.Provider
+			strategyCfg.UniverseMembers = universe.Members
+		}
+		resolved, strategyLabel, err = resolveRequestedStrategiesWithConfig(req, strategyCfg, asset, injectedConfig, universe)
 		if err != nil {
+			return nil, err
+		}
+		if err := validatePreloadableDSLRequests(resolved); err != nil {
 			return nil, err
 		}
 	}
@@ -149,7 +159,7 @@ func (s *PortfolioBacktestService) resolveBacktestPlan(ctx context.Context, run 
 		portfolioSymbols: collectPortfolioSymbols(req, asset),
 		universeSymbols:  universeSymbols,
 		universeCodes:    universeCodes,
-		universeProvider: universeProvider,
+		universe:         universe,
 		minDTE:           req.MinExpiryDays,
 		targetDTE:        req.TargetExpiryDays,
 		strategyLabel:    strategyLabel,
@@ -164,18 +174,18 @@ func (s *PortfolioBacktestService) resolveBacktestPlan(ctx context.Context, run 
 	}, nil
 }
 
-func resolveRequestedStrategiesWithConfig(req dto.StrategyBacktestRunRequest, cfg strategies.Config, asset string, injectedConfig map[string]interface{}, universeProvider bridge.UniverseProvider) ([]strategies.ResolvedStrategy, string, error) {
+func resolveRequestedStrategiesWithConfig(req dto.StrategyBacktestRunRequest, cfg strategies.Config, asset string, injectedConfig map[string]interface{}, universe *bridge.UniverseSnapshot) ([]strategies.ResolvedStrategy, string, error) {
 	if strings.TrimSpace(req.DSL) == "" {
 		return resolveRequestedStrategies(req, cfg, asset)
 	}
-	resolved, err := buildDynamicDSLResolvedStrategyWithConfig(req, cfg, injectedConfig, universeProvider)
+	resolved, err := buildDynamicDSLResolvedStrategyWithConfig(req, cfg, injectedConfig, universe)
 	if err != nil {
 		return nil, "", err
 	}
 	return []strategies.ResolvedStrategy{resolved}, resolved.CanonicalName, nil
 }
 
-func (s *PortfolioBacktestService) resolveDSLUniverses(ctx context.Context, req dto.StrategyBacktestRunRequest, resolved []strategies.ResolvedStrategy, from, to time.Time) ([]string, []string, bridge.UniverseProvider, error) {
+func (s *PortfolioBacktestService) resolveDSLUniverses(ctx context.Context, req dto.StrategyBacktestRunRequest, resolved []strategies.ResolvedStrategy, from, to time.Time) ([]string, []string, *bridge.UniverseSnapshot, error) {
 	if s.universes == nil {
 		for _, item := range resolved {
 			if ds, ok := item.Strategy.(*bridge.DslStrategy); ok && len(ds.Manifest().UniverseRequests()) > 0 {
@@ -185,6 +195,9 @@ func (s *PortfolioBacktestService) resolveDSLUniverses(ctx context.Context, req 
 		return nil, nil, nil, nil
 	}
 	seenSymbols := make(map[string]struct{})
+	seenMembers := make(map[string]map[string]struct{})
+	membersByCode := make(map[string][]string)
+	intervalsByCode := make(map[string][]dto.UniverseMember)
 	symbols := make([]string, 0)
 	seenCodes := make(map[string]struct{})
 	codes := make([]string, 0)
@@ -200,6 +213,10 @@ func (s *PortfolioBacktestService) resolveDSLUniverses(ctx context.Context, req 
 		if err != nil {
 			return err
 		}
+		if seenMembers[code] == nil {
+			seenMembers[code] = make(map[string]struct{})
+		}
+		intervalsByCode[code] = append([]dto.UniverseMember(nil), resp.Data...)
 		for _, member := range resp.Data {
 			symbol := normalizeSymbol(member.Symbol)
 			if symbol == "" {
@@ -208,6 +225,10 @@ func (s *PortfolioBacktestService) resolveDSLUniverses(ctx context.Context, req 
 			if _, ok := seenSymbols[symbol]; !ok {
 				seenSymbols[symbol] = struct{}{}
 				symbols = append(symbols, symbol)
+			}
+			if _, ok := seenMembers[code][symbol]; !ok {
+				seenMembers[code][symbol] = struct{}{}
+				membersByCode[code] = append(membersByCode[code], symbol)
 			}
 		}
 		seenCodes[code] = struct{}{}
@@ -237,11 +258,8 @@ func (s *PortfolioBacktestService) resolveDSLUniverses(ctx context.Context, req 
 	if len(codes) == 0 {
 		return symbols, codes, nil, nil
 	}
-	provider, err := s.universes.LoadProvider(ctx, dto.UniverseMembersRequest{Market: req.UniverseMarket, From: from, To: to, Limit: maxUniverseIntervalMembers}, codes)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	return symbols, codes, provider, nil
+	provider := &UniverseIntervalProvider{members: intervalsByCode}
+	return symbols, codes, &bridge.UniverseSnapshot{Provider: provider, Members: membersByCode}, nil
 }
 
 func buildBacktestStrategyConfig(req dto.StrategyBacktestRunRequest) (strategies.Config, error) {
@@ -449,6 +467,47 @@ func (s *PortfolioBacktestService) preflightBacktestPlan(ctx context.Context, ru
 	return nil
 }
 
+// classifyDSLRequests is the single pass over each resolved DSL strategy's
+// manifest that both validatePreloadableDSLRequests (hard-fail gate) and
+// buildStrategyBacktestResourcePlan (informational counts) rely on, so the
+// definition of "preloadable" only lives in one place.
+func classifyDSLRequests(resolved []strategies.ResolvedStrategy) (staticRequests, dynamicRequests int, firstDynamicKind string) {
+	for _, item := range resolved {
+		dslStrategy, ok := item.Strategy.(*bridge.DslStrategy)
+		if !ok {
+			continue
+		}
+		staticRequests += dslStrategy.ConcreteDataRequestCount()
+		for _, request := range dslStrategy.Manifest().Requests {
+			if request.Kind != "security" && request.Kind != "factor" && request.Kind != "fundamental" {
+				continue
+			}
+			if request.IsUniverseExpanded() {
+				continue
+			}
+			if request.Dynamic || request.Key == "" {
+				dynamicRequests++
+				if firstDynamicKind == "" {
+					firstDynamicKind = request.Kind
+				}
+			}
+		}
+	}
+	return staticRequests, dynamicRequests, firstDynamicKind
+}
+
+func validatePreloadableDSLRequests(resolved []strategies.ResolvedStrategy) error {
+	_, dynamicRequests, firstDynamicKind := classifyDSLRequests(resolved)
+	if dynamicRequests == 0 {
+		return nil
+	}
+	return dto.NewValidationError("dsl %s uses runtime-dynamic arguments; this request cannot be preloaded deterministically", requestDiagnosticName(firstDynamicKind))
+}
+
+func requestDiagnosticName(kind string) string {
+	return analysis.RequestDiagnosticFunction(kind)
+}
+
 func buildStrategyBacktestValidationResponse(plan *resolvedBacktestPlan) *dto.StrategyBacktestValidationResponse {
 	if plan == nil {
 		return &dto.StrategyBacktestValidationResponse{Strategies: []dto.StrategyBacktestValidationItem{}}
@@ -503,8 +562,12 @@ func buildStrategyBacktestResourcePlan(plan *resolvedBacktestPlan) *dto.Strategy
 		return nil
 	}
 	warnings := append([]string(nil), plan.warnings...)
+	staticRequests, runtimeDynamicRequests, _ := classifyDSLRequests(plan.resolved)
 	if len(plan.universeCodes) > 0 && len(plan.universeSymbols) == 0 {
 		warnings = append(warnings, "universe resolved to zero symbols")
+	}
+	if runtimeDynamicRequests > 0 {
+		warnings = append(warnings, fmt.Sprintf("%d DSL data request(s) use runtime-dynamic arguments and cannot use the static preload path", runtimeDynamicRequests))
 	}
 	estimatedContracts := 0
 	if len(plan.chainTargets) > 0 {
@@ -517,6 +580,8 @@ func buildStrategyBacktestResourcePlan(plan *resolvedBacktestPlan) *dto.Strategy
 		MinDTE:                 plan.minDTE,
 		TargetDTE:              plan.targetDTE,
 		EstimatedContracts:     estimatedContracts,
+		StaticDataRequests:     staticRequests,
+		RuntimeDynamicRequests: runtimeDynamicRequests,
 		From:                   plan.from.Format("2006-01-02"),
 		To:                     plan.to.Format("2006-01-02"),
 		Interval:               plan.interval,

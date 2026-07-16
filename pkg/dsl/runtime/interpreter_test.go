@@ -26,6 +26,19 @@ func TestInterpreterArithmetic(t *testing.T) {
 	}
 }
 
+func TestOpaqueObjectIsNotArray(t *testing.T) {
+	value := ObjVal(struct{}{})
+	if value.Tag() != TagObject {
+		t.Fatalf("object tag = %v, want %v", value.Tag(), TagObject)
+	}
+	if len(value.Array()) != 0 {
+		t.Fatalf("object array contents = %#v, want empty", value.Array())
+	}
+	if !value.Bool() {
+		t.Fatal("non-nil object should be truthy")
+	}
+}
+
 func TestInterpreterVarPersist(t *testing.T) {
 	src := "var count = 0\ncount := count + 1"
 	prog, errs := parser.Parse(src)

@@ -33,8 +33,11 @@ func RegisterDSLWithMetadata(reg catalog.Registration, source string) error {
 		Profile: reg.Profile,
 		Factory: func(cfg catalog.Config) (backtest.Strategy, error) {
 			opts := bridge.Options{
-				SignalSource:     cfg.SignalSource,
-				UniverseProvider: cfg.UniverseProvider,
+				SignalSource: cfg.SignalSource,
+				Universe: &bridge.UniverseSnapshot{
+					Provider: cfg.UniverseProvider,
+					Members:  cfg.UniverseMembers,
+				},
 			}
 			opts.Config = configmap.FromStrategyConfig(cfg, nil)
 			ds := bridge.NewWithOptions(source, opts)

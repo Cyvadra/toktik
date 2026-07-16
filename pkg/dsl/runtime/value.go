@@ -17,6 +17,7 @@ const (
 	TagString
 	TagSeries
 	TagArray
+	TagObject
 	TagFn
 	TagExpr
 )
@@ -42,7 +43,7 @@ func SeriesVal(s *Series) Value   { return Value{tag: TagSeries, series: s} }
 func ArrayVal(vs []Value) Value   { return Value{tag: TagArray, array: vs} }
 func FnVal(fn *Fn) Value          { return Value{tag: TagFn, fn: fn} }
 func ExprVal(expr ast.Expr) Value { return Value{tag: TagExpr, expr: expr} }
-func ObjVal(o interface{}) Value  { return Value{tag: TagArray, obj: o} }
+func ObjVal(o interface{}) Value  { return Value{tag: TagObject, obj: o} }
 
 func (v Value) Tag() Tag   { return v.tag }
 func (v Value) IsNa() bool { return v.tag == TagNa }
@@ -81,6 +82,8 @@ func (v Value) Bool() bool {
 		}
 	case TagArray:
 		return len(v.array) > 0
+	case TagObject:
+		return v.obj != nil
 	}
 	return false
 }
@@ -102,6 +105,8 @@ func (v Value) String() string {
 		return fmt.Sprintf("series(%g)", v.series.Current())
 	case TagArray:
 		return fmt.Sprintf("array[%d]", len(v.array))
+	case TagObject:
+		return "object"
 	case TagFn:
 		return fmt.Sprintf("fn(%s)", v.fn.Name)
 	case TagExpr:

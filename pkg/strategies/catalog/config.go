@@ -33,6 +33,9 @@ type Config struct {
 	UniverseProvider interface {
 		SymbolsAt(code string, ts time.Time) []string
 	}
+	// UniverseMembers contains the resolved interval membership used to preload
+	// DSL request templates. Runtime membership remains provider-driven.
+	UniverseMembers map[string][]string
 
 	FastPeriod    int
 	SlowPeriod    int

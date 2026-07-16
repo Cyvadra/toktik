@@ -65,6 +65,7 @@ type RequestSpec struct {
 	Key            string
 	Tier           RequestTier
 	Dynamic        bool
+	UniverseCode   string
 	ExpressionMode bool
 	Expression     ast.Expr
 }
@@ -74,6 +75,7 @@ type RequestTier string
 const (
 	RequestTierStatic         RequestTier = "static"
 	RequestTierSemiDynamic    RequestTier = "semi_dynamic"
+	RequestTierUniverseExpand RequestTier = "universe_expanded"
 	RequestTierRuntimeDynamic RequestTier = "runtime_dynamic"
 )
 
@@ -106,6 +108,12 @@ type Manifest struct {
 }
 
 func Analyze(prog *ast.Program) Manifest {
+	return AnalyzeWithParams(prog, nil)
+}
+
+// AnalyzeWithParams extracts a manifest after applying caller-provided string
+// input overrides to dependency-driving expressions.
+func AnalyzeWithParams(prog *ast.Program, params map[string]interface{}) Manifest {
 	m := Manifest{
 		StrategyName: ExtractStrategyName(prog),
 		Inputs:       ExtractParams(prog),
@@ -113,15 +121,37 @@ func Analyze(prog *ast.Program) Manifest {
 	if prog == nil {
 		return m
 	}
-	stringBindings := collectStaticStringBindings(prog)
+	stringOverrides := normalizeStringOverrides(params)
+	stringBindings := collectStaticStringBindings(prog, stringOverrides)
+	w := newWalkContext(prog, &m, stringBindings, stringOverrides)
 	for _, stmt := range prog.Stmts {
 		if sd, ok := stmt.(*ast.StrategyDecl); ok {
 			extractStrategyMetadata(sd, &m.Metadata)
 		}
-		walkStmt(stmt, &m, stringBindings)
+		w.stmt(stmt, universeScope{})
 	}
 	m.Metadata.Requests = append([]RequestSpec(nil), m.Requests...)
 	return m
+}
+
+// UniverseRequestTemplatesForPreload returns the requests whose symbol argument
+// is a loop variable proven to originate from a literal universe.symbols()
+// call. The service/bridge later expands these templates against the
+// point-in-time universe membership before replay.
+func (m Manifest) UniverseRequestTemplatesForPreload() []RequestSpec {
+	var out []RequestSpec
+	for _, req := range m.Requests {
+		if req.Tier == RequestTierUniverseExpand {
+			out = append(out, req)
+		}
+	}
+	return out
+}
+
+// IsUniverseExpanded reports whether the request is a universe-bound template
+// that the bridge expands into concrete preloaded dependencies before replay.
+func (r RequestSpec) IsUniverseExpanded() bool {
+	return r.Tier == RequestTierUniverseExpand
 }
 
 func (m Manifest) OptionChainRequests() []ChainRequestSpec {
@@ -267,17 +297,18 @@ func extractStrategyMetadata(sd *ast.StrategyDecl, meta *SignalMetadata) {
 	}
 }
 
-func collectStaticStringBindings(prog *ast.Program) map[string]string {
+func collectStaticStringBindings(prog *ast.Program, overrides map[string]string) map[string]string {
 	if prog == nil {
 		return nil
 	}
+	mutable := collectAssignedNames(prog)
 	out := make(map[string]string)
 	for _, stmt := range prog.Stmts {
 		decl, ok := stmt.(*ast.VarDecl)
-		if !ok || decl.Persist || decl.Varip || strings.TrimSpace(decl.Name) == "" {
+		if !ok || decl.Persist || decl.Varip || strings.TrimSpace(decl.Name) == "" || mutable[decl.Name] {
 			continue
 		}
-		if value := staticString(decl.Value, out); value != "" {
+		if value := staticStringWithOverrides(decl.Value, out, overrides); value != "" {
 			out[decl.Name] = value
 		}
 	}
@@ -288,6 +319,10 @@ func collectStaticStringBindings(prog *ast.Program) map[string]string {
 }
 
 func staticString(expr ast.Expr, bindings map[string]string) string {
+	return staticStringWithOverrides(expr, bindings, nil)
+}
+
+func staticStringWithOverrides(expr ast.Expr, bindings, overrides map[string]string) string {
 	switch node := expr.(type) {
 	case *ast.StringLit:
 		return strings.TrimSpace(node.Value)
@@ -301,106 +336,305 @@ func staticString(expr ast.Expr, bindings map[string]string) string {
 		if name != "input.string" && name != "config.string" {
 			return ""
 		}
+		if name == "input.string" {
+			title := ""
+			for _, arg := range node.Args {
+				if arg.Name == "title" {
+					title = staticStringWithOverrides(arg.Value, bindings, nil)
+				}
+			}
+			if title == "" && len(node.Args) >= 2 && node.Args[1].Name == "" {
+				title = staticStringWithOverrides(node.Args[1].Value, bindings, nil)
+			}
+			if value := overrides[strings.ToLower(strings.TrimSpace(title))]; value != "" {
+				return value
+			}
+		}
 		for _, arg := range node.Args {
 			if name == "config.string" && arg.Name == "defval" {
-				return staticString(arg.Value, bindings)
+				return staticStringWithOverrides(arg.Value, bindings, overrides)
 			}
 			if name == "input.string" && arg.Name == "defval" {
-				return staticString(arg.Value, bindings)
+				return staticStringWithOverrides(arg.Value, bindings, overrides)
 			}
 		}
 		if name == "config.string" && len(node.Args) >= 2 && node.Args[1].Name == "" {
-			return staticString(node.Args[1].Value, bindings)
+			return staticStringWithOverrides(node.Args[1].Value, bindings, overrides)
 		}
 		if name == "input.string" && len(node.Args) >= 1 && node.Args[0].Name == "" {
-			return staticString(node.Args[0].Value, bindings)
+			return staticStringWithOverrides(node.Args[0].Value, bindings, overrides)
 		}
 	}
 	return ""
 }
 
-func walkStmt(stmt ast.Stmt, m *Manifest, stringBindings map[string]string) {
-	if stmt == nil || m == nil {
+func normalizeStringOverrides(params map[string]interface{}) map[string]string {
+	if len(params) == 0 {
+		return nil
+	}
+	out := make(map[string]string)
+	for key, raw := range params {
+		value, ok := raw.(string)
+		if !ok {
+			continue
+		}
+		key = strings.ToLower(strings.TrimSpace(key))
+		if key != "" {
+			out[key] = strings.TrimSpace(value)
+		}
+	}
+	return out
+}
+
+func collectAssignedNames(prog *ast.Program) map[string]bool {
+	out := make(map[string]bool)
+	var walkStmt func(ast.Stmt)
+	var walkBlock func(*ast.Block)
+	walkBlock = func(block *ast.Block) {
+		if block == nil {
+			return
+		}
+		for _, stmt := range block.Stmts {
+			walkStmt(stmt)
+		}
+	}
+	walkStmt = func(stmt ast.Stmt) {
+		switch node := stmt.(type) {
+		case *ast.AssignStmt:
+			out[node.Name] = true
+		case *ast.IfStmt:
+			walkBlock(node.Body)
+			for _, branch := range node.ElseIfs {
+				walkBlock(branch.Body)
+			}
+			walkBlock(node.Else)
+		case *ast.ForStmt:
+			walkBlock(node.Body)
+		case *ast.ForInStmt:
+			walkBlock(node.Body)
+		case *ast.WhileStmt:
+			walkBlock(node.Body)
+		case *ast.SwitchStmt:
+			for _, switchCase := range node.Cases {
+				walkBlock(switchCase.Body)
+			}
+			walkBlock(node.Default)
+		case *ast.FnDecl:
+			walkBlock(node.Body)
+		case *ast.Block:
+			walkBlock(node)
+		}
+	}
+	for _, stmt := range prog.Stmts {
+		walkStmt(stmt)
+	}
+	return out
+}
+
+// walkContext threads analysis state (and the active universe loop scope)
+// through a single AST traversal.
+type walkContext struct {
+	m               *Manifest
+	bindings        map[string]string
+	overrides       map[string]string
+	collectionCodes map[string]string
+}
+
+// universeScope carries the active universe code and the loop variable bound to
+// its membership while walking a `for symbol in universe.symbols(code)` body.
+type universeScope struct {
+	code      string
+	symbolVar string
+}
+
+func newWalkContext(prog *ast.Program, m *Manifest, bindings, overrides map[string]string) *walkContext {
+	codes := make(map[string]string)
+	if prog != nil {
+		mutable := collectAssignedNames(prog)
+		for _, stmt := range prog.Stmts {
+			decl, ok := stmt.(*ast.VarDecl)
+			if !ok || mutable[decl.Name] {
+				continue
+			}
+			if code := literalUniverseCode(decl.Value, bindings, overrides); code != "" {
+				codes[decl.Name] = code
+			}
+		}
+	}
+	return &walkContext{m: m, bindings: bindings, overrides: overrides, collectionCodes: codes}
+}
+
+// childUniverseScope resolves the scope that applies inside a for-in loop body.
+// Loops iterating a literal universe (directly or via a top-level variable)
+// bind their loop variable to that universe; unrelated loops that reuse the
+// outer loop variable name shadow and therefore clear the scope.
+func (w *walkContext) childUniverseScope(node *ast.ForInStmt, scope universeScope) universeScope {
+	code := literalUniverseCode(node.Collection, w.bindings, w.overrides)
+	if code == "" {
+		if ident, ok := node.Collection.(*ast.IdentExpr); ok {
+			code = w.collectionCodes[ident.Name]
+		}
+	}
+	if code != "" {
+		return universeScope{code: code, symbolVar: node.Var}
+	}
+	if node.Var == scope.symbolVar {
+		return universeScope{}
+	}
+	return scope
+}
+
+func literalUniverseCode(expr ast.Expr, stringBindings, overrides map[string]string) string {
+	call, ok := expr.(*ast.CallExpr)
+	if !ok || qualifiedName(call.Callee) != "universe.symbols" {
+		return ""
+	}
+	for _, arg := range call.Args {
+		if arg.Name == "code" {
+			return strings.ToLower(strings.TrimSpace(staticStringWithOverrides(arg.Value, stringBindings, overrides)))
+		}
+	}
+	if len(call.Args) == 0 {
+		return ""
+	}
+	return strings.ToLower(strings.TrimSpace(staticStringWithOverrides(call.Args[0].Value, stringBindings, overrides)))
+}
+
+// universeRequestTemplate recognizes request.security/request.fundamental calls
+// whose symbol argument is the active universe loop variable and returns a
+// preloadable template (symbol left blank; expanded per-member before replay).
+func universeRequestTemplate(call *ast.CallExpr, scope universeScope, stringBindings, overrides map[string]string) (RequestSpec, bool) {
+	if scope.code == "" || scope.symbolVar == "" {
+		return RequestSpec{}, false
+	}
+	dot, ok := call.Callee.(*ast.DotExpr)
+	if !ok {
+		return RequestSpec{}, false
+	}
+	argExpr := func(name string, index int) ast.Expr {
+		for _, arg := range call.Args {
+			if arg.Name == name {
+				return arg.Value
+			}
+		}
+		if index < len(call.Args) && call.Args[index].Name == "" {
+			return call.Args[index].Value
+		}
+		return nil
+	}
+	symbolMatchesLoop := func(expr ast.Expr) bool {
+		ident, ok := expr.(*ast.IdentExpr)
+		return ok && ident.Name == scope.symbolVar
+	}
+	switch qualifiedName(dot) {
+	case "request.security":
+		market := staticStringWithOverrides(argExpr("market", 0), stringBindings, overrides)
+		interval := staticStringWithOverrides(argExpr("interval", 2), stringBindings, overrides)
+		fieldExpr := argExpr("field", 3)
+		if market == "" || interval == "" || fieldExpr == nil || !symbolMatchesLoop(argExpr("symbol", 1)) {
+			return RequestSpec{}, false
+		}
+		field := literalString(fieldExpr)
+		return RequestSpec{Kind: "security", Market: market, Interval: interval, Field: field, Tier: RequestTierUniverseExpand, UniverseCode: scope.code, ExpressionMode: field == "", Expression: fieldExpr}, true
+	case "request.fundamental":
+		market := staticStringWithOverrides(argExpr("market", 0), stringBindings, overrides)
+		factor := staticStringWithOverrides(argExpr("factor", 2), stringBindings, overrides)
+		mode := staticStringWithOverrides(argExpr("mode", 3), stringBindings, overrides)
+		if market == "" || factor == "" || !symbolMatchesLoop(argExpr("symbol", 1)) {
+			return RequestSpec{}, false
+		}
+		if mode == "" {
+			mode = "filled"
+		}
+		return RequestSpec{Kind: "fundamental", Market: market, Name: factor, Interval: "primary", Mode: mode, Field: "value", Tier: RequestTierUniverseExpand, UniverseCode: scope.code}, true
+	default:
+		return RequestSpec{}, false
+	}
+}
+
+func (w *walkContext) stmt(stmt ast.Stmt, scope universeScope) {
+	if stmt == nil || w == nil || w.m == nil {
 		return
 	}
 	switch node := stmt.(type) {
 	case *ast.StrategyDecl:
 		for _, arg := range node.Args {
-			walkExpr(arg.Value, m, stringBindings)
+			w.expr(arg.Value, scope)
 		}
 	case *ast.InputDecl:
 		for _, arg := range node.Args {
-			walkExpr(arg.Value, m, stringBindings)
+			w.expr(arg.Value, scope)
 		}
 	case *ast.VarDecl:
-		walkExpr(node.Value, m, stringBindings)
+		w.expr(node.Value, scope)
 	case *ast.AssignStmt:
-		walkExpr(node.Value, m, stringBindings)
+		w.expr(node.Value, scope)
 	case *ast.IndexAssignStmt:
-		walkExpr(node.Left, m, stringBindings)
-		walkExpr(node.Index, m, stringBindings)
-		walkExpr(node.Value, m, stringBindings)
+		w.expr(node.Left, scope)
+		w.expr(node.Index, scope)
+		w.expr(node.Value, scope)
 	case *ast.TupleAssign:
-		walkExpr(node.Value, m, stringBindings)
+		w.expr(node.Value, scope)
 	case *ast.ExprStmt:
-		walkExpr(node.Expression, m, stringBindings)
+		w.expr(node.Expression, scope)
 	case *ast.IfStmt:
-		walkExpr(node.Condition, m, stringBindings)
-		walkBlock(node.Body, m, stringBindings)
+		w.expr(node.Condition, scope)
+		w.block(node.Body, scope)
 		for _, branch := range node.ElseIfs {
-			walkExpr(branch.Condition, m, stringBindings)
-			walkBlock(branch.Body, m, stringBindings)
+			w.expr(branch.Condition, scope)
+			w.block(branch.Body, scope)
 		}
-		walkBlock(node.Else, m, stringBindings)
+		w.block(node.Else, scope)
 	case *ast.ForStmt:
-		walkExpr(node.Start, m, stringBindings)
-		walkExpr(node.End, m, stringBindings)
-		walkExpr(node.Step, m, stringBindings)
-		walkBlock(node.Body, m, stringBindings)
+		w.expr(node.Start, scope)
+		w.expr(node.End, scope)
+		w.expr(node.Step, scope)
+		w.block(node.Body, scope)
 	case *ast.ForInStmt:
-		walkExpr(node.Collection, m, stringBindings)
-		walkBlock(node.Body, m, stringBindings)
+		w.expr(node.Collection, scope)
+		w.block(node.Body, w.childUniverseScope(node, scope))
 	case *ast.WhileStmt:
-		walkExpr(node.Condition, m, stringBindings)
-		walkBlock(node.Body, m, stringBindings)
+		w.expr(node.Condition, scope)
+		w.block(node.Body, scope)
 	case *ast.SwitchStmt:
-		walkExpr(node.Tag, m, stringBindings)
+		w.expr(node.Tag, scope)
 		for _, switchCase := range node.Cases {
-			walkExpr(switchCase.Value, m, stringBindings)
-			walkBlock(switchCase.Body, m, stringBindings)
+			w.expr(switchCase.Value, scope)
+			w.block(switchCase.Body, scope)
 		}
-		walkBlock(node.Default, m, stringBindings)
+		w.block(node.Default, scope)
 	case *ast.FnDecl:
 		for _, param := range node.Params {
-			walkExpr(param.Default, m, stringBindings)
+			w.expr(param.Default, scope)
 		}
-		walkBlock(node.Body, m, stringBindings)
+		w.block(node.Body, scope)
 	case *ast.ReturnStmt:
-		walkExpr(node.Value, m, stringBindings)
+		w.expr(node.Value, scope)
 	case *ast.Block:
-		walkBlock(node, m, stringBindings)
+		w.block(node, scope)
 	}
 }
 
-func walkBlock(block *ast.Block, m *Manifest, stringBindings map[string]string) {
+func (w *walkContext) block(block *ast.Block, scope universeScope) {
 	if block == nil {
 		return
 	}
 	for _, stmt := range block.Stmts {
-		walkStmt(stmt, m, stringBindings)
+		w.stmt(stmt, scope)
 	}
 }
 
-func walkExpr(expr ast.Expr, m *Manifest, stringBindings map[string]string) {
-	if expr == nil || m == nil {
+func (w *walkContext) expr(expr ast.Expr, scope universeScope) {
+	if expr == nil || w == nil || w.m == nil {
 		return
 	}
+	m := w.m
 	switch node := expr.(type) {
 	case *ast.BinaryExpr:
-		walkExpr(node.Left, m, stringBindings)
-		walkExpr(node.Right, m, stringBindings)
+		w.expr(node.Left, scope)
+		w.expr(node.Right, scope)
 	case *ast.UnaryExpr:
-		walkExpr(node.Operand, m, stringBindings)
+		w.expr(node.Operand, scope)
 	case *ast.CallExpr:
 		name := qualifiedName(node.Callee)
 		if isOptionsReference(name) {
@@ -409,7 +643,9 @@ func walkExpr(expr ast.Expr, m *Manifest, stringBindings map[string]string) {
 		if isRegularTradeCall(name) {
 			m.UsesRegularOrders = true
 		}
-		if spec, ok := parseRequestSpec(node, stringBindings); ok {
+		if template, ok := universeRequestTemplate(node, scope, w.bindings, w.overrides); ok {
+			m.Requests = append(m.Requests, template)
+		} else if spec, ok := parseRequestSpec(node, w.bindings, w.overrides); ok {
 			m.Requests = append(m.Requests, spec)
 			if spec.Tier == RequestTierRuntimeDynamic && spec.Kind != "option_chain" {
 				m.Diagnostics.Add(diagnostics.Diagnostic{
@@ -439,33 +675,33 @@ func walkExpr(expr ast.Expr, m *Manifest, stringBindings map[string]string) {
 				})
 			}
 		}
-		walkExpr(node.Callee, m, stringBindings)
+		w.expr(node.Callee, scope)
 		for _, arg := range node.Args {
-			walkExpr(arg.Value, m, stringBindings)
+			w.expr(arg.Value, scope)
 		}
 	case *ast.DotExpr:
 		name := qualifiedName(node)
 		if isOptionsReference(name) {
 			m.UsesOptions = true
 		}
-		walkExpr(node.Object, m, stringBindings)
+		w.expr(node.Object, scope)
 	case *ast.IndexExpr:
-		walkExpr(node.Left, m, stringBindings)
-		walkExpr(node.Index, m, stringBindings)
+		w.expr(node.Left, scope)
+		w.expr(node.Index, scope)
 	case *ast.TernaryExpr:
-		walkExpr(node.Condition, m, stringBindings)
-		walkExpr(node.Then, m, stringBindings)
-		walkExpr(node.Else, m, stringBindings)
+		w.expr(node.Condition, scope)
+		w.expr(node.Then, scope)
+		w.expr(node.Else, scope)
 	case *ast.ArrayLit:
 		for _, element := range node.Elements {
-			walkExpr(element, m, stringBindings)
+			w.expr(element, scope)
 		}
 	case *ast.LambdaExpr:
-		walkExpr(node.Body, m, stringBindings)
+		w.expr(node.Body, scope)
 	}
 }
 
-func parseRequestSpec(call *ast.CallExpr, stringBindings map[string]string) (RequestSpec, bool) {
+func parseRequestSpec(call *ast.CallExpr, stringBindings, overrides map[string]string) (RequestSpec, bool) {
 	dot, ok := call.Callee.(*ast.DotExpr)
 	if !ok {
 		return RequestSpec{}, false
@@ -493,7 +729,7 @@ func parseRequestSpec(call *ast.CallExpr, stringBindings map[string]string) (Req
 		if expr == nil {
 			return "", true
 		}
-		value := staticString(expr, stringBindings)
+		value := staticStringWithOverrides(expr, stringBindings, overrides)
 		return value, value == ""
 	}
 	switch dot.Field {
@@ -573,6 +809,12 @@ func parseRequestSpec(call *ast.CallExpr, stringBindings map[string]string) (Req
 }
 
 func requestDiagnosticFunction(kind string) string {
+	return RequestDiagnosticFunction(kind)
+}
+
+// RequestDiagnosticFunction maps a RequestSpec.Kind to the DSL builtin name
+// it originates from, for use in diagnostics and validation error messages.
+func RequestDiagnosticFunction(kind string) string {
 	switch kind {
 	case "security":
 		return "request.security"
@@ -843,6 +1085,9 @@ func toFloat(v interface{}) (float64, bool) {
 }
 
 func RequestSecurityKey(market, symbol, interval string) string {
+	market = strings.TrimSpace(strings.ToLower(market))
+	symbol = strings.TrimSpace(strings.ToUpper(symbol))
+	interval = strings.TrimSpace(strings.ToLower(interval))
 	return strings.Join([]string{market, symbol, interval}, "|")
 }
 

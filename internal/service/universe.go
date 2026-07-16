@@ -127,33 +127,6 @@ LIMIT %s`,
 	return &dto.UniverseMembersResponse{Market: market, Code: code, From: from, To: to, Data: members}, nil
 }
 
-func (s *UniverseService) LoadProvider(ctx context.Context, req dto.UniverseMembersRequest, codes []string) (*UniverseIntervalProvider, error) {
-	provider := &UniverseIntervalProvider{members: make(map[string][]dto.UniverseMember, len(codes))}
-	for _, rawCode := range codes {
-		code := normalizeUniverseCode(rawCode)
-		if code == "" {
-			continue
-		}
-		req.Code = code
-		resp, err := s.MemberIntervals(ctx, req)
-		if err != nil {
-			return nil, err
-		}
-		members := append([]dto.UniverseMember(nil), resp.Data...)
-		sort.SliceStable(members, func(i, j int) bool {
-			if members[i].ValidFrom.Equal(members[j].ValidFrom) {
-				if members[i].Rank == nil || members[j].Rank == nil || *members[i].Rank == *members[j].Rank {
-					return members[i].Symbol < members[j].Symbol
-				}
-				return *members[i].Rank < *members[j].Rank
-			}
-			return members[i].ValidFrom.Before(members[j].ValidFrom)
-		})
-		provider.members[code] = members
-	}
-	return provider, nil
-}
-
 func (p *UniverseIntervalProvider) SymbolsAt(code string, ts time.Time) []string {
 	if p == nil {
 		return nil

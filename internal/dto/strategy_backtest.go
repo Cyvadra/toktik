@@ -130,6 +130,8 @@ type StrategyBacktestResourcePlan struct {
 	MinDTE                 int      `json:"min_dte,omitempty"`
 	TargetDTE              int      `json:"target_dte,omitempty"`
 	EstimatedContracts     int      `json:"estimated_contracts,omitempty"`
+	StaticDataRequests     int      `json:"static_data_requests,omitempty"`
+	RuntimeDynamicRequests int      `json:"runtime_dynamic_requests,omitempty"`
 	From                   string   `json:"from,omitempty"`
 	To                     string   `json:"to,omitempty"`
 	Interval               string   `json:"interval,omitempty"`

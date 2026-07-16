@@ -664,6 +664,25 @@ plot(close, title="Close")`,
 	}
 }
 
+func TestResolveBacktestPlanRejectsDynamicDSLDataRequests(t *testing.T) {
+	svc := NewPortfolioBacktestService(nil, nil)
+	_, err := svc.resolveBacktestPlan(context.Background(), nil, dto.StrategyBacktestRunRequest{
+		Market:   "us-stocks",
+		Asset:    "SPY",
+		From:     "2026-01-01",
+		To:       "2026-01-02",
+		Capital:  100000,
+		Interval: "1d",
+		DSL: `strategy("Dynamic Data Request")
+symbol = close > open ? "AAPL" : "MSFT"
+external_close = request.security("us-stocks", symbol, "1d", "close")
+plot(external_close, title="External Close")`,
+	}, false)
+	if err == nil || !strings.Contains(err.Error(), "request.security") {
+		t.Fatalf("expected runtime-dynamic request.security validation error, got %v", err)
+	}
+}
+
 func TestResolveBacktestPlanUsesUniverseSymbolsForDynamicOptionChains(t *testing.T) {
 	from := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	to := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
@@ -807,6 +826,50 @@ plot(len(symbols), title="Universe Size")`,
 	}
 }
 
+func TestResolveBacktestPlanUsesParameterizedUniverseSnapshotOnce(t *testing.T) {
+	from := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
+	resolver := &stubPortfolioUniverseResolver{members: map[string][]dto.UniverseMember{
+		"strong_momentum": {{UniverseCode: "strong_momentum", Market: "us-stocks", Symbol: "NVDA", ValidFrom: from, ValidTo: to}},
+		"value_allocation": {
+			{UniverseCode: "value_allocation", Market: "us-stocks", Symbol: "AAPL", ValidFrom: from, ValidTo: to},
+			{UniverseCode: "value_allocation", Market: "us-stocks", Symbol: "MSFT", ValidFrom: from, ValidTo: to},
+		},
+	}}
+	svc := NewPortfolioBacktestService(nil, nil)
+	svc.universes = resolver
+
+	plan, err := svc.resolveBacktestPlan(context.Background(), nil, dto.StrategyBacktestRunRequest{
+		Market:    "us-stocks",
+		Asset:     "SPY",
+		From:      "2026-01-01",
+		To:        "2026-01-02",
+		Capital:   100000,
+		Interval:  "1d",
+		DSLParams: map[string]interface{}{"Universe": "value_allocation"},
+		DSL: `strategy("Parameterized Universe")
+code = input.string("strong_momentum", title="Universe")
+symbols = universe.symbols(code)
+for symbol in symbols {
+  external_close = request.security("us-stocks", symbol, "1d", "close")
+}
+plot(close, title="Close")`,
+	}, false)
+	if err != nil {
+		t.Fatalf("resolveBacktestPlan returned error: %v", err)
+	}
+	if strings.Join(plan.universeCodes, ",") != "value_allocation" {
+		t.Fatalf("universe codes = %v, want value_allocation", plan.universeCodes)
+	}
+	if resolver.calls["value_allocation"] != 1 || resolver.calls["strong_momentum"] != 0 {
+		t.Fatalf("universe query calls = %v, want only value_allocation once", resolver.calls)
+	}
+	resourcePlan := buildStrategyBacktestResourcePlan(plan)
+	if resourcePlan.StaticDataRequests != 2 || resourcePlan.RuntimeDynamicRequests != 0 {
+		t.Fatalf("data requests = static:%d dynamic:%d, want static:2 dynamic:0", resourcePlan.StaticDataRequests, resourcePlan.RuntimeDynamicRequests)
+	}
+}
+
 func TestUniverseIntervalProviderSymbolsAtUsesValidInterval(t *testing.T) {
 	provider := &UniverseIntervalProvider{members: map[string][]dto.UniverseMember{
 		"strong_momentum": {
@@ -841,18 +904,15 @@ type validationTestFeed struct {
 
 type stubPortfolioUniverseResolver struct {
 	members map[string][]dto.UniverseMember
+	calls   map[string]int
 }
 
 func (s *stubPortfolioUniverseResolver) MemberIntervals(_ context.Context, req dto.UniverseMembersRequest) (*dto.UniverseMembersResponse, error) {
-	return &dto.UniverseMembersResponse{Market: req.Market, Code: req.Code, From: req.From, To: req.To, Data: append([]dto.UniverseMember(nil), s.members[req.Code]...)}, nil
-}
-
-func (s *stubPortfolioUniverseResolver) LoadProvider(_ context.Context, req dto.UniverseMembersRequest, codes []string) (*UniverseIntervalProvider, error) {
-	provider := &UniverseIntervalProvider{members: make(map[string][]dto.UniverseMember, len(codes))}
-	for _, code := range codes {
-		provider.members[code] = append([]dto.UniverseMember(nil), s.members[code]...)
+	if s.calls == nil {
+		s.calls = make(map[string]int)
 	}
-	return provider, nil
+	s.calls[req.Code]++
+	return &dto.UniverseMembersResponse{Market: req.Market, Code: req.Code, From: req.From, To: req.To, Data: append([]dto.UniverseMember(nil), s.members[req.Code]...)}, nil
 }
 
 func (f *validationTestFeed) Fields() []string {

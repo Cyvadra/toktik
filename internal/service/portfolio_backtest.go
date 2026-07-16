@@ -19,6 +19,8 @@ import (
 	"github.com/Cyvadra/toktik/internal/datafeed"
 	"github.com/Cyvadra/toktik/internal/dto"
 	"github.com/Cyvadra/toktik/internal/report"
+	"github.com/Cyvadra/toktik/pkg/dsl/bridge"
+	"github.com/Cyvadra/toktik/pkg/dsl/diagnostics"
 	"github.com/Cyvadra/toktik/pkg/feeds"
 	"github.com/Cyvadra/toktik/pkg/strategies"
 )
@@ -84,7 +86,6 @@ type PortfolioBacktestService struct {
 
 type portfolioUniverseResolver interface {
 	MemberIntervals(ctx context.Context, req dto.UniverseMembersRequest) (*dto.UniverseMembersResponse, error)
-	LoadProvider(ctx context.Context, req dto.UniverseMembersRequest, codes []string) (*UniverseIntervalProvider, error)
 }
 
 type optionsChainProviderCache struct {
@@ -616,6 +617,13 @@ func (s *PortfolioBacktestService) runBacktest(ctx context.Context, run *portfol
 		}
 		overviewItems = append(overviewItems, report.OverviewItem{Result: result, HTMLPath: htmlPath})
 		summary := buildStrategyBacktestSummary(result, htmlPath)
+		if dslStrategy, ok := strategy.(*bridge.DslStrategy); ok {
+			dslDiagnostics := dslStrategy.Diagnostics()
+			if diagnostics.List(dslDiagnostics).HasErrors() {
+				return nil, fmt.Errorf("run strategy %s: %s", strategy.Name(), firstErrorDiagnosticMessage(dslDiagnostics))
+			}
+			summary.Warnings = append(summary.Warnings, dslDiagnosticsToRuntimeWarnings(dslDiagnostics)...)
+		}
 		runWarnings = append(runWarnings, summary.Warnings...)
 		resultSet = append(resultSet, summary)
 	}
@@ -852,6 +860,31 @@ func backtestWarningsToDTO(warnings []backtest.BacktestWarning) []dto.StrategyBa
 		})
 	}
 	return out
+}
+
+func dslDiagnosticsToRuntimeWarnings(items []diagnostics.Diagnostic) []dto.StrategyBacktestRuntimeWarning {
+	if len(items) == 0 {
+		return nil
+	}
+	out := make([]dto.StrategyBacktestRuntimeWarning, 0, len(items))
+	for _, item := range items {
+		out = append(out, dto.StrategyBacktestRuntimeWarning{
+			Severity: string(item.Severity),
+			Code:     item.Code,
+			Message:  item.Message,
+			BarIndex: item.BarIndex,
+		})
+	}
+	return out
+}
+
+func firstErrorDiagnosticMessage(items []diagnostics.Diagnostic) string {
+	for _, item := range items {
+		if item.Severity == diagnostics.SeverityError {
+			return item.String()
+		}
+	}
+	return "dsl diagnostic error"
 }
 
 func buildBacktestReportHTMLMeta(req dto.StrategyBacktestRunRequest, plan *resolvedBacktestPlan, generatedAt time.Time) report.HTMLMeta {
