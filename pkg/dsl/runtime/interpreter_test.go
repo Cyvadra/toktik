@@ -40,6 +40,86 @@ func TestOpaqueObjectIsNotArray(t *testing.T) {
 	}
 }
 
+func TestInterpreterExecutionBudgetStopsNestedLoops(t *testing.T) {
+	prog, errs := parser.Parse("sum = 0\nfor i = 1 to 10\n    for j = 1 to 10\n        sum += 1")
+	if len(errs) > 0 {
+		t.Fatal(errs)
+	}
+	ip := NewInterpreter(prog)
+	ip.ExecutionBudget = 12
+	var collected diagnostics.List
+	ip.Diagnostics = &collected
+	ip.Init()
+	ip.OnBar()
+
+	if !collected.HasErrors() {
+		t.Fatalf("expected execution budget diagnostic, got %+v", collected)
+	}
+	if collected[0].Code != "dsl.execution_budget_exceeded" {
+		t.Fatalf("diagnostic code = %q, want dsl.execution_budget_exceeded", collected[0].Code)
+	}
+	sum, ok := ip.Global.Get("sum")
+	if !ok || sum.Float() >= 100 {
+		t.Fatalf("sum = %v, expected halted execution before 100 iterations", sum)
+	}
+}
+
+func TestInterpreterExecutionBudgetResetsEachBar(t *testing.T) {
+	prog, errs := parser.Parse("var count = 0\ncount += 1")
+	if len(errs) > 0 {
+		t.Fatal(errs)
+	}
+	ip := NewInterpreter(prog)
+	ip.ExecutionBudget = 3
+	var collected diagnostics.List
+	ip.Diagnostics = &collected
+	ip.Init()
+	ip.OnBar()
+	ip.OnBar()
+
+	count, ok := ip.Global.Get("count")
+	if !ok || count.Float() != 2 {
+		t.Fatalf("count = %v, want 2", count)
+	}
+	if len(collected) != 0 {
+		t.Fatalf("unexpected diagnostics after budget reset: %+v", collected)
+	}
+}
+
+func TestInterpreterExecutionBudgetReportsOncePerBar(t *testing.T) {
+	prog, errs := parser.Parse("for i = 1 to 10\n    x = i")
+	if len(errs) > 0 {
+		t.Fatal(errs)
+	}
+	ip := NewInterpreter(prog)
+	ip.ExecutionBudget = 2
+	var collected diagnostics.List
+	ip.Diagnostics = &collected
+	ip.Init()
+	ip.OnBar()
+
+	if len(collected) != 1 {
+		t.Fatalf("diagnostics = %+v, want exactly one budget error", collected)
+	}
+}
+
+func TestInterpreterExecutionBudgetIncludesUserFunctionCalls(t *testing.T) {
+	prog, errs := parser.Parse("increment(x) => x + 1\nvalue = increment(increment(1))")
+	if len(errs) > 0 {
+		t.Fatal(errs)
+	}
+	ip := NewInterpreter(prog)
+	ip.ExecutionBudget = 3
+	var collected diagnostics.List
+	ip.Diagnostics = &collected
+	ip.Init()
+	ip.OnBar()
+
+	if !collected.HasErrors() || collected[0].Code != "dsl.execution_budget_exceeded" {
+		t.Fatalf("expected function-call budget error, got %+v", collected)
+	}
+}
+
 func TestInterpreterVarPersist(t *testing.T) {
 	src := "var count = 0\ncount := count + 1"
 	prog, errs := parser.Parse(src)

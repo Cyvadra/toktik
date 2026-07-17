@@ -81,7 +81,7 @@ func (e *Engine) Run(ctx context.Context, market, symbol, interval string, from,
 	if err != nil {
 		return nil, err
 	}
-	return e.replayer.Replay(prepared, strategy, params)
+	return e.replayer.Replay(ctx, prepared, strategy, params)
 }
 
 // StrategyFactory creates a fresh Strategy instance for each parameter set.
@@ -126,7 +126,7 @@ func (e *Engine) RunBatch(ctx context.Context, market, symbol, interval string, 
 				results[idx] = BatchResult{Params: params, Err: prepErr}
 				return
 			}
-			res, replayErr := e.replayer.Replay(prepared, s, params)
+			res, replayErr := e.replayer.Replay(ctx, prepared, s, params)
 			results[idx] = BatchResult{Params: params, Result: res, Err: replayErr}
 		}(i, ps)
 	}

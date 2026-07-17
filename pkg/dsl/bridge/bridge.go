@@ -391,6 +391,18 @@ type barContextBridge struct {
 	spreadPricing backtest.SpreadPricingConfig
 }
 
+// Keep the runtime capability contract explicit. New builtin capabilities
+// must either be implemented here or intentionally handled as unavailable.
+var (
+	_ runtime.Bridge            = (*barContextBridge)(nil)
+	_ runtime.OrderBridge       = (*barContextBridge)(nil)
+	_ runtime.SignalBridge      = (*barContextBridge)(nil)
+	_ runtime.UniverseBridge    = (*barContextBridge)(nil)
+	_ runtime.ConfigBridge      = (*barContextBridge)(nil)
+	_ runtime.OptionsBridge     = (*barContextBridge)(nil)
+	_ runtime.SpecialFormBridge = (*barContextBridge)(nil)
+)
+
 func (b *barContextBridge) BarIndex() int                   { return b.ctx.BarIndex() }
 func (b *barContextBridge) Close() float64                  { return b.ctx.Close() }
 func (b *barContextBridge) Open() float64                   { return b.ctx.Open() }

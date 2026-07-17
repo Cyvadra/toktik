@@ -29,6 +29,8 @@ const (
 	sigContinue
 )
 
+const defaultExecutionBudget = 100_000
+
 // Interpreter walks the AST and produces side-effects via a Bridge.
 type Interpreter struct {
 	Program *ast.Program
@@ -57,6 +59,13 @@ type Interpreter struct {
 	// referenced on every bar only reports once instead of flooding the
 	// diagnostics list.
 	unresolvedIdents map[string]struct{}
+
+	// ExecutionBudget bounds total interpreter work for a single bar. It is
+	// shared by statements, loop iterations, and user-defined function calls.
+	// Values <= 0 use defaultExecutionBudget.
+	ExecutionBudget int
+	executionLeft   int
+	executionHalted bool
 
 	// Inputs: user-supplied parameter overrides keyed by input title.
 	// When an input(defval, title=T) call is evaluated, Inputs[T] takes priority.
@@ -193,6 +202,8 @@ func (ip *Interpreter) Init() {
 // OnBar executes the program for a single bar.
 func (ip *Interpreter) OnBar() {
 	ip.BarIndex++
+	ip.executionLeft = ip.executionBudget()
+	ip.executionHalted = false
 	// Update built-in series from bridge.
 	if ip.Bridge != nil {
 		closePrice := ip.Bridge.Close()
@@ -325,11 +336,43 @@ func (ip *Interpreter) CaptureSeries(name string, val float64) Value {
 	return v
 }
 
+func (ip *Interpreter) executionBudget() int {
+	if ip.ExecutionBudget > 0 {
+		return ip.ExecutionBudget
+	}
+	return defaultExecutionBudget
+}
+
+func (ip *Interpreter) consumeExecution() bool {
+	if ip.executionHalted {
+		return false
+	}
+	ip.executionLeft--
+	if ip.executionLeft >= 0 {
+		return true
+	}
+	ip.executionHalted = true
+	if ip.Diagnostics != nil {
+		barIndex := ip.BarIndex
+		ip.Diagnostics.Add(diagnostics.Diagnostic{
+			Severity: diagnostics.SeverityError,
+			Code:     "dsl.execution_budget_exceeded",
+			Message:  "DSL execution budget exceeded for bar",
+			BarIndex: &barIndex,
+			Hint:     "Reduce loop work, simplify nested function calls, or raise the execution budget for this trusted strategy.",
+		})
+	}
+	return false
+}
+
 // ---------- statement execution ----------
 
 func (ip *Interpreter) execBlock(stmts []ast.Stmt, scope *Scope) Value {
 	var last Value
 	for _, stmt := range stmts {
+		if !ip.consumeExecution() {
+			return last
+		}
 		last = ip.execStmt(stmt, scope)
 		if ip.sig != sigNone {
 			return last
@@ -554,6 +597,9 @@ func (ip *Interpreter) execFor(s *ast.ForStmt, scope *Scope) Value {
 
 	var last Value
 	for i := start; (step > 0 && i <= end) || (step < 0 && i >= end); i += step {
+		if !ip.consumeExecution() {
+			return last
+		}
 		if !scope.Update(s.Var, FloatVal(i)) {
 			scope.Set(s.Var, FloatVal(i))
 		}
@@ -578,6 +624,9 @@ func (ip *Interpreter) execForIn(s *ast.ForInStmt, scope *Scope) Value {
 	arr := coll.Array()
 	var last Value
 	for _, elem := range arr {
+		if !ip.consumeExecution() {
+			return last
+		}
 		if !scope.Update(s.Var, elem) {
 			scope.Set(s.Var, elem)
 		}
@@ -602,6 +651,9 @@ func (ip *Interpreter) execWhile(s *ast.WhileStmt, scope *Scope) Value {
 	const limit = 100_000
 	i := 0
 	for ; i < limit; i++ {
+		if !ip.consumeExecution() {
+			return last
+		}
 		if !ip.evalExpr(s.Condition, scope).Bool() {
 			break
 		}
@@ -905,6 +957,9 @@ func (ip *Interpreter) callFn(fn *Fn, args []Value) Value {
 	// Native function.
 	if fn.Native != nil {
 		return fn.Native(args)
+	}
+	if !ip.consumeExecution() {
+		return NaVal()
 	}
 	// User-defined function.
 	fnScope := fn.Closure.Child()

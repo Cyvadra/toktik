@@ -46,6 +46,14 @@ type trendStrategy struct{}
 
 type parameterizedIndicatorStrategy struct{}
 
+type countingStrategy struct {
+	bars int
+}
+
+func (s *countingStrategy) Name() string               { return "counting" }
+func (s *countingStrategy) Init(_ *SetupContext) error { return nil }
+func (s *countingStrategy) OnBar(_ *BarContext)        { s.bars++ }
+
 func (s *trendStrategy) Name() string { return "trend" }
 
 func (s *trendStrategy) Init(ctx *SetupContext) error {
@@ -153,6 +161,31 @@ func TestRunBatch(t *testing.T) {
 	t.Logf("Result 0: trades=%d sharpe=%.4f", results[0].Result.TotalTrades, results[0].Result.SharpeRatio)
 	t.Logf("Result 1: trades=%d sharpe=%.4f", results[1].Result.TotalTrades, results[1].Result.SharpeRatio)
 	t.Logf("Result 2: trades=%d sharpe=%.4f", results[2].Result.TotalTrades, results[2].Result.SharpeRatio)
+}
+
+func TestRunCanceledBeforeReplayDoesNotExecuteBars(t *testing.T) {
+	engine := NewEngine(Config{InitialCapital: 10000})
+	engine.RegisterDataFeed("test", &stubDataFeed{
+		fields: []string{"open", "high", "low", "close", "volume"},
+	})
+
+	strategy := &countingStrategy{}
+	from := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2024, 1, 2, 0, 0, 0, 0, time.UTC)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	result, err := engine.Run(ctx, "test", "TEST", "1h", from, to, strategy, nil)
+	if err == nil {
+		t.Fatalf("expected canceled run to return error")
+	}
+	if result != nil {
+		t.Fatalf("expected nil result on canceled run, got %#v", result)
+	}
+	if strategy.bars != 0 {
+		t.Fatalf("expected no bars executed, got %d", strategy.bars)
+	}
 }
 
 func TestRunBatchConsistency(t *testing.T) {

@@ -1,6 +1,7 @@
 package backtest
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"math"
@@ -73,7 +74,7 @@ type Replayer struct {
 
 // Replay runs a strategy against pre-loaded data with the given parameters.
 // This is the core bar-replay loop shared by Engine.Run and Engine.RunBatch.
-func (r *Replayer) Replay(prepared *PreparedData, strategy Strategy, params map[string]interface{}) (*Result, error) {
+func (r *Replayer) Replay(ctx context.Context, prepared *PreparedData, strategy Strategy, params map[string]interface{}) (*Result, error) {
 	// Init strategy with params to pick up parameter-specific setup
 	setupCtx := NewSetupContext(prepared.PrimaryRef.Market, prepared.PrimaryRef.Symbol, prepared.PrimaryRef.Interval)
 	for k, v := range params {
@@ -218,6 +219,9 @@ func (r *Replayer) Replay(prepared *PreparedData, strategy Strategy, params map[
 	lastProgressAt := time.Now()
 
 	for i := 0; i < nBars; i++ {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		barCtx.barIndex = i
 		barCtx.barTime = prepared.PrimaryDS.Timestamps[i]
 
