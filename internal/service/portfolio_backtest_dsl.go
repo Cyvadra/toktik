@@ -328,6 +328,14 @@ func resolveDynamicDSLProfile(manifest bridge.Manifest, hint *dto.StrategyBackte
 	return profile.Normalized(), nil
 }
 
+// inferDynamicDSLProfile derives a StrategyProfile from the static manifest.
+// NOTE: this profile is a *classification* used for reporting and engine wiring
+// (does the strategy trade options, place regular orders, etc.); it is NOT a
+// capability sandbox. The interpreter for backtest runs always receives the
+// full backtest builtin set (see bridge.Init -> RegisterBacktestProfile). The
+// /backtests/runs endpoint is therefore gated by API-key auth, not by this
+// profile. Restricted capabilities are only enforced for the indicator path
+// via runtime.ProfileIndicator.
 func inferDynamicDSLProfile(manifest bridge.Manifest) strategies.StrategyProfile {
 	profile := strategies.StrategyProfile{UsesOptions: manifest.UsesOptions}
 	switch {

@@ -970,3 +970,78 @@ func TestConditionalAssignmentSeriesStaysBarAligned(t *testing.T) {
 		t.Fatalf("prev_y = %v, want NaN (bar 3's skipped assignment should pad the series, not compact it)", prevY.Float())
 	}
 }
+
+// candidateLike is a non-comparable object type (embeds a slice), mirroring
+// strategyCandidate's Payload field. Comparing two of these with plain `==`
+// on an interface{} would panic; valEqual must not.
+type candidateLike struct {
+	Tags []string
+}
+
+func TestValEqualDoesNotPanicOnNonComparableObjects(t *testing.T) {
+	a := ObjVal(candidateLike{Tags: []string{"x"}})
+	b := ObjVal(candidateLike{Tags: []string{"x"}})
+	if valEqual(a, a) {
+		// Same underlying value is fine either way; the key assertion is
+		// that comparing two *different* non-comparable objects must not
+		// panic and must report false rather than crashing the interpreter.
+	}
+	if valEqual(a, b) {
+		t.Fatal("distinct non-comparable objects should never compare equal")
+	}
+}
+
+func TestInterpreterEqEqOnCandidateObjectsDoesNotPanic(t *testing.T) {
+	prog, errs := parser.Parse(`
+a = candidates.new("AAPL", 1, 0, ["x"])
+b = candidates.new("AAPL", 1, 0, ["x"])
+same = a == b
+`)
+	if len(errs) > 0 {
+		t.Fatal(errs)
+	}
+	ip := NewInterpreter(prog)
+	ip.Init()
+
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("interpreter panicked comparing candidate objects: %v", r)
+		}
+	}()
+	ip.OnBar()
+}
+
+func TestCompoundAssignRejectsNonNumericOperand(t *testing.T) {
+	prog, errs := parser.Parse("x = \"hi\"\nx -= 1")
+	if len(errs) > 0 {
+		t.Fatal(errs)
+	}
+	ip := NewInterpreter(prog)
+	var diags diagnostics.List
+	ip.Diagnostics = &diags
+	ip.Init()
+	ip.OnBar()
+
+	x, _ := ip.Global.Get("x")
+	if !x.IsNa() {
+		t.Fatalf("x = %#v, want na after invalid -= on a string", x)
+	}
+	if len(diags) != 1 || diags[0].Code != "dsl.compound_assign_type_error" {
+		t.Fatalf("diagnostics = %+v, want one compound_assign_type_error", diags)
+	}
+}
+
+func TestCompoundPlusEqConcatenatesStrings(t *testing.T) {
+	prog, errs := parser.Parse("x = \"a\"\nx += \"b\"")
+	if len(errs) > 0 {
+		t.Fatal(errs)
+	}
+	ip := NewInterpreter(prog)
+	ip.Init()
+	ip.OnBar()
+
+	x, _ := ip.Global.Get("x")
+	if x.Str() != "ab" {
+		t.Fatalf("x = %q, want \"ab\"", x.Str())
+	}
+}

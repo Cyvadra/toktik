@@ -3,6 +3,7 @@ package runtime
 import (
 	"fmt"
 	"math"
+	"reflect"
 	"strings"
 
 	"github.com/Cyvadra/toktik/pkg/dsl/ast"
@@ -469,69 +470,69 @@ func (ip *Interpreter) execVarDecl(d *ast.VarDecl, scope *Scope) Value {
 		if _, ok := ip.persist[d.Name]; ok {
 			val := ip.evalExpr(d.Value, scope)
 			ip.persist[d.Name] = val
-			scope.Set(d.Name, val)
-			return val
+			return ip.promoteScalarSeries(d.Name, val, scope)
 		}
 		if _, ok := ip.varip[d.Name]; ok {
 			val := ip.evalExpr(d.Value, scope)
 			ip.varip[d.Name] = val
-			scope.Set(d.Name, val)
-			return val
+			return ip.promoteScalarSeries(d.Name, val, scope)
 		}
 	}
 	if d.Persist {
 		// var: evaluate once, persist across bars.
 		if v, ok := ip.persist[d.Name]; ok {
-			scope.Set(d.Name, v)
-			return v
+			return ip.promoteScalarSeries(d.Name, v, scope)
 		}
 		val := ip.evalExpr(d.Value, scope)
 		ip.persist[d.Name] = val
-		scope.Set(d.Name, val)
-		return val
+		return ip.promoteScalarSeries(d.Name, val, scope)
 	}
 	if d.Varip {
 		// varip: persist and update in-place every bar.
 		if v, ok := ip.varip[d.Name]; ok {
-			scope.Set(d.Name, v)
-			return v
+			return ip.promoteScalarSeries(d.Name, v, scope)
 		}
 		val := ip.evalExpr(d.Value, scope)
 		ip.varip[d.Name] = val
-		scope.Set(d.Name, val)
-		return val
+		return ip.promoteScalarSeries(d.Name, val, scope)
 	}
 	// Normal: re-evaluate each bar.
 	val := ip.evalExpr(d.Value, scope)
-	scope.Set(d.Name, val)
+	return ip.promoteScalarSeries(d.Name, val, scope)
+}
 
-	// Track in series map for scalar/bool/series types so history subscript
-	// and TA builtins (ta.sma, ta.barssince, etc.) work correctly.
-	// Array/object values are NOT series-promoted — keep them as-is.
-	if val.tag == TagFloat || val.tag == TagBool || val.tag == TagNa || val.tag == TagSeries {
-		s, ok := ip.seriesMap[d.Name]
-		if !ok {
-			s = NewSeries()
-			ip.seriesMap[d.Name] = s
-		}
-		// This declaration may live inside an if/for/switch body and not run
-		// on every bar. Pad any bars that were skipped since the last append
-		// with NaN so the series stays bar-index aligned: s.At(n) and
-		// ta.* builtins must see this bar's value at offset 0, not shifted
-		// by however many bars the branch was skipped.
-		for s.Len() < ip.BarIndex-1 {
-			s.Append(math.NaN())
-		}
-		if s.Len() < ip.BarIndex {
-			s.Append(val.Float())
-		} else {
-			s.Set(val.Float())
-		}
-		// Update scope to SeriesVal so history subscript and TA builtins work.
-		scope.Set(d.Name, SeriesVal(s))
+// promoteScalarSeries binds name=val in scope and, for scalar/bool/na/series
+// values, keeps a bar-index-aligned Series backing the name so history
+// subscript (x[n]) and TA builtins (ta.sma, ta.barssince, ...) work — including
+// for var/varip accumulators. Array/object values are left as-is (not
+// series-promoted). It returns the value bound into scope.
+func (ip *Interpreter) promoteScalarSeries(name string, val Value, scope *Scope) Value {
+	if val.tag != TagFloat && val.tag != TagBool && val.tag != TagNa && val.tag != TagSeries {
+		scope.Set(name, val)
+		return val
 	}
-
-	return val
+	s, ok := ip.seriesMap[name]
+	if !ok {
+		s = NewSeries()
+		ip.seriesMap[name] = s
+	}
+	// This declaration may live inside an if/for/switch body and not run on
+	// every bar. Pad any bars that were skipped since the last append with NaN
+	// so the series stays bar-index aligned: s.At(n) and ta.* builtins must see
+	// this bar's value at offset 0, not shifted by however many bars the branch
+	// was skipped.
+	for s.Len() < ip.BarIndex-1 {
+		s.Append(math.NaN())
+	}
+	if s.Len() < ip.BarIndex {
+		s.Append(val.Float())
+	} else {
+		s.Set(val.Float())
+	}
+	// Update scope to SeriesVal so history subscript and TA builtins work.
+	sv := SeriesVal(s)
+	scope.Set(name, sv)
+	return sv
 }
 
 func (ip *Interpreter) execAssign(a *ast.AssignStmt, scope *Scope) Value {
@@ -545,31 +546,67 @@ func (ip *Interpreter) execAssign(a *ast.AssignStmt, scope *Scope) Value {
 		}
 	case token.PlusEq:
 		old, _ := scope.Get(a.Name)
-		val = FloatVal(old.Float() + val.Float())
+		if old.tag == TagString || val.tag == TagString {
+			// Match binary `+`'s string-concatenation semantics.
+			val = StringVal(old.String() + val.String())
+		} else {
+			rhs := ip.compoundNumeric(a.Name, "+=", old, val)
+			if rhs.tag == TagNa {
+				val = NaVal()
+			} else {
+				val = FloatVal(old.Float() + rhs.Float())
+			}
+		}
 		scope.Update(a.Name, val)
 	case token.MinusEq:
 		old, _ := scope.Get(a.Name)
-		val = FloatVal(old.Float() - val.Float())
+		val = ip.compoundNumeric(a.Name, "-=", old, val)
+		if val.tag != TagNa {
+			val = FloatVal(old.Float() - val.Float())
+		}
 		scope.Update(a.Name, val)
 	case token.StarEq:
 		old, _ := scope.Get(a.Name)
-		val = FloatVal(old.Float() * val.Float())
+		val = ip.compoundNumeric(a.Name, "*=", old, val)
+		if val.tag != TagNa {
+			val = FloatVal(old.Float() * val.Float())
+		}
 		scope.Update(a.Name, val)
 	case token.SlashEq:
 		old, _ := scope.Get(a.Name)
-		val = FloatVal(old.Float() / val.Float())
+		rhs := ip.compoundNumeric(a.Name, "/=", old, val)
+		if rhs.tag == TagNa || rhs.Float() == 0 {
+			val = NaVal()
+		} else {
+			val = FloatVal(old.Float() / rhs.Float())
+		}
 		scope.Update(a.Name, val)
 	case token.PercentEq:
 		old, _ := scope.Get(a.Name)
-		val = FloatVal(math.Mod(old.Float(), val.Float()))
+		rhs := ip.compoundNumeric(a.Name, "%=", old, val)
+		if rhs.tag == TagNa || rhs.Float() == 0 {
+			val = NaVal()
+		} else {
+			val = FloatVal(math.Mod(old.Float(), rhs.Float()))
+		}
 		scope.Update(a.Name, val)
 	case token.PlusPlus:
 		old, _ := scope.Get(a.Name)
-		val = FloatVal(old.Float() + 1)
+		if isNumericLike(old) {
+			val = FloatVal(old.Float() + 1)
+		} else {
+			ip.reportCompoundTypeError(a.Name, "++")
+			val = NaVal()
+		}
 		scope.Update(a.Name, val)
 	case token.MinusMinus:
 		old, _ := scope.Get(a.Name)
-		val = FloatVal(old.Float() - 1)
+		if isNumericLike(old) {
+			val = FloatVal(old.Float() - 1)
+		} else {
+			ip.reportCompoundTypeError(a.Name, "--")
+			val = NaVal()
+		}
 		scope.Update(a.Name, val)
 	}
 	// Update persist storage if applicable.
@@ -580,11 +617,66 @@ func (ip *Interpreter) execAssign(a *ast.AssignStmt, scope *Scope) Value {
 	if _, ok := ip.varip[a.Name]; ok {
 		ip.varip[a.Name] = val
 	}
-	// Update series.
-	if s, ok := ip.seriesMap[a.Name]; ok {
-		s.Set(val.Float())
+	// Update series. Only scalar values (float/bool/na/series) are
+	// series-backed; a reassignment to a string/array/object leaves the
+	// scope binding as that value and does not touch the series.
+	if val.tag == TagFloat || val.tag == TagBool || val.tag == TagNa || val.tag == TagSeries {
+		if s, ok := ip.seriesMap[a.Name]; ok {
+			s.Set(val.Float())
+			// Keep the scope binding series-backed after reassignment so
+			// history subscript (x[n]) and TA builtins continue to resolve
+			// against the live series rather than a detached scalar value.
+			if !scope.Update(a.Name, SeriesVal(s)) {
+				scope.Set(a.Name, SeriesVal(s))
+			}
+		}
 	}
 	return val
+}
+
+// isNumericLike reports whether a value can participate in arithmetic
+// (float/bool/na/series) without silently coercing to NaN. Strings, arrays,
+// functions, and objects are not numeric-like.
+func isNumericLike(v Value) bool {
+	switch v.tag {
+	case TagFloat, TagBool, TagNa, TagSeries:
+		return true
+	}
+	return false
+}
+
+// compoundNumeric validates that both operands of a numeric compound
+// assignment (-=, *=, /=, %=) are numeric-like. If either is not (e.g. a
+// string, array, or object), it reports a diagnostic once and returns na so
+// the caller does not silently overwrite the target with a coerced NaN
+// without explanation.
+func (ip *Interpreter) compoundNumeric(name, op string, old, rhs Value) Value {
+	if isNumericLike(old) && isNumericLike(rhs) {
+		return rhs
+	}
+	ip.reportCompoundTypeError(name, op)
+	return NaVal()
+}
+
+// reportCompoundTypeError records a diagnostic the first time a compound
+// assignment operator is applied to a non-numeric operand.
+func (ip *Interpreter) reportCompoundTypeError(name, op string) {
+	if ip.Diagnostics == nil {
+		return
+	}
+	key := "compound:" + name + ":" + op
+	if _, seen := ip.builtinFailures[key]; seen {
+		return
+	}
+	ip.builtinFailures[key] = struct{}{}
+	barIndex := ip.BarIndex
+	ip.Diagnostics.Add(diagnostics.Diagnostic{
+		Severity: diagnostics.SeverityError,
+		Code:     "dsl.compound_assign_type_error",
+		Message:  fmt.Sprintf("%s%s applied to a non-numeric operand", name, op),
+		BarIndex: &barIndex,
+		Hint:     "Compound assignment operators (+=, -=, *=, /=, %=, ++, --) require numeric operands; += also allows string concatenation.",
+	})
 }
 
 func (ip *Interpreter) execIndexAssign(s *ast.IndexAssignStmt, scope *Scope) Value {
@@ -1103,9 +1195,35 @@ func valEqual(a, b Value) bool {
 	case TagFn:
 		return b.tag == TagFn && a.fn == b.fn
 	case TagObject:
-		return b.tag == TagObject && a.obj == b.obj
+		return b.tag == TagObject && safeObjEqual(a.obj, b.obj)
 	case TagExpr:
 		return b.tag == TagExpr && a.expr == b.expr
 	}
 	return false
+}
+
+// safeObjEqual compares two opaque object payloads (e.g. strategyCandidate,
+// OptionsChain, OptionContract) without risking a Go runtime panic. Plain `==`
+// on an interface{} panics if its dynamic type is not comparable (e.g. a
+// struct embedding a slice/map field, such as strategyCandidate's Payload
+// Value which holds an `array []Value`). DSL scripts are untrusted input, so
+// an `==`/`switch` over two such objects must never crash the backtest
+// goroutine; non-comparable dynamic types are treated as never-equal instead.
+func safeObjEqual(a, b interface{}) (eq bool) {
+	if a == nil || b == nil {
+		return a == b
+	}
+	ta, tb := reflect.TypeOf(a), reflect.TypeOf(b)
+	if ta != tb {
+		return false
+	}
+	if !ta.Comparable() {
+		return false
+	}
+	defer func() {
+		if recover() != nil {
+			eq = false
+		}
+	}()
+	return a == b
 }
