@@ -69,11 +69,20 @@ TOKTIK_CONFIG=/path/to/toktik.yaml go run ./cmd/api-server
 - `MYSQL_PASSWORD`
 - `LISTEN_ADDR`
 - `CORS_ORIGINS`
+- `TOKTIK_BYPASS_AUTH_FOR_LOCAL_CLIENTS`
+- `TOKTIK_API_ENVIRONMENT`
+- `TOKTIK_API_TRAFFIC_ENABLED`
 - `FMP_API_KEY`
 - `TOKTIK_FMP_CACHE_DIR`
+- `TIGEROPEN_*`
 - `TOKTIK_REDIS_ENABLED`
 - `TOKTIK_REDIS_ADDR`
+- `TOKTIK_REDIS_DB`
+- `TOKTIK_REDIS_KEY_PREFIX`
+- `TOKTIK_LATEST_MARKET_DATA_*`
 - `TOKTIK_AES_KEY`
+
+完整環境變數清單以 `internal/config/runtime.go` 為準，YAML 欄位與預設範例見 `toktik.example.yaml`。
 
 `TOKTIK_AES_KEY` 是 hex encoded AES key，長度需對應 16、24 或 32 bytes。留空時 credentials 以 plaintext 保留在記憶體。
 

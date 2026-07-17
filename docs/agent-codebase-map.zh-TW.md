@@ -49,6 +49,7 @@ Route table 在 `internal/api/router.go`，主要群組：
 - `/api/v1/indicators`
 - `/api/v1/markets/{crypto-options,crypto-spot,forex,us-stocks,us-options}`
 - `/api/v1/screener`
+- `/api/v1/universes`
 - `/api/v1/factors`
 - `/api/v1/fundamentals`
 - `/api/v1/macro`
@@ -191,6 +192,7 @@ DSL 支援 `request.security`、factor request、option chain request、signal s
 目前 config 的 job 名稱包含：
 
 - `cboe_vix_macro`
+- `deribit_dvol_macro`
 - `guru_macro`
 - `fmp_sp500_macro`
 - `fmp_nasdaq100_macro`
@@ -198,10 +200,12 @@ DSL 支援 `request.security`、factor request、option chain request、signal s
 - `fmp_forex`
 - `fmp_us_stocks`
 - `fmp_us_stock_splits`
+- `fmp_us_stock_profiles`
 - `fmp_us_fundamentals`
 - `fmp_etf_fundamentals`
 - `fmp_economic_calendar`
 - `fmp_observed_stock_calendar`
+- `fmp_stock_earnings_calendar_backfill`
 - `polygon_us_flatfiles`
 - `polygon_us_greeks`
 - `feature_store_backfill`

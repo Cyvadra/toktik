@@ -82,13 +82,19 @@ go run ./cmd/api-server
 - `LISTEN_ADDR`
 - `CORS_ORIGINS`
 - `RATE_LIMIT_RPS`
+- `TOKTIK_BYPASS_AUTH_FOR_LOCAL_CLIENTS`
+- `TOKTIK_API_ENVIRONMENT`、`TOKTIK_API_TRAFFIC_ENABLED`、`TOKTIK_API_TRAFFIC_FLUSH_SECONDS`
 - `TOKTIK_SCHEMA_DIR`
+- `DERIBIT_BASE_URL`
 - `FMP_API_KEY`
 - `TOKTIK_FMP_CACHE_DIR`
-- `TOKTIK_REDIS_ENABLED`、`TOKTIK_REDIS_ADDR`、`TOKTIK_REDIS_PASSWORD`
+- `TIGEROPEN_*`
+- `TOKTIK_REDIS_ENABLED`、`TOKTIK_REDIS_ADDR`、`TOKTIK_REDIS_PASSWORD`、`TOKTIK_REDIS_DB`、`TOKTIK_REDIS_KEY_PREFIX`
+- `TOKTIK_LATEST_MARKET_DATA_*`
+- `TOKTIK_API_WARMUP_REFRESH_INTERVAL_HOURS`、`TOKTIK_API_WARMUP_COOLDOWN_HOURS`
 - `TOKTIK_AES_KEY`
 
-API server 需要 ClickHouse 與 MySQL；Redis 可關閉。API key 儲存在 MySQL，使用 `go run ./cmd/api-keys create ...` 建立，呼叫 API 時放在 `X-API-Key` header。
+完整環境變數清單以 `internal/config/runtime.go` 為準，YAML 欄位與預設範例見 `toktik.example.yaml`。API server 需要 ClickHouse 與 MySQL；Redis 可關閉。API key 儲存在 MySQL，使用 `go run ./cmd/api-keys create ...` 建立，呼叫 API 時放在 `X-API-Key` header。
 
 ## 修改功能時的路徑
 

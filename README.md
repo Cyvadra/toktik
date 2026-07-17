@@ -115,7 +115,7 @@ Key design decisions:
 | `feature_daily_panel_daily` | Both | Merged daily feature panel (all above combined) |
 | `fundamental_factor_catalog` | US stocks, Crypto spot | Factor control plane: metadata, preferred frequency, fill policy, SLA, source |
 | `fundamental_observation` | US stocks, Crypto spot | Tall sparse symbol-bound observations with `event_ts`, `known_at`, revision, and point-in-time query semantics |
-| Materialized K-line views | Both | 5m, 15m, 30m, 1h, 2h, 3h, 4h, 6h, 8h, 12h, 1d auto-aggregated from 1m |
+| Materialized K-line views | Market-dependent | Intervals are auto-aggregated from 1m; see the per-market interval map below |
 
 ### API Surface
 

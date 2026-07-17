@@ -43,6 +43,17 @@ go run ./cmd/data-sync-pipeline integrity \
   --underlyings PLTR,NFLX,LITE
 ```
 
+Limit US stock aggregate checks to selected symbols:
+
+```bash
+go run ./cmd/data-sync-pipeline integrity \
+  --config configs/data-sync-pipeline.yaml \
+  --from 2025-08-01 \
+  --to 2025-09-02 \
+  --targets us-stocks-aggregates \
+  --symbols AAPL,MSFT
+```
+
 Preview aggregate repairs without mutating data:
 
 ```bash
@@ -71,3 +82,5 @@ JSON output is available for schedulers or CI:
 ```bash
 go run ./cmd/data-sync-pipeline integrity --format json
 ```
+
+For large checks, ClickHouse resource limits can be adjusted with `--max-memory-gb`, `--external-group-by-gb`, and `--max-threads`. Set a value to `0` to disable that client-side cap or leave the corresponding server default in effect, as described by `--help`.
