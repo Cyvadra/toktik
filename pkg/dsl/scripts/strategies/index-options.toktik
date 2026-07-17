@@ -7,13 +7,20 @@ qty = input.float(1, title="Contracts", minval=1, maxval=20, step=1)
 market_name = input.string("us", title="Options Market", options=["us"])
 
 symbols = ["SPY", "QQQ"]
-spy_valuation = request.fundamental("us-stocks", "SPY", "pe10_live", "filled")
-qqq_valuation = request.fundamental("us-stocks", "QQQ", "pe", "filled")
-hv30 = request.factor("volatility", "1d", "hv30")
-ivp = request.factor("volatility", "1d", "iv_percentile")
-hvp = ta.percentrank(hv30, 80)
-rsi14 = ta.rsi(close, 14)
-cci20 = ta.cci(high, low, close, 20)
+spy_pe10 = request.fundamental("us-stocks", "SPY", "pe10_live", "filled")
+qqq_pe = request.fundamental("us-stocks", "QQQ", "pe", "filled")
+spy_valuation = ta.percentrank_valid(spy_pe10, 630, 200)
+qqq_valuation = ta.percentrank_valid(qqq_pe, 630, 200)
+spy_hv30 = request.factor("volatility", "SPY", "1d", "hv30")
+qqq_hv30 = request.factor("volatility", "QQQ", "1d", "hv30")
+spy_ivp = request.factor("volatility", "SPY", "1d", "iv_percentile")
+qqq_ivp = request.factor("volatility", "QQQ", "1d", "iv_percentile")
+spy_hvp = ta.percentrank_valid(spy_hv30, 80, 40)
+qqq_hvp = ta.percentrank_valid(qqq_hv30, 80, 40)
+spy_rsi14 = request.security("us-stocks", "SPY", "1d", ta.rsi(close, 14))
+qqq_rsi14 = request.security("us-stocks", "QQQ", "1d", ta.rsi(close, 14))
+spy_cci20 = request.security("us-stocks", "SPY", "1d", ta.cci(high, low, close, 20))
+qqq_cci20 = request.security("us-stocks", "QQQ", "1d", ta.cci(high, low, close, 20))
 
 plot(spread.count(), title="open_spreads", precision=0)
 
@@ -23,14 +30,18 @@ for symbol in symbols
     state_key = str.format("index_options_%s", symbol)
     if not ref.has(state_key) and opened_count < top_n
         valuation_percentile = symbol == "SPY" ? spy_valuation : qqq_valuation
+        hvp = symbol == "SPY" ? spy_hvp : qqq_hvp
+        ivp = symbol == "SPY" ? spy_ivp : qqq_ivp
+        rsi14 = symbol == "SPY" ? spy_rsi14 : qqq_rsi14
+        cci20 = symbol == "SPY" ? spy_cci20 : qqq_cci20
 
         if not na(valuation_percentile) and not na(ivp) and not na(hvp)
             ctx = market.context(rsi14, cci20, hvp, ivp, valuation_percentile)
-            strategies = options.strategies(ctx, "index")
+            strategies = options.strategies(ctx, "value")
 
-            if len(strategies) == 0
-                trend_ctx = market.context(rsi14, cci20, hvp, 50, 50)
-                strategies = options.strategies(trend_ctx, "index")
+            range_rejected = rsi14 >= 40 and rsi14 <= 60 and math.abs(cci20) >= 101
+            if len(strategies) == 0 and not range_rejected
+                strategies = options.strategies(ctx, "index")
 
             if len(strategies) > 0
                 name = strategies[0]
@@ -51,3 +62,6 @@ for symbol in symbols
                         if sid != na
                             ref.set(state_key, sid)
                             opened_count = opened_count + 1
+                            trace.emit("open_success", symbol, name)
+                    else
+                        trace.emit("leg_reject", symbol, name)
