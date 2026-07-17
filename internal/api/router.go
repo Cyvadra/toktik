@@ -77,7 +77,21 @@ func NewRouterFromDeps(d Deps) *gin.Engine {
 
 	r.GET("/swagger/*any", swaggerHandler())
 	r.GET("/health", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"status": "ok"})
+		c.JSON(http.StatusOK, gin.H{
+			"status": "ok",
+			"request": gin.H{
+				"client_ip":         c.ClientIP(),
+				"method":            c.Request.Method,
+				"url":               c.Request.URL.String(),
+				"proto":             c.Request.Proto,
+				"host":              c.Request.Host,
+				"remote_addr":       c.Request.RemoteAddr,
+				"request_uri":       c.Request.RequestURI,
+				"content_length":    c.Request.ContentLength,
+				"transfer_encoding": c.Request.TransferEncoding,
+				"headers":           c.Request.Header,
+			},
+		})
 	})
 	r.GET("/ready", h.GetReadiness)
 

@@ -28,7 +28,7 @@ api:
   # For a local nginx proxy, use ["127.0.0.1", "::1"]. Leave empty when
   # api-server is directly exposed so client-supplied forwarding headers are ignored.
   trusted_proxies: ["127.0.0.1", "::1"]
-  bypass_auth_for_local_clients: false
+  bypass_auth_for_local_clients: false # Always auth users if `frp` is used.
   request_timeout_seconds: 180
   # Application HTTP payload traffic accounting. Values exclude headers,
   # TLS/TCP overhead, proxies, and CDN traffic.

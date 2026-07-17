@@ -627,18 +627,35 @@ func TestHealthEndpoint(t *testing.T) {
 	r := setupRouter(&mockQuerier{})
 
 	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("GET", "/health", nil)
+	req, _ := http.NewRequest("GET", "/health?probe=1", nil)
+	req.RemoteAddr = "127.0.0.1:43210"
+	req.Header.Set("X-Forwarded-For", "203.0.113.25")
 	r.ServeHTTP(w, req)
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
 	}
-	var body map[string]string
+	var body struct {
+		Status  string `json:"status"`
+		Request struct {
+			ClientIP   string              `json:"client_ip"`
+			Method     string              `json:"method"`
+			URL        string              `json:"url"`
+			RemoteAddr string              `json:"remote_addr"`
+			Headers    map[string][]string `json:"headers"`
+		} `json:"request"`
+	}
 	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if body["status"] != "ok" {
-		t.Fatalf(`expected status "ok", got %q`, body["status"])
+	if body.Status != "ok" {
+		t.Fatalf(`expected status "ok", got %q`, body.Status)
+	}
+	if body.Request.ClientIP != "127.0.0.1" || body.Request.Method != http.MethodGet || body.Request.URL != "/health?probe=1" || body.Request.RemoteAddr != "127.0.0.1:43210" {
+		t.Fatalf("unexpected request echo: %#v", body.Request)
+	}
+	if got := body.Request.Headers["X-Forwarded-For"]; len(got) != 1 || got[0] != "203.0.113.25" {
+		t.Fatalf("expected forwarded header to be echoed, got %#v", got)
 	}
 }
 
