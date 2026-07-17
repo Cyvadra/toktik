@@ -154,6 +154,19 @@ func RegisterOptionsBuiltins(ip *Interpreter) {
 		return nil
 	}
 
+	// registerChainFilter wraps the repeated "nil bridge / missing arg" guard
+	// shared by every options.* chain-filter builtin, so each filter only
+	// declares its minimum arg count and the bridge call itself.
+	registerChainFilter := func(name string, minArgs int, call func(b OptionsBridge, args []Value) interface{}) {
+		ip.RegisterBuiltin(name, func(args []Value) Value {
+			b := ob()
+			if b == nil || len(args) < minArgs {
+				return NaVal()
+			}
+			return ObjVal(call(b, args))
+		})
+	}
+
 	// ------- options.chain() -------
 	ip.RegisterBuiltin("options.chain", func(args []Value) Value {
 		b := ob()
@@ -198,57 +211,33 @@ func RegisterOptionsBuiltins(ip *Interpreter) {
 	})
 
 	// ------- options.expiry_range(chain, min_days, max_days) -------
-	ip.RegisterBuiltin("options.expiry_range", func(args []Value) Value {
-		b := ob()
-		if b == nil || len(args) < 3 {
-			return NaVal()
-		}
-		return ObjVal(b.ChainExpiryRange(args[0].Obj(), int(args[1].Float()), int(args[2].Float())))
+	registerChainFilter("options.expiry_range", 3, func(b OptionsBridge, args []Value) interface{} {
+		return b.ChainExpiryRange(args[0].Obj(), int(args[1].Float()), int(args[2].Float()))
 	})
 
 	// ------- options.expiry_min(chain, min_days) -------
-	ip.RegisterBuiltin("options.expiry_min", func(args []Value) Value {
-		b := ob()
-		if b == nil || len(args) < 2 {
-			return NaVal()
-		}
-		return ObjVal(b.ChainExpiryMin(args[0].Obj(), int(args[1].Float())))
+	registerChainFilter("options.expiry_min", 2, func(b OptionsBridge, args []Value) interface{} {
+		return b.ChainExpiryMin(args[0].Obj(), int(args[1].Float()))
 	})
 
 	// ------- options.expiry_max(chain, max_days) -------
-	ip.RegisterBuiltin("options.expiry_max", func(args []Value) Value {
-		b := ob()
-		if b == nil || len(args) < 2 {
-			return NaVal()
-		}
-		return ObjVal(b.ChainExpiryMax(args[0].Obj(), int(args[1].Float())))
+	registerChainFilter("options.expiry_max", 2, func(b OptionsBridge, args []Value) interface{} {
+		return b.ChainExpiryMax(args[0].Obj(), int(args[1].Float()))
 	})
 
 	// ------- options.delta_range(chain, min_delta, max_delta) -------
-	ip.RegisterBuiltin("options.delta_range", func(args []Value) Value {
-		b := ob()
-		if b == nil || len(args) < 3 {
-			return NaVal()
-		}
-		return ObjVal(b.ChainDeltaRange(args[0].Obj(), args[1].Float(), args[2].Float()))
+	registerChainFilter("options.delta_range", 3, func(b OptionsBridge, args []Value) interface{} {
+		return b.ChainDeltaRange(args[0].Obj(), args[1].Float(), args[2].Float())
 	})
 
 	// ------- options.min_premium(chain, min_bid) -------
-	ip.RegisterBuiltin("options.min_premium", func(args []Value) Value {
-		b := ob()
-		if b == nil || len(args) < 2 {
-			return NaVal()
-		}
-		return ObjVal(b.ChainMinPremium(args[0].Obj(), args[1].Float()))
+	registerChainFilter("options.min_premium", 2, func(b OptionsBridge, args []Value) interface{} {
+		return b.ChainMinPremium(args[0].Obj(), args[1].Float())
 	})
 
 	// ------- options.strike_range(chain, min, max) -------
-	ip.RegisterBuiltin("options.strike_range", func(args []Value) Value {
-		b := ob()
-		if b == nil || len(args) < 3 {
-			return NaVal()
-		}
-		return ObjVal(b.ChainStrikeRange(args[0].Obj(), args[1].Float(), args[2].Float()))
+	registerChainFilter("options.strike_range", 3, func(b OptionsBridge, args []Value) interface{} {
+		return b.ChainStrikeRange(args[0].Obj(), args[1].Float(), args[2].Float())
 	})
 
 	// ------- options.len(chain) -------
@@ -339,131 +328,52 @@ func RegisterOptionsBuiltins(ip *Interpreter) {
 	})
 
 	// ------- contract field accessors -------
-	// contract.symbol, contract.type, contract.strike, contract.dte,
-	// contract.expiry,
-	// contract.delta, contract.gamma, contract.vega, contract.theta,
-	// contract.iv, contract.bid, contract.ask, contract.mark,
-	// contract.volume, contract.oi
+	// Table-driven: every contract.* accessor shares the same nil-bridge /
+	// missing-arg guard and just forwards to a single OptionsBridge getter,
+	// so adding a new field means adding one table row instead of a new
+	// copy-pasted RegisterBuiltin block.
+	stringGetters := map[string]func(OptionsBridge, interface{}) string{
+		"contract.symbol":     OptionsBridge.ContractSymbol,
+		"contract.underlying": OptionsBridge.ContractUnderlying,
+		"contract.market":     OptionsBridge.ContractMarket,
+		"contract.type":       OptionsBridge.ContractType,
+	}
+	for name, getter := range stringGetters {
+		getter := getter
+		ip.RegisterBuiltin(name, func(args []Value) Value {
+			b := ob()
+			if b == nil || len(args) < 1 {
+				return NaVal()
+			}
+			return StringVal(getter(b, args[0].Obj()))
+		})
+	}
 
-	ip.RegisterBuiltin("contract.symbol", func(args []Value) Value {
-		b := ob()
-		if b == nil || len(args) < 1 {
-			return NaVal()
-		}
-		return StringVal(b.ContractSymbol(args[0].Obj()))
-	})
-	ip.RegisterBuiltin("contract.underlying", func(args []Value) Value {
-		b := ob()
-		if b == nil || len(args) < 1 {
-			return NaVal()
-		}
-		return StringVal(b.ContractUnderlying(args[0].Obj()))
-	})
-	ip.RegisterBuiltin("contract.market", func(args []Value) Value {
-		b := ob()
-		if b == nil || len(args) < 1 {
-			return NaVal()
-		}
-		return StringVal(b.ContractMarket(args[0].Obj()))
-	})
-	ip.RegisterBuiltin("contract.type", func(args []Value) Value {
-		b := ob()
-		if b == nil || len(args) < 1 {
-			return NaVal()
-		}
-		return StringVal(b.ContractType(args[0].Obj()))
-	})
-	ip.RegisterBuiltin("contract.strike", func(args []Value) Value {
-		b := ob()
-		if b == nil || len(args) < 1 {
-			return NaVal()
-		}
-		return FloatVal(b.ContractStrike(args[0].Obj()))
-	})
-	ip.RegisterBuiltin("contract.expiry", func(args []Value) Value {
-		b := ob()
-		if b == nil || len(args) < 1 {
-			return NaVal()
-		}
-		return FloatVal(b.ContractExpiry(args[0].Obj()))
-	})
-	ip.RegisterBuiltin("contract.dte", func(args []Value) Value {
-		b := ob()
-		if b == nil || len(args) < 1 {
-			return NaVal()
-		}
-		return FloatVal(b.ContractDTE(args[0].Obj()))
-	})
-	ip.RegisterBuiltin("contract.delta", func(args []Value) Value {
-		b := ob()
-		if b == nil || len(args) < 1 {
-			return NaVal()
-		}
-		return FloatVal(b.ContractDelta(args[0].Obj()))
-	})
-	ip.RegisterBuiltin("contract.gamma", func(args []Value) Value {
-		b := ob()
-		if b == nil || len(args) < 1 {
-			return NaVal()
-		}
-		return FloatVal(b.ContractGamma(args[0].Obj()))
-	})
-	ip.RegisterBuiltin("contract.vega", func(args []Value) Value {
-		b := ob()
-		if b == nil || len(args) < 1 {
-			return NaVal()
-		}
-		return FloatVal(b.ContractVega(args[0].Obj()))
-	})
-	ip.RegisterBuiltin("contract.theta", func(args []Value) Value {
-		b := ob()
-		if b == nil || len(args) < 1 {
-			return NaVal()
-		}
-		return FloatVal(b.ContractTheta(args[0].Obj()))
-	})
-	ip.RegisterBuiltin("contract.iv", func(args []Value) Value {
-		b := ob()
-		if b == nil || len(args) < 1 {
-			return NaVal()
-		}
-		return FloatVal(b.ContractIV(args[0].Obj()))
-	})
-	ip.RegisterBuiltin("contract.bid", func(args []Value) Value {
-		b := ob()
-		if b == nil || len(args) < 1 {
-			return NaVal()
-		}
-		return FloatVal(b.ContractBid(args[0].Obj()))
-	})
-	ip.RegisterBuiltin("contract.ask", func(args []Value) Value {
-		b := ob()
-		if b == nil || len(args) < 1 {
-			return NaVal()
-		}
-		return FloatVal(b.ContractAsk(args[0].Obj()))
-	})
-	ip.RegisterBuiltin("contract.mark", func(args []Value) Value {
-		b := ob()
-		if b == nil || len(args) < 1 {
-			return NaVal()
-		}
-		return FloatVal(b.ContractMark(args[0].Obj()))
-	})
-	ip.RegisterBuiltin("contract.volume", func(args []Value) Value {
-		b := ob()
-		if b == nil || len(args) < 1 {
-			return NaVal()
-		}
-		return FloatVal(b.ContractVolume(args[0].Obj()))
-	})
-	ip.RegisterBuiltin("contract.oi", func(args []Value) Value {
-		b := ob()
-		if b == nil || len(args) < 1 {
-			return NaVal()
-		}
-		return FloatVal(b.ContractOI(args[0].Obj()))
-	})
+	floatGetters := map[string]func(OptionsBridge, interface{}) float64{
+		"contract.strike": OptionsBridge.ContractStrike,
+		"contract.expiry": OptionsBridge.ContractExpiry,
+		"contract.dte":    OptionsBridge.ContractDTE,
+		"contract.delta":  OptionsBridge.ContractDelta,
+		"contract.gamma":  OptionsBridge.ContractGamma,
+		"contract.vega":   OptionsBridge.ContractVega,
+		"contract.theta":  OptionsBridge.ContractTheta,
+		"contract.iv":     OptionsBridge.ContractIV,
+		"contract.bid":    OptionsBridge.ContractBid,
+		"contract.ask":    OptionsBridge.ContractAsk,
+		"contract.mark":   OptionsBridge.ContractMark,
+		"contract.volume": OptionsBridge.ContractVolume,
+		"contract.oi":     OptionsBridge.ContractOI,
+	}
+	for name, getter := range floatGetters {
+		getter := getter
+		ip.RegisterBuiltin(name, func(args []Value) Value {
+			b := ob()
+			if b == nil || len(args) < 1 {
+				return NaVal()
+			}
+			return FloatVal(getter(b, args[0].Obj()))
+		})
+	}
 
 	// ------- spread management -------
 

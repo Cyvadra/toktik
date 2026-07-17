@@ -53,6 +53,11 @@ type Interpreter struct {
 	queuedFields map[string]float64
 	traceKeys    map[string]struct{}
 
+	// unresolvedIdents dedupes "unknown identifier" diagnostics so a typo
+	// referenced on every bar only reports once instead of flooding the
+	// diagnostics list.
+	unresolvedIdents map[string]struct{}
+
 	// Inputs: user-supplied parameter overrides keyed by input title.
 	// When an input(defval, title=T) call is evaluated, Inputs[T] takes priority.
 	Inputs map[string]float64
@@ -114,18 +119,41 @@ type SpecialFormBridge interface {
 // NewInterpreter creates a new interpreter for the given program.
 func NewInterpreter(prog *ast.Program) *Interpreter {
 	ip := &Interpreter{
-		Program:      prog,
-		Global:       NewScope(),
-		persist:      make(map[string]Value),
-		varip:        make(map[string]Value),
-		seriesMap:    make(map[string]*Series),
-		builtins:     make(map[string]Value),
-		propertyFns:  make(map[string]func() Value),
-		queuedFields: make(map[string]float64),
-		traceKeys:    make(map[string]struct{}),
+		Program:          prog,
+		Global:           NewScope(),
+		persist:          make(map[string]Value),
+		varip:            make(map[string]Value),
+		seriesMap:        make(map[string]*Series),
+		builtins:         make(map[string]Value),
+		propertyFns:      make(map[string]func() Value),
+		queuedFields:     make(map[string]float64),
+		traceKeys:        make(map[string]struct{}),
+		unresolvedIdents: make(map[string]struct{}),
 	}
 	RegisterCoreBuiltins(ip)
 	return ip
+}
+
+// reportUnresolvedIdent records a diagnostic the first time an identifier
+// name is referenced but not found in any scope. Unlike silently returning
+// na, this surfaces typos and undeclared references (e.g. postion_size) so a
+// broken condition does not masquerade as a valid backtest result.
+func (ip *Interpreter) reportUnresolvedIdent(name string) {
+	if ip.Diagnostics == nil {
+		return
+	}
+	if _, seen := ip.unresolvedIdents[name]; seen {
+		return
+	}
+	ip.unresolvedIdents[name] = struct{}{}
+	barIndex := ip.BarIndex
+	ip.Diagnostics.Add(diagnostics.Diagnostic{
+		Severity: diagnostics.SeverityError,
+		Code:     "dsl.unresolved_identifier",
+		Message:  fmt.Sprintf("identifier %q is not defined", name),
+		BarIndex: &barIndex,
+		Hint:     "Check for typos in variable or builtin names; undeclared identifiers evaluate to na and silently break conditions.",
+	})
 }
 
 // RegisterBuiltin adds a native function.
@@ -571,8 +599,9 @@ func (ip *Interpreter) execForIn(s *ast.ForInStmt, scope *Scope) Value {
 
 func (ip *Interpreter) execWhile(s *ast.WhileStmt, scope *Scope) Value {
 	var last Value
-	limit := 100_000
-	for i := 0; i < limit; i++ {
+	const limit = 100_000
+	i := 0
+	for ; i < limit; i++ {
 		if !ip.evalExpr(s.Condition, scope).Bool() {
 			break
 		}
@@ -588,16 +617,18 @@ func (ip *Interpreter) execWhile(s *ast.WhileStmt, scope *Scope) Value {
 		if ip.sig == sigReturn {
 			return last
 		}
-		if i == limit-1 && ip.Diagnostics != nil {
-			barIndex := ip.BarIndex
-			ip.Diagnostics.Add(diagnostics.Diagnostic{
-				Severity: diagnostics.SeverityWarning,
-				Code:     "dsl.while_iteration_cap",
-				Message:  "while loop reached the interpreter iteration cap",
-				BarIndex: &barIndex,
-				Hint:     "Check loop conditions and prefer bounded for loops when possible.",
-			})
-		}
+	}
+	// Only warn when the loop was cut off by the cap rather than a natural
+	// break/condition-false/return exit, and only once per site's bar.
+	if i == limit && ip.Diagnostics != nil {
+		barIndex := ip.BarIndex
+		ip.Diagnostics.Add(diagnostics.Diagnostic{
+			Severity: diagnostics.SeverityWarning,
+			Code:     "dsl.while_iteration_cap",
+			Message:  "while loop reached the interpreter iteration cap",
+			BarIndex: &barIndex,
+			Hint:     "Check loop conditions and prefer bounded for loops when possible.",
+		})
 	}
 	return last
 }
@@ -655,6 +686,7 @@ func (ip *Interpreter) evalExpr(expr ast.Expr, scope *Scope) Value {
 	case *ast.IdentExpr:
 		v, ok := scope.Get(e.Name)
 		if !ok {
+			ip.reportUnresolvedIdent(e.Name)
 			return NaVal()
 		}
 		return v
