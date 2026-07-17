@@ -104,6 +104,23 @@ pe = request.fundamental("us-stocks", "AAPL", "pe")
 	}
 }
 
+func TestAnalyzeDetectsStaticSymbolFactorRequest(t *testing.T) {
+	prog, errs := parser.Parse(`strategy("Static Symbol Factor")
+ivp = request.factor("volatility", "SPY", "1d", "iv_percentile")
+`)
+	if len(errs) > 0 {
+		t.Fatalf("parse errors: %v", errs)
+	}
+	manifest := Analyze(prog)
+	if len(manifest.Requests) != 1 {
+		t.Fatalf("request count = %d, want 1: %+v", len(manifest.Requests), manifest.Requests)
+	}
+	req := manifest.Requests[0]
+	if req.Dynamic || req.Kind != "factor" || req.Name != "volatility" || req.Symbol != "SPY" || req.Interval != "1d" || req.Key != RequestSymbolFactorKey("volatility", "SPY", "1d") {
+		t.Fatalf("unexpected symbol factor request: %+v", req)
+	}
+}
+
 func TestAnalyzeDetectsNamedFundamentalRequests(t *testing.T) {
 	prog, errs := parser.Parse(`strategy("Named Fundamental Request")
 pe = request.fundamental(symbol="AAPL", factor="pe", market="us-stocks")
@@ -186,6 +203,27 @@ for symbol in symbols {
 	}
 	if fundamental.Kind != "fundamental" || fundamental.Market != "us-stocks" || fundamental.Name != "pe" || fundamental.Mode != "percentile" || fundamental.UniverseCode != "strong_momentum" || fundamental.Tier != RequestTierUniverseExpand {
 		t.Fatalf("unexpected fundamental template: %+v", fundamental)
+	}
+}
+
+func TestAnalyzeExtractsUniverseBoundSymbolFactorRequest(t *testing.T) {
+	prog, errs := parser.Parse(`strategy("Universe Symbol Factor")
+symbols = universe.symbols("strong_momentum")
+for symbol in symbols {
+  ivp = request.factor("volatility", symbol, "1d", "iv_percentile")
+}
+`)
+	if len(errs) > 0 {
+		t.Fatalf("parse errors: %v", errs)
+	}
+	manifest := Analyze(prog)
+	templates := manifest.UniverseRequestTemplatesForPreload()
+	if len(templates) != 1 {
+		t.Fatalf("template count = %d, want 1: %+v", len(templates), templates)
+	}
+	factor := templates[0]
+	if factor.Kind != "factor" || factor.Name != "volatility" || factor.Interval != "1d" || factor.Field != "iv_percentile" || factor.UniverseCode != "strong_momentum" || factor.Tier != RequestTierUniverseExpand {
+		t.Fatalf("unexpected factor template: %+v", factor)
 	}
 }
 

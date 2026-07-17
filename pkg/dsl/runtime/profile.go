@@ -108,4 +108,5 @@ func registerProfile(ip *Interpreter, cfg profileConfig) {
 	if cfg.ref {
 		RegisterRefBuiltins(ip)
 	}
+	RegisterTraceBuiltins(ip)
 }

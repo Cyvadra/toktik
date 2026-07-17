@@ -1135,6 +1135,9 @@ func validateOptionStrategyLegs(b OptionsBridge, name string, legs []SpreadLegIn
 	if len(legs) == 1 {
 		return true
 	}
+	if name == OptionStrategyCalendarSpread {
+		return validCalendarSpreadLegs(b, legs)
+	}
 	if !sameScopeAndExpiry(b, legs) {
 		return false
 	}
@@ -1156,22 +1159,44 @@ func validateOptionStrategyLegs(b OptionsBridge, name string, legs []SpreadLegIn
 		return len(legs) == 4 && side(0) == "buy" && side(1) == "sell" && side(2) == "sell" && side(3) == "buy" && right(0) == "put" && right(1) == "put" && right(2) == "call" && right(3) == "call" && strike(0) < strike(1) && strike(1) < strike(2) && strike(2) < strike(3)
 	case OptionStrategyBuyStraddle, OptionStrategyBuySkewedStraddle:
 		return len(legs) == 2 && side(0) == "buy" && side(1) == "buy" && right(0) == "call" && right(1) == "put"
-	case OptionStrategyCalendarSpread:
-		return len(legs) == 2 && side(0) == "sell" && side(1) == "buy" && right(0) == right(1) && b.ContractStrike(legs[0].Contract) == b.ContractStrike(legs[1].Contract) && b.ContractDTE(legs[1].Contract) >= b.ContractDTE(legs[0].Contract)+7
 	default:
 		return len(legs) == 1
 	}
 }
 
+func validCalendarSpreadLegs(b OptionsBridge, legs []SpreadLegInput) bool {
+	if len(legs) != 2 || !sameScope(b, legs) {
+		return false
+	}
+	front, back := legs[0], legs[1]
+	return front.Side == "sell" &&
+		back.Side == "buy" &&
+		strings.EqualFold(b.ContractType(front.Contract), b.ContractType(back.Contract)) &&
+		b.ContractStrike(front.Contract) == b.ContractStrike(back.Contract) &&
+		b.ContractDTE(back.Contract) >= b.ContractDTE(front.Contract)+7
+}
+
 func sameScopeAndExpiry(b OptionsBridge, legs []SpreadLegInput) bool {
+	if !sameScope(b, legs) {
+		return false
+	}
+	expiry := b.ContractExpiry(legs[0].Contract)
+	for _, leg := range legs[1:] {
+		if math.Abs(b.ContractExpiry(leg.Contract)-expiry) > 1e-9 {
+			return false
+		}
+	}
+	return true
+}
+
+func sameScope(b OptionsBridge, legs []SpreadLegInput) bool {
 	if len(legs) == 0 {
 		return false
 	}
 	market := strings.TrimSpace(b.ContractMarket(legs[0].Contract))
 	underlying := strings.TrimSpace(b.ContractUnderlying(legs[0].Contract))
-	expiry := b.ContractExpiry(legs[0].Contract)
 	for _, leg := range legs[1:] {
-		if !strings.EqualFold(strings.TrimSpace(b.ContractMarket(leg.Contract)), market) || !strings.EqualFold(strings.TrimSpace(b.ContractUnderlying(leg.Contract)), underlying) || math.Abs(b.ContractExpiry(leg.Contract)-expiry) > 1e-9 {
+		if !strings.EqualFold(strings.TrimSpace(b.ContractMarket(leg.Contract)), market) || !strings.EqualFold(strings.TrimSpace(b.ContractUnderlying(leg.Contract)), underlying) {
 			return false
 		}
 	}

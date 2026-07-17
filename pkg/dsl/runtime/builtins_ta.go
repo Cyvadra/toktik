@@ -560,4 +560,36 @@ func RegisterTABuiltins(ip *Interpreter) {
 		}
 		return taSeriesValue(ip, "ta.percentrank", float64(count)/float64(length-1)*100, args...)
 	})
+
+	// ta.percentrank_valid(source, length, min_samples) — percent rank using only valid observations.
+	ip.RegisterBuiltin("ta.percentrank_valid", func(args []Value) Value {
+		if len(args) < 3 {
+			return NaVal()
+		}
+		s := args[0].SeriesPtr()
+		length := int(args[1].Float())
+		minSamples := int(args[2].Float())
+		if s == nil || length <= 0 || minSamples < 2 || s.Len() < length {
+			return NaVal()
+		}
+		current := s.At(0)
+		if math.IsNaN(current) {
+			return NaVal()
+		}
+		valid, lessOrEqual := 1, 0
+		for i := 1; i < length; i++ {
+			value := s.At(i)
+			if math.IsNaN(value) {
+				continue
+			}
+			valid++
+			if value <= current {
+				lessOrEqual++
+			}
+		}
+		if valid < minSamples {
+			return NaVal()
+		}
+		return taSeriesValue(ip, "ta.percentrank_valid", float64(lessOrEqual)/float64(valid-1)*100, args...)
+	})
 }

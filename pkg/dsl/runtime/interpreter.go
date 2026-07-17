@@ -51,6 +51,7 @@ type Interpreter struct {
 	propertyFns  map[string]func() Value
 	plots        []*PlotSpec
 	queuedFields map[string]float64
+	traceKeys    map[string]struct{}
 
 	// Inputs: user-supplied parameter overrides keyed by input title.
 	// When an input(defval, title=T) call is evaluated, Inputs[T] takes priority.
@@ -121,6 +122,7 @@ func NewInterpreter(prog *ast.Program) *Interpreter {
 		builtins:     make(map[string]Value),
 		propertyFns:  make(map[string]func() Value),
 		queuedFields: make(map[string]float64),
+		traceKeys:    make(map[string]struct{}),
 	}
 	RegisterCoreBuiltins(ip)
 	return ip
@@ -165,10 +167,17 @@ func (ip *Interpreter) OnBar() {
 	ip.BarIndex++
 	// Update built-in series from bridge.
 	if ip.Bridge != nil {
-		ip.setBarField("close", ip.Bridge.Close())
-		ip.setBarField("open", ip.Bridge.Open())
-		ip.setBarField("high", ip.Bridge.High())
-		ip.setBarField("low", ip.Bridge.Low())
+		closePrice := ip.Bridge.Close()
+		openPrice := ip.Bridge.Open()
+		highPrice := ip.Bridge.High()
+		lowPrice := ip.Bridge.Low()
+		ip.setBarField("close", closePrice)
+		ip.setBarField("open", openPrice)
+		ip.setBarField("high", highPrice)
+		ip.setBarField("low", lowPrice)
+		ip.setBarField("hl2", (highPrice+lowPrice)/2)
+		ip.setBarField("hlc3", (highPrice+lowPrice+closePrice)/3)
+		ip.setBarField("ohlc4", (openPrice+highPrice+lowPrice+closePrice)/4)
 		ip.setBarField("volume", ip.Bridge.Volume())
 		ip.Global.Set("bar_index", FloatVal(float64(ip.Bridge.BarIndex())))
 	}

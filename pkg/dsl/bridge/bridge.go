@@ -93,6 +93,8 @@ func buildDependencyPlan(manifest analysis.Manifest, universe *UniverseSnapshot)
 			switch concrete.Kind {
 			case "security":
 				concrete.Key = requestSecurityKey(concrete.Market, concrete.Symbol, concrete.Interval)
+			case "factor":
+				concrete.Key = analysis.RequestSymbolFactorKey(concrete.Name, concrete.Symbol, concrete.Interval)
 			case "fundamental":
 				concrete.Key = analysis.RequestFundamentalKey(concrete.Market, concrete.Symbol, concrete.Name, concrete.Mode)
 			}
@@ -239,7 +241,11 @@ func (ds *DslStrategy) registerRequest(ctx *backtest.SetupContext, req requestSp
 		}
 	case "factor":
 		if _, ok := ds.facRefs[req.Key]; !ok {
-			ds.facRefs[req.Key] = ctx.AddFactor(req.Name, req.Interval)
+			if strings.TrimSpace(req.Symbol) == "" {
+				ds.facRefs[req.Key] = ctx.AddFactor(req.Name, req.Interval)
+			} else {
+				ds.facRefs[req.Key] = ctx.AddSymbolFactor(req.Name, ctx.PrimaryRef().Market, req.Symbol, req.Interval, "")
+			}
 		}
 	case "fundamental":
 		if _, ok := ds.facRefs[req.Key]; !ok {
@@ -539,9 +545,19 @@ func (ds *DslStrategy) requestFactorBuiltin() func(args []runtime.Value) runtime
 			return runtime.NaVal()
 		}
 		name := strings.TrimSpace(args[0].Str())
-		interval := strings.TrimSpace(args[1].Str())
-		field := strings.TrimSpace(args[2].Str())
+		symbol, interval, field := "", "", ""
+		if len(args) >= 4 {
+			symbol = strings.TrimSpace(args[1].Str())
+			interval = strings.TrimSpace(args[2].Str())
+			field = strings.TrimSpace(args[3].Str())
+		} else {
+			interval = strings.TrimSpace(args[1].Str())
+			field = strings.TrimSpace(args[2].Str())
+		}
 		key := requestFactorKey(name, interval)
+		if symbol != "" {
+			key = analysis.RequestSymbolFactorKey(name, symbol, interval)
+		}
 		ref, ok := ds.facRefs[key]
 		if !ok || ds.ip == nil || ds.ip.Bridge == nil {
 			if !ok {

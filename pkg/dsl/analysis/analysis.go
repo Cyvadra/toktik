@@ -547,6 +547,14 @@ func universeRequestTemplate(call *ast.CallExpr, scope universeScope, stringBind
 			mode = "filled"
 		}
 		return RequestSpec{Kind: "fundamental", Market: market, Name: factor, Interval: "primary", Mode: mode, Field: "value", Tier: RequestTierUniverseExpand, UniverseCode: scope.code}, true
+	case "request.factor":
+		name := staticStringWithOverrides(argExpr("name", 0), stringBindings, overrides)
+		interval := staticStringWithOverrides(argExpr("interval", 2), stringBindings, overrides)
+		field := staticStringWithOverrides(argExpr("field", 3), stringBindings, overrides)
+		if name == "" || interval == "" || field == "" || !symbolMatchesLoop(argExpr("symbol", 1)) {
+			return RequestSpec{}, false
+		}
+		return RequestSpec{Kind: "factor", Name: name, Interval: interval, Field: field, Tier: RequestTierUniverseExpand, UniverseCode: scope.code}, true
 	default:
 		return RequestSpec{}, false
 	}
@@ -772,12 +780,22 @@ func parseRequestSpec(call *ast.CallExpr, stringBindings, overrides map[string]s
 			return RequestSpec{}, false
 		}
 		name, dynName := get("name", 0)
-		interval, dynInterval := get("interval", 1)
-		field, dynField := get("field", 2)
-		if dynName || dynInterval || dynField {
+		intervalIndex, fieldIndex := 1, 2
+		symbol, dynSymbol := "", false
+		if len(call.Args) >= 4 {
+			intervalIndex, fieldIndex = 2, 3
+			symbol, dynSymbol = get("symbol", 1)
+		}
+		interval, dynInterval := get("interval", intervalIndex)
+		field, dynField := get("field", fieldIndex)
+		if dynName || dynSymbol || dynInterval || dynField {
 			return RequestSpec{Kind: "factor", Tier: requestTier(true), Dynamic: true}, true
 		}
-		return RequestSpec{Kind: "factor", Name: name, Interval: interval, Field: field, Key: RequestFactorKey(name, interval), Tier: RequestTierStatic}, true
+		key := RequestFactorKey(name, interval)
+		if symbol != "" {
+			key = RequestSymbolFactorKey(name, symbol, interval)
+		}
+		return RequestSpec{Kind: "factor", Symbol: symbol, Name: name, Interval: interval, Field: field, Key: key, Tier: RequestTierStatic}, true
 	case "fundamental":
 		if obj.Name != "request" {
 			return RequestSpec{}, false
@@ -1093,4 +1111,8 @@ func RequestSecurityKey(market, symbol, interval string) string {
 
 func RequestFactorKey(name, interval string) string {
 	return strings.Join([]string{name, interval}, "|")
+}
+
+func RequestSymbolFactorKey(name, symbol, interval string) string {
+	return strings.Join([]string{name, strings.TrimSpace(strings.ToUpper(symbol)), interval}, "|")
 }

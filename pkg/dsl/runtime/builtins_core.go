@@ -4,6 +4,7 @@ package runtime
 
 // RegisterCoreBuiltins adds language-level builtins that should always exist.
 func RegisterCoreBuiltins(ip *Interpreter) {
+	RegisterCandidateBuiltins(ip)
 	ip.RegisterBuiltin("len", func(args []Value) Value {
 		if len(args) < 1 {
 			return FloatVal(0)

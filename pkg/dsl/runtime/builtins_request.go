@@ -8,6 +8,8 @@ func RegisterRequestBuiltins(ip *Interpreter, securityFn func(args []Value) Valu
 		ip.RegisterBuiltinWithParams("request.security", []string{"market", "symbol", "interval", "field"}, securityFn)
 	}
 	if factorFn != nil {
+		// Keep the legacy named-argument contract. The symbol-aware form is
+		// positional: request.factor(name, symbol, interval, field).
 		ip.RegisterBuiltinWithParams("request.factor", []string{"name", "interval", "field"}, factorFn)
 	}
 	if fundamentalFn != nil {

@@ -4,6 +4,7 @@ import (
 	"math"
 	"testing"
 
+	"github.com/Cyvadra/toktik/pkg/dsl/diagnostics"
 	"github.com/Cyvadra/toktik/pkg/dsl/parser"
 )
 
@@ -560,6 +561,93 @@ bs = ta.barssince(sig)
 	v, _ := ip.Global.Get("bs")
 	if v.Float() != 2 {
 		t.Errorf("barssince: expected 2, got %g", v.Float())
+	}
+}
+
+func TestTAPercentRankValidIgnoresMissingObservations(t *testing.T) {
+	src := `rank = ta.percentrank_valid(close, 4, 3)`
+	prog, errs := parser.Parse(src)
+	if len(errs) > 0 {
+		t.Fatal(errs)
+	}
+	ip := NewInterpreter(prog)
+	RegisterTABuiltins(ip)
+	ip.Init()
+
+	for _, price := range []float64{10, math.NaN(), 20, 30} {
+		ip.Bridge = &mockBridge{closeVal: price}
+		ip.OnBar()
+	}
+
+	value, _ := ip.Global.Get("rank")
+	if value.Float() != 100 {
+		t.Fatalf("valid percentile rank = %g, want 100", value.Float())
+	}
+}
+
+func TestTAPercentRankValidRequiresMinimumObservations(t *testing.T) {
+	src := `rank = ta.percentrank_valid(close, 4, 3)`
+	prog, errs := parser.Parse(src)
+	if len(errs) > 0 {
+		t.Fatal(errs)
+	}
+	ip := NewInterpreter(prog)
+	RegisterTABuiltins(ip)
+	ip.Init()
+
+	for _, price := range []float64{10, math.NaN(), 20} {
+		ip.Bridge = &mockBridge{closeVal: price}
+		ip.OnBar()
+	}
+
+	value, _ := ip.Global.Get("rank")
+	if !math.IsNaN(value.Float()) {
+		t.Fatalf("valid percentile rank = %g, want na", value.Float())
+	}
+}
+
+func TestTACCIUsesHLC3PriceSource(t *testing.T) {
+	src := `cci = ta.cci(hlc3, 3)`
+	prog, errs := parser.Parse(src)
+	if len(errs) > 0 {
+		t.Fatal(errs)
+	}
+	ip := NewInterpreter(prog)
+	RegisterTABuiltins(ip)
+	ip.Init()
+
+	for _, price := range []float64{10, 12, 15} {
+		ip.Bridge = &mockBridge{closeVal: price}
+		ip.OnBar()
+	}
+
+	value, _ := ip.Global.Get("cci")
+	if math.IsNaN(value.Float()) {
+		t.Fatal("cci using hlc3 = na, want finite value")
+	}
+}
+
+func TestTraceEmitDeduplicatesWithinBarButPreservesOccurrencesAcrossBars(t *testing.T) {
+	prog, errs := parser.Parse(`
+trace.emit("candidate_match", "AAPL", "momentum")
+trace.emit("candidate_match", "AAPL", "momentum")
+`)
+	if len(errs) > 0 {
+		t.Fatal(errs)
+	}
+	ip := NewInterpreter(prog)
+	RegisterTraceBuiltins(ip)
+	var items diagnostics.List
+	ip.Diagnostics = &items
+	ip.Init()
+	ip.OnBar()
+	ip.OnBar()
+
+	if len(items) != 2 {
+		t.Fatalf("trace diagnostics = %+v, want one event per bar", items)
+	}
+	if items[0].Severity != diagnostics.SeverityInfo || items[0].Code != "dsl.trace.candidate_match" || items[0].Function != "trace.emit" {
+		t.Fatalf("unexpected trace diagnostic: %+v", items[0])
 	}
 }
 

@@ -133,6 +133,20 @@ func TestBuildOptionStrategyLegsRejectsMixedExpiryVertical(t *testing.T) {
 	}
 }
 
+func TestBuildOptionStrategyLegsBuildsCalendarAcrossExpiries(t *testing.T) {
+	bridge := newTestOptionsBridge()
+	legs := buildOptionStrategyLegs(bridge, bridge.OptionsChain(), OptionStrategyCalendarSpread, 1, 0.35)
+	if len(legs) != 2 {
+		t.Fatalf("expected calendar spread legs, got %#v", legs)
+	}
+	if got := legs[0].Array()[1].Str(); got != "sell" {
+		t.Fatalf("front calendar leg side = %q, want sell", got)
+	}
+	if got := legs[1].Array()[1].Str(); got != "buy" {
+		t.Fatalf("back calendar leg side = %q, want buy", got)
+	}
+}
+
 func TestParseLegInputsRejectsMalformedLegs(t *testing.T) {
 	contract := testOptionContract{symbol: "C105", underlying: "SPY", market: "us-stocks", right: "call", strike: 105, dte: 30, delta: 0.35, mark: 3}
 	legs := parseLegInputs([]Value{
