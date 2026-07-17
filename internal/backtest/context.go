@@ -232,6 +232,15 @@ func (bc *BarContext) NextBarTime() time.Time {
 	return bc.barTimes[bc.barIndex+1]
 }
 
+// PrevBarTime returns the previous primary bar timestamp, or zero if the
+// current bar is the first replayable primary bar.
+func (bc *BarContext) PrevBarTime() time.Time {
+	if bc.barIndex-1 < 0 || bc.barIndex-1 >= len(bc.barTimes) {
+		return time.Time{}
+	}
+	return bc.barTimes[bc.barIndex-1]
+}
+
 // --- Primary field shortcuts ---
 
 // Open returns the current bar's open price (canonical alias).

@@ -122,6 +122,7 @@ type DslStrategy struct {
 	runtimeDiagnostics diagnostics.List
 	missingRequestKeys map[string]struct{}
 	events             []signals.SignalEvent // structured events loaded during Preload
+	bridge             *barContextBridge     // reused across bars; only ctx/events mutate per bar
 }
 
 // New creates a DslStrategy from DSL source code.
@@ -149,7 +150,7 @@ func NewWithOptions(source string, opts Options) *DslStrategy {
 		secRefs:            make(map[string]backtest.SecurityRef),
 		facRefs:            make(map[string]backtest.FactorRef),
 		remoteFacRefs:      make(map[string]backtest.FactorRef),
-		aliasExprs:         collectAliasExprs(prog),
+		aliasExprs:         analysis.CollectAliasExprs(prog),
 		missingRequestKeys: make(map[string]struct{}),
 	}
 }
@@ -202,6 +203,7 @@ func (ds *DslStrategy) Init(ctx *backtest.SetupContext) error {
 	ApplyParams(ds.ip, ds.opts.Params)
 	runtime.RegisterBacktestProfile(ds.ip, ds.requestSecurityBuiltin(), ds.requestFactorBuiltin(), ds.requestFundamentalBuiltin())
 	ds.ip.Init()
+	ds.bridge = &barContextBridge{config: ds.opts.Config, ds: ds, spreadPricing: ds.SpreadPricingConfig()}
 	if ds.opts.InitHook != nil {
 		if err := ds.opts.InitHook(ctx); err != nil {
 			return err
@@ -220,8 +222,8 @@ func (ds *DslStrategy) registerRequest(ctx *backtest.SetupContext, req requestSp
 			return
 		}
 		expr := ds.resolveRemoteExpr(req.Expression)
-		for _, factor := range collectRemoteFactorRequests(expr) {
-			key := remoteFactorKey(req.Key, factor)
+		for _, factor := range analysis.CollectRemoteFactorRequests(expr) {
+			key := analysis.RemoteFactorKey(req.Key, factor)
 			if _, ok := ds.remoteFacRefs[key]; ok {
 				continue
 			}
@@ -331,7 +333,12 @@ func (ds *DslStrategy) Preload(ctx *backtest.PreloadContext) error {
 // OnBar implements backtest.Strategy.
 func (ds *DslStrategy) OnBar(ctx *backtest.BarContext) {
 	barEvents := signals.EventsAtTime(ds.events, ctx.Time())
-	ds.ip.Bridge = &barContextBridge{ctx: ctx, events: barEvents, config: ds.opts.Config, ds: ds, spreadPricing: ds.SpreadPricingConfig()}
+	// Reuse the single bridge instance allocated in Init; only the per-bar
+	// context and events change, avoiding an allocation on every bar of a
+	// (potentially years-long) replay.
+	ds.bridge.ctx = ctx
+	ds.bridge.events = barEvents
+	ds.ip.Bridge = ds.bridge
 	for _, field := range defaultRawPriceFields() {
 		ds.ip.SetNamedField(field, ctx.Field(field))
 	}
@@ -644,37 +651,6 @@ func (ds *DslStrategy) addMissingRequestDiagnostic(function, key string, barInde
 	})
 }
 
-func literalString(expr ast.Expr) string {
-	if s, ok := expr.(*ast.StringLit); ok {
-		return strings.TrimSpace(s.Value)
-	}
-	return ""
-}
-
-func literalBool(expr ast.Expr) bool {
-	if b, ok := expr.(*ast.BoolLit); ok {
-		return b.Value
-	}
-	return false
-}
-
-func literalStringArray(expr ast.Expr) []string {
-	arr, ok := expr.(*ast.ArrayLit)
-	if !ok {
-		if single := literalString(expr); single != "" {
-			return []string{single}
-		}
-		return nil
-	}
-	out := make([]string, 0, len(arr.Elements))
-	for _, item := range arr.Elements {
-		if s := literalString(item); s != "" {
-			out = append(out, s)
-		}
-	}
-	return out
-}
-
 func splitCSVOrList(raw string) []string {
 	if strings.TrimSpace(raw) == "" {
 		return nil
@@ -724,196 +700,17 @@ func requestFactorKey(name, interval string) string {
 	return analysis.RequestFactorKey(name, interval)
 }
 
-func remoteFactorKey(securityKey string, spec requestSpec) string {
-	return strings.Join([]string{
-		securityKey,
-		strings.TrimSpace(strings.ToLower(spec.Market)),
-		strings.TrimSpace(strings.ToUpper(spec.Symbol)),
-		strings.TrimSpace(strings.ToLower(spec.Name)),
-		strings.TrimSpace(strings.ToLower(spec.Interval)),
-		strings.TrimSpace(strings.ToLower(spec.Mode)),
-	}, "|")
-}
-
-func collectAliasExprs(prog *ast.Program) map[string]ast.Expr {
-	out := make(map[string]ast.Expr)
-	if prog == nil {
-		return out
-	}
-	for _, stmt := range prog.Stmts {
-		decl, ok := stmt.(*ast.VarDecl)
-		if !ok || decl.Persist || decl.Varip || strings.TrimSpace(decl.Name) == "" || decl.Value == nil {
-			continue
-		}
-		out[decl.Name] = decl.Value
-	}
-	return out
-}
-
+// resolveRemoteExpr expands top-level variable aliases (e.g. `iv =
+// request.factor(...)` then `request.security(..., iv)`) in a
+// request.security(...) expression argument. It delegates to analysis,
+// which owns both the alias table (ds.aliasExprs, built once from the
+// parsed program) and the expansion algorithm, so bridge and analysis can't
+// disagree about what a given expression resolves to. This must stay a
+// live per-call expansion (not something analysis can cache) because the
+// runtime evaluation path (remote_request.go) calls it once per bar to
+// build the exact expression tree handed to the interpreter.
 func (ds *DslStrategy) resolveRemoteExpr(expr ast.Expr) ast.Expr {
-	return ds.expandRemoteExpr(expr, make(map[string]bool))
-}
-
-func (ds *DslStrategy) expandRemoteExpr(expr ast.Expr, stack map[string]bool) ast.Expr {
-	if expr == nil || ds == nil || len(ds.aliasExprs) == 0 {
-		return expr
-	}
-	switch node := expr.(type) {
-	case *ast.IdentExpr:
-		name := strings.TrimSpace(node.Name)
-		if name == "" || stack[name] {
-			return expr
-		}
-		alias, ok := ds.aliasExprs[name]
-		if !ok {
-			return expr
-		}
-		stack[name] = true
-		resolved := ds.expandRemoteExpr(alias, stack)
-		delete(stack, name)
-		return resolved
-	case *ast.BinaryExpr:
-		copy := *node
-		copy.Left = ds.expandRemoteExpr(node.Left, stack)
-		copy.Right = ds.expandRemoteExpr(node.Right, stack)
-		return &copy
-	case *ast.UnaryExpr:
-		copy := *node
-		copy.Operand = ds.expandRemoteExpr(node.Operand, stack)
-		return &copy
-	case *ast.CallExpr:
-		copy := *node
-		copy.Callee = ds.expandRemoteExpr(node.Callee, stack)
-		copy.Args = make([]ast.CallArg, len(node.Args))
-		for i, arg := range node.Args {
-			copy.Args[i] = ast.CallArg{Name: arg.Name, Value: ds.expandRemoteExpr(arg.Value, stack)}
-		}
-		return &copy
-	case *ast.DotExpr:
-		copy := *node
-		copy.Object = ds.expandRemoteExpr(node.Object, stack)
-		return &copy
-	case *ast.IndexExpr:
-		copy := *node
-		copy.Left = ds.expandRemoteExpr(node.Left, stack)
-		copy.Index = ds.expandRemoteExpr(node.Index, stack)
-		return &copy
-	case *ast.TernaryExpr:
-		copy := *node
-		copy.Condition = ds.expandRemoteExpr(node.Condition, stack)
-		copy.Then = ds.expandRemoteExpr(node.Then, stack)
-		copy.Else = ds.expandRemoteExpr(node.Else, stack)
-		return &copy
-	case *ast.ArrayLit:
-		copy := *node
-		copy.Elements = make([]ast.Expr, len(node.Elements))
-		for i, element := range node.Elements {
-			copy.Elements[i] = ds.expandRemoteExpr(element, stack)
-		}
-		return &copy
-	case *ast.LambdaExpr:
-		copy := *node
-		copy.Body = ds.expandRemoteExpr(node.Body, stack)
-		return &copy
-	default:
-		return expr
-	}
-}
-
-func collectRemoteFactorRequests(expr ast.Expr) []requestSpec {
-	var out []requestSpec
-	var walk func(ast.Expr)
-	walk = func(node ast.Expr) {
-		switch n := node.(type) {
-		case nil:
-			return
-		case *ast.BinaryExpr:
-			walk(n.Left)
-			walk(n.Right)
-		case *ast.UnaryExpr:
-			walk(n.Operand)
-		case *ast.CallExpr:
-			if isRequestFactorCall(n) {
-				name := positionalStringArg(n, "name", 0)
-				interval := positionalStringArg(n, "interval", 1)
-				field := positionalStringArg(n, "field", 2)
-				if name != "" && interval != "" && field != "" {
-					out = append(out, requestSpec{Kind: "factor", Name: name, Interval: interval, Field: field, Key: requestFactorKey(name, interval)})
-				}
-			} else if isRequestFundamentalCall(n) {
-				market := positionalStringArg(n, "market", 0)
-				symbol := positionalStringArg(n, "symbol", 1)
-				factor := positionalStringArg(n, "factor", 2)
-				mode := positionalStringArg(n, "mode", 3)
-				if mode == "" {
-					mode = "filled"
-				}
-				if factor != "" {
-					out = append(out, requestSpec{Kind: "fundamental", Market: market, Symbol: symbol, Name: factor, Interval: "primary", Mode: mode, Field: "value"})
-				}
-			}
-			walk(n.Callee)
-			for _, arg := range n.Args {
-				walk(arg.Value)
-			}
-		case *ast.DotExpr:
-			walk(n.Object)
-		case *ast.IndexExpr:
-			walk(n.Left)
-			walk(n.Index)
-		case *ast.TernaryExpr:
-			walk(n.Condition)
-			walk(n.Then)
-			walk(n.Else)
-		case *ast.ArrayLit:
-			for _, element := range n.Elements {
-				walk(element)
-			}
-		case *ast.LambdaExpr:
-			walk(n.Body)
-		}
-	}
-	walk(expr)
-	return out
-}
-
-func positionalStringArg(call *ast.CallExpr, name string, idx int) string {
-	if call == nil {
-		return ""
-	}
-	for _, arg := range call.Args {
-		if arg.Name == name {
-			return literalString(arg.Value)
-		}
-	}
-	if idx >= 0 && idx < len(call.Args) && call.Args[idx].Name == "" {
-		return literalString(call.Args[idx].Value)
-	}
-	return ""
-}
-
-func isRequestSecurityCall(call *ast.CallExpr) bool {
-	return isRequestCall(call, "security")
-}
-
-func isRequestFactorCall(call *ast.CallExpr) bool {
-	return isRequestCall(call, "factor")
-}
-
-func isRequestFundamentalCall(call *ast.CallExpr) bool {
-	return isRequestCall(call, "fundamental")
-}
-
-func isRequestCall(call *ast.CallExpr, field string) bool {
-	if call == nil {
-		return false
-	}
-	dot, ok := call.Callee.(*ast.DotExpr)
-	if !ok || dot.Field != field {
-		return false
-	}
-	obj, ok := dot.Object.(*ast.IdentExpr)
-	return ok && obj.Name == "request"
+	return analysis.ExpandExpr(expr, ds.aliasExprs)
 }
 
 func parseLocation(raw string) (*time.Location, error) {

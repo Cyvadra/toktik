@@ -234,6 +234,7 @@ aapl_iv_rank = request.security("us", "AAPL", "1d", iv_rank_base)
 | 模組 | 數量 |
 | --- | --- |
 | `alpha` | 20 |
+| `candidates` | 9 |
 | `config` | 2 |
 | `contract` | 17 |
 | `core` | 20 |
@@ -253,7 +254,8 @@ aapl_iv_rank = request.security("us", "AAPL", "1d", iv_rank_base)
 | `spread` | 16 |
 | `str` | 8 |
 | `strategy` | 9 |
-| `ta` | 19 |
+| `ta` | 20 |
+| `trace` | 1 |
 | `universe` | 1 |
 
 ### alpha
@@ -280,6 +282,20 @@ aapl_iv_rank = request.security("us", "AAPL", "1d", iv_rank_base)
 | `alpha.ts_std` | `alpha.ts_std(x, window)` | `函數` | `數值` | `std20 = alpha.ts_std(close, 20)` | 用於衡量近期視窗波動度。 |
 | `alpha.ts_sum` | `alpha.ts_sum(x, window)` | `函數` | `數值` | `sum_vol = alpha.ts_sum(volume, 20)` | 用於計算近期視窗總和，例如累積成交量或累積報酬。 |
 | `alpha.zscore` | `alpha.zscore(x, window)` | `函數` | `數值` | `z = alpha.zscore(close, 20)` | 用於衡量目前值偏離近期均值幾個標準差，常作為均值回歸或異常波動濾網。 |
+
+### candidates
+
+| 名稱 | 簽名 | 種類 | 回傳 | 範例 | 用途 |
+| --- | --- | --- | --- | --- | --- |
+| `candidates.add` | `candidates.add(items, candidate)` | `函數` | `陣列` | `items = candidates.add(items, item)` | 回傳加入 candidate 後的新候選陣列。 |
+| `candidates.contains_symbol` | `candidates.contains_symbol(items, symbol)` | `函數` | `布林` | `selected = candidates.contains_symbol(top, symbol)` | 檢查候選陣列是否包含標的，適合在原 universe 迴圈中保留可預載請求。 |
+| `candidates.new` | `candidates.new(symbol, score, secondary_score, payload)` | `函數` | `candidate` | `item = candidates.new("AAPL", rsi14, 0, [name, legs])` | 建立供橫截面排序使用的候選標的；payload 可保留排序後執行所需的資料。 |
+| `candidates.payload` | `candidates.payload(candidate)` | `函數` | `任意值` | `payload = candidates.payload(top[0])` | 讀取 candidate 建立時保留的 payload。 |
+| `candidates.score` | `candidates.score(candidate)` | `函數` | `數值` | `score = candidates.score(top[0])` | 讀取 candidate 的主排序分數。 |
+| `candidates.secondary_score` | `candidates.secondary_score(candidate)` | `函數` | `數值` | `tie = candidates.secondary_score(top[0])` | 讀取 candidate 的次排序分數。 |
+| `candidates.sort` | `candidates.sort(items, direction)` | `函數` | `陣列` | `ranked = candidates.sort(items, "desc")` | 依 score 排序候選；同分時依 secondary_score 和 symbol 穩定排序。 |
+| `candidates.symbol` | `candidates.symbol(candidate)` | `函數` | `字串` | `symbol = candidates.symbol(top[0])` | 讀取 candidate 的標的代碼。 |
+| `candidates.take` | `candidates.take(items, count)` | `函數` | `陣列` | `top = candidates.take(ranked, 12)` | 回傳排序後候選的前 N 筆。 |
 
 ### config
 
@@ -474,7 +490,7 @@ aapl_iv_rank = request.security("us", "AAPL", "1d", iv_rank_base)
 
 | 名稱 | 簽名 | 種類 | 回傳 | 範例 | 用途 |
 | --- | --- | --- | --- | --- | --- |
-| `request.factor` | `request.factor(name, interval, field)` | `函數` | `series` | `iv_rank = request.factor("volatility", "1d", "iv_rank")` | 用於讀取預載因子資料；內建 volatility 因子會綁定目前回測主標的，提供 iv/current_iv、hv10、hv20、hv30、iv_percentile、iv_rank、price_observations、iv_observations 等 1d 欄位。 |
+| `request.factor` | `request.factor(name, interval, field)` | `函數` | `series` | `iv_rank = request.factor("volatility", "AAPL", "1d", "iv_rank")` | 用於讀取預載因子資料；三參形式讀取回測主標的，四參位置形式可指定標的。內建 volatility 因子提供 iv/current_iv、hv10、hv20、hv30、iv_percentile、iv_rank、price_observations、iv_observations 等 1d 欄位。 |
 | `request.fundamental` | `request.fundamental(market, symbol, factor, mode)` | `函數` | `series` | `pe = request.fundamental("us-stocks", "AAPL", "pe")` | 用於讀取標的綁定的基本面序列，例如 PE、PB、market_cap 等；美股的 PE/PB 會依 bar close 以 point-in-time 方式動態重估。 |
 | `request.security` | `request.security(market, symbol, interval, field)` | `函數` | `series` | `spy_close = request.security("us-stocks", "SPY", "1d", "close")` | 用於讀取其他市場、標的或週期的預載欄位；第四參數也可為純表達式，會在指定標的/週期上下文中計算後對齊回主時間軸。 |
 
@@ -569,11 +585,18 @@ aapl_iv_rank = request.security("us", "AAPL", "1d", iv_rank_base)
 | `ta.highest` | `ta.highest(source, length)` | `函數` | `series` | `breakout_level = ta.highest(high, 20)` | 用於取得近期最高值，常作為突破或追蹤停利條件。 |
 | `ta.lowest` | `ta.lowest(source, length)` | `函數` | `series` | `stop_level = ta.lowest(low, 10)` | 用於取得近期最低值，常作為停損或跌破條件。 |
 | `ta.percentrank` | `ta.percentrank(source, length)` | `函數` | `series` | `rank = ta.percentrank(ta.rsi(close, 14), 20)` | 用於衡量目前值在近期視窗中的百分位排名。 |
+| `ta.percentrank_valid` | `ta.percentrank_valid(source, length, min_samples)` | `函數` | `series` | `rank = ta.percentrank_valid(pe, 630, 200)` | 用於以有效觀測值計算目前值的歷史分位；缺失值會忽略，樣本不足時回傳 na。 |
 | `ta.rsi` | `ta.rsi(source, length)` | `函數` | `series` | `rsi = ta.rsi(close, 14)` | 用於衡量超買超賣或動能強弱。 |
 | `ta.sma` | `ta.sma(source, length)` | `函數` | `series` | `fast = ta.sma(close, 10)` | 用於平滑價格或成交量，常作為趨勢方向與均線交叉訊號。 |
 | `ta.stdev` | `ta.stdev(source, length)` | `函數` | `series` | `vol = ta.stdev(close, 20)` | 用於衡量序列波動程度，常搭配均線形成通道。 |
 | `ta.valuewhen` | `ta.valuewhen(condition, source, occurrence)` | `函數` | `數值` | `last_breakout_close = ta.valuewhen(close > ta.highest(high, 20)[1], close, 0)` | 用於取得某條件第 N 次成立時的來源序列值。 |
 | `ta.wma` | `ta.wma(source, length)` | `函數` | `series` | `weighted = ta.wma(close, 20)` | 用於計算線性加權均線，近期資料權重較高。 |
+
+### trace
+
+| 名稱 | 簽名 | 種類 | 回傳 | 範例 | 用途 |
+| --- | --- | --- | --- | --- | --- |
+| `trace.emit` | `trace.emit(stage, symbol, reason)` | `函數` | `na` | `trace.emit("candidate_match", symbol, "momentum")` | 記錄有上限且去重的策略流程事件，供回測 DSL diagnostics 檢視。 |
 
 ### universe
 

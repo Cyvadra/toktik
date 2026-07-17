@@ -912,3 +912,61 @@ func TestStrategyEntryShortStopLimitIntent(t *testing.T) {
 		t.Fatalf("unexpected strategy.entry advanced fields: %#v", got)
 	}
 }
+
+// TestNamedArgsEvaluateArgumentsOnce guards against re-introducing the bug
+// where evalCall's named->positional remap re-evaluated every argument
+// expression a second time. ref.inc has a side effect (increments a stored
+// counter), so passing it as a named argument must only bump the counter once.
+func TestNamedArgsEvaluateArgumentsOnce(t *testing.T) {
+	src := `ref.set(name="x", value=ref.inc("hits"))`
+	prog, errs := parser.Parse(src)
+	if len(errs) > 0 {
+		t.Fatal(errs)
+	}
+	ip := NewInterpreter(prog)
+	RegisterRefBuiltins(ip)
+	ip.Init()
+	ip.OnBar()
+
+	hits, ok := ip.varip[refKey("hits")]
+	if !ok {
+		t.Fatal("hits ref not set")
+	}
+	if hits.Float() != 1 {
+		t.Fatalf("hits = %v, want 1 (named-arg evaluated the side-effecting argument more than once)", hits.Float())
+	}
+}
+
+// TestConditionalAssignmentSeriesStaysBarAligned guards against the series
+// misalignment bug where a variable declared only inside an if-branch
+// accrued fewer series samples than elapsed bars, corrupting [n] history
+// subscripts and ta.* results on later bars.
+func TestConditionalAssignmentSeriesStaysBarAligned(t *testing.T) {
+	src := "x = 10\nif bar_index % 2 == 0\n    y = x\nprev_y = y[1]"
+	prog, errs := parser.Parse(src)
+	if len(errs) > 0 {
+		t.Fatal(errs)
+	}
+	bridge := &mockBridge{closeVal: 1}
+	ip := NewInterpreter(prog)
+	ip.Bridge = bridge
+	ip.Init()
+
+	// mockBridge.BarIndex() returns 1, 2, 3, 4 across these four bars.
+	// "y = x" only executes on even bars (2 and 4). Without bar-aligned
+	// padding, y's series would compact to [10 (bar2), 10 (bar4)], so on
+	// bar4 y[1] would incorrectly read bar2's value (10) instead of bar3's
+	// skipped (NaN) value.
+	ip.OnBar() // bar 1: odd, y not assigned
+	ip.OnBar() // bar 2: even, y = 10
+	ip.OnBar() // bar 3: odd, y not assigned (must pad, not compact)
+	ip.OnBar() // bar 4: even, y = 10 again; y[1] should be bar 3's NaN
+
+	prevY, ok := ip.Global.Get("prev_y")
+	if !ok {
+		t.Fatal("prev_y not found")
+	}
+	if !math.IsNaN(prevY.Float()) {
+		t.Fatalf("prev_y = %v, want NaN (bar 3's skipped assignment should pad the series, not compact it)", prevY.Float())
+	}
+}

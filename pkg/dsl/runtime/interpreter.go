@@ -60,6 +60,12 @@ type Interpreter struct {
 	// diagnostics list.
 	unresolvedIdents map[string]struct{}
 
+	// builtinFailures dedupes "builtin call failed" diagnostics (missing
+	// bridge capability, unusable arguments, etc.) per function+reason so a
+	// failing call on every bar only reports once instead of flooding the
+	// diagnostics list.
+	builtinFailures map[string]struct{}
+
 	// ExecutionBudget bounds total interpreter work for a single bar. It is
 	// shared by statements, loop iterations, and user-defined function calls.
 	// Values <= 0 use defaultExecutionBudget.
@@ -138,6 +144,7 @@ func NewInterpreter(prog *ast.Program) *Interpreter {
 		queuedFields:     make(map[string]float64),
 		traceKeys:        make(map[string]struct{}),
 		unresolvedIdents: make(map[string]struct{}),
+		builtinFailures:  make(map[string]struct{}),
 	}
 	RegisterCoreBuiltins(ip)
 	return ip
@@ -162,6 +169,33 @@ func (ip *Interpreter) reportUnresolvedIdent(name string) {
 		Message:  fmt.Sprintf("identifier %q is not defined", name),
 		BarIndex: &barIndex,
 		Hint:     "Check for typos in variable or builtin names; undeclared identifiers evaluate to na and silently break conditions.",
+	})
+}
+
+// ReportBuiltinFailure records a diagnostic the first time a side-effecting
+// builtin (spread.open, group.open, options.open_strategy, etc.) is invoked
+// but cannot complete — a missing bridge capability, unusable legs/qty, or a
+// scope mismatch. Builtins that fail this way should also return an explicit
+// sentinel (e.g. -1 for a spread/group id) rather than na, so a failed
+// creation doesn't silently propagate as an unresolvable id, or as undefined
+// behavior when a caller casts na to int.
+func (ip *Interpreter) ReportBuiltinFailure(function, reason string) {
+	if ip.Diagnostics == nil {
+		return
+	}
+	key := function + ":" + reason
+	if _, seen := ip.builtinFailures[key]; seen {
+		return
+	}
+	ip.builtinFailures[key] = struct{}{}
+	barIndex := ip.BarIndex
+	ip.Diagnostics.Add(diagnostics.Diagnostic{
+		Severity: diagnostics.SeverityError,
+		Code:     "dsl.builtin_call_failed",
+		Function: function,
+		Message:  fmt.Sprintf("%s failed: %s", function, reason),
+		BarIndex: &barIndex,
+		Hint:     "Check that the bridge/backtest configuration supports this call and that arguments (legs, qty, scope) are valid.",
 	})
 }
 
@@ -480,7 +514,19 @@ func (ip *Interpreter) execVarDecl(d *ast.VarDecl, scope *Scope) Value {
 			s = NewSeries()
 			ip.seriesMap[d.Name] = s
 		}
-		s.Append(val.Float())
+		// This declaration may live inside an if/for/switch body and not run
+		// on every bar. Pad any bars that were skipped since the last append
+		// with NaN so the series stays bar-index aligned: s.At(n) and
+		// ta.* builtins must see this bar's value at offset 0, not shifted
+		// by however many bars the branch was skipped.
+		for s.Len() < ip.BarIndex-1 {
+			s.Append(math.NaN())
+		}
+		if s.Len() < ip.BarIndex {
+			s.Append(val.Float())
+		} else {
+			s.Set(val.Float())
+		}
 		// Update scope to SeriesVal so history subscript and TA builtins work.
 		scope.Set(d.Name, SeriesVal(s))
 	}
@@ -491,11 +537,9 @@ func (ip *Interpreter) execVarDecl(d *ast.VarDecl, scope *Scope) Value {
 func (ip *Interpreter) execAssign(a *ast.AssignStmt, scope *Scope) Value {
 	val := ip.evalExpr(a.Value, scope)
 	switch a.Op {
-	case token.Eq:
-		if !scope.Update(a.Name, val) {
-			scope.Set(a.Name, val)
-		}
-	case token.ColonEq:
+	case token.Eq, token.ColonEq:
+		// The DSL does not distinguish declare (`:=`) from reassign (`=`)
+		// at the interpreter level; both simply set-or-update the target.
 		if !scope.Update(a.Name, val) {
 			scope.Set(a.Name, val)
 		}
@@ -914,7 +958,10 @@ func (ip *Interpreter) evalCall(e *ast.CallExpr, scope *Scope) Value {
 		args[i] = ip.evalExpr(a.Value, scope)
 	}
 
-	// Handle named args by mapping them to positional slots.
+	// Handle named args by mapping them to positional slots. Reuse the
+	// already-evaluated `args` values instead of re-evaluating each
+	// expression, so side-effecting arguments (ref.inc(), order.submit(),
+	// etc.) fire exactly once regardless of named-arg usage.
 	if len(fn.Params) > 0 && hasNamedArgs(e.Args) {
 		mapped := make([]Value, len(fn.Params))
 		for i := range mapped {
@@ -925,8 +972,8 @@ func (ip *Interpreter) evalCall(e *ast.CallExpr, scope *Scope) Value {
 			paramIdx[p] = i
 		}
 		posIdx := 0
-		for _, a := range e.Args {
-			val := ip.evalExpr(a.Value, scope)
+		for i, a := range e.Args {
+			val := args[i]
 			if a.Name != "" {
 				if idx, ok := paramIdx[a.Name]; ok {
 					mapped[idx] = val
@@ -1025,7 +1072,10 @@ func (ip *Interpreter) evalIndex(e *ast.IndexExpr, scope *Scope) Value {
 	return NaVal()
 }
 
-// valEqual compares two Values for equality.
+// valEqual compares two Values for equality. Arrays are compared
+// element-wise; functions, objects, and expressions are compared by
+// identity rather than falling back to an unstable Sprintf comparison of
+// their (possibly pointer-containing) internal representation.
 func valEqual(a, b Value) bool {
 	if a.tag == TagNa || b.tag == TagNa {
 		return a.tag == TagNa && b.tag == TagNa
@@ -1040,6 +1090,22 @@ func valEqual(a, b Value) bool {
 		return a.bval == b.Bool()
 	case TagString:
 		return a.sval == b.Str()
+	case TagArray:
+		if b.tag != TagArray || len(a.array) != len(b.array) {
+			return false
+		}
+		for i := range a.array {
+			if !valEqual(a.array[i], b.array[i]) {
+				return false
+			}
+		}
+		return true
+	case TagFn:
+		return b.tag == TagFn && a.fn == b.fn
+	case TagObject:
+		return b.tag == TagObject && a.obj == b.obj
+	case TagExpr:
+		return b.tag == TagExpr && a.expr == b.expr
 	}
-	return fmt.Sprintf("%v", a) == fmt.Sprintf("%v", b)
+	return false
 }

@@ -14,7 +14,7 @@ import (
 // expression mode. The fourth argument remains an AST template and is evaluated
 // with field/factor reads redirected to the requested security context.
 func (b *barContextBridge) EvalSpecialForm(ip *runtime.Interpreter, call *ast.CallExpr, scope *runtime.Scope) (runtime.Value, bool) {
-	if b == nil || b.ds == nil || call == nil || !isRequestSecurityCall(call) {
+	if b == nil || b.ds == nil || call == nil || !analysis.IsRequestSecurityCall(call) {
 		return runtime.Value{}, false
 	}
 	args := evalCallArgs(ip, call, scope, []string{"market", "symbol", "interval", "field"})
@@ -144,10 +144,10 @@ func (r *remoteContextBridge) EvalSpecialForm(ip *runtime.Interpreter, call *ast
 	if call == nil {
 		return runtime.Value{}, false
 	}
-	if isRequestFactorCall(call) {
+	if analysis.IsRequestFactorCall(call) {
 		return r.evalRemoteFactor(ip, call, scope)
 	}
-	if isRequestFundamentalCall(call) {
+	if analysis.IsRequestFundamentalCall(call) {
 		return r.evalRemoteFundamental(ip, call, scope)
 	}
 	return runtime.Value{}, false
@@ -164,9 +164,9 @@ func (r *remoteContextBridge) evalRemoteFactor(ip *runtime.Interpreter, call *as
 	name := strings.TrimSpace(ip.EvalExpression(args[0], scope).Str())
 	interval := strings.TrimSpace(ip.EvalExpression(args[1], scope).Str())
 	field := strings.TrimSpace(ip.EvalExpression(args[2], scope).Str())
-	ref, ok := r.parent.ds.remoteFacRefs[remoteFactorKey(r.securityKey, requestSpec{Name: name, Interval: interval})]
+	ref, ok := r.parent.ds.remoteFacRefs[analysis.RemoteFactorKey(r.securityKey, requestSpec{Name: name, Interval: interval})]
 	if !ok {
-		r.parent.ds.addMissingRequestDiagnostic("request.factor", remoteFactorKey(r.securityKey, requestSpec{Name: name, Interval: interval}), r.parent.ctx.BarIndex())
+		r.parent.ds.addMissingRequestDiagnostic("request.factor", analysis.RemoteFactorKey(r.securityKey, requestSpec{Name: name, Interval: interval}), r.parent.ctx.BarIndex())
 		return runtime.NaVal(), true
 	}
 	value := r.parent.ctx.Factor(ref).Field(field)
@@ -197,9 +197,9 @@ func (r *remoteContextBridge) evalRemoteFundamental(ip *runtime.Interpreter, cal
 	if factor == "" {
 		return runtime.NaVal(), true
 	}
-	ref, ok := r.parent.ds.remoteFacRefs[remoteFactorKey(r.securityKey, requestSpec{Market: market, Symbol: symbol, Name: factor, Interval: "primary", Mode: mode})]
+	ref, ok := r.parent.ds.remoteFacRefs[analysis.RemoteFactorKey(r.securityKey, requestSpec{Market: market, Symbol: symbol, Name: factor, Interval: "primary", Mode: mode})]
 	if !ok {
-		r.parent.ds.addMissingRequestDiagnostic("request.fundamental", remoteFactorKey(r.securityKey, requestSpec{Market: market, Symbol: symbol, Name: factor, Interval: "primary", Mode: mode}), r.parent.ctx.BarIndex())
+		r.parent.ds.addMissingRequestDiagnostic("request.fundamental", analysis.RemoteFactorKey(r.securityKey, requestSpec{Market: market, Symbol: symbol, Name: factor, Interval: "primary", Mode: mode}), r.parent.ctx.BarIndex())
 		return runtime.NaVal(), true
 	}
 	value := r.parent.ctx.Factor(ref).Field("value")

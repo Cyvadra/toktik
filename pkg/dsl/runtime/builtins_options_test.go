@@ -5,6 +5,9 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/Cyvadra/toktik/pkg/dsl/diagnostics"
+	"github.com/Cyvadra/toktik/pkg/dsl/parser"
 )
 
 func TestSelectValueOptionStrategies(t *testing.T) {
@@ -160,6 +163,39 @@ func TestParseLegInputsRejectsMalformedLegs(t *testing.T) {
 	}
 	if legs[0].Side != "sell" || legs[0].Qty != 1 || legs[0].Contract == nil {
 		t.Fatalf("unexpected parsed leg: %#v", legs[0])
+	}
+}
+
+// TestSpreadOpenFailureReportsDiagnosticAndSentinel guards against silent
+// na results from failed spread/group creation builtins: a failed
+// spread.open must (1) return the -1 sentinel rather than na/undefined-int,
+// and (2) surface a dsl.builtin_call_failed diagnostic instead of vanishing.
+func TestSpreadOpenFailureReportsDiagnosticAndSentinel(t *testing.T) {
+	src := `id = spread.open([], "tag")`
+	prog, errs := parser.Parse(src)
+	if len(errs) > 0 {
+		t.Fatal(errs)
+	}
+	ip := NewInterpreter(prog)
+	// No ip.Bridge assigned: spread.open has no OptionsBridge to call.
+	RegisterOptionsBuiltins(ip)
+	var collected diagnostics.List
+	ip.Diagnostics = &collected
+	ip.Init()
+	ip.OnBar()
+
+	id, ok := ip.Global.Get("id")
+	if !ok {
+		t.Fatal("id not found")
+	}
+	if id.Float() != -1 {
+		t.Fatalf("id = %v, want -1 sentinel for a failed spread.open", id.Float())
+	}
+	if !collected.HasErrors() {
+		t.Fatal("expected a diagnostic for the failed spread.open call")
+	}
+	if collected[0].Code != "dsl.builtin_call_failed" || collected[0].Function != "spread.open" {
+		t.Fatalf("unexpected diagnostic: %+v", collected[0])
 	}
 }
 

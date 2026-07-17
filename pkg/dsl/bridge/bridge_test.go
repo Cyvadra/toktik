@@ -714,8 +714,8 @@ if bar_index == 0 {
 	if goodSeries[0] != 1 {
 		t.Fatalf("unexpected scoped spread id: %#v", goodSeries[:1])
 	}
-	if !math.IsNaN(badSeries[0]) {
-		t.Fatalf("expected mismatched scoped spread to return na, got %#v", badSeries[:1])
+	if badSeries[0] != -1 {
+		t.Fatalf("expected mismatched scoped spread to return the -1 invalid sentinel, got %#v", badSeries[:1])
 	}
 	if len(result.SpreadPositions) != 1 {
 		t.Fatalf("unexpected spread positions: %#v", result.SpreadPositions)
@@ -759,6 +759,56 @@ if bar_index == 1 and tracked_spread > 0 {
 	}
 	if result.SpreadPositions[0].CloseNote != "close-reason" {
 		t.Fatalf("unexpected close note: got %q want %q", result.SpreadPositions[0].CloseNote, "close-reason")
+	}
+}
+
+// ctxCapturingStrategy wraps a DslStrategy to capture the *backtest.BarContext
+// seen on the most recent OnBar call, so tests can inspect bridge-level
+// helpers (like barSpacing) against a real, engine-constructed context.
+type ctxCapturingStrategy struct {
+	*DslStrategy
+	capture func(*backtest.BarContext)
+}
+
+func (w *ctxCapturingStrategy) OnBar(ctx *backtest.BarContext) {
+	w.capture(ctx)
+	w.DslStrategy.OnBar(ctx)
+}
+
+// TestDslScheduleCloseSpreadUsesIntervalBarSpacingNotHardcodedHour guards
+// against the bug where schedule.close_spread's bar-offset duration
+// defaulted to a hardcoded hour whenever NextBarTime() was unavailable
+// (e.g. the last replayable bar), which silently scheduled closes at the
+// wrong wall-clock time on non-hourly intervals such as daily strategies.
+// It exercises barSpacing() directly against the last bar of a 24h-interval
+// replay, where NextBarTime() is zero and only PrevBarTime()/interval
+// fallback distinguish the fix from the old hardcoded-hour default.
+func TestDslScheduleCloseSpreadUsesIntervalBarSpacingNotHardcodedHour(t *testing.T) {
+	var lastCtx *backtest.BarContext
+	wrapper := &ctxCapturingStrategy{
+		DslStrategy: New(`strategy("Bar Spacing Probe")`),
+		capture:     func(ctx *backtest.BarContext) { lastCtx = ctx },
+	}
+
+	engine := backtest.NewEngine(backtest.Config{InitialCapital: 10000})
+	engine.RegisterDataFeed("test", &testDataFeed{fields: []string{"open", "high", "low", "close", "volume"}})
+
+	from := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	to := from.Add(30 * 24 * time.Hour)
+
+	if _, err := engine.Run(context.Background(), "test", "TEST", "24h", from, to, wrapper, nil); err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+	if lastCtx == nil {
+		t.Fatal("expected OnBar to capture a bar context")
+	}
+	if !lastCtx.NextBarTime().IsZero() {
+		t.Fatalf("expected the captured bar to be the last replayable bar (NextBarTime zero), got %v", lastCtx.NextBarTime())
+	}
+
+	spacing := (&barContextBridge{ctx: lastCtx}).barSpacing()
+	if spacing != 24*time.Hour {
+		t.Fatalf("barSpacing() = %v on a 24h-interval last bar, want 24h (previously hardcoded to 1h)", spacing)
 	}
 }
 

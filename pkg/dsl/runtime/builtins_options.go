@@ -3,9 +3,20 @@ package runtime
 // When changing DSL builtin behavior here, update builtins_docs.go so generated DSL docs stay accurate.
 
 import (
+	"fmt"
 	"math"
 	"strings"
 )
+
+// invalidSpreadID is the sentinel value returned by spread/group creation
+// builtins when the open fails (missing bridge capability, no valid legs,
+// scope mismatch, etc.). Using -1 instead of na avoids two problems: na
+// silently disappears into diagnostics-free downstream calls, and casting
+// na (NaN) to a Go int is undefined/platform-dependent, so it could
+// accidentally alias a real id such as 0. Every spread.*/group.* consumer
+// below already treats an unknown id as a safe no-op via nil map lookups,
+// so passing -1 through is safe and recognizable in traces.
+var invalidSpreadID = FloatVal(-1)
 
 const (
 	OptionStrategyBuyCall           = "BUY_CALL"
@@ -310,7 +321,8 @@ func RegisterOptionsBuiltins(ip *Interpreter) {
 		}
 		b := ob()
 		if b == nil || len(args) < 2 {
-			return NaVal()
+			ip.ReportBuiltinFailure("options.open_strategy", "options bridge unavailable or missing arguments")
+			return invalidSpreadID
 		}
 		qty := argFloat(args, 2, 1)
 		if qty <= 0 {
@@ -321,7 +333,8 @@ func RegisterOptionsBuiltins(ip *Interpreter) {
 		legs := buildOptionStrategyLegs(b, args[0].Obj(), name, qty, targetDelta)
 		inputs := parseLegInputs(legs)
 		if len(inputs) == 0 {
-			return NaVal()
+			ip.ReportBuiltinFailure("options.open_strategy", fmt.Sprintf("could not build valid legs for strategy %q", name))
+			return invalidSpreadID
 		}
 		tag := argStr(args, 4, name)
 		return FloatVal(float64(b.OpenSpread(inputs, tag)))
@@ -385,13 +398,15 @@ func RegisterOptionsBuiltins(ip *Interpreter) {
 		}
 		b := ob()
 		if b == nil || len(args) < 2 {
-			return NaVal()
+			ip.ReportBuiltinFailure("spread.open", "options bridge unavailable or missing arguments")
+			return invalidSpreadID
 		}
 		legsArr := args[0].Array()
 		tag := args[1].Str()
 		legs := parseLegInputs(legsArr)
 		if len(legs) == 0 {
-			return NaVal()
+			ip.ReportBuiltinFailure("spread.open", "no valid legs (missing contract, bad side, or non-positive qty)")
+			return invalidSpreadID
 		}
 		id := b.OpenSpread(legs, tag)
 		return FloatVal(float64(id))
@@ -404,11 +419,13 @@ func RegisterOptionsBuiltins(ip *Interpreter) {
 		}
 		b := ob()
 		if b == nil || len(args) < 4 {
-			return NaVal()
+			ip.ReportBuiltinFailure("spread.open_on", "options bridge unavailable or missing arguments")
+			return invalidSpreadID
 		}
 		legs := parseLegInputs(args[2].Array())
 		if len(legs) == 0 || !spreadLegsMatchScope(b, legs, args[0].Str(), args[1].Str()) {
-			return NaVal()
+			ip.ReportBuiltinFailure("spread.open_on", "no valid legs or legs do not match requested market/underlying scope")
+			return invalidSpreadID
 		}
 		id := b.OpenSpread(legs, args[3].Str())
 		return FloatVal(float64(id))
@@ -421,14 +438,16 @@ func RegisterOptionsBuiltins(ip *Interpreter) {
 		}
 		b := ob()
 		if b == nil || len(args) < 3 {
-			return NaVal()
+			ip.ReportBuiltinFailure("spread.open_in_group", "options bridge unavailable or missing arguments")
+			return invalidSpreadID
 		}
 		legsArr := args[0].Array()
 		tag := args[1].Str()
 		groupID := int(args[2].Float())
 		legs := parseLegInputs(legsArr)
 		if len(legs) == 0 {
-			return NaVal()
+			ip.ReportBuiltinFailure("spread.open_in_group", "no valid legs (missing contract, bad side, or non-positive qty)")
+			return invalidSpreadID
 		}
 		id := b.OpenSpreadInGroup(legs, tag, groupID)
 		return FloatVal(float64(id))
@@ -441,11 +460,13 @@ func RegisterOptionsBuiltins(ip *Interpreter) {
 		}
 		b := ob()
 		if b == nil || len(args) < 5 {
-			return NaVal()
+			ip.ReportBuiltinFailure("spread.open_in_group_on", "options bridge unavailable or missing arguments")
+			return invalidSpreadID
 		}
 		legs := parseLegInputs(args[2].Array())
 		if len(legs) == 0 || !spreadLegsMatchScope(b, legs, args[0].Str(), args[1].Str()) {
-			return NaVal()
+			ip.ReportBuiltinFailure("spread.open_in_group_on", "no valid legs or legs do not match requested market/underlying scope")
+			return invalidSpreadID
 		}
 		id := b.OpenSpreadInGroup(legs, args[3].Str(), int(args[4].Float()))
 		return FloatVal(float64(id))
@@ -593,7 +614,8 @@ func RegisterOptionsBuiltins(ip *Interpreter) {
 		}
 		b := ob()
 		if b == nil || len(args) < 3 {
-			return NaVal()
+			ip.ReportBuiltinFailure("group.open", "options bridge unavailable or missing arguments")
+			return invalidSpreadID
 		}
 		id := b.GroupOpen(args[0].Str(), args[1].Float(), args[2].Float())
 		return FloatVal(float64(id))

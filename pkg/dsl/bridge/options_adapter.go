@@ -2,10 +2,12 @@ package bridge
 
 import (
 	"math"
+	"strings"
 	"time"
 
 	"github.com/Cyvadra/toktik/internal/backtest"
 	"github.com/Cyvadra/toktik/pkg/dsl/runtime"
+	"github.com/Cyvadra/toktik/pkg/feeds"
 )
 
 func (b *barContextBridge) OptionsChain() interface{} {
@@ -437,11 +439,30 @@ func (b *barContextBridge) barOffsetDuration(triggerBarOffset int) time.Duration
 	if triggerBarOffset <= 0 {
 		return 0
 	}
-	barDur := time.Hour
-	if next := b.ctx.NextBarTime(); !next.IsZero() && next.After(b.ctx.Time()) {
-		barDur = next.Sub(b.ctx.Time())
+	return time.Duration(triggerBarOffset) * b.barSpacing()
+}
+
+// barSpacing estimates the wall-clock duration of one primary bar. It prefers
+// the gap to the next bar, then the gap from the previous bar, and only
+// falls back to parsing the primary security's interval label (or, failing
+// that, one hour) when both neighboring bars are unavailable — e.g. on a
+// single-bar replay. Using a hardcoded hour whenever NextBarTime() is zero
+// previously caused schedule.close_* to fire at the wrong wall-clock time on
+// non-hourly intervals, most visibly on the last bar of a daily strategy.
+func (b *barContextBridge) barSpacing() time.Duration {
+	now := b.ctx.Time()
+	if next := b.ctx.NextBarTime(); !next.IsZero() && next.After(now) {
+		return next.Sub(now)
 	}
-	return time.Duration(triggerBarOffset) * barDur
+	if prev := b.ctx.PrevBarTime(); !prev.IsZero() && now.After(prev) {
+		return now.Sub(prev)
+	}
+	if interval := strings.TrimSpace(b.ctx.PrimaryRef().Interval); interval != "" {
+		if w, err := feeds.ParseWindow(interval); err == nil && w.Duration > 0 {
+			return w.Duration
+		}
+	}
+	return time.Hour
 }
 
 func convertLegs(legs []runtime.SpreadLegInput, entryMode backtest.OptionPriceMode) []backtest.SpreadLeg {
