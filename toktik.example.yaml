@@ -24,6 +24,10 @@ api_server:
 api:
   cors_origins: []
   rate_limit_rps: 50
+  # Addresses/CIDRs of reverse proxies allowed to supply X-Forwarded-For.
+  # For a local nginx proxy, use ["127.0.0.1", "::1"]. Leave empty when
+  # api-server is directly exposed so client-supplied forwarding headers are ignored.
+  trusted_proxies: ["127.0.0.1", "::1"]
   bypass_auth_for_local_clients: false
   request_timeout_seconds: 180
   # Application HTTP payload traffic accounting. Values exclude headers,

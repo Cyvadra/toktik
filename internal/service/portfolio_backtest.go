@@ -254,14 +254,16 @@ func (s *PortfolioBacktestService) loadOptionsChainProvider(ctx context.Context,
 	})
 }
 
-func (s *PortfolioBacktestService) loadOptionChainUniverse(ctx context.Context, run *portfolioBacktestRun, interval string, from, to time.Time, targets []optionChainTarget) (backtest.OptionsChainProvider, error) {
+func (s *PortfolioBacktestService) loadOptionChainUniverse(ctx context.Context, run *portfolioBacktestRun, interval string, from, to time.Time, targets []optionChainTarget) (backtest.OptionsChainProvider, []dto.StrategyBacktestRuntimeWarning, error) {
 	if len(targets) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 	if s.repo == nil || s.repo.Conn == nil {
-		return s.loadEagerOptionChainUniverse(ctx, interval, from, to, targets)
+		provider, err := s.loadEagerOptionChainUniverse(ctx, interval, from, to, targets)
+		return provider, nil, err
 	}
 	providers := make(map[string]backtest.OptionsChainProvider, len(targets))
+	warnings := make([]dto.StrategyBacktestRuntimeWarning, 0)
 	for index, target := range targets {
 		if run != nil {
 			run.setProgress(&dto.StrategyBacktestProgress{
@@ -276,16 +278,37 @@ func (s *PortfolioBacktestService) loadOptionChainUniverse(ctx context.Context, 
 		}
 		timestamps, err := s.loadOptionPrecomputeTimestamps(ctx, target.market, target.asset, interval, from, to)
 		if err != nil {
-			return nil, err
+			if errors.Is(err, errOptionPrecomputeNoData) {
+				warning, policyErr := optionPrecomputeNoDataPolicy(target, interval, from, to, err)
+				if policyErr != nil {
+					return nil, nil, policyErr
+				}
+				warnings = append(warnings, warning)
+				continue
+			}
+			return nil, nil, err
 		}
 		rawProvider, err := s.loadOptionsChainProvider(ctx, target.market, target.asset, interval, from, to)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		snapshot := backtest.NewOptionsChainSnapshot(rawProvider, target.market, target.asset, timestamps)
 		providers[backtest.ChainLookupKey(target.market, target.asset)] = backtest.NewSnapshotOptionsChainProvider(snapshot)
 	}
-	return backtest.NewMultiOptionsChainProvider(providers), nil
+	return backtest.NewMultiOptionsChainProvider(providers), warnings, nil
+}
+
+func optionPrecomputeNoDataPolicy(target optionChainTarget, interval string, from, to time.Time, cause error) (dto.StrategyBacktestRuntimeWarning, error) {
+	if target.required {
+		return dto.StrategyBacktestRuntimeWarning{}, cause
+	}
+	return dto.StrategyBacktestRuntimeWarning{
+		Severity: "warning",
+		Code:     "options.underlying_data_omitted",
+		Message:  fmt.Sprintf("universe symbol %s omitted because no underlying bars were available", target.asset),
+		Symbol:   target.asset,
+		Details:  map[string]string{"market": target.market, "interval": interval, "from": from.UTC().Format(time.RFC3339), "to": to.UTC().Format(time.RFC3339)},
+	}, nil
 }
 
 func (s *PortfolioBacktestService) loadEagerOptionChainUniverse(ctx context.Context, interval string, from, to time.Time, targets []optionChainTarget) (backtest.OptionsChainProvider, error) {
@@ -306,6 +329,8 @@ func (s *PortfolioBacktestService) loadEagerOptionChainUniverse(ctx context.Cont
 	}
 	return backtest.NewMultiOptionsChainProvider(providers), nil
 }
+
+var errOptionPrecomputeNoData = errors.New("option precompute has no underlying data")
 
 func (s *PortfolioBacktestService) loadOptionPrecomputeTimestamps(ctx context.Context, marketName, asset, interval string, from, to time.Time) ([]time.Time, error) {
 	marketSpec, err := parsePrimaryMarket(marketName)
@@ -331,7 +356,7 @@ func (s *PortfolioBacktestService) loadOptionPrecomputeTimestamps(ctx context.Co
 		return nil, fmt.Errorf("load option precompute timestamps for %s/%s: %w", marketName, asset, err)
 	}
 	if ds == nil || len(ds.Timestamps) == 0 {
-		return nil, fmt.Errorf("load option precompute timestamps for %s/%s: no data", marketName, asset)
+		return nil, fmt.Errorf("load option precompute timestamps for %s/%s: %w", marketName, asset, errOptionPrecomputeNoData)
 	}
 	return append([]time.Time(nil), ds.Timestamps...), nil
 }
@@ -580,7 +605,7 @@ func (s *PortfolioBacktestService) runBacktest(ctx context.Context, run *portfol
 	htmlBase := ""
 	htmlMeta := buildBacktestReportHTMLMeta(req, plan, s.now())
 	resultSet := make([]dto.StrategyBacktestSummary, 0, len(plan.resolved))
-	runWarnings := make([]dto.StrategyBacktestRuntimeWarning, 0)
+	runWarnings := append([]dto.StrategyBacktestRuntimeWarning(nil), plan.runtimeWarnings...)
 	overviewItems := make([]report.OverviewItem, 0, len(plan.resolved))
 
 	for index, item := range plan.resolved {

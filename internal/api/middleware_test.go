@@ -80,6 +80,56 @@ func TestCORSMiddlewareExplicitOriginsOverrideLANDefault(t *testing.T) {
 	}
 }
 
+func TestRouterClientIPHonorsOnlyConfiguredTrustedProxies(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	tests := []struct {
+		name           string
+		trustedProxies []string
+		wantClientIP   string
+	}{
+		{
+			name:           "trusted local nginx forwards client IP",
+			trustedProxies: []string{"127.0.0.1"},
+			wantClientIP:   "203.0.113.25",
+		},
+		{
+			name:         "unconfigured proxy headers are ignored",
+			wantClientIP: "127.0.0.1",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			runtime := config.DefaultRuntime()
+			runtime.API.TrustedProxies = tt.trustedProxies
+			r := NewRouterFromDeps(Deps{
+				Config: runtime,
+				APIKeys: fakeAPIKeyAuthenticator{keys: map[string]apikeyauth.Principal{
+					"secret": {ID: 1, KeyDigest: "secret-digest"},
+				}},
+			})
+			r.GET("/client-ip", func(c *gin.Context) {
+				c.String(http.StatusOK, c.ClientIP())
+			})
+
+			req := httptest.NewRequest(http.MethodGet, "/client-ip", nil)
+			req.RemoteAddr = "127.0.0.1:54321"
+			req.Header.Set("X-API-Key", "secret")
+			req.Header.Set("X-Forwarded-For", "203.0.113.25")
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, req)
+
+			if w.Code != http.StatusOK {
+				t.Fatalf("expected status %d, got %d", http.StatusOK, w.Code)
+			}
+			if got := w.Body.String(); got != tt.wantClientIP {
+				t.Fatalf("expected client IP %q, got %q", tt.wantClientIP, got)
+			}
+		})
+	}
+}
+
 func TestAPIKeyAuthOnlyBypassesExplicitPublicPaths(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

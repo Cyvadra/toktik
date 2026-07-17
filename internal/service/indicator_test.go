@@ -151,6 +151,7 @@ func TestExecuteIndicatorDSLSupportsPineStyleATRAndCCIAndNestedPercentRank(t *te
 	result, err := executeIndicatorDSL(`
 plot(ta.atr(high, low, close, 14), title="ATR Pine")
 plot(ta.cci(high, low, close, 20), title="CCI Pine")
+plot(ta.cci(hlc3,20), title="CCI HLC3")
 plot(ta.percentrank(ta.rsi(close,14),20), title="RSI Rank")
 `, bars, nil, nil)
 	if err != nil {
@@ -160,7 +161,7 @@ plot(ta.percentrank(ta.rsi(close,14),20), title="RSI Rank")
 	for _, column := range result.columns {
 		seriesByTitle[column.Title] = result.series[column.Source]
 	}
-	for _, key := range []string{"ATR Pine", "CCI Pine", "RSI Rank"} {
+	for _, key := range []string{"ATR Pine", "CCI Pine", "CCI HLC3", "RSI Rank"} {
 		series := seriesByTitle[key]
 		if len(series) != len(bars) {
 			t.Fatalf("len(%s) = %d, want %d", key, len(series), len(bars))

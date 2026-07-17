@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -738,6 +739,35 @@ plot(len(symbols), title="Universe Size")`,
 	resourcePlan := buildStrategyBacktestResourcePlan(plan)
 	if resourcePlan.UniverseSize != 2 || resourcePlan.OptionChainUnderlyings != 2 {
 		t.Fatalf("resource plan universe/underlyings = %d/%d, want 2/2", resourcePlan.UniverseSize, resourcePlan.OptionChainUnderlyings)
+	}
+}
+
+func TestLoadOptionChainUniverseFailsForExplicitTargetWithoutUnderlyingData(t *testing.T) {
+	cause := fmt.Errorf("load option precompute timestamps: %w", errOptionPrecomputeNoData)
+	_, err := optionPrecomputeNoDataPolicy(optionChainTarget{market: marketUS, asset: "SNDK", required: true}, "1d", time.Time{}, time.Time{}, cause)
+	if !errors.Is(err, errOptionPrecomputeNoData) {
+		t.Fatalf("expected explicit no-data target to fail, got %v", err)
+	}
+}
+
+func TestLoadOptionChainUniverseWarnsForUniverseTargetWithoutUnderlyingData(t *testing.T) {
+	warning, err := optionPrecomputeNoDataPolicy(optionChainTarget{market: marketUS, asset: "SNDK"}, "1d", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC), errOptionPrecomputeNoData)
+	if err != nil {
+		t.Fatalf("expected optional no-data target to continue, got %v", err)
+	}
+	if warning.Code != "options.underlying_data_omitted" || warning.Symbol != "SNDK" || warning.Details["market"] != marketUS {
+		t.Fatalf("warning = %+v", warning)
+	}
+}
+
+func TestCollectOptionChainTargetsPromotesExplicitUniverseDuplicate(t *testing.T) {
+	req := dto.StrategyBacktestRunRequest{Symbols: []string{"AAPL"}}
+	targets, _, err := collectOptionChainTargets(req, marketUS, "AAPL", []string{"AAPL", "NVDA"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(targets) != 2 || !targets[0].required || targets[1].required {
+		t.Fatalf("targets = %+v, want required AAPL and optional NVDA", targets)
 	}
 }
 

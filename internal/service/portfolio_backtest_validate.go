@@ -35,12 +35,14 @@ type resolvedBacktestPlan struct {
 	commissionModel  backtest.CommissionModel
 	chainProvider    backtest.OptionsChainProvider
 	chainTargets     []optionChainTarget
+	runtimeWarnings  []dto.StrategyBacktestRuntimeWarning
 }
 
 type optionChainTarget struct {
-	market string
-	asset  string
-	weight float64
+	market   string
+	asset    string
+	weight   float64
+	required bool
 }
 
 func (s *PortfolioBacktestService) resolveBacktestPlan(ctx context.Context, run *portfolioBacktestRun, req dto.StrategyBacktestRunRequest, loadChains bool) (*resolvedBacktestPlan, error) {
@@ -122,13 +124,10 @@ func (s *PortfolioBacktestService) resolveBacktestPlan(ctx context.Context, run 
 
 	var chainProvider backtest.OptionsChainProvider
 	var targets []optionChainTarget
+	var runtimeWarnings []dto.StrategyBacktestRuntimeWarning
 	if shouldLoadOptionChain(tradeScope, resolved) {
 		var targetSymbols []string
-		chainScopeReq := req
-		if len(universeSymbols) > 0 {
-			chainScopeReq.Symbols = mergeSymbols(chainScopeReq.Symbols, universeSymbols)
-		}
-		targets, targetSymbols, err = collectOptionChainTargets(chainScopeReq, primaryMarket.name, asset, resolved)
+		targets, targetSymbols, err = collectOptionChainTargets(req, primaryMarket.name, asset, universeSymbols, resolved)
 		if err != nil {
 			return nil, err
 		}
@@ -144,7 +143,7 @@ func (s *PortfolioBacktestService) resolveBacktestPlan(ctx context.Context, run 
 			})
 		}
 		if loadChains {
-			chainProvider, err = s.loadOptionChainUniverse(ctx, run, interval, from, to, targets)
+			chainProvider, runtimeWarnings, err = s.loadOptionChainUniverse(ctx, run, interval, from, to, targets)
 			if err != nil {
 				return nil, fmt.Errorf("load options chain: %w", err)
 			}
@@ -171,6 +170,7 @@ func (s *PortfolioBacktestService) resolveBacktestPlan(ctx context.Context, run 
 		commissionModel:  commissionModel,
 		chainProvider:    chainProvider,
 		chainTargets:     targets,
+		runtimeWarnings:  runtimeWarnings,
 	}, nil
 }
 
@@ -360,10 +360,10 @@ func mergeSymbols(existing, extra []string) []string {
 	return out
 }
 
-func collectOptionChainTargets(req dto.StrategyBacktestRunRequest, primaryMarket, primaryAsset string, resolved []strategies.ResolvedStrategy) ([]optionChainTarget, []string, error) {
+func collectOptionChainTargets(req dto.StrategyBacktestRunRequest, primaryMarket, primaryAsset string, universeSymbols []string, resolved []strategies.ResolvedStrategy) ([]optionChainTarget, []string, error) {
 	seen := make(map[string]optionChainTarget)
 	ordered := make([]string, 0, len(req.Portfolio)+len(req.Symbols)+len(resolved)+1)
-	add := func(rawMarket, rawAsset string, weight float64) error {
+	add := func(rawMarket, rawAsset string, weight float64, required bool) error {
 		asset := strings.ToUpper(strings.TrimSpace(rawAsset))
 		if asset == "" {
 			return nil
@@ -380,14 +380,20 @@ func collectOptionChainTargets(req dto.StrategyBacktestRunRequest, primaryMarket
 		if _, ok := seen[key]; !ok {
 			ordered = append(ordered, key)
 		}
-		seen[key] = optionChainTarget{market: marketSpec.name, asset: asset, weight: weight}
+		target := seen[key]
+		target.market = marketSpec.name
+		target.asset = asset
+		target.weight = weight
+		target.required = target.required || required
+		seen[key] = target
 		return nil
 	}
-	if err := add(primaryMarket, primaryAsset, 1); err != nil {
+	primaryExplicit := strings.TrimSpace(req.Asset) != "" || len(req.Portfolio) > 0 || len(req.Symbols) > 0
+	if err := add(primaryMarket, primaryAsset, 1, primaryExplicit); err != nil {
 		return nil, nil, err
 	}
 	for _, leg := range req.Portfolio {
-		if err := add(leg.Market, leg.Asset, leg.Weight); err != nil {
+		if err := add(leg.Market, leg.Asset, leg.Weight, true); err != nil {
 			return nil, nil, err
 		}
 	}
@@ -396,7 +402,12 @@ func collectOptionChainTargets(req dto.StrategyBacktestRunRequest, primaryMarket
 		if index < len(req.Weights) {
 			weight = req.Weights[index]
 		}
-		if err := add(primaryMarket, symbol, weight); err != nil {
+		if err := add(primaryMarket, symbol, weight, true); err != nil {
+			return nil, nil, err
+		}
+	}
+	for _, symbol := range universeSymbols {
+		if err := add(primaryMarket, symbol, 0, false); err != nil {
 			return nil, nil, err
 		}
 	}
@@ -406,11 +417,11 @@ func collectOptionChainTargets(req dto.StrategyBacktestRunRequest, primaryMarket
 			continue
 		}
 		manifest := dslStrategy.Manifest()
-		if manifest.HasDynamicOptionChainRequest() && len(req.Portfolio) == 0 && len(req.Symbols) == 0 {
+		if manifest.HasDynamicOptionChainRequest() && len(req.Portfolio) == 0 && len(req.Symbols) == 0 && len(universeSymbols) == 0 {
 			return nil, nil, dto.NewValidationError("dsl uses dynamic options.chain arguments; provide symbols or portfolio so option chains can be preloaded")
 		}
 		for _, chainReq := range dslStrategy.OptionChainRequests() {
-			if err := add(chainReq.Market, chainReq.Symbol, 0); err != nil {
+			if err := add(chainReq.Market, chainReq.Symbol, 0, true); err != nil {
 				return nil, nil, err
 			}
 		}
