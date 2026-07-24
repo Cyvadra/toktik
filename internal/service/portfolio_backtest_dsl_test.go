@@ -287,6 +287,95 @@ plot(ta.sma(close, length), title="SMA")`,
 	}
 }
 
+func TestValidateStrategyBacktestRejectsUniverseWithoutReplayCoverage(t *testing.T) {
+	feed := &validationTestFeed{}
+	from := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	svc := NewPortfolioBacktestService(nil, nil)
+	t.Cleanup(func() { _ = svc.Close() })
+	svc.universes = &stubPortfolioUniverseResolver{members: map[string][]dto.UniverseMember{
+		"strong_momentum": {{
+			UniverseCode: "strong_momentum",
+			Market:       "us-stocks",
+			Symbol:       "AAPL",
+			ValidFrom:    from.AddDate(0, 0, 1),
+			ValidTo:      from.AddDate(0, 0, 2),
+		}},
+	}}
+	svc.engineBuilder = func(cfg backtest.Config, chainProvider backtest.OptionsChainProvider, usesOptions bool) *backtest.Engine {
+		engine := backtest.NewEngine(cfg)
+		engine.RegisterDataFeed(usUnderlyingFeed, feed)
+		return engine
+	}
+
+	_, err := svc.ValidateStrategyBacktest(context.Background(), dto.StrategyBacktestRunRequest{
+		Market:   "us-stocks",
+		Asset:    "AAPL",
+		Interval: "1d",
+		From:     "2026-01-01",
+		To:       "2026-01-02",
+		Capital:  100000,
+		DSL: `strategy("Universe Coverage")
+symbols = universe.symbols("strong_momentum")
+plot(len(symbols), title="universe_size")`,
+	})
+	if err == nil {
+		t.Fatal("expected validation error for zero runtime universe coverage")
+	}
+	var validationErr *dto.ValidationError
+	if !errors.As(err, &validationErr) {
+		t.Fatalf("expected dto.ValidationError, got %T: %v", err, err)
+	}
+	if !strings.Contains(err.Error(), "strong_momentum") || !strings.Contains(err.Error(), "6 replay bars") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestValidateStrategyBacktestReportsUniverseReplayCoverage(t *testing.T) {
+	feed := &validationTestFeed{}
+	from := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	svc := NewPortfolioBacktestService(nil, nil)
+	t.Cleanup(func() { _ = svc.Close() })
+	svc.universes = &stubPortfolioUniverseResolver{members: map[string][]dto.UniverseMember{
+		"strong_momentum": {{
+			UniverseCode: "strong_momentum",
+			Market:       "us-stocks",
+			Symbol:       "AAPL",
+			ValidFrom:    from,
+			ValidTo:      from.AddDate(0, 0, 1),
+		}},
+	}}
+	svc.engineBuilder = func(cfg backtest.Config, chainProvider backtest.OptionsChainProvider, usesOptions bool) *backtest.Engine {
+		engine := backtest.NewEngine(cfg)
+		engine.RegisterDataFeed(usUnderlyingFeed, feed)
+		return engine
+	}
+
+	resp, err := svc.ValidateStrategyBacktest(context.Background(), dto.StrategyBacktestRunRequest{
+		Market:   "us-stocks",
+		Asset:    "AAPL",
+		Interval: "1d",
+		From:     "2026-01-01",
+		To:       "2026-01-02",
+		Capital:  100000,
+		DSL: `strategy("Universe Coverage")
+symbols = universe.symbols("strong_momentum")
+plot(len(symbols), title="universe_size")`,
+	})
+	if err != nil {
+		t.Fatalf("ValidateStrategyBacktest returned error: %v", err)
+	}
+	if resp.ResourcePlan == nil || len(resp.ResourcePlan.UniverseCoverage) != 1 {
+		t.Fatalf("unexpected resource plan: %+v", resp.ResourcePlan)
+	}
+	coverage := resp.ResourcePlan.UniverseCoverage[0]
+	if coverage.Code != "strong_momentum" || coverage.ReplayBars != 6 || coverage.BarsWithMembers != 6 {
+		t.Fatalf("unexpected universe coverage: %+v", coverage)
+	}
+	if coverage.MinMembersPerBar != 1 || coverage.MaxMembersPerBar != 1 {
+		t.Fatalf("unexpected per-bar member range: %+v", coverage)
+	}
+}
+
 func TestValidateStrategyBacktestMapsMissingIndicatorSeriesToValidationError(t *testing.T) {
 	feed := &validationTestFeed{}
 	svc := NewPortfolioBacktestService(nil, nil)

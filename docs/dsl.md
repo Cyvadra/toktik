@@ -10,7 +10,7 @@
 
 ## Scope
 
-本文檔匯出策略回測與 DSL 工作流 API。內容包含請求驗證、非同步回測建立、狀態輪詢、SSE 進度串流、HTML 報告取得、策略目錄查詢，以及讀取完成回測結果所需的 response schema。API 摘要與欄位描述來自 Swagger 註釋；教學、範例與使用建議由本生成器模板輸出。
+本文檔匯出 named universe、策略回測與 DSL 工作流 API。API operation 與 schema 的摘要、行為和欄位描述均來自 Swagger 註釋；教學與 DSL 語言參考由本生成器輸出。
 
 ## Authentication
 
@@ -32,6 +32,7 @@ The server hashes the supplied key and accepts it only when the matching databas
 - [DSL 內建模組速查](#dsl-內建模組速查)
 - [DSL 函數參考](#dsl-函數參考)
 - [提交與查詢範例](#提交與查詢範例)
+- [Named Universe API](#named-universe-api)
 - [回測流程 API](#回測流程-api)
 - [策略目錄 API](#策略目錄-api)
 - [Schemas](#schemas)
@@ -738,6 +739,64 @@ Toktik DSL 不是完整 TradingView Pine Script v6 實作；語法風格接近 P
 
 `request.security(...)`、`request.factor(...)`、`request.fundamental(...)` 依賴 validate/run 規劃階段的確定性預載，因此識別參數應使用字面量；以 `universe.symbols(code)` 成員作為 symbol 的迴圈 request 模板可由規劃器展開。其他 runtime-dynamic request 會在 validation 時被拒絕，資源規劃可透過 `runtime.static_data_requests` 與 `runtime.runtime_dynamic_requests` 檢查。`request.factor("volatility", "1d", field)` 讀取目前回測主標的的 IV/HV 特徵；若需要同一腳本中讀取多個不同美股 symbol 的 HV，需要先擴展 symbol-bound volatility factor 或新增專用 DSL builtin。`contract.iv(contract)` 則可透過不同 `options.chain(market, symbol)` 讀取各 underlying 候選期權合約的 IV。
 
+## Named Universe API
+
+### Rebuild named universe membership
+
+- Endpoint: `POST /api/v1/universes/rebuild`
+- Tags: `Universes`
+- Consumes: `application/json`
+- Produces: `application/json`
+- Summary: Rebuild named universe membership
+- Description: Rebuilds membership over a server-derived half-open [from, to) range. The end is the latest date shared by SPY stock and option daily data; force_refresh=true (the default) starts from the configured rebuild history, while false resumes from existing membership. source_type defaults to turnover_intersection_union, which derives a daily union of liquid US stock/option underlyings across requested turnover lookbacks. preset_symbols and provider_holdings require symbols or members. Set dry_run=true to calculate the result without changing stored membership or recording a run. A configured API key authenticator is required even when local-client auth bypass is enabled.
+
+#### Parameters
+
+| Name | In | Type | Required | Description |
+| --- | --- | --- | --- | --- |
+| body | body | [UniverseRebuildRequest](#universerebuildrequest) | yes | Universe rebuild configuration |
+
+#### Responses
+
+| Status | Schema | Description |
+| --- | --- | --- |
+| 200 | [UniverseRebuildResponse](#universerebuildresponse) | OK |
+| 400 | [ErrorResponse](#errorresponse) | Bad Request |
+| 401 | [ErrorResponse](#errorresponse) | Unauthorized |
+| 403 | [ErrorResponse](#errorresponse) | Forbidden |
+| 500 | [ErrorResponse](#errorresponse) | Internal Server Error |
+| 501 | [ErrorResponse](#errorresponse) | Not Implemented |
+
+### Get named universe members
+
+- Endpoint: `GET /api/v1/universes/{code}/members`
+- Tags: `Universes`
+- Produces: `application/json`
+- Summary: Get named universe members
+- Description: Returns point-in-time members when as_of is supplied, or every membership interval overlapping the half-open [from, to) range. Supply either as_of or a range; dates accept YYYY-MM-DD or RFC3339.
+
+#### Parameters
+
+| Name | In | Type | Required | Description |
+| --- | --- | --- | --- | --- |
+| code | path | string | yes | Named universe code |
+| market | query | string | no | Market; defaults to us-stocks |
+| as_of | query | string | no | Point-in-time date (YYYY-MM-DD or RFC3339); cannot be combined with a range |
+| from | query | string | no | Inclusive range start (YYYY-MM-DD or RFC3339) |
+| to | query | string | no | Exclusive range end (YYYY-MM-DD or RFC3339) |
+| limit | query | integer | no | Maximum intervals returned; defaults to 5000 and is capped at 500000 |
+
+#### Responses
+
+| Status | Schema | Description |
+| --- | --- | --- |
+| 200 | [UniverseMembersResponse](#universemembersresponse) | OK |
+| 400 | [ErrorResponse](#errorresponse) | Bad Request |
+| 401 | [ErrorResponse](#errorresponse) | Unauthorized |
+| 404 | [ErrorResponse](#errorresponse) | Not Found |
+| 500 | [ErrorResponse](#errorresponse) | Internal Server Error |
+| 501 | [ErrorResponse](#errorresponse) | Not Implemented |
+
 ## 回測流程 API
 
 ### 驗證回測請求
@@ -1060,6 +1119,7 @@ data: {"run_id":"c40505f1a16f02f33380b4ccbe4f74db","status":"running","progress"
 | target_dte | integer | no | Target option expiry days used for option-chain planning. |
 | to | string | no | Inclusive end date used by the resource plan. |
 | universe_codes | array<string> | no | Universe codes resolved during validation and run planning. |
+| universe_coverage | array<[StrategyBacktestUniverseCoverage](#strategybacktestuniversecoverage)> | no | Point-in-time membership coverage measured on the actual primary replay bars during preflight. |
 | universe_size | integer | no | Number of distinct symbols resolved from requested DSL universes. |
 | warnings | array<string> | no | Resource planning warnings that do not block submission. |
 
@@ -1225,6 +1285,21 @@ data: {"run_id":"c40505f1a16f02f33380b4ccbe4f74db","status":"running","progress"
 | win_rate | number | no | Winning trade ratio from 0 to 1. |
 | winning_trades | integer | no | Number of profitable trades. |
 
+### StrategyBacktestUniverseCoverage
+
+- Schema: `github_com_Cyvadra_toktik_internal_dto.StrategyBacktestUniverseCoverage`
+- Type: `object`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| bars_with_members | integer | no | Number of replay bars where the named universe has at least one point-in-time member. |
+| code | string | no | Named universe code evaluated during preflight. |
+| first_covered_date | string | no | First replay date with at least one universe member. |
+| last_covered_date | string | no | Last replay date with at least one universe member. |
+| max_members_per_bar | integer | no | Maximum member count across replay bars. |
+| min_members_per_bar | integer | no | Minimum member count across replay bars. Zero indicates at least one coverage gap. |
+| replay_bars | integer | no | Number of actual primary bars that will be replayed. |
+
 ### StrategyBacktestValidationItem
 
 - Schema: `github_com_Cyvadra_toktik_internal_dto.StrategyBacktestValidationItem`
@@ -1293,3 +1368,73 @@ data: {"run_id":"c40505f1a16f02f33380b4ccbe4f74db","status":"running","progress"
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
 | data | array<[StrategyCatalogEntry](#strategycatalogentry)> | no | Registered strategy catalog entries. |
+
+### UniverseMember
+
+- Schema: `github_com_Cyvadra_toktik_internal_dto.UniverseMember`
+- Type: `object`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| ingested_at | string | no | Storage ingestion timestamp. |
+| market | string | no | Market containing the symbol. |
+| metadata | string | no | Optional caller-supplied JSON or text metadata. |
+| rank | integer | no | Optional source rank; static members without a rank are ranked by symbol. |
+| score | number | no | Optional source score, such as combined turnover. |
+| source | string | no | Source type that created the membership. |
+| source_run_id | string | no | Deterministic identifier for the rebuild result. |
+| symbol | string | no | Symbol, normalized to uppercase for static sources. |
+| universe_code | string | no | Named universe code. |
+| valid_from | string | no | Inclusive membership start. |
+| valid_to | string | no | Exclusive membership end. |
+
+### UniverseMembersResponse
+
+- Schema: `github_com_Cyvadra_toktik_internal_dto.UniverseMembersResponse`
+- Type: `object`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| as_of | string | no | Point-in-time date for an as_of query. |
+| code | string | no | Resolved universe code. |
+| data | array<[UniverseMember](#universemember)> | no | Matching membership records. |
+| from | string | no | Inclusive interval query start. |
+| market | string | no | Resolved market. |
+| to | string | no | Exclusive interval query end. |
+
+### UniverseRebuildRequest
+
+- Schema: `github_com_Cyvadra_toktik_internal_dto.UniverseRebuildRequest`
+- Type: `object`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| code | string | no | Required named universe code. |
+| dry_run | boolean | no | Calculate without persisting membership or run metadata. |
+| force_refresh | boolean | no | Full rebuild when true; defaults to true for JSON requests. |
+| limit | integer | no | Members retained per turnover lookback; default is 60. |
+| lookback_days | array<integer> | no | Turnover lookbacks in trading days; values outside 7..252 are ignored and default is 7,20,60,120. |
+| market | string | no | Market; defaults to us-stocks. |
+| members | array<[UniverseMember](#universemember)> | no | Static members required by preset_symbols and provider_holdings when symbols is empty. |
+| non_etf_only | boolean | no | Turnover source ETF exclusion; default is true. |
+| source_type | [UniverseSourceType](#universesourcetype) | no | turnover_intersection_union (default), preset_symbols, or provider_holdings. |
+| symbols | array<string> | no | Static symbols required by preset_symbols and provider_holdings when members is empty. |
+
+### UniverseRebuildResponse
+
+- Schema: `github_com_Cyvadra_toktik_internal_dto.UniverseRebuildResponse`
+- Type: `object`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| as_of | string | no | Rebuild start date retained for compatibility. |
+| code | string | no | Resolved universe code. |
+| data | array<[UniverseMember](#universemember)> | no | Calculated membership intervals. |
+| dry_run | boolean | no | Whether the result was calculated without persistence. |
+| from | string | no | Inclusive rebuild start. |
+| lookback_days | array<integer> | no | Effective turnover lookbacks. |
+| market | string | no | Resolved market. |
+| member_count | integer | no | Number of compressed membership intervals returned. |
+| run_id | string | no | Deterministic identifier for this result. |
+| source_type | [UniverseSourceType](#universesourcetype) | no | Source used to build members. |
+| to | string | no | Exclusive rebuild end. |

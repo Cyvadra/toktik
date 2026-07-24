@@ -24,6 +24,7 @@ type resolvedBacktestPlan struct {
 	universeSymbols  []string
 	universeCodes    []string
 	universe         *bridge.UniverseSnapshot
+	universeCoverage []dto.StrategyBacktestUniverseCoverage
 	minDTE           int
 	targetDTE        int
 	strategyLabel    string
@@ -440,6 +441,7 @@ func (s *PortfolioBacktestService) preflightBacktestPlan(ctx context.Context, ru
 	if plan == nil {
 		return nil
 	}
+	coverageChecked := false
 	for index, item := range plan.resolved {
 		if run != nil {
 			total := len(plan.resolved)
@@ -468,14 +470,67 @@ func (s *PortfolioBacktestService) preflightBacktestPlan(ctx context.Context, ru
 			ValuationMode:   backtest.ValuationPriceClose,
 			TriggerMode:     backtest.TriggerPriceCanonical,
 		}, plan.chainProvider, item.Profile.UsesOptions)
-		if _, err := engine.Prepare(ctx, plan.primaryMarket.underlyingFeed, plan.asset, plan.interval, plan.from, plan.to, strategy, nil); err != nil {
+		prepared, err := engine.Prepare(ctx, plan.primaryMarket.underlyingFeed, plan.asset, plan.interval, plan.from, plan.to, strategy, nil)
+		if err != nil {
 			if errors.Is(err, backtest.ErrUnknownIndicatorSeries) {
 				return dto.NewValidationError("prepare strategy %s: %v", strategy.Name(), err)
 			}
 			return fmt.Errorf("prepare strategy %s: %w", strategy.Name(), err)
 		}
+		if !coverageChecked && len(plan.universeCodes) > 0 {
+			if prepared == nil || prepared.PrimaryDS == nil {
+				return fmt.Errorf("prepare strategy %s: primary replay data is unavailable", strategy.Name())
+			}
+			coverage, warnings, err := validateUniverseReplayCoverage(plan.universe, plan.universeCodes, prepared.PrimaryDS.Timestamps)
+			if err != nil {
+				return err
+			}
+			plan.universeCoverage = coverage
+			plan.warnings = append(plan.warnings, warnings...)
+			coverageChecked = true
+		}
 	}
 	return nil
+}
+
+func validateUniverseReplayCoverage(snapshot *bridge.UniverseSnapshot, codes []string, timestamps []time.Time) ([]dto.StrategyBacktestUniverseCoverage, []string, error) {
+	if len(codes) == 0 {
+		return nil, nil, nil
+	}
+	if snapshot == nil || snapshot.Provider == nil {
+		return nil, nil, dto.NewValidationError("dsl uses universe.symbols but runtime universe provider is unavailable")
+	}
+	coverage := make([]dto.StrategyBacktestUniverseCoverage, 0, len(codes))
+	warnings := make([]string, 0)
+	for _, code := range codes {
+		item := dto.StrategyBacktestUniverseCoverage{Code: code, ReplayBars: len(timestamps)}
+		for index, ts := range timestamps {
+			memberCount := len(snapshot.Provider.SymbolsAt(code, ts))
+			if index == 0 || memberCount < item.MinMembersPerBar {
+				item.MinMembersPerBar = memberCount
+			}
+			if memberCount > item.MaxMembersPerBar {
+				item.MaxMembersPerBar = memberCount
+			}
+			if memberCount == 0 {
+				continue
+			}
+			item.BarsWithMembers++
+			coveredDate := ts.UTC().Format("2006-01-02")
+			if item.FirstCoveredDate == "" {
+				item.FirstCoveredDate = coveredDate
+			}
+			item.LastCoveredDate = coveredDate
+		}
+		if item.ReplayBars > 0 && item.BarsWithMembers == 0 {
+			return nil, nil, dto.NewValidationError("universe %q has no members on any of the %d replay bars", code, item.ReplayBars)
+		}
+		if item.BarsWithMembers < item.ReplayBars {
+			warnings = append(warnings, fmt.Sprintf("universe %q has members on %d of %d replay bars", code, item.BarsWithMembers, item.ReplayBars))
+		}
+		coverage = append(coverage, item)
+	}
+	return coverage, warnings, nil
 }
 
 // classifyDSLRequests is the single pass over each resolved DSL strategy's
@@ -587,6 +642,7 @@ func buildStrategyBacktestResourcePlan(plan *resolvedBacktestPlan) *dto.Strategy
 	return &dto.StrategyBacktestResourcePlan{
 		UniverseSize:           len(plan.universeSymbols),
 		UniverseCodes:          sliceOrEmpty(append([]string(nil), plan.universeCodes...)),
+		UniverseCoverage:       sliceOrEmpty(append([]dto.StrategyBacktestUniverseCoverage(nil), plan.universeCoverage...)),
 		OptionChainUnderlyings: len(plan.chainTargets),
 		MinDTE:                 plan.minDTE,
 		TargetDTE:              plan.targetDTE,

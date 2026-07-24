@@ -590,7 +590,7 @@ func (s *PortfolioBacktestService) runBacktest(ctx context.Context, run *portfol
 	if err != nil {
 		return nil, err
 	}
-	if strings.TrimSpace(req.DSL) != "" {
+	if strings.TrimSpace(req.DSL) != "" || len(plan.universeCodes) > 0 {
 		if err := s.preflightBacktestPlan(ctx, run, plan); err != nil {
 			return nil, err
 		}
