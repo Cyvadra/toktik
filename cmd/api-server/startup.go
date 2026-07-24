@@ -66,7 +66,7 @@ func buildAPICoreServices(runtimeCfg config.Runtime, repo *chrepo.Repo, calendar
 		WithLatestMarketCache(latestMarket)
 	universeSvc := service.NewUniverseService(repo, universeRepo).
 		WithRebuildStart(runtimeCfg.UniverseRebuildStart()).
-		WithTurnoverScreener(screenerSvc)
+		WithETFClassifier(companyProfileProvider)
 	backtests := service.NewPortfolioBacktestService(repo, factorStore).
 		WithReportsRoot(runtimeCfg.Paths.ReportsRoot).
 		WithUniverseService(universeSvc)

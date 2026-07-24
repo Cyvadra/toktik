@@ -133,7 +133,7 @@ type mockScreener struct {
 
 type mockUniverseProvider struct {
 	membersResp *dto.UniverseMembersResponse
-	rebuildResp *dto.UniverseRebuildResponse
+	rebuildResp *dto.UniverseRebuildAccepted
 	membersReq  dto.UniverseMembersRequest
 	rebuildReq  dto.UniverseRebuildRequest
 	err         error
@@ -188,7 +188,7 @@ func (m *mockUniverseProvider) MemberIntervals(_ context.Context, req dto.Univer
 	return m.membersResp, m.err
 }
 
-func (m *mockUniverseProvider) Rebuild(_ context.Context, req dto.UniverseRebuildRequest) (*dto.UniverseRebuildResponse, error) {
+func (m *mockUniverseProvider) StartRebuild(_ context.Context, req dto.UniverseRebuildRequest) (*dto.UniverseRebuildAccepted, error) {
 	m.rebuildReq = req
 	return m.rebuildResp, m.err
 }
@@ -1110,7 +1110,7 @@ func TestGetMacroSeriesRoute(t *testing.T) {
 
 func TestRebuildUniverseAcceptsDateOnlyJSON(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	universes := &mockUniverseProvider{rebuildResp: &dto.UniverseRebuildResponse{Market: "us-stocks", Code: "strong_momentum"}}
+	universes := &mockUniverseProvider{rebuildResp: &dto.UniverseRebuildAccepted{Market: "us-stocks", Code: "strong_momentum", Accepted: true, Status: "queued"}}
 	cfg := config.DefaultRuntime()
 	r := NewRouterFromDeps(Deps{
 		Config:    cfg,
@@ -1126,8 +1126,8 @@ func TestRebuildUniverseAcceptsDateOnlyJSON(t *testing.T) {
 	req.Header.Set("X-API-Key", "test-key")
 	r.ServeHTTP(w, req)
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d: %s", w.Code, w.Body.String())
 	}
 	if !universes.rebuildReq.ForceRefresh {
 		t.Fatal("force_refresh should default to true")
@@ -1136,7 +1136,7 @@ func TestRebuildUniverseAcceptsDateOnlyJSON(t *testing.T) {
 
 func TestRebuildUniverseRejectsDeprecatedDates(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	universes := &mockUniverseProvider{rebuildResp: &dto.UniverseRebuildResponse{Market: "us-stocks", Code: "strong_momentum"}}
+	universes := &mockUniverseProvider{rebuildResp: &dto.UniverseRebuildAccepted{Market: "us-stocks", Code: "strong_momentum", Accepted: true, Status: "queued"}}
 	r := NewRouterFromDeps(Deps{
 		Config:    config.DefaultRuntime(),
 		Universes: universes,
@@ -1161,7 +1161,7 @@ func TestRebuildUniverseRejectsDeprecatedDates(t *testing.T) {
 
 func TestRebuildUniverseAcceptsForceRefreshFalse(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	universes := &mockUniverseProvider{rebuildResp: &dto.UniverseRebuildResponse{Market: "us-stocks", Code: "strong_momentum"}}
+	universes := &mockUniverseProvider{rebuildResp: &dto.UniverseRebuildAccepted{Market: "us-stocks", Code: "strong_momentum", Accepted: true, Status: "queued"}}
 	r := NewRouterFromDeps(Deps{
 		Config:    config.DefaultRuntime(),
 		Universes: universes,
@@ -1176,8 +1176,8 @@ func TestRebuildUniverseAcceptsForceRefreshFalse(t *testing.T) {
 	req.Header.Set("X-API-Key", "test-key")
 	r.ServeHTTP(w, req)
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d: %s", w.Code, w.Body.String())
 	}
 	if universes.rebuildReq.ForceRefresh {
 		t.Fatal("force_refresh=false was not preserved")
@@ -1186,7 +1186,7 @@ func TestRebuildUniverseAcceptsForceRefreshFalse(t *testing.T) {
 
 func TestRebuildUniverseRequiresAPIKeyAuthenticator(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	universes := &mockUniverseProvider{rebuildResp: &dto.UniverseRebuildResponse{Market: "us-stocks", Code: "strong_momentum"}}
+	universes := &mockUniverseProvider{rebuildResp: &dto.UniverseRebuildAccepted{Market: "us-stocks", Code: "strong_momentum", Accepted: true, Status: "queued"}}
 	r := NewRouterFromDeps(Deps{Config: config.DefaultRuntime(), Universes: universes})
 
 	w := httptest.NewRecorder()

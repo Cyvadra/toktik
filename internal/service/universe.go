@@ -29,14 +29,17 @@ type universeDefinitionRepo interface {
 }
 
 type UniverseService struct {
-	repo         *chrepo.Repo
-	definitions  universeDefinitionRepo
-	screener     usTurnoverIntersectionScreener
-	now          func() time.Time
-	rebuildStart time.Time
+	repo          *chrepo.Repo
+	definitions   universeDefinitionRepo
+	etfClassifier usStockCompanyProfileProvider
+	now           func() time.Time
+	rebuildStart  time.Time
 
 	rebuildLocksMu sync.Mutex
 	rebuildLocks   map[universeLockKey]*sync.Mutex
+
+	rebuildJobsMu sync.Mutex
+	rebuildJobs   map[string]universeRebuildJob
 }
 
 // universeLockKey scopes rebuild serialization to a single (market, code)
@@ -46,12 +49,20 @@ type universeLockKey struct {
 	code   string
 }
 
+type universeRebuildJob struct {
+	market      string
+	code        string
+	sourceType  dto.UniverseSourceType
+	requestHash string
+	startedAt   time.Time
+}
+
 type UniverseIntervalProvider struct {
 	members map[string][]dto.UniverseMember
 }
 
 func NewUniverseService(repo *chrepo.Repo, definitions universeDefinitionRepo) *UniverseService {
-	return &UniverseService{repo: repo, definitions: definitions, now: time.Now, rebuildLocks: make(map[universeLockKey]*sync.Mutex)}
+	return &UniverseService{repo: repo, definitions: definitions, now: time.Now, rebuildLocks: make(map[universeLockKey]*sync.Mutex), rebuildJobs: make(map[string]universeRebuildJob)}
 }
 
 // lockUniverse serializes ReplaceMembers calls for a given (market, code) so
@@ -74,11 +85,11 @@ func (s *UniverseService) lockUniverse(market, code string) func() {
 	return mu.Unlock
 }
 
-func (s *UniverseService) WithTurnoverScreener(screener usTurnoverIntersectionScreener) *UniverseService {
+func (s *UniverseService) WithETFClassifier(provider usStockCompanyProfileProvider) *UniverseService {
 	if s == nil {
 		return nil
 	}
-	s.screener = screener
+	s.etfClassifier = provider
 	return s
 }
 
@@ -171,6 +182,66 @@ LIMIT %s`,
 		return nil, fmt.Errorf("iterate universe members: %w", err)
 	}
 	return &dto.UniverseMembersResponse{Market: market, Code: code, From: from, To: to, Data: members}, nil
+}
+
+// StartRebuild accepts a rebuild trigger and executes the heavy rebuild in the
+// background. An identical normalized request hash already in flight is ignored
+// so retries cannot pile up behind a long-running rebuild.
+func (s *UniverseService) StartRebuild(ctx context.Context, req dto.UniverseRebuildRequest) (*dto.UniverseRebuildAccepted, error) {
+	market := normalizeUniverseMarket(req.Market)
+	code := normalizeUniverseCode(req.Code)
+	if code == "" {
+		return nil, dto.NewValidationError("universe code must be non-empty")
+	}
+	sourceType := req.SourceType
+	if sourceType == "" {
+		sourceType = dto.UniverseSourceTurnoverIntersectionUnion
+	}
+	switch sourceType {
+	case dto.UniverseSourceTurnoverIntersectionUnion, dto.UniverseSourcePresetSymbols, dto.UniverseSourceProviderHoldings:
+	default:
+		return nil, dto.NewValidationError("unsupported universe source_type %q", sourceType)
+	}
+	req.Market = market
+	req.Code = code
+	req.SourceType = sourceType
+	requestHash, err := universeRebuildRequestHash(req)
+	if err != nil {
+		return nil, err
+	}
+
+	now := s.now()
+	s.rebuildJobsMu.Lock()
+	if s.rebuildJobs == nil {
+		s.rebuildJobs = make(map[string]universeRebuildJob)
+	}
+	if job, ok := s.rebuildJobs[requestHash]; ok {
+		s.rebuildJobsMu.Unlock()
+		slog.Info("ignore universe rebuild trigger: identical request already running", "market", market, "code", code, "source_type", sourceType, "request_hash", requestHash, "started_at", job.startedAt)
+		return &dto.UniverseRebuildAccepted{Market: market, Code: code, SourceType: sourceType, RequestHash: requestHash, Accepted: false, Ignored: true, Status: "already_running", Message: "identical universe rebuild is already running", StartedAt: job.startedAt}, nil
+	}
+	s.rebuildJobs[requestHash] = universeRebuildJob{market: market, code: code, sourceType: sourceType, requestHash: requestHash, startedAt: now}
+	s.rebuildJobsMu.Unlock()
+
+	slog.Info("accepted universe rebuild trigger", "market", market, "code", code, "source_type", sourceType, "request_hash", requestHash)
+	go s.runRebuildJob(req, requestHash, now)
+	return &dto.UniverseRebuildAccepted{Market: market, Code: code, SourceType: sourceType, RequestHash: requestHash, Accepted: true, Ignored: false, Status: "queued", Message: "universe rebuild started", StartedAt: now}, nil
+}
+
+func (s *UniverseService) runRebuildJob(req dto.UniverseRebuildRequest, requestHash string, startedAt time.Time) {
+	defer func() {
+		s.rebuildJobsMu.Lock()
+		delete(s.rebuildJobs, requestHash)
+		s.rebuildJobsMu.Unlock()
+	}()
+	ctx := context.Background()
+	slog.Info("start universe rebuild", "market", req.Market, "code", req.Code, "source_type", req.SourceType, "request_hash", requestHash, "started_at", startedAt)
+	resp, err := s.Rebuild(ctx, req)
+	if err != nil {
+		slog.Error("universe rebuild failed", "market", req.Market, "code", req.Code, "source_type", req.SourceType, "request_hash", requestHash, "latency_ms", time.Since(startedAt).Milliseconds(), "error", err)
+		return
+	}
+	slog.Info("universe rebuild completed", "market", req.Market, "code", req.Code, "source_type", req.SourceType, "request_hash", requestHash, "run_id", resp.RunID, "from", resp.From.Format("2006-01-02"), "to", resp.To.Format("2006-01-02"), "member_count", resp.MemberCount, "dry_run", resp.DryRun, "latency_ms", time.Since(startedAt).Milliseconds())
 }
 
 func (p *UniverseIntervalProvider) SymbolsAt(code string, ts time.Time) []string {
@@ -442,33 +513,36 @@ func normalizeStaticUniverseMembers(req dto.UniverseRebuildRequest, market, code
 }
 
 func (s *UniverseService) rebuildTurnoverIntersectionUnion(ctx context.Context, req dto.UniverseRebuildRequest, market, code string, from, to time.Time) (*dto.UniverseRebuildResponse, error) {
-	if s.screener == nil {
-		return nil, fmt.Errorf("turnover intersection screener not configured")
-	}
 	lookbackDays := normalizeUniverseLookbacks(req.LookbackDays)
 	limit := req.Limit
 	if limit <= 0 {
 		limit = observedUSStockPoolTopLimit
+	}
+	if limit > turnoverIntersectionPoolCandidateKeep {
+		limit = turnoverIntersectionPoolCandidateKeep
 	}
 	nonETFOnly := true
 	if req.NonETFOnly != nil {
 		nonETFOnly = *req.NonETFOnly
 	}
 
-	daily := make(map[time.Time][]dto.UniverseMember)
-	for day := from; day.Before(to); day = day.AddDate(0, 0, 1) {
-		members, err := s.buildTurnoverIntersectionMembersForDate(ctx, market, code, day, lookbackDays, limit, nonETFOnly)
-		if err != nil {
-			return nil, err
-		}
-		daily[day] = members
+	slog.Info("universe rebuild progress: ensuring turnover intersection source", "market", market, "code", code, "from", from.Format("2006-01-02"), "to", to.Format("2006-01-02"), "lookback_days", lookbackDays, "limit", limit, "non_etf_only", nonETFOnly, "force_rebuild_source", req.ForceRebuildSource)
+	if err := s.ensureTurnoverIntersectionPool(ctx, market, lookbackDays, nonETFOnly, from, to, req.ForceRebuildSource); err != nil {
+		return nil, err
 	}
-	members := compressUniverseDailyMembers(daily, to)
+
+	slog.Info("universe rebuild progress: querying turnover intersection source", "market", market, "code", code, "from", from.Format("2006-01-02"), "to", to.Format("2006-01-02"), "lookback_days", lookbackDays, "limit", limit, "non_etf_only", nonETFOnly)
+	members, err := s.queryCompressedTurnoverIntersectionMembers(ctx, market, code, lookbackDays, limit, nonETFOnly, from, to)
+	if err != nil {
+		return nil, err
+	}
+	slog.Info("universe rebuild progress: compressed turnover intersection members", "market", market, "code", code, "member_count", len(members))
 	runID := universeRunID(code, market, dto.UniverseSourceTurnoverIntersectionUnion, from, to, members)
 	for index := range members {
 		members[index].SourceRunID = runID
 	}
 	if !req.DryRun {
+		slog.Info("universe rebuild progress: persisting members", "market", market, "code", code, "run_id", runID, "member_count", len(members))
 		if err := s.persistUniverseRunStatus(ctx, code, market, dto.UniverseSourceTurnoverIntersectionUnion, from, to, lookbackDays, limit, nonETFOnly, runID, len(members), "pending", nil); err != nil {
 			return nil, err
 		}
@@ -479,8 +553,81 @@ func (s *UniverseService) rebuildTurnoverIntersectionUnion(ctx context.Context, 
 		if err := s.persistUniverseRunStatus(ctx, code, market, dto.UniverseSourceTurnoverIntersectionUnion, from, to, lookbackDays, limit, nonETFOnly, runID, len(members), "success", nil); err != nil {
 			return nil, err
 		}
+		slog.Info("universe rebuild progress: persisted members", "market", market, "code", code, "run_id", runID, "member_count", len(members))
 	}
 	return &dto.UniverseRebuildResponse{Market: market, Code: code, SourceType: dto.UniverseSourceTurnoverIntersectionUnion, AsOf: from, From: from, To: to, RunID: runID, DryRun: req.DryRun, MemberCount: len(members), LookbackDays: lookbackDays, Data: members}, nil
+}
+
+func (s *UniverseService) queryCompressedTurnoverIntersectionMembers(ctx context.Context, market, code string, lookbackDays []int, limit int, nonETFOnly bool, from, to time.Time) ([]dto.UniverseMember, error) {
+	query := fmt.Sprintf(`
+SELECT
+	as_of_date,
+	underlying,
+	score,
+	toUInt32(row_number() OVER (PARTITION BY as_of_date ORDER BY score DESC, underlying ASC)) AS member_rank
+FROM (
+	SELECT
+		as_of_date,
+		underlying,
+		max(combined_turnover_usd) AS score
+	FROM %s
+	WHERE market = %s
+		AND non_etf_only = %s
+		AND lookback_days IN (%s)
+		AND as_of_date >= toDate(%s)
+		AND as_of_date < toDate(%s)
+		AND rank <= %s
+	GROUP BY as_of_date, underlying
+)
+ORDER BY as_of_date ASC, member_rank ASC, underlying ASC`,
+		turnoverIntersectionPoolTable,
+		clickhouseStringLiteral(market),
+		clickhouseBoolLiteral(nonETFOnly),
+		clickhouseIntListLiteral(lookbackDays),
+		clickhouseStringLiteral(from.Format("2006-01-02")),
+		clickhouseStringLiteral(to.Format("2006-01-02")),
+		clickhouseUInt32Literal(limit),
+	)
+	rows, err := s.repo.Query(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("query turnover intersection source membership: %w", err)
+	}
+	defer rows.Close()
+
+	compressor := newUniverseMembershipCompressor()
+	var currentDay time.Time
+	currentMembers := make([]dto.UniverseMember, 0, limit*len(lookbackDays))
+	flush := func() {
+		if currentDay.IsZero() {
+			return
+		}
+		compressor.AddDay(currentDay, currentMembers)
+		currentMembers = currentMembers[:0]
+	}
+	for rows.Next() {
+		var day time.Time
+		var symbol string
+		var score float64
+		var rank uint32
+		if err := rows.Scan(&day, &symbol, &score, &rank); err != nil {
+			return nil, fmt.Errorf("scan turnover intersection source membership: %w", err)
+		}
+		day = normalizeUniverseDate(day, day)
+		if currentDay.IsZero() {
+			currentDay = day
+		} else if !currentDay.Equal(day) {
+			flush()
+			currentDay = day
+		}
+		scoreCopy := score
+		rankCopy := rank
+		currentMembers = append(currentMembers, dto.UniverseMember{UniverseCode: code, Market: market, Symbol: normalizeSymbol(symbol), ValidFrom: day, ValidTo: day.AddDate(0, 0, 1), Score: &scoreCopy, Rank: &rankCopy, Source: string(dto.UniverseSourceTurnoverIntersectionUnion)})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate turnover intersection source membership: %w", err)
+	}
+	flush()
+	return compressor.Finish(to), nil
 }
 
 // ReplaceMembers overwrites universe membership for the given [from, to)
@@ -558,38 +705,56 @@ func clipUniverseMemberRemainders(existing []dto.UniverseMember, from, to time.T
 	return remainders
 }
 
-func (s *UniverseService) buildTurnoverIntersectionMembersForDate(ctx context.Context, market, code string, asOf time.Time, lookbackDays []int, limit int, nonETFOnly bool) ([]dto.UniverseMember, error) {
-	seen := make(map[string]struct{}, limit*len(lookbackDays))
-	members := make([]dto.UniverseMember, 0, limit*len(lookbackDays))
-	for _, lookbackDays := range lookbackDays {
-		resp, err := s.screener.ScreenUSTurnoverIntersection(ctx, dto.ScreenUSTurnoverIntersectionRequest{Limit: limit, LookbackDays: lookbackDays, NonETFOnly: nonETFOnly, AsOf: asOf.Format("2006-01-02")})
-		if err != nil {
-			return nil, fmt.Errorf("screen turnover intersection for %d-day lookback at %s: %w", lookbackDays, asOf.Format("2006-01-02"), err)
-		}
-		for _, row := range resp.Data {
-			symbol := normalizeSymbol(row.Underlying)
-			if symbol == "" {
+type universeMembershipCompressor struct {
+	open map[string]int
+	out  []dto.UniverseMember
+}
+
+func newUniverseMembershipCompressor() *universeMembershipCompressor {
+	return &universeMembershipCompressor{open: make(map[string]int), out: make([]dto.UniverseMember, 0)}
+}
+
+func (c *universeMembershipCompressor) AddDay(day time.Time, members []dto.UniverseMember) {
+	active := make(map[string]dto.UniverseMember, len(members))
+	for _, member := range members {
+		active[member.Symbol] = member
+		if index, ok := c.open[member.Symbol]; ok {
+			if universeMemberStateEqual(c.out[index], member) {
+				c.out[index].ValidTo = day.AddDate(0, 0, 1)
 				continue
 			}
-			if _, ok := seen[symbol]; ok {
-				continue
-			}
-			seen[symbol] = struct{}{}
-			score := row.CombinedTurnoverUSD
-			members = append(members, dto.UniverseMember{UniverseCode: code, Market: market, Symbol: symbol, ValidFrom: asOf, ValidTo: asOf.AddDate(0, 0, 1), Score: &score, Source: string(dto.UniverseSourceTurnoverIntersectionUnion)})
+			c.out[index].ValidTo = day
+			member.ValidFrom = day
+			member.ValidTo = day.AddDate(0, 0, 1)
+			c.out = append(c.out, member)
+			c.open[member.Symbol] = len(c.out) - 1
+			continue
 		}
+		member.ValidFrom = day
+		member.ValidTo = day.AddDate(0, 0, 1)
+		c.out = append(c.out, member)
+		c.open[member.Symbol] = len(c.out) - 1
 	}
-	sort.SliceStable(members, func(i, j int) bool {
-		if members[i].Score == nil || members[j].Score == nil || *members[i].Score == *members[j].Score {
-			return members[i].Symbol < members[j].Symbol
+	for symbol, index := range c.open {
+		if _, ok := active[symbol]; ok {
+			continue
 		}
-		return *members[i].Score > *members[j].Score
+		c.out[index].ValidTo = day
+		delete(c.open, symbol)
+	}
+}
+
+func (c *universeMembershipCompressor) Finish(to time.Time) []dto.UniverseMember {
+	for _, index := range c.open {
+		c.out[index].ValidTo = to
+	}
+	sort.SliceStable(c.out, func(i, j int) bool {
+		if c.out[i].ValidFrom.Equal(c.out[j].ValidFrom) {
+			return c.out[i].Symbol < c.out[j].Symbol
+		}
+		return c.out[i].ValidFrom.Before(c.out[j].ValidFrom)
 	})
-	for index := range members {
-		rank := uint32(index + 1)
-		members[index].Rank = &rank
-	}
-	return members, nil
+	return c.out
 }
 
 func compressUniverseDailyMembers(daily map[time.Time][]dto.UniverseMember, to time.Time) []dto.UniverseMember {
@@ -598,47 +763,11 @@ func compressUniverseDailyMembers(daily map[time.Time][]dto.UniverseMember, to t
 		days = append(days, day)
 	}
 	sort.Slice(days, func(i, j int) bool { return days[i].Before(days[j]) })
-	open := make(map[string]int)
-	out := make([]dto.UniverseMember, 0)
+	compressor := newUniverseMembershipCompressor()
 	for _, day := range days {
-		active := make(map[string]dto.UniverseMember, len(daily[day]))
-		for _, member := range daily[day] {
-			active[member.Symbol] = member
-			if index, ok := open[member.Symbol]; ok {
-				if universeMemberStateEqual(out[index], member) {
-					out[index].ValidTo = day.AddDate(0, 0, 1)
-					continue
-				}
-				out[index].ValidTo = day
-				member.ValidFrom = day
-				member.ValidTo = day.AddDate(0, 0, 1)
-				out = append(out, member)
-				open[member.Symbol] = len(out) - 1
-				continue
-			}
-			member.ValidFrom = day
-			member.ValidTo = day.AddDate(0, 0, 1)
-			out = append(out, member)
-			open[member.Symbol] = len(out) - 1
-		}
-		for symbol, index := range open {
-			if _, ok := active[symbol]; ok {
-				continue
-			}
-			out[index].ValidTo = day
-			delete(open, symbol)
-		}
+		compressor.AddDay(day, daily[day])
 	}
-	for _, index := range open {
-		out[index].ValidTo = to
-	}
-	sort.SliceStable(out, func(i, j int) bool {
-		if out[i].ValidFrom.Equal(out[j].ValidFrom) {
-			return out[i].Symbol < out[j].Symbol
-		}
-		return out[i].ValidFrom.Before(out[j].ValidFrom)
-	})
-	return out
+	return compressor.Finish(to)
 }
 
 func universeMemberStateEqual(left, right dto.UniverseMember) bool {
@@ -772,6 +901,76 @@ func normalizeUniverseLookbacks(values []int) []int {
 	}
 	sort.Ints(out)
 	return out
+}
+
+func universeRebuildRequestHash(req dto.UniverseRebuildRequest) (string, error) {
+	lookbackDays := append([]int(nil), req.LookbackDays...)
+	sort.Ints(lookbackDays)
+	symbols := make([]string, 0, len(req.Symbols))
+	for _, symbol := range req.Symbols {
+		if normalized := normalizeSymbol(symbol); normalized != "" {
+			symbols = append(symbols, normalized)
+		}
+	}
+	sort.Strings(symbols)
+	members := append([]dto.UniverseMember(nil), req.Members...)
+	for index := range members {
+		members[index].Symbol = normalizeSymbol(members[index].Symbol)
+		members[index].UniverseCode = normalizeUniverseCode(members[index].UniverseCode)
+		members[index].Market = normalizeUniverseMarket(members[index].Market)
+		members[index].ValidFrom = normalizeUniverseDate(members[index].ValidFrom, time.Time{})
+		members[index].ValidTo = normalizeUniverseDate(members[index].ValidTo, time.Time{})
+	}
+	sort.SliceStable(members, func(i, j int) bool {
+		if members[i].Symbol == members[j].Symbol {
+			if members[i].ValidFrom.Equal(members[j].ValidFrom) {
+				return members[i].ValidTo.Before(members[j].ValidTo)
+			}
+			return members[i].ValidFrom.Before(members[j].ValidFrom)
+		}
+		return members[i].Symbol < members[j].Symbol
+	})
+	payload := struct {
+		Market             string                 `json:"market"`
+		Code               string                 `json:"code"`
+		SourceType         dto.UniverseSourceType `json:"source_type"`
+		ForceRefresh       bool                   `json:"force_refresh"`
+		ForceRebuildSource bool                   `json:"force_rebuild_source"`
+		Symbols            []string               `json:"symbols,omitempty"`
+		Members            []dto.UniverseMember   `json:"members,omitempty"`
+		LookbackDays       []int                  `json:"lookback_days,omitempty"`
+		Limit              int                    `json:"limit,omitempty"`
+		NonETFOnly         *bool                  `json:"non_etf_only,omitempty"`
+		DryRun             bool                   `json:"dry_run,omitempty"`
+	}{
+		Market:             normalizeUniverseMarket(req.Market),
+		Code:               normalizeUniverseCode(req.Code),
+		SourceType:         req.SourceType,
+		ForceRefresh:       req.ForceRefresh,
+		ForceRebuildSource: req.ForceRebuildSource,
+		Symbols:            symbols,
+		Members:            members,
+		LookbackDays:       lookbackDays,
+		Limit:              req.Limit,
+		NonETFOnly:         req.NonETFOnly,
+		DryRun:             req.DryRun,
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return "", fmt.Errorf("hash universe rebuild request: %w", err)
+	}
+	return universeHash(data), nil
+}
+
+func clickhouseIntListLiteral(values []int) string {
+	if len(values) == 0 {
+		return "0"
+	}
+	parts := make([]string, 0, len(values))
+	for _, value := range values {
+		parts = append(parts, clickhouseUInt32Literal(value))
+	}
+	return strings.Join(parts, ",")
 }
 
 func universeRunID(code, market string, sourceType dto.UniverseSourceType, from, to time.Time, members []dto.UniverseMember) string {

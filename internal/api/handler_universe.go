@@ -81,12 +81,12 @@ func (h *Handler) GetUniverseMembers(c *gin.Context) {
 // RebuildUniverse handles POST /api/v1/universes/rebuild.
 //
 // @Summary      Rebuild named universe membership
-// @Description  Rebuilds membership over a server-derived half-open [from, to) range. The end is the latest date shared by SPY stock and option daily data; force_refresh=true (the default) starts from the configured rebuild history, while false resumes from existing membership. source_type defaults to turnover_intersection_union, which derives a daily union of liquid US stock/option underlyings across requested turnover lookbacks. preset_symbols and provider_holdings require symbols or members. Set dry_run=true to calculate the result without changing stored membership or recording a run. A configured API key authenticator is required even when local-client auth bypass is enabled.
+// @Description  Triggers an asynchronous rebuild over a server-derived half-open [from, to) range. The end is the latest date shared by SPY stock and option daily data; force_refresh=true (the default) starts from the configured rebuild history, while false resumes from existing membership. source_type defaults to turnover_intersection_union, which derives a daily union of liquid US stock/option underlyings across requested turnover lookbacks. preset_symbols and provider_holdings require symbols or members. Set dry_run=true to calculate the result without changing stored membership or recording a run. For turnover_intersection_union, force_rebuild_source=true refreshes the materialized turnover source pool before rebuilding membership; by default only missing source dates are filled. Identical requests already running are ignored by request_hash. A configured API key authenticator is required even when local-client auth bypass is enabled.
 // @Tags         Universes
 // @Accept       json
 // @Produce      json
 // @Param        body  body      dto.UniverseRebuildRequest  true  "Universe rebuild configuration"
-// @Success      200   {object}  dto.UniverseRebuildResponse
+// @Success      202   {object}  dto.UniverseRebuildAccepted
 // @Failure      400   {object}  dto.ErrorResponse
 // @Failure      401   {object}  dto.ErrorResponse
 // @Failure      403   {object}  dto.ErrorResponse
@@ -107,10 +107,10 @@ func (h *Handler) RebuildUniverse(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: err.Error()})
 		return
 	}
-	resp, err := h.universes.Rebuild(c.Request.Context(), req)
+	resp, err := h.universes.StartRebuild(c.Request.Context(), req)
 	if err != nil {
 		h.handleServiceError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, resp)
+	c.JSON(http.StatusAccepted, resp)
 }

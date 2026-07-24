@@ -110,7 +110,7 @@ type ScreenerProvider interface {
 type UniverseProvider interface {
 	Members(ctx context.Context, req dto.UniverseMembersRequest) (*dto.UniverseMembersResponse, error)
 	MemberIntervals(ctx context.Context, req dto.UniverseMembersRequest) (*dto.UniverseMembersResponse, error)
-	Rebuild(ctx context.Context, req dto.UniverseRebuildRequest) (*dto.UniverseRebuildResponse, error)
+	StartRebuild(ctx context.Context, req dto.UniverseRebuildRequest) (*dto.UniverseRebuildAccepted, error)
 }
 
 // StrategyCatalogProvider defines operations for listing registered strategies.

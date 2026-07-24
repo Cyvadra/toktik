@@ -128,6 +128,46 @@ func TestRebuildPresetSymbolsDryRun(t *testing.T) {
 	if req.SourceType != dto.UniverseSourcePresetSymbols || len(req.Symbols) != 3 || !req.DryRun {
 		t.Fatalf("unexpected request: %+v", req)
 	}
+	if req.ForceRebuildSource {
+		t.Fatal("force_rebuild_source should default to false")
+	}
+
+	if err := json.Unmarshal([]byte(`{"market":"us-stocks","code":"manual_watchlist","force_rebuild_source":true}`), &req); err != nil {
+		t.Fatalf("unmarshal force_rebuild_source request: %v", err)
+	}
+	if !req.ForceRebuildSource {
+		t.Fatal("force_rebuild_source=true was not preserved")
+	}
+}
+
+func TestUniverseRebuildRequestHashNormalizesStableFields(t *testing.T) {
+	left, err := universeRebuildRequestHash(dto.UniverseRebuildRequest{Market: "US-Stocks", Code: "Strong_Momentum", SourceType: dto.UniverseSourceTurnoverIntersectionUnion, ForceRefresh: true, Symbols: []string{"msft", "AAPL"}, LookbackDays: []int{60, 20}, Limit: 60, DryRun: true})
+	if err != nil {
+		t.Fatalf("hash left request: %v", err)
+	}
+	right, err := universeRebuildRequestHash(dto.UniverseRebuildRequest{Market: "us-stocks", Code: "strong_momentum", SourceType: dto.UniverseSourceTurnoverIntersectionUnion, ForceRefresh: true, Symbols: []string{"AAPL", "MSFT"}, LookbackDays: []int{20, 60}, Limit: 60, DryRun: true})
+	if err != nil {
+		t.Fatalf("hash right request: %v", err)
+	}
+	if left != right {
+		t.Fatalf("equivalent rebuild requests should have same hash: %s != %s", left, right)
+	}
+
+	changed, err := universeRebuildRequestHash(dto.UniverseRebuildRequest{Market: "us-stocks", Code: "strong_momentum", SourceType: dto.UniverseSourceTurnoverIntersectionUnion, ForceRefresh: false, Symbols: []string{"AAPL", "MSFT"}, LookbackDays: []int{20, 60}, Limit: 60, DryRun: true})
+	if err != nil {
+		t.Fatalf("hash changed request: %v", err)
+	}
+	if changed == left {
+		t.Fatal("force_refresh changes rebuild semantics and should change the request hash")
+	}
+
+	forceSource, err := universeRebuildRequestHash(dto.UniverseRebuildRequest{Market: "us-stocks", Code: "strong_momentum", SourceType: dto.UniverseSourceTurnoverIntersectionUnion, ForceRefresh: true, ForceRebuildSource: true, Symbols: []string{"AAPL", "MSFT"}, LookbackDays: []int{20, 60}, Limit: 60, DryRun: true})
+	if err != nil {
+		t.Fatalf("hash force source request: %v", err)
+	}
+	if forceSource == left {
+		t.Fatal("force_rebuild_source changes source materialization semantics and should change the request hash")
+	}
 }
 
 func TestSelectUniverseRebuildWindow(t *testing.T) {

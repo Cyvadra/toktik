@@ -54,16 +54,17 @@ type UniverseMembersResponse struct {
 // UniverseRebuildRequest configures a named-universe rebuild. Its date range
 // is owned by the server and derived from configured history plus reference data.
 type UniverseRebuildRequest struct {
-	Market       string             `json:"market"`                  // Market; defaults to us-stocks.
-	Code         string             `json:"code"`                    // Required named universe code.
-	SourceType   UniverseSourceType `json:"source_type"`             // turnover_intersection_union (default), preset_symbols, or provider_holdings.
-	ForceRefresh bool               `json:"force_refresh"`           // Full rebuild when true; defaults to true for JSON requests.
-	Symbols      []string           `json:"symbols,omitempty"`       // Static symbols required by preset_symbols and provider_holdings when members is empty.
-	Members      []UniverseMember   `json:"members,omitempty"`       // Static members required by preset_symbols and provider_holdings when symbols is empty.
-	LookbackDays []int              `json:"lookback_days,omitempty"` // Turnover lookbacks in trading days; values outside 7..252 are ignored and default is 7,20,60,120.
-	Limit        int                `json:"limit,omitempty"`         // Members retained per turnover lookback; default is 60.
-	NonETFOnly   *bool              `json:"non_etf_only,omitempty"`  // Turnover source ETF exclusion; default is true.
-	DryRun       bool               `json:"dry_run,omitempty"`       // Calculate without persisting membership or run metadata.
+	Market             string             `json:"market"`                         // Market; defaults to us-stocks.
+	Code               string             `json:"code"`                           // Required named universe code.
+	SourceType         UniverseSourceType `json:"source_type"`                    // turnover_intersection_union (default), preset_symbols, or provider_holdings.
+	ForceRefresh       bool               `json:"force_refresh"`                  // Full rebuild when true; defaults to true for JSON requests.
+	ForceRebuildSource bool               `json:"force_rebuild_source,omitempty"` // Rebuild the materialized turnover source pool before rebuilding membership.
+	Symbols            []string           `json:"symbols,omitempty"`              // Static symbols required by preset_symbols and provider_holdings when members is empty.
+	Members            []UniverseMember   `json:"members,omitempty"`              // Static members required by preset_symbols and provider_holdings when symbols is empty.
+	LookbackDays       []int              `json:"lookback_days,omitempty"`        // Turnover lookbacks in trading days; values outside 7..252 are ignored and default is 7,20,60,120.
+	Limit              int                `json:"limit,omitempty"`                // Members retained per turnover lookback; default is 60.
+	NonETFOnly         *bool              `json:"non_etf_only,omitempty"`         // Turnover source ETF exclusion; default is true.
+	DryRun             bool               `json:"dry_run,omitempty"`              // Calculate without persisting membership or run metadata.
 }
 
 func (r *UniverseRebuildRequest) UnmarshalJSON(data []byte) error {
@@ -77,16 +78,17 @@ func (r *UniverseRebuildRequest) UnmarshalJSON(data []byte) error {
 		}
 	}
 	type rawRequest struct {
-		Market       string             `json:"market"`
-		Code         string             `json:"code"`
-		SourceType   UniverseSourceType `json:"source_type"`
-		ForceRefresh *bool              `json:"force_refresh"`
-		Symbols      []string           `json:"symbols,omitempty"`
-		Members      []UniverseMember   `json:"members,omitempty"`
-		LookbackDays []int              `json:"lookback_days,omitempty"`
-		Limit        int                `json:"limit,omitempty"`
-		NonETFOnly   *bool              `json:"non_etf_only,omitempty"`
-		DryRun       bool               `json:"dry_run,omitempty"`
+		Market             string             `json:"market"`
+		Code               string             `json:"code"`
+		SourceType         UniverseSourceType `json:"source_type"`
+		ForceRefresh       *bool              `json:"force_refresh"`
+		ForceRebuildSource bool               `json:"force_rebuild_source,omitempty"`
+		Symbols            []string           `json:"symbols,omitempty"`
+		Members            []UniverseMember   `json:"members,omitempty"`
+		LookbackDays       []int              `json:"lookback_days,omitempty"`
+		Limit              int                `json:"limit,omitempty"`
+		NonETFOnly         *bool              `json:"non_etf_only,omitempty"`
+		DryRun             bool               `json:"dry_run,omitempty"`
 	}
 	var raw rawRequest
 	if err := json.Unmarshal(data, &raw); err != nil {
@@ -96,7 +98,7 @@ func (r *UniverseRebuildRequest) UnmarshalJSON(data []byte) error {
 	if raw.ForceRefresh != nil {
 		forceRefresh = *raw.ForceRefresh
 	}
-	*r = UniverseRebuildRequest{Market: raw.Market, Code: raw.Code, SourceType: raw.SourceType, ForceRefresh: forceRefresh, Symbols: raw.Symbols, Members: raw.Members, LookbackDays: raw.LookbackDays, Limit: raw.Limit, NonETFOnly: raw.NonETFOnly, DryRun: raw.DryRun}
+	*r = UniverseRebuildRequest{Market: raw.Market, Code: raw.Code, SourceType: raw.SourceType, ForceRefresh: forceRefresh, ForceRebuildSource: raw.ForceRebuildSource, Symbols: raw.Symbols, Members: raw.Members, LookbackDays: raw.LookbackDays, Limit: raw.Limit, NonETFOnly: raw.NonETFOnly, DryRun: raw.DryRun}
 	return nil
 }
 
@@ -124,4 +126,17 @@ type UniverseRebuildResponse struct {
 	MemberCount  int                `json:"member_count"`            // Number of compressed membership intervals returned.
 	LookbackDays []int              `json:"lookback_days,omitempty"` // Effective turnover lookbacks.
 	Data         []UniverseMember   `json:"data,omitempty"`          // Calculated membership intervals.
+}
+
+// UniverseRebuildAccepted describes an asynchronous rebuild trigger result.
+type UniverseRebuildAccepted struct {
+	Market      string             `json:"market"`       // Resolved market.
+	Code        string             `json:"code"`         // Resolved universe code.
+	SourceType  UniverseSourceType `json:"source_type"`  // Source requested for the rebuild.
+	RequestHash string             `json:"request_hash"` // Stable hash of the normalized rebuild request.
+	Accepted    bool               `json:"accepted"`     // True when a background rebuild was started.
+	Ignored     bool               `json:"ignored"`      // True when an identical rebuild is already running.
+	Status      string             `json:"status"`       // queued or already_running.
+	Message     string             `json:"message"`      // Human-readable trigger outcome.
+	StartedAt   time.Time          `json:"started_at"`   // Background rebuild start time.
 }
