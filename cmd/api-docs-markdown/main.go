@@ -57,6 +57,7 @@ type schemaRef struct {
 	Type                 string               `json:"type"`
 	Format               string               `json:"format"`
 	Description          string               `json:"description"`
+	AllOf                []schemaRef          `json:"allOf"`
 	Items                *schemaRef           `json:"items"`
 	AdditionalProperties json.RawMessage      `json:"additionalProperties"`
 	Properties           map[string]schemaRef `json:"properties"`
@@ -158,6 +159,13 @@ var marketSections = []sectionSpec{
 
 var backtestSections = []sectionSpec{
 	{
+		Title: "Named Universe API",
+		Endpoints: []endpointSpec{
+			{Method: "POST", Path: "/universes/rebuild", Label: "Rebuild named universe membership"},
+			{Method: "GET", Path: "/universes/{code}/members", Label: "Get named universe members"},
+		},
+	},
+	{
 		Title: "回測流程 API",
 		Endpoints: []endpointSpec{
 			{Method: "POST", Path: "/backtests/validate", Label: "驗證回測請求"},
@@ -218,6 +226,7 @@ var backtestSchemaDocs = map[string]map[string]string{
 		"option_chain_underlyings": "Number of underlyings whose option chains will be preloaded.",
 		"universe_size":            "Number of distinct symbols resolved from requested DSL universes.",
 		"universe_codes":           "Universe codes resolved during validation and run planning.",
+		"universe_coverage":        "Point-in-time membership coverage measured on the actual primary replay bars during preflight.",
 		"min_dte":                  "Minimum option expiry days used for option-chain planning.",
 		"target_dte":               "Target option expiry days used for option-chain planning.",
 		"estimated_contracts":      "Estimated number of option contracts to preload.",
@@ -227,6 +236,15 @@ var backtestSchemaDocs = map[string]map[string]string{
 		"to":                       "Inclusive end date used by the resource plan.",
 		"interval":                 "Primary bar interval used by the resource plan.",
 		"warnings":                 "Resource planning warnings that do not block submission.",
+	},
+	"StrategyBacktestUniverseCoverage": {
+		"code":                "Named universe code evaluated during preflight.",
+		"replay_bars":         "Number of actual primary bars that will be replayed.",
+		"bars_with_members":   "Number of replay bars where the named universe has at least one point-in-time member.",
+		"min_members_per_bar": "Minimum member count across replay bars. Zero indicates at least one coverage gap.",
+		"max_members_per_bar": "Maximum member count across replay bars.",
+		"first_covered_date":  "First replay date with at least one universe member.",
+		"last_covered_date":   "Last replay date with at least one universe member.",
 	},
 	"StrategyBacktestRunAccepted": {
 		"run_id":     "Opaque run identifier used by status, SSE, and report endpoints.",
@@ -429,7 +447,7 @@ func renderConfig(scope string) (renderSpec, error) {
 		return renderSpec{
 			Sections:    backtestSections,
 			Kind:        "backtests",
-			Scope:       "本文檔匯出策略回測與 DSL 工作流 API。內容包含請求驗證、非同步回測建立、狀態輪詢、SSE 進度串流、HTML 報告取得、策略目錄查詢，以及讀取完成回測結果所需的 response schema。API 摘要與欄位描述來自 Swagger 註釋；教學、範例與使用建議由本生成器模板輸出。",
+			Scope:       "本文檔匯出 named universe、策略回測與 DSL 工作流 API。API operation 與 schema 的摘要、行為和欄位描述均來自 Swagger 註釋；教學與 DSL 語言參考由本生成器輸出。",
 			SchemaIntro: "本節展開上方 API 使用到的 request/response schema。巢狀 DTO 也會被納入，方便客戶不打開 Swagger 也能檢查完整 JSON 結構。",
 			SchemaDocs:  backtestSchemaDocs,
 		}, nil
@@ -1230,6 +1248,9 @@ func schemaTypeMarkdown(doc *swaggerDoc, schema *schemaRef) string {
 		}
 		return name
 	}
+	if len(schema.AllOf) == 1 {
+		return schemaTypeMarkdown(doc, &schema.AllOf[0])
+	}
 	if schema.Type == "array" && schema.Items != nil {
 		return "array<" + schemaTypeMarkdown(doc, schema.Items) + ">"
 	}
@@ -1248,6 +1269,9 @@ func schemaTypePlain(schema *schemaRef) string {
 	}
 	if schema.Ref != "" {
 		return refName(schema.Ref)
+	}
+	if len(schema.AllOf) == 1 {
+		return schemaTypePlain(&schema.AllOf[0])
 	}
 	if schema.Type == "array" && schema.Items != nil {
 		return "array<" + schemaTypePlain(schema.Items) + ">"
