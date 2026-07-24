@@ -1121,7 +1121,7 @@ func TestRebuildUniverseAcceptsDateOnlyJSON(t *testing.T) {
 	})
 
 	w := httptest.NewRecorder()
-	req, _ := http.NewRequest(http.MethodPost, "/api/v1/universes/rebuild", strings.NewReader(`{"market":"us-stocks","code":"strong_momentum","from":"2024-01-01","to":"2024-01-03","dry_run":true}`))
+	req, _ := http.NewRequest(http.MethodPost, "/api/v1/universes/rebuild", strings.NewReader(`{"market":"us-stocks","code":"strong_momentum","dry_run":true}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-API-Key", "test-key")
 	r.ServeHTTP(w, req)
@@ -1129,11 +1129,58 @@ func TestRebuildUniverseAcceptsDateOnlyJSON(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
 	}
-	if got := universes.rebuildReq.From.Format("2006-01-02"); got != "2024-01-01" {
-		t.Fatalf("from = %s, want 2024-01-01", got)
+	if !universes.rebuildReq.ForceRefresh {
+		t.Fatal("force_refresh should default to true")
 	}
-	if got := universes.rebuildReq.To.Format("2006-01-02"); got != "2024-01-03" {
-		t.Fatalf("to = %s, want 2024-01-03", got)
+}
+
+func TestRebuildUniverseRejectsDeprecatedDates(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	universes := &mockUniverseProvider{rebuildResp: &dto.UniverseRebuildResponse{Market: "us-stocks", Code: "strong_momentum"}}
+	r := NewRouterFromDeps(Deps{
+		Config:    config.DefaultRuntime(),
+		Universes: universes,
+		APIKeys: fakeAPIKeyAuthenticator{keys: map[string]apikeyauth.Principal{
+			"test-key": {ID: 1, KeyDigest: "test-digest"},
+		}},
+	})
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodPost, "/api/v1/universes/rebuild", strings.NewReader(`{"market":"us-stocks","code":"strong_momentum","from":"2024-01-01"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-API-Key", "test-key")
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+	if universes.rebuildReq.Code != "" {
+		t.Fatalf("rebuild should not be called for deprecated dates: %+v", universes.rebuildReq)
+	}
+}
+
+func TestRebuildUniverseAcceptsForceRefreshFalse(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	universes := &mockUniverseProvider{rebuildResp: &dto.UniverseRebuildResponse{Market: "us-stocks", Code: "strong_momentum"}}
+	r := NewRouterFromDeps(Deps{
+		Config:    config.DefaultRuntime(),
+		Universes: universes,
+		APIKeys: fakeAPIKeyAuthenticator{keys: map[string]apikeyauth.Principal{
+			"test-key": {ID: 1, KeyDigest: "test-digest"},
+		}},
+	})
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodPost, "/api/v1/universes/rebuild", strings.NewReader(`{"market":"us-stocks","code":"strong_momentum","force_refresh":false,"dry_run":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-API-Key", "test-key")
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if universes.rebuildReq.ForceRefresh {
+		t.Fatal("force_refresh=false was not preserved")
 	}
 }
 
@@ -1143,14 +1190,14 @@ func TestRebuildUniverseRequiresAPIKeyAuthenticator(t *testing.T) {
 	r := NewRouterFromDeps(Deps{Config: config.DefaultRuntime(), Universes: universes})
 
 	w := httptest.NewRecorder()
-	req, _ := http.NewRequest(http.MethodPost, "/api/v1/universes/rebuild", strings.NewReader(`{"market":"us-stocks","code":"strong_momentum","from":"2024-01-01","to":"2024-01-03"}`))
+	req, _ := http.NewRequest(http.MethodPost, "/api/v1/universes/rebuild", strings.NewReader(`{"market":"us-stocks","code":"strong_momentum"}`))
 	req.Header.Set("Content-Type", "application/json")
 	r.ServeHTTP(w, req)
 
 	if w.Code != http.StatusForbidden {
 		t.Fatalf("expected 403, got %d: %s", w.Code, w.Body.String())
 	}
-	if !universes.rebuildReq.From.IsZero() {
+	if universes.rebuildReq.Code != "" {
 		t.Fatalf("rebuild should not be called without API key auth: %+v", universes.rebuildReq)
 	}
 }

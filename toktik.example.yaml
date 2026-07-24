@@ -90,6 +90,11 @@ latest_market_data:
   option_chain_limit: 250
   option_aggregate_limit: 180
 
+# Server-owned historical start for force-refresh named-universe rebuilds.
+# The end date is derived from the latest common SPY stock/options 1d data.
+universe:
+  rebuild_start_date: "2022-05-01"
+
 redis:
   enabled: false
   addr: "127.0.0.1:6379"

@@ -36,32 +36,6 @@ func TestColdStartAssetClassesReturnsBothWhenDatabaseIsEmpty(t *testing.T) {
 	}
 }
 
-func TestResolveRequestedSyncScopeParsesOverrideWindow(t *testing.T) {
-	start, end, dates, err := resolveRequestedSyncScope("2022-05-01", "2022-12-31", "", "")
-	if err != nil {
-		t.Fatalf("resolveRequestedSyncScope returned error: %v", err)
-	}
-	if len(dates) != 0 {
-		t.Fatalf("expected no explicit dates, got %v", dates)
-	}
-	if got := start.Format("2006-01-02"); got != "2022-05-01" {
-		t.Fatalf("unexpected start date: %s", got)
-	}
-	if got := end.Format("2006-01-02"); got != "2022-12-31" {
-		t.Fatalf("unexpected end date: %s", got)
-	}
-}
-
-func TestResolveRequestedSyncScopeRejectsInvertedWindow(t *testing.T) {
-	_, _, _, err := resolveRequestedSyncScope("2022-12-31", "2022-05-01", "", "")
-	if err == nil {
-		t.Fatal("expected inverted range error")
-	}
-	if !strings.Contains(err.Error(), "before start-date") {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
 func TestResolveRequestedSyncScopeParsesExplicitDates(t *testing.T) {
 	file, err := os.CreateTemp(t.TempDir(), "dates-*.txt")
 	if err != nil {

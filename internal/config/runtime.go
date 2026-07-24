@@ -77,6 +77,7 @@ const (
 	defaultRedisAddr                         = "127.0.0.1:6379"
 	defaultPolygonTimeoutSec                 = 60
 	defaultReportsRoot                       = "reports/backtests"
+	defaultUniverseRebuildStartDate          = "2022-05-01"
 	maxLatestMarketDataOptionChainLimit      = 250
 )
 
@@ -101,6 +102,7 @@ type Runtime struct {
 	Polygon          Polygon          `yaml:"polygon"`
 	FMP              FMP              `yaml:"fmp"`
 	LatestMarketData LatestMarketData `yaml:"latest_market_data"`
+	Universe         Universe         `yaml:"universe"`
 	Redis            Redis            `yaml:"redis"`
 	AESKey           string           `yaml:"aes_key"`
 
@@ -329,6 +331,12 @@ type Redis struct {
 	WriteTimeoutSeconds int    `yaml:"write_timeout_seconds"`
 }
 
+// Universe configures server-owned rebuild policy for named universes.
+// The rebuild range end is derived from reference market data at runtime.
+type Universe struct {
+	RebuildStartDate string `yaml:"rebuild_start_date"`
+}
+
 func DefaultRuntime() Runtime {
 	return Runtime{
 		ClickHouse: ClickHouse{
@@ -391,6 +399,9 @@ func DefaultRuntime() Runtime {
 			AlwaysRefreshSymbols:         slices.Clone(defaultLatestMarketDataAlwaysRefreshSymbols),
 			OptionChainLimit:             maxLatestMarketDataOptionChainLimit,
 			OptionAggregateLimit:         50,
+		},
+		Universe: Universe{
+			RebuildStartDate: defaultUniverseRebuildStartDate,
 		},
 		Redis: Redis{
 			Addr:                defaultRedisAddr,
@@ -825,6 +836,10 @@ func (c *Runtime) normalize() {
 	if c.LatestMarketData.OptionAggregateLimit <= 0 {
 		c.LatestMarketData.OptionAggregateLimit = 50
 	}
+	c.Universe.RebuildStartDate = strings.TrimSpace(c.Universe.RebuildStartDate)
+	if c.Universe.RebuildStartDate == "" {
+		c.Universe.RebuildStartDate = defaultUniverseRebuildStartDate
+	}
 	if strings.TrimSpace(c.Redis.Addr) == "" {
 		c.Redis.Addr = defaultRedisAddr
 	}
@@ -843,6 +858,9 @@ func (c *Runtime) normalize() {
 }
 
 func (c Runtime) Validate() error {
+	if _, err := time.Parse("2006-01-02", c.Universe.RebuildStartDate); err != nil {
+		return fmt.Errorf("universe.rebuild_start_date must use YYYY-MM-DD: %w", err)
+	}
 	if strings.TrimSpace(c.ClickHouse.DSN) == "" {
 		return fmt.Errorf("clickhouse.dsn is required")
 	}
@@ -1049,6 +1067,13 @@ func (c Runtime) LatestMarketDataRefreshTimeout() time.Duration {
 // APIRequestTimeout returns the per-request handler timeout.
 func (c Runtime) APIRequestTimeout() time.Duration {
 	return time.Duration(c.API.RequestTimeoutSeconds) * time.Second
+}
+
+// UniverseRebuildStart returns the configured inclusive start date for
+// force-refresh universe rebuilds. Runtime validation guarantees parsing.
+func (c Runtime) UniverseRebuildStart() time.Time {
+	start, _ := time.Parse("2006-01-02", c.Universe.RebuildStartDate)
+	return start.UTC()
 }
 
 func (c Runtime) SchemaPathCandidates(fileName string) []string {
