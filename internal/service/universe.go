@@ -302,10 +302,10 @@ func validateUniverseRebuildStart(rebuildStart, earliestReference time.Time) err
 func (s *UniverseService) universeReferenceDataWindow(ctx context.Context) (universeReferenceDataWindow, bool, error) {
 	rows, err := s.repo.Query(ctx, `
 SELECT
-	(SELECT minOrNull(market_date) FROM us_stocks_bar_1d_direct) AS stock_earliest,
-	(SELECT minOrNull(market_date) FROM us_options_bar_1d_direct) AS options_earliest,
-	(SELECT maxOrNull(market_date) FROM us_stocks_bar_1d_direct WHERE symbol = 'SPY') AS stock_latest,
-	(SELECT maxOrNull(market_date) FROM us_options_bar_1d_direct WHERE underlying = 'SPY') AS options_latest`)
+	(SELECT minOrNull(timestamp) FROM us_stocks_bar_1d) AS stock_earliest,
+	(SELECT minOrNull(timestamp) FROM us_options_bar_1d) AS options_earliest,
+	(SELECT maxOrNull(timestamp) FROM us_stocks_bar_1d WHERE symbol = 'SPY') AS stock_latest,
+	(SELECT maxOrNull(timestamp) FROM us_options_bar_1d WHERE underlying = 'SPY') AS options_latest`)
 	if err != nil {
 		return universeReferenceDataWindow{}, false, fmt.Errorf("query daily universe reference data: %w", err)
 	}
