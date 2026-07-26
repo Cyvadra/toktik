@@ -176,7 +176,7 @@ func chainMarketMatches(providerMarket, requestedMarket string) bool {
 
 func isUSChainMarket(market string) bool {
 	switch strings.ToLower(strings.TrimSpace(market)) {
-	case "us", "us-stocks", "us-stock", "us-underlying", "stocks":
+	case "us", "us-options", "us-stocks", "us-stock", "us-underlying", "stocks":
 		return true
 	default:
 		return false

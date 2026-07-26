@@ -309,6 +309,18 @@ func (b *testOptionsBridge) ContractMark(c interface{}) float64   { return asTes
 func (b *testOptionsBridge) ContractVolume(c interface{}) float64 { return 100 }
 func (b *testOptionsBridge) ContractOI(c interface{}) float64     { return 100 }
 
+func TestSpreadLegsMatchScopeAcceptsUSOptionsAlias(t *testing.T) {
+	bridge := newTestOptionsBridge()
+	legs := []SpreadLegInput{{Contract: bridge.chain[0], Side: "buy", Qty: 1}}
+
+	if !spreadLegsMatchScope(bridge, legs, "us-options", "spy") {
+		t.Fatalf("expected us-options request to match us-stocks contract scope")
+	}
+	if spreadLegsMatchScope(bridge, legs, "crypto", "SPY") {
+		t.Fatalf("expected crypto request not to match US contract scope")
+	}
+}
+
 func (b *testOptionsBridge) OpenSpread(legs []SpreadLegInput, tag string) int { return 1 }
 func (b *testOptionsBridge) OpenSpreadInGroup(legs []SpreadLegInput, tag string, groupID int) int {
 	return 1

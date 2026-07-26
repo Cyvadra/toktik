@@ -1,55 +1,105 @@
 //@version=6
 strategy("strong-momentum-dsl")
 
-universe_code = input.string("strong_momentum", title="Universe Code")
 top_n = input.int(5, title="Top N", minval=1, maxval=12)
-target_delta = input.float(0.35, title="Target Delta", minval=0.05, maxval=0.8, step=0.01)
+candidate_limit = input.int(20, title="Candidate Limit", minval=1, maxval=30)
+target_delta = input.float(0.35, title="Target Delta", minval=0.05, maxval=0.60, step=0.01)
 qty = input.float(1, title="Contracts", minval=1, maxval=20, step=1)
-valuation_percentile = input.float(50, title="Valuation Percentile", minval=0, maxval=100, step=1)
-market_name = input.string("us", title="Options Market", options=["us"])
+min_dte = input.int(10, title="Minimum DTE", minval=1, maxval=90)
+max_dte = input.int(90, title="Maximum DTE", minval=10, maxval=180)
+min_premium = input.float(1, title="Minimum Premium", minval=0, maxval=20, step=0.05)
+seller_iv_floor = input.float(45, title="Seller IV Percentile Floor", minval=0, maxval=100, step=1)
+hv_low = input.float(35, title="HV Low Percentile", minval=0, maxval=100, step=1)
+hv_high = input.float(70, title="HV High Percentile", minval=0, maxval=100, step=1)
+max_hold_bars = input.int(20, title="Maximum Hold Bars", minval=1, maxval=120)
+rebalance_bars = input.int(21, title="Rebalance Bars", minval=2, maxval=120)
 
-symbols = universe.symbols(universe_code)
+symbols = universe.symbols("strong_momentum")
+candidate_items = []
+
+for symbol in symbols
+    price = request.security("us-stocks", symbol, "1d", "close")
+    rsi14 = request.security("us-stocks", symbol, "1d", ta.rsi(close, 14))
+    return20 = request.security("us-stocks", symbol, "1d", close / close[20] - 1)
+    hv20 = request.factor("volatility", symbol, "1d", "hv20")
+    iv_percentile = request.factor("volatility", symbol, "1d", "iv_percentile")
+    hv_percentile = ta.percentrank_valid(hv20, 252, 60)
+    if not na(price) and price > 0 and not na(rsi14) and not na(hv_percentile) and not na(iv_percentile)
+        candidate_items = candidates.add(candidate_items, candidates.new(symbol, rsi14, return20, [price, rsi14, hv_percentile, iv_percentile]))
+
+ranked = candidates.sort(candidate_items, "desc")
+targets = candidates.take(ranked, candidate_limit)
+selected = candidates.take(targets, top_n)
+top_payload = len(selected) > 0 ? candidates.payload(selected[0]) : [na, na, na, na]
+top_price = top_payload[0]
+top_rsi14 = top_payload[1]
+top_hv_percentile = top_payload[2]
+top_iv_percentile = top_payload[3]
+
+rebalance_due = bar_index % rebalance_bars == 0
+selected_with_strategy = 0
+chain_ready_count = 0
+opened_spreads = 0
 
 plot(len(symbols), title="universe_size", precision=0)
-plot(spread.count(), title="open_spreads", precision=0)
+plot(len(candidate_items), title="qualified_candidates", precision=0)
+plot(len(targets), title="momentum_candidates", precision=0)
+plot(len(selected), title="selected_targets", precision=0)
+plot(rebalance_due ? 1 : 0, title="rebalance_due", precision=0)
+plot(top_price, title="top_price", precision=2)
+plot(top_rsi14, title="top_rsi14", precision=2)
+plot(top_hv_percentile, title="top_hv_percentile", precision=2)
+plot(top_iv_percentile, title="top_iv_percentile", precision=2)
 
-candidate_items = []
-for symbol in symbols
-    rsi14 = request.security("us-stocks", symbol, "1d", ta.rsi(close, 14))
-    cci20 = request.security("us-stocks", symbol, "1d", ta.cci(high, low, close, 20))
-    sma5 = request.security("us-stocks", symbol, "1d", ta.sma(close, 5))
-    sma20 = request.security("us-stocks", symbol, "1d", ta.sma(close, 20))
-    hv30 = request.factor("volatility", symbol, "1d", "hv30")
-    ivp = request.factor("volatility", symbol, "1d", "iv_percentile")
-    hvp = ta.percentrank_valid(hv30, 80, 40)
-    ctx = market.context(rsi14, cci20, hvp, ivp, valuation_percentile)
-    strategies = options.strategies(ctx, "momentum")
-    trend = market.trend_state(ctx)
-    range_ok = trend != "range" or math.abs(cci20) < 101
-    momentum_ok = sma5 > sma20 and rsi14 > 60 and range_ok and len(strategies) > 0
-    if momentum_ok
-        chain = options.chain(market_name, symbol)
-        if chain != na and options.len(chain) > 0
-            legs = options.build_strategy(chain, strategies[0], qty, target_delta)
-            if len(legs) > 0
-                candidate_items = candidates.add(candidate_items, candidates.new(symbol, rsi14, 0, [strategies[0], legs]))
-                trace.emit("candidate_match", symbol, "momentum")
+if rebalance_due
+    for item in selected
+        symbol = candidates.symbol(item)
+        payload = candidates.payload(item)
+        price = payload[0]
+        rsi14 = payload[1]
+        hv_percentile = payload[2]
+        iv_percentile = payload[3]
+        high_iv = iv_percentile >= seller_iv_floor
+        high_hv = hv_percentile >= hv_high
+        mid_hv = hv_percentile >= hv_low and hv_percentile < hv_high
+        low_hv = hv_percentile < hv_low
+        strategy_name = ""
+
+        if rsi14 >= 85
+            strategy_name = high_iv ? "COVERED_CALL" : "LONG_COLLAR"
+        else if rsi14 >= 58 and mid_hv
+            strategy_name = high_iv ? "BULL_PUT_SPREAD" : "BULL_CALL_SPREAD"
+        else if rsi14 >= 48 and high_hv and high_iv
+            strategy_name = "IRON_CONDOR"
+        else if rsi14 < 48 and high_hv
+            strategy_name = high_iv ? "BULL_PUT_SPREAD" : "BULL_CALL_SPREAD"
+        else if rsi14 < 48 and low_hv
+            strategy_name = high_iv ? "BEAR_CALL_SPREAD" : "BEAR_PUT_SPREAD"
+
+        if str.length(strategy_name) > 0
+            selected_with_strategy += 1
+            chain = options.chain("us-options", symbol)
+            chain = options.expiry_range(chain, min_dte, max_dte)
+            chain = options.min_premium(chain, min_premium)
+            if options.len(chain) > 0
+                chain_ready_count += 1
+                legs = options.build_strategy(chain, strategy_name, qty, target_delta)
+                if len(legs) > 0
+                    spread_id = spread.open_on("us-options", symbol, legs, "optopick-momentum")
+                    if spread_id >= 0
+                        schedule.close_spread(max_hold_bars, spread_id, "max_hold")
+                        opened_spreads += 1
+                        trace.emit("momentum_open", symbol, strategy_name)
+                    else
+                        trace.emit("momentum_open_rejected", symbol, strategy_name)
+                else
+                    trace.emit("momentum_legs_empty", symbol, strategy_name)
             else
-                trace.emit("leg_reject", symbol, strategies[0])
+                trace.emit("momentum_chain_empty", symbol, strategy_name)
+        else
+            trace.emit("momentum_no_strategy", symbol, str.format("rsi=%s", rsi14))
 
-ranked_candidates = candidates.sort(candidate_items, "desc")
-top_candidates = candidates.take(ranked_candidates, 12)
-
-opened_count = 0
-for candidate in top_candidates
-    symbol = candidates.symbol(candidate)
-    state_key = str.format("strong_momentum_%s", symbol)
-    if not ref.has(state_key) and opened_count < top_n
-        payload = candidates.payload(candidate)
-        name = payload[0]
-        legs = payload[1]
-        sid = spread.open_on(market_name, symbol, legs, state_key)
-        if sid != na
-            ref.set(state_key, sid)
-            opened_count = opened_count + 1
-            trace.emit("open_success", symbol, name)
+plot(selected_with_strategy, title="selected_with_strategy", precision=0)
+plot(chain_ready_count, title="chain_ready_count", precision=0)
+plot(opened_spreads, title="opened_spreads", precision=0)
+plot(spread.count(), title="open_spreads", precision=0)

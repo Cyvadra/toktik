@@ -29,6 +29,9 @@ func TestSnapshotOptionsChainProviderCopiesContractsAndMatchesUSAliases(t *testi
 	if contracts[0].MarkPrice != 1.25 {
 		t.Fatalf("snapshot contract was not independent from source: mark=%v", contracts[0].MarkPrice)
 	}
+	if got := provider.AvailableContractsFor(ts, "us-options", "AAPL"); len(got) != 1 {
+		t.Fatalf("expected us-options alias to return one contract, got %d", len(got))
+	}
 	if got := provider.AvailableContractsFor(ts, "crypto", "AAPL"); len(got) != 0 {
 		t.Fatalf("expected crypto market alias mismatch to return no contracts, got %d", len(got))
 	}

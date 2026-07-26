@@ -7,6 +7,8 @@ import (
 	"time"
 )
 
+const maxPrepareLoadConcurrency = 8
+
 // PreparedData holds pre-loaded and aligned data that can be reused across
 // multiple strategy runs. Created by DataPreparer.Prepare, consumed by
 // Replayer.Replay and Engine.RunBatch.
@@ -116,6 +118,7 @@ func (dp *DataPreparer) Prepare(ctx context.Context, market, symbol, interval st
 
 	if secCount > 0 {
 		results := make(chan secResult, secCount)
+		loadSlots := make(chan struct{}, maxPrepareLoadConcurrency)
 		var wg sync.WaitGroup
 
 		for i := 1; i < len(setupCtx.securities); i++ {
@@ -128,6 +131,13 @@ func (dp *DataPreparer) Prepare(ctx context.Context, market, symbol, interval st
 			wg.Add(1)
 			go func(idx int, f DataFeed, r SecurityRef) {
 				defer wg.Done()
+				select {
+				case loadSlots <- struct{}{}:
+					defer func() { <-loadSlots }()
+				case <-ctx.Done():
+					results <- secResult{index: idx, err: ctx.Err()}
+					return
+				}
 				req := DataRequest{
 					Market: r.Market, Symbol: r.Symbol, Interval: r.Interval, From: loadFrom, To: to,
 				}
@@ -167,6 +177,7 @@ func (dp *DataPreparer) Prepare(ctx context.Context, market, symbol, interval st
 
 	if len(setupCtx.factors) > 0 {
 		results := make(chan factorResult, len(setupCtx.factors))
+		loadSlots := make(chan struct{}, maxPrepareLoadConcurrency)
 		var wg sync.WaitGroup
 
 		for i := range setupCtx.factors {
@@ -179,6 +190,13 @@ func (dp *DataPreparer) Prepare(ctx context.Context, market, symbol, interval st
 			wg.Add(1)
 			go func(idx int, f FactorFeed, r FactorRef) {
 				defer wg.Done()
+				select {
+				case loadSlots <- struct{}{}:
+					defer func() { <-loadSlots }()
+				case <-ctx.Done():
+					results <- factorResult{index: idx, err: ctx.Err()}
+					return
+				}
 				ds, err := f.Load(ctx, FactorRequest{
 					Name:          r.Name,
 					Interval:      r.Interval,

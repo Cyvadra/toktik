@@ -1145,7 +1145,7 @@ func spreadLegsMatchScope(b OptionsBridge, legs []SpreadLegInput, market, underl
 		if leg.Contract == nil {
 			return false
 		}
-		if !strings.EqualFold(strings.TrimSpace(b.ContractMarket(leg.Contract)), targetMarket) {
+		if !optionMarketScopesMatch(b.ContractMarket(leg.Contract), targetMarket) {
 			return false
 		}
 		if !strings.EqualFold(strings.TrimSpace(b.ContractUnderlying(leg.Contract)), targetUnderlying) {
@@ -1153,4 +1153,22 @@ func spreadLegsMatchScope(b OptionsBridge, legs []SpreadLegInput, market, underl
 		}
 	}
 	return true
+}
+
+func optionMarketScopesMatch(contractMarket, requestedMarket string) bool {
+	contractMarket = strings.ToLower(strings.TrimSpace(contractMarket))
+	requestedMarket = strings.ToLower(strings.TrimSpace(requestedMarket))
+	if contractMarket == requestedMarket {
+		return true
+	}
+	return isUSOptionMarketScope(contractMarket) && isUSOptionMarketScope(requestedMarket)
+}
+
+func isUSOptionMarketScope(market string) bool {
+	switch strings.ToLower(strings.TrimSpace(market)) {
+	case "us", "us-options", "us-stocks", "us-stock", "us-underlying", "stocks":
+		return true
+	default:
+		return false
+	}
 }
