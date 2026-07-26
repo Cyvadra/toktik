@@ -1,7 +1,6 @@
 package bridge
 
 import (
-	"math"
 	"strings"
 	"time"
 
@@ -404,23 +403,15 @@ func (b *barContextBridge) OpenGroups() []int {
 }
 
 func (b *barContextBridge) ScheduleCloseSpread(triggerBarOffset int, spreadID int) {
-	b.ctx.ScheduleCloseAfter(b.barOffsetDuration(triggerBarOffset), spreadID)
+	b.ctx.ScheduleCloseSpreadAfterBars(triggerBarOffset, spreadID, "")
 }
 
 func (b *barContextBridge) ScheduleCloseSpreadWithReason(triggerBarOffset int, spreadID int, reason string) {
-	b.ctx.ScheduleCloseSpreadOrder(
-		b.ctx.Time().Add(b.barOffsetDuration(triggerBarOffset)),
-		spreadID,
-		backtest.SpreadOrderMarket,
-		backtest.Sell,
-		math.NaN(),
-		0,
-		reason,
-	)
+	b.ctx.ScheduleCloseSpreadAfterBars(triggerBarOffset, spreadID, reason)
 }
 
 func (b *barContextBridge) ScheduleCloseLeg(triggerBarOffset int, spreadID, legIndex int) {
-	b.ctx.ScheduleCloseLegAfter(b.barOffsetDuration(triggerBarOffset), spreadID, legIndex)
+	b.ctx.ScheduleCloseLegAfterBars(triggerBarOffset, spreadID, legIndex)
 }
 
 func (b *barContextBridge) ScheduleCloseGroup(triggerBarOffset int, groupID int) {

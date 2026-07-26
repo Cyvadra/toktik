@@ -114,3 +114,25 @@ func TestCandidatesRejectsInvalidSortAndCount(t *testing.T) {
 		t.Fatalf("diagnostics = %+v, want two errors", items)
 	}
 }
+
+func TestArrayContainsUsesValueEquality(t *testing.T) {
+	prog, errs := parser.Parse(`
+symbols = ["AAPL", "MSFT"]
+has_msft = array.contains(symbols, "MSFT")
+has_nvda = array.contains(symbols, "NVDA")
+has_nested = array.contains([[1, 2], [3]], [1, 2])
+`)
+	if len(errs) > 0 {
+		t.Fatal(errs)
+	}
+	ip := NewInterpreter(prog)
+	ip.Init()
+	ip.OnBar()
+
+	hasMSFT, _ := ip.Global.Get("has_msft")
+	hasNVDA, _ := ip.Global.Get("has_nvda")
+	hasNested, _ := ip.Global.Get("has_nested")
+	if !hasMSFT.Bool() || hasNVDA.Bool() || !hasNested.Bool() {
+		t.Fatalf("array.contains results = %v/%v/%v", hasMSFT.Bool(), hasNVDA.Bool(), hasNested.Bool())
+	}
+}

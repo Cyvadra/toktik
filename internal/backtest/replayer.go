@@ -256,7 +256,11 @@ func (r *Replayer) Replay(ctx context.Context, prepared *PreparedData, strategy 
 
 			var remaining []ScheduledAction
 			for _, sa := range scheduledActions {
-				if !prepared.PrimaryDS.Timestamps[i].Before(sa.TriggerTime) {
+				triggered := sa.TriggerBarIndex > 0 && i >= sa.TriggerBarIndex
+				if sa.TriggerBarIndex <= 0 {
+					triggered = !prepared.PrimaryDS.Timestamps[i].Before(sa.TriggerTime)
+				}
+				if triggered {
 					if !triggeredByBar(sa, barOpen, barHigh, barLow) {
 						remaining = append(remaining, sa)
 						continue

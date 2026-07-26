@@ -892,6 +892,41 @@ func (bc *BarContext) ScheduleCloseSpreadOrder(triggerTime time.Time, spreadID i
 	})
 }
 
+// ScheduleCloseSpreadAfterBars closes all spread legs after the requested
+// number of primary replay bars, independent of weekends or irregular gaps.
+func (bc *BarContext) ScheduleCloseSpreadAfterBars(barOffset, spreadID int, closeReason string) {
+	if bc.scheduledActions == nil || barOffset <= 0 {
+		return
+	}
+	*bc.scheduledActions = append(*bc.scheduledActions, ScheduledAction{
+		TriggerBarIndex: bc.barIndex + barOffset,
+		SpreadID:        spreadID,
+		LegIndex:        -1,
+		ActionType:      ScheduleCloseSpread,
+		OrderType:       SpreadOrderMarket,
+		TriggerSide:     Sell,
+		TriggerPrice:    math.NaN(),
+		CloseReason:     closeReason,
+	})
+}
+
+// ScheduleCloseLegAfterBars closes one spread leg after the requested number
+// of primary replay bars, independent of weekends or irregular gaps.
+func (bc *BarContext) ScheduleCloseLegAfterBars(barOffset, spreadID, legIndex int) {
+	if bc.scheduledActions == nil || barOffset <= 0 {
+		return
+	}
+	*bc.scheduledActions = append(*bc.scheduledActions, ScheduledAction{
+		TriggerBarIndex: bc.barIndex + barOffset,
+		SpreadID:        spreadID,
+		LegIndex:        legIndex,
+		ActionType:      ScheduleCloseLeg,
+		OrderType:       SpreadOrderMarket,
+		TriggerSide:     Sell,
+		TriggerPrice:    math.NaN(),
+	})
+}
+
 // ScheduleCloseAfter schedules closing all legs of a spread after a duration from now.
 func (bc *BarContext) ScheduleCloseAfter(d time.Duration, spreadID int) {
 	bc.ScheduleCloseSpread(bc.barTime.Add(d), spreadID)

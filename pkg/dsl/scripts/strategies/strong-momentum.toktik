@@ -1,18 +1,13 @@
 //@version=6
 strategy("strong-momentum-dsl")
 
-top_n = input.int(5, title="Top N", minval=1, maxval=12)
-candidate_limit = input.int(20, title="Candidate Limit", minval=1, maxval=30)
 target_delta = input.float(0.35, title="Target Delta", minval=0.05, maxval=0.60, step=0.01)
 qty = input.float(1, title="Contracts", minval=1, maxval=20, step=1)
-min_dte = input.int(10, title="Minimum DTE", minval=1, maxval=90)
-max_dte = input.int(90, title="Maximum DTE", minval=10, maxval=180)
-min_premium = input.float(1, title="Minimum Premium", minval=0, maxval=20, step=0.05)
-seller_iv_floor = input.float(45, title="Seller IV Percentile Floor", minval=0, maxval=100, step=1)
-hv_low = input.float(35, title="HV Low Percentile", minval=0, maxval=100, step=1)
-hv_high = input.float(70, title="HV High Percentile", minval=0, maxval=100, step=1)
-max_hold_bars = input.int(20, title="Maximum Hold Bars", minval=1, maxval=120)
-rebalance_bars = input.int(21, title="Rebalance Bars", minval=2, maxval=120)
+min_dte = input.int(25, title="Minimum DTE", minval=1, maxval=90)
+target_dte = input.int(45, title="Target DTE", minval=7, maxval=120)
+max_dte = input.int(65, title="Maximum DTE", minval=10, maxval=180)
+min_short_premium = input.float(0.50, title="Minimum Short Premium", minval=0, maxval=20, step=0.05)
+seller_iv_floor = input.float(70, title="Seller IV Percentile Floor", minval=0, maxval=100, step=1)
 
 symbols = universe.symbols("strong_momentum")
 candidate_items = []
@@ -20,86 +15,92 @@ candidate_items = []
 for symbol in symbols
     price = request.security("us-stocks", symbol, "1d", "close")
     rsi14 = request.security("us-stocks", symbol, "1d", ta.rsi(close, 14))
+    cci20 = request.security("us-stocks", symbol, "1d", ta.cci(high, low, close, 20))
+    sma5 = request.security("us-stocks", symbol, "1d", ta.sma(close, 5))
+    sma20 = request.security("us-stocks", symbol, "1d", ta.sma(close, 20))
     return20 = request.security("us-stocks", symbol, "1d", close / close[20] - 1)
     hv20 = request.factor("volatility", symbol, "1d", "hv20")
     iv_percentile = request.factor("volatility", symbol, "1d", "iv_percentile")
     hv_percentile = ta.percentrank_valid(hv20, 252, 60)
-    if not na(price) and price > 0 and not na(rsi14) and not na(hv_percentile) and not na(iv_percentile)
-        candidate_items = candidates.add(candidate_items, candidates.new(symbol, rsi14, return20, [price, rsi14, hv_percentile, iv_percentile]))
+    data_ready = not na(price) and price > 0 and not na(rsi14) and not na(cci20) and not na(sma5) and not na(sma20) and not na(return20) and not na(hv_percentile) and not na(iv_percentile)
+    momentum_ok = data_ready and sma5 > sma20 and rsi14 >= 55 and cci20 > 0 and return20 > 0
+    if momentum_ok
+        strategy_name = iv_percentile >= seller_iv_floor ? "BULL_PUT_SPREAD" : "BULL_CALL_SPREAD"
+        candidate_items = candidates.add(candidate_items, candidates.new(symbol, rsi14, -return20, [price, rsi14, cci20, hv_percentile, iv_percentile, strategy_name]))
 
 ranked = candidates.sort(candidate_items, "desc")
-targets = candidates.take(ranked, candidate_limit)
-selected = candidates.take(targets, top_n)
-top_payload = len(selected) > 0 ? candidates.payload(selected[0]) : [na, na, na, na]
+targets = ranked
+top_payload = len(targets) > 0 ? candidates.payload(targets[0]) : [na, na, na, na, na, ""]
 top_price = top_payload[0]
 top_rsi14 = top_payload[1]
-top_hv_percentile = top_payload[2]
-top_iv_percentile = top_payload[3]
+top_hv_percentile = top_payload[3]
+top_iv_percentile = top_payload[4]
 
-rebalance_due = bar_index % rebalance_bars == 0
 selected_with_strategy = 0
 chain_ready_count = 0
+legs_ready_count = 0
 opened_spreads = 0
+closed_out_of_universe = 0
 
 plot(len(symbols), title="universe_size", precision=0)
 plot(len(candidate_items), title="qualified_candidates", precision=0)
 plot(len(targets), title="momentum_candidates", precision=0)
-plot(len(selected), title="selected_targets", precision=0)
-plot(rebalance_due ? 1 : 0, title="rebalance_due", precision=0)
 plot(top_price, title="top_price", precision=2)
 plot(top_rsi14, title="top_rsi14", precision=2)
 plot(top_hv_percentile, title="top_hv_percentile", precision=2)
 plot(top_iv_percentile, title="top_iv_percentile", precision=2)
 
-if rebalance_due
-    for item in selected
+for spread_id in spread.open_ids()
+    leg = spread.leg_contract(spread_id, 0)
+    underlying = contract.underlying(leg)
+    if str.length(underlying) > 0 and not array.contains(symbols, underlying)
+        spread.close(spread_id, "left_strong_momentum_universe")
+        ref.clear(str.format("strong_momentum_%s", underlying))
+        closed_out_of_universe += 1
+        trace.emit("momentum_close_out_of_universe", underlying, "membership")
+
+opened_this_bar = false
+for item in targets
+    if not opened_this_bar
         symbol = candidates.symbol(item)
         payload = candidates.payload(item)
-        price = payload[0]
-        rsi14 = payload[1]
-        hv_percentile = payload[2]
-        iv_percentile = payload[3]
-        high_iv = iv_percentile >= seller_iv_floor
-        high_hv = hv_percentile >= hv_high
-        mid_hv = hv_percentile >= hv_low and hv_percentile < hv_high
-        low_hv = hv_percentile < hv_low
-        strategy_name = ""
+        strategy_name = payload[5]
+        state_key = str.format("strong_momentum_%s", symbol)
+        if ref.has(state_key)
+            existing = spread.get(ref.get(state_key))
+            if len(existing) < 5 or not existing[4]
+                ref.clear(state_key)
 
-        if rsi14 >= 85
-            strategy_name = high_iv ? "COVERED_CALL" : "LONG_COLLAR"
-        else if rsi14 >= 58 and mid_hv
-            strategy_name = high_iv ? "BULL_PUT_SPREAD" : "BULL_CALL_SPREAD"
-        else if rsi14 >= 48 and high_hv and high_iv
-            strategy_name = "IRON_CONDOR"
-        else if rsi14 < 48 and high_hv
-            strategy_name = high_iv ? "BULL_PUT_SPREAD" : "BULL_CALL_SPREAD"
-        else if rsi14 < 48 and low_hv
-            strategy_name = high_iv ? "BEAR_CALL_SPREAD" : "BEAR_PUT_SPREAD"
-
-        if str.length(strategy_name) > 0
+        if str.length(strategy_name) > 0 and not ref.has(state_key)
             selected_with_strategy += 1
             chain = options.chain("us-options", symbol)
             chain = options.expiry_range(chain, min_dte, max_dte)
-            chain = options.min_premium(chain, min_premium)
+            chain = options.expiry_nearest(chain, target_dte)
             if options.len(chain) > 0
                 chain_ready_count += 1
                 legs = options.build_strategy(chain, strategy_name, qty, target_delta)
                 if len(legs) > 0
-                    spread_id = spread.open_on("us-options", symbol, legs, "optopick-momentum")
-                    if spread_id >= 0
-                        schedule.close_spread(max_hold_bars, spread_id, "max_hold")
-                        opened_spreads += 1
-                        trace.emit("momentum_open", symbol, strategy_name)
+                    short_premium_ok = strategy_name != "BULL_PUT_SPREAD" or contract.bid(legs[1][0]) >= min_short_premium
+                    if short_premium_ok
+                        legs_ready_count += 1
+                        spread_id = spread.open_on("us-options", symbol, legs, "strong-momentum")
+                        if spread_id >= 0
+                            ref.set(state_key, spread_id)
+                            opened_spreads += 1
+                            opened_this_bar = true
+                            trace.emit("momentum_open", symbol, strategy_name)
+                        else
+                            trace.emit("momentum_open_rejected", symbol, strategy_name)
                     else
-                        trace.emit("momentum_open_rejected", symbol, strategy_name)
+                        trace.emit("momentum_premium_rejected", symbol, strategy_name)
                 else
                     trace.emit("momentum_legs_empty", symbol, strategy_name)
             else
                 trace.emit("momentum_chain_empty", symbol, strategy_name)
-        else
-            trace.emit("momentum_no_strategy", symbol, str.format("rsi=%s", rsi14))
 
 plot(selected_with_strategy, title="selected_with_strategy", precision=0)
 plot(chain_ready_count, title="chain_ready_count", precision=0)
+plot(legs_ready_count, title="legs_ready_count", precision=0)
 plot(opened_spreads, title="opened_spreads", precision=0)
+plot(closed_out_of_universe, title="closed_out_of_universe", precision=0)
 plot(spread.count(), title="open_spreads", precision=0)

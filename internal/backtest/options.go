@@ -813,11 +813,12 @@ func (st *SpreadTracker) CloseAll(spreadID int, priceFn func(OptionContract) flo
 
 // ScheduledAction represents a time-triggered action for the engine to process.
 type ScheduledAction struct {
-	TriggerTime   time.Time
-	SpreadID      int
-	LegIndex      int // -1 means close all legs
-	ActionType    ScheduledActionType
-	SecurityOrder Order
+	TriggerTime     time.Time
+	TriggerBarIndex int // <= 0 means trigger by time
+	SpreadID        int
+	LegIndex        int // -1 means close all legs
+	ActionType      ScheduledActionType
+	SecurityOrder   Order
 
 	// Trigger behavior for pending spread actions.
 	OrderType    SpreadOrderType

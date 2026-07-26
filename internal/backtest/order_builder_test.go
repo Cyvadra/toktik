@@ -189,6 +189,35 @@ func TestSpreadOrderBuilder(t *testing.T) {
 	})
 }
 
+func TestScheduleCloseAfterBarsUsesReplayIndex(t *testing.T) {
+	var scheduledActions []ScheduledAction
+	ctx := &BarContext{
+		barIndex:         10,
+		barTime:          time.Date(2026, 7, 24, 0, 0, 0, 0, time.UTC),
+		scheduledActions: &scheduledActions,
+	}
+
+	ctx.ScheduleCloseSpreadAfterBars(2, 7, "max_hold")
+	ctx.ScheduleCloseLegAfterBars(3, 8, 1)
+
+	if len(scheduledActions) != 2 {
+		t.Fatalf("scheduled actions = %d, want 2", len(scheduledActions))
+	}
+
+	spreadAction := scheduledActions[0]
+	if spreadAction.TriggerBarIndex != 12 || !spreadAction.TriggerTime.IsZero() {
+		t.Fatalf("spread trigger = index %d/time %v, want index 12 with no time trigger", spreadAction.TriggerBarIndex, spreadAction.TriggerTime)
+	}
+	if spreadAction.CloseReason != "max_hold" || spreadAction.ActionType != ScheduleCloseSpread {
+		t.Fatalf("unexpected spread action: %+v", spreadAction)
+	}
+
+	legAction := scheduledActions[1]
+	if legAction.TriggerBarIndex != 13 || legAction.SpreadID != 8 || legAction.LegIndex != 1 || legAction.ActionType != ScheduleCloseLeg {
+		t.Fatalf("unexpected leg action: %+v", legAction)
+	}
+}
+
 func TestOpenSpreadInGroupAddsGroupMembershipOnce(t *testing.T) {
 	broker := NewBroker(Config{InitialCapital: 10000})
 	groupTracker := NewSpreadGroupTracker()
