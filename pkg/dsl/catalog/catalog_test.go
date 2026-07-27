@@ -15,6 +15,7 @@ func TestDSLStrategiesParse(t *testing.T) {
 		"ema-atr-spot-dsl",
 		"delta-filter-dsl",
 		"strong-momentum-dsl",
+		"daily-picks-dsl",
 		"value-allocation-dsl",
 		"index-options-dsl",
 	}
@@ -46,6 +47,7 @@ func TestStrategySamplesDeclareExpectedDataDependencies(t *testing.T) {
 		wantSymbol   string
 	}{
 		{name: "strong-momentum-dsl", universeCode: "strong_momentum", wantTemplate: "factor"},
+		{name: "daily-picks-dsl", universeCode: "daily_picks", wantTemplate: "fundamental"},
 		{name: "value-allocation-dsl", universeCode: "value_allocation", wantTemplate: "fundamental"},
 		{name: "index-options-dsl", wantSymbol: "SPY"},
 	}
