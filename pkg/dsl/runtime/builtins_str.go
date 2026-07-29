@@ -78,7 +78,12 @@ func RegisterStrBuiltins(ip *Interpreter) {
 		fmtStr := args[0].Str()
 		ifaces := make([]interface{}, len(args)-1)
 		for i := 1; i < len(args); i++ {
-			ifaces[i-1] = args[i].String()
+			value := args[i]
+			if value.Tag() == TagSeries {
+				ifaces[i-1] = value.Float()
+			} else {
+				ifaces[i-1] = value.String()
+			}
 		}
 		return StringVal(fmt.Sprintf(fmtStr, ifaces...))
 	})

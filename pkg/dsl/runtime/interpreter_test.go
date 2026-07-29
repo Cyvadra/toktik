@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"math"
+	"strconv"
 	"testing"
 
 	"github.com/Cyvadra/toktik/pkg/dsl/diagnostics"
@@ -728,6 +729,41 @@ trace.emit("candidate_match", "AAPL", "momentum")
 	}
 	if items[0].Severity != diagnostics.SeverityInfo || items[0].Code != "dsl.trace.candidate_match" || items[0].Function != "trace.emit" {
 		t.Fatalf("unexpected trace diagnostic: %+v", items[0])
+	}
+}
+
+func TestTraceEmitReportsTruncationOnce(t *testing.T) {
+	ip := NewInterpreter(nil)
+	RegisterTraceBuiltins(ip)
+	var items diagnostics.List
+	ip.Diagnostics = &items
+	for index := 0; index < maxTraceDiagnostics; index++ {
+		ip.traceKeys[strconv.Itoa(index)] = struct{}{}
+	}
+
+	emit := ip.builtins["trace.emit"].FnPtr().Native
+	emit([]Value{StringVal("signal_open"), StringVal("AAPL"), StringVal("strategy=BUY_CALL")})
+	emit([]Value{StringVal("signal_open"), StringVal("MSFT"), StringVal("strategy=BUY_CALL")})
+
+	if len(items) != 1 || items[0].Code != "dsl.trace.truncated" || items[0].Severity != diagnostics.SeverityWarning {
+		t.Fatalf("trace diagnostics = %+v, want one truncation warning", items)
+	}
+}
+
+func TestStrFormatUsesCurrentSeriesValue(t *testing.T) {
+	prog, errs := parser.Parse(`formatted = str.format("value=%g", close)`)
+	if len(errs) > 0 {
+		t.Fatal(errs)
+	}
+	ip := NewInterpreter(prog)
+	RegisterStrBuiltins(ip)
+	ip.Bridge = &mockBridge{closeVal: 12.5}
+	ip.Init()
+	ip.OnBar()
+
+	formatted, ok := ip.Global.Get("formatted")
+	if !ok || formatted.Str() != "value=12.5" {
+		t.Fatalf("formatted = %q, want value=12.5", formatted.Str())
 	}
 }
 

@@ -13,6 +13,8 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
+from export_dsl_signal_audit import export_audit
+
 
 DEFAULT_STRATEGIES = [
     "pkg/dsl/scripts/strategies/index-options.toktik",
@@ -49,6 +51,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--timeout", type=float, default=1800.0, help="max seconds to wait for each run")
     parser.add_argument("--poll-interval", type=float, default=5.0, help="seconds between status polls")
     parser.add_argument("--output", type=Path, help="optional JSON file for full run statuses")
+    parser.add_argument("--signal-audit", type=Path, help="optional CSV path for DSL signal trace audit")
     parser.add_argument(
         "--reports-dir",
         type=Path,
@@ -248,6 +251,17 @@ def main() -> int:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(json.dumps(results, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
         print(f"wrote {args.output}", flush=True)
+
+    if args.signal_audit:
+        if not args.output:
+            print("--signal-audit requires --output", file=sys.stderr, flush=True)
+            return 2
+        try:
+            count = export_audit(args.output, args.signal_audit)
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            print(f"signal audit error: {exc}", file=sys.stderr, flush=True)
+            return 1
+        print(f"wrote {args.signal_audit} ({count} signal rows)", flush=True)
 
     all_completed = len(results) == len(strategies) and all(
         result.get("status", {}).get("status") == "completed" for result in results

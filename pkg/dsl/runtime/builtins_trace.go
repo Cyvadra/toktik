@@ -7,11 +7,26 @@ import (
 	"github.com/Cyvadra/toktik/pkg/dsl/diagnostics"
 )
 
-const maxTraceDiagnostics = 200
+const maxTraceDiagnostics = 10000
+const traceTruncatedKey = "__trace_truncated__"
 
 func RegisterTraceBuiltins(ip *Interpreter) {
 	ip.RegisterBuiltinWithParams("trace.emit", []string{"stage", "symbol", "reason"}, func(args []Value) Value {
-		if ip == nil || ip.Diagnostics == nil || len(args) < 3 || len(ip.traceKeys) >= maxTraceDiagnostics {
+		if ip == nil || ip.Diagnostics == nil || len(args) < 3 {
+			return NaVal()
+		}
+		if len(ip.traceKeys) >= maxTraceDiagnostics {
+			if _, seen := ip.traceKeys[traceTruncatedKey]; !seen {
+				ip.traceKeys[traceTruncatedKey] = struct{}{}
+				barIndex := ip.BarIndex
+				ip.Diagnostics.Add(diagnostics.Diagnostic{
+					Severity: diagnostics.SeverityWarning,
+					Code:     "dsl.trace.truncated",
+					Message:  "trace diagnostics exceeded the configured limit",
+					Function: "trace.emit",
+					BarIndex: &barIndex,
+				})
+			}
 			return NaVal()
 		}
 		stage := strings.TrimSpace(args[0].Str())

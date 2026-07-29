@@ -66,6 +66,31 @@ For ordinary stocks, the source top-pick validator disallows naked `SELL_CALL`. 
 - If a strategy cannot build valid legs or opening is rejected, the next strategy is attempted.
 - A closed or invalid spread reference is cleared so the underlying can re-enter later.
 
+## Signal audit
+
+The signal audit checks whether an executed decision follows the strategy rules. It does not evaluate PnL, returns, drawdown, win rate, or any other performance metric.
+
+Run the backtest with a full status output and an optional audit CSV:
+
+```bash
+python3 scripts/run_dsl_backtests.py \
+	--from 2023-07-27 --to 2026-07-27 \
+	--output tmp/daily-picks-backtest.json \
+	--signal-audit tmp/daily-picks-signal-audit.csv \
+	pkg/dsl/scripts/strategies/daily-picks.toktik
+```
+
+The audit CSV contains only `bar_index`, symbol, signal inputs, matched strategy order, final action, and rejection reason. It is assembled from the following DSL trace stages:
+
+| Stage | Purpose |
+| --- | --- |
+| `signal_input` | Turnover, valuation percentile, IV percentile, HV percentile, RSI, and CCI used by the decision. |
+| `signal_match` | The deterministic, ordered strategy list after the low-IV override and value matrix are applied. |
+| `signal_reject` | The chain, leg, or opening failure reason. |
+| `signal_open` | The strategy that successfully opened. |
+
+The exporter fails instead of producing an incomplete result when a successful open has no matching inputs, has no strategy match, opens a strategy outside the matched order, or more than one successful open appears on a bar. For an existing JSON result, run `python3 scripts/export_dsl_signal_audit.py INPUT.json OUTPUT.csv` directly.
+
 ## Three-year daily backtest
 
 Run ID: `ba88ad4e05a666bae9dea3012457dcfb`
