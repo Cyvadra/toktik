@@ -16,6 +16,7 @@ func TestDSLStrategiesParse(t *testing.T) {
 		"delta-filter-dsl",
 		"strong-momentum-dsl",
 		"daily-picks-dsl",
+		"daily-picks-core-dsl",
 		"value-allocation-dsl",
 		"index-options-dsl",
 	}
@@ -30,6 +31,67 @@ func TestDSLStrategiesParse(t *testing.T) {
 				t.Fatalf("Resolve(%q) returned 0 strategies", name)
 			}
 		})
+	}
+}
+
+func TestDailyPicksCoreDeclaresFixedSymbolDependencies(t *testing.T) {
+	strategies, err := catalog.Resolve("daily-picks-core-dsl", catalog.Config{})
+	if err != nil {
+		t.Fatalf("Resolve daily-picks-core-dsl failed: %v", err)
+	}
+	strategy, ok := strategies[0].(*bridge.DslStrategy)
+	if !ok {
+		t.Fatalf("strategy type = %T, want *bridge.DslStrategy", strategies[0])
+	}
+	manifest := strategy.Manifest()
+	for _, symbol := range []string{"SPY", "QQQ", "NVDA"} {
+		for _, field := range []string{"hv30", "iv_percentile"} {
+			found := false
+			for _, request := range manifest.Requests {
+				if request.Kind == "factor" && request.Symbol == symbol && request.Name == "volatility" && request.Field == field {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Fatalf("factor requests = %+v, missing %s volatility.%s", manifest.Requests, symbol, field)
+			}
+		}
+	}
+	wantFundamentals := map[string]map[string]bool{
+		"SPY":  {"pe10_live": true},
+		"QQQ":  {"pe": true},
+		"NVDA": {"pe": true, "pb": true},
+	}
+	for symbol, factors := range wantFundamentals {
+		for factor := range factors {
+			found := false
+			for _, request := range manifest.Requests {
+				if request.Kind == "fundamental" && request.Symbol == symbol && request.Name == factor {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Fatalf("fundamental requests = %+v, missing %s %s", manifest.Requests, symbol, factor)
+			}
+		}
+	}
+	chains := manifest.OptionChainRequests()
+	if len(chains) != 3 {
+		t.Fatalf("option chain requests = %+v, want 3", chains)
+	}
+	for _, symbol := range []string{"SPY", "QQQ", "NVDA"} {
+		found := false
+		for _, chain := range chains {
+			if chain.Symbol == symbol {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("option chain requests = %+v, missing %s", chains, symbol)
+		}
 	}
 }
 

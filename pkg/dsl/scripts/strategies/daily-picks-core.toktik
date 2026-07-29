@@ -1,0 +1,147 @@
+//@version=6
+strategy("daily-picks-core-dsl")
+
+max_candidates = input.int(3, title="Max Candidates", minval=1, maxval=3)
+target_delta = input.float(0.35, title="Target Delta", minval=0.05, maxval=0.60, step=0.01)
+qty = input.float(1, title="Contracts", minval=1, maxval=20, step=1)
+market_name = input.string("us", title="Options Market", options=["us"])
+min_dte = input.int(10, title="Minimum DTE", minval=1, maxval=89)
+max_dte = input.int(90, title="Maximum DTE", minval=11, maxval=365)
+min_abs_delta = input.float(0.05, title="Minimum Absolute Delta", minval=0.01, maxval=0.59, step=0.01)
+max_abs_delta = input.float(0.60, title="Maximum Absolute Delta", minval=0.06, maxval=1, step=0.01)
+min_premium = input.float(1, title="Minimum Premium", minval=0, maxval=100, step=0.05)
+
+symbols = ["SPY", "QQQ", "NVDA"]
+
+spy_price = request.security("us-stocks", "SPY", "1d", "close")
+qqq_price = request.security("us-stocks", "QQQ", "1d", "close")
+nvda_price = request.security("us-stocks", "NVDA", "1d", "close")
+spy_volume = request.security("us-stocks", "SPY", "1d", "volume")
+qqq_volume = request.security("us-stocks", "QQQ", "1d", "volume")
+nvda_volume = request.security("us-stocks", "NVDA", "1d", "volume")
+
+spy_pe10 = request.fundamental("us-stocks", "SPY", "pe10_live", "filled")
+qqq_pe = request.fundamental("us-stocks", "QQQ", "pe", "filled")
+nvda_pe = request.fundamental("us-stocks", "NVDA", "pe", "filled")
+nvda_pb = request.fundamental("us-stocks", "NVDA", "pb", "filled")
+spy_valuation = ta.percentrank_valid(spy_pe10, 500, 200)
+qqq_valuation = ta.percentrank_valid(qqq_pe, 500, 200)
+nvda_pe_percentile = ta.percentrank_valid(nvda_pe, 500, 200)
+nvda_pb_percentile = ta.percentrank_valid(nvda_pb, 500, 200)
+nvda_valuation = na
+if not na(nvda_pe_percentile) and not na(nvda_pb_percentile)
+    nvda_valuation = math.avg(nvda_pe_percentile, nvda_pb_percentile)
+else if not na(nvda_pe_percentile)
+    nvda_valuation = nvda_pe_percentile
+else if not na(nvda_pb_percentile)
+    nvda_valuation = nvda_pb_percentile
+
+spy_hv30 = request.factor("volatility", "SPY", "1d", "hv30")
+qqq_hv30 = request.factor("volatility", "QQQ", "1d", "hv30")
+nvda_hv30 = request.factor("volatility", "NVDA", "1d", "hv30")
+spy_ivp = request.factor("volatility", "SPY", "1d", "iv_percentile")
+qqq_ivp = request.factor("volatility", "QQQ", "1d", "iv_percentile")
+nvda_ivp = request.factor("volatility", "NVDA", "1d", "iv_percentile")
+spy_hvp = ta.percentrank_valid(spy_hv30, 80, 40)
+qqq_hvp = ta.percentrank_valid(qqq_hv30, 80, 40)
+nvda_hvp = ta.percentrank_valid(nvda_hv30, 80, 40)
+spy_rsi14 = request.security("us-stocks", "SPY", "1d", ta.rsi(close, 14))
+qqq_rsi14 = request.security("us-stocks", "QQQ", "1d", ta.rsi(close, 14))
+nvda_rsi14 = request.security("us-stocks", "NVDA", "1d", ta.rsi(close, 14))
+spy_cci20 = request.security("us-stocks", "SPY", "1d", ta.cci(high, low, close, 20))
+qqq_cci20 = request.security("us-stocks", "QQQ", "1d", ta.cci(high, low, close, 20))
+nvda_cci20 = request.security("us-stocks", "NVDA", "1d", ta.cci(high, low, close, 20))
+
+spy_chain = options.chain(market_name, "SPY")
+qqq_chain = options.chain(market_name, "QQQ")
+nvda_chain = options.chain(market_name, "NVDA")
+
+candidate_items = []
+for symbol in symbols
+    price = symbol == "SPY" ? spy_price : symbol == "QQQ" ? qqq_price : nvda_price
+    volume = symbol == "SPY" ? spy_volume : symbol == "QQQ" ? qqq_volume : nvda_volume
+    valuation_percentile = symbol == "SPY" ? spy_valuation : symbol == "QQQ" ? qqq_valuation : nvda_valuation
+    hvp = symbol == "SPY" ? spy_hvp : symbol == "QQQ" ? qqq_hvp : nvda_hvp
+    ivp = symbol == "SPY" ? spy_ivp : symbol == "QQQ" ? qqq_ivp : nvda_ivp
+    rsi14 = symbol == "SPY" ? spy_rsi14 : symbol == "QQQ" ? qqq_rsi14 : nvda_rsi14
+    cci20 = symbol == "SPY" ? spy_cci20 : symbol == "QQQ" ? qqq_cci20 : nvda_cci20
+    chain = symbol == "SPY" ? spy_chain : symbol == "QQQ" ? qqq_chain : nvda_chain
+    turnover_usd = price * volume
+    valid_metrics = not na(price) and price > 0 and not na(volume) and volume > 0 and not na(valuation_percentile) and not na(ivp) and not na(hvp) and not na(rsi14) and not na(cci20)
+    if valid_metrics
+        signal_inputs = str.format("turnover=%g;valuation=%g;ivp=%g;hvp=%g;rsi=%g;cci=%g", turnover_usd, valuation_percentile, ivp, hvp, rsi14, cci20)
+        strategies = []
+        if ivp <= 30
+            if valuation_percentile >= 80
+                strategies = strategies + ["BUY_PUT"]
+            else
+                strategies = strategies + ["BUY_STRADDLE"]
+
+        ctx = market.context(rsi14, cci20, hvp, ivp, valuation_percentile)
+        value_strategies = options.strategies(ctx, "value")
+        for name in value_strategies
+            resolved_name = name == "SELL_CALL" ? "BEAR_CALL_SPREAD" : name
+            if not array.contains(strategies, resolved_name)
+                strategies = strategies + [resolved_name]
+
+        if len(strategies) > 0 and chain != na and options.len(chain) > 0
+            eligible_chain = options.expiry_range(chain, min_dte, max_dte)
+            eligible_chain = options.min_premium(eligible_chain, min_premium)
+            eligible_calls = options.delta_range(options.calls(eligible_chain), min_abs_delta, max_abs_delta)
+            eligible_puts = options.delta_range(options.puts(eligible_chain), -max_abs_delta, -min_abs_delta)
+            if options.len(eligible_calls) > 0 or options.len(eligible_puts) > 0
+                candidate_items = candidates.add(candidate_items, candidates.new(symbol, turnover_usd, valuation_percentile, [strategies, signal_inputs]))
+
+ranked_candidates = candidates.sort(candidate_items, "desc")
+top_candidates = candidates.take(ranked_candidates, max_candidates)
+opened_this_bar = false
+opened_count = 0
+
+for candidate in top_candidates
+    if not opened_this_bar
+        symbol = candidates.symbol(candidate)
+        state_key = str.format("daily_picks_core_%s", symbol)
+        if ref.has(state_key)
+            existing = spread.get(ref.get(state_key))
+            if len(existing) < 5 or not existing[4]
+                ref.clear(state_key)
+
+        if not ref.has(state_key)
+            payload = candidates.payload(candidate)
+            strategies = payload[0]
+            signal_inputs = payload[1]
+            trace.emit("signal_input", symbol, signal_inputs)
+            trace.emit("signal_match", symbol, str.format("%s;strategies=%s", signal_inputs, str.join(strategies, "|")))
+            chain = symbol == "SPY" ? spy_chain : symbol == "QQQ" ? qqq_chain : nvda_chain
+            if chain != na and options.len(chain) > 0
+                chain = options.expiry_range(chain, min_dte, max_dte)
+                chain = options.min_premium(chain, min_premium)
+                if options.len(chain) > 0
+                    strategy_opened = false
+                    for name in strategies
+                        if not strategy_opened
+                            legs = options.build_strategy(chain, name, qty, target_delta)
+                            if len(legs) > 0
+                                spread_id = spread.open_on(market_name, symbol, legs, state_key)
+                                if spread_id >= 0
+                                    ref.set(state_key, spread_id)
+                                    strategy_opened = true
+                                    opened_this_bar = true
+                                    opened_count = opened_count + 1
+                                    trace.emit("signal_open", symbol, str.format("strategy=%s", name))
+                                else
+                                    trace.emit("signal_reject", symbol, str.format("strategy=%s;reason=open_rejected", name))
+                            else
+                                trace.emit("signal_reject", symbol, str.format("strategy=%s;reason=leg_reject", name))
+                    if not strategy_opened
+                        trace.emit("signal_reject", symbol, "reason=no_strategy_opened")
+                else
+                    trace.emit("signal_reject", symbol, "reason=dte_premium")
+            else
+                trace.emit("signal_reject", symbol, "reason=chain_empty")
+
+plot(len(symbols), title="universe_size", precision=0)
+plot(len(candidate_items), title="qualified_candidates", precision=0)
+plot(len(top_candidates), title="daily_pick_candidates", precision=0)
+plot(opened_count, title="opened_this_bar", precision=0)
+plot(spread.count(), title="open_spreads", precision=0)
