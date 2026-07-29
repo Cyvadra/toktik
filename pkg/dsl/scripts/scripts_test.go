@@ -1,0 +1,31 @@
+package dslscripts
+
+import "testing"
+
+func TestReadStrategyValidatesName(t *testing.T) {
+	tests := []struct {
+		name      string
+		wantError bool
+	}{
+		{name: " golden-cross.toktik ", wantError: false},
+		{name: "", wantError: true},
+		{name: "../golden-cross.toktik", wantError: true},
+		{name: "nested/golden-cross.toktik", wantError: true},
+		{name: "/golden-cross.toktik", wantError: true},
+		{name: "golden-cross.txt", wantError: true},
+		{name: "Golden-Cross.toktik", wantError: true},
+		{name: "golden-\ncross.toktik", wantError: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			content, err := ReadStrategy(tt.name)
+			if (err != nil) != tt.wantError {
+				t.Fatalf("ReadStrategy(%q) error = %v, wantError = %v", tt.name, err, tt.wantError)
+			}
+			if !tt.wantError && content == "" {
+				t.Fatal("ReadStrategy returned empty content")
+			}
+		})
+	}
+}
