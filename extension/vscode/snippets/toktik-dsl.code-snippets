@@ -99,10 +99,60 @@
     "description": "用於衡量目前值偏離近期均值幾個標準差，常作為均值回歸或異常波動濾網。",
     "prefix": "alpha.zscore"
   },
+  "array.contains": {
+    "body": "array.contains(${1:items}, ${2:value})",
+    "description": "檢查陣列是否包含指定值；可用於比對 point-in-time universe 與目前持倉標的。",
+    "prefix": "array.contains"
+  },
   "buy": {
     "body": "buy(${1:qty})",
     "description": "用於快速送出基本買入指令，適合最小範例或不需要命名部位的腳本。",
     "prefix": "buy"
+  },
+  "candidates.add": {
+    "body": "candidates.add(${1:items}, ${2:candidate})",
+    "description": "回傳加入 candidate 後的新候選陣列。",
+    "prefix": "candidates.add"
+  },
+  "candidates.contains_symbol": {
+    "body": "candidates.contains_symbol(${1:items}, ${2:symbol})",
+    "description": "檢查候選陣列是否包含標的，適合在原 universe 迴圈中保留可預載請求。",
+    "prefix": "candidates.contains_symbol"
+  },
+  "candidates.new": {
+    "body": "candidates.new(${1:symbol}, ${2:score}, ${3:secondary_score}, ${4:payload})",
+    "description": "建立供橫截面排序使用的候選標的；payload 可保留排序後執行所需的資料。",
+    "prefix": "candidates.new"
+  },
+  "candidates.payload": {
+    "body": "candidates.payload(${1:candidate})",
+    "description": "讀取 candidate 建立時保留的 payload。",
+    "prefix": "candidates.payload"
+  },
+  "candidates.score": {
+    "body": "candidates.score(${1:candidate})",
+    "description": "讀取 candidate 的主排序分數。",
+    "prefix": "candidates.score"
+  },
+  "candidates.secondary_score": {
+    "body": "candidates.secondary_score(${1:candidate})",
+    "description": "讀取 candidate 的次排序分數。",
+    "prefix": "candidates.secondary_score"
+  },
+  "candidates.sort": {
+    "body": "candidates.sort(${1:items}, ${2:direction})",
+    "description": "依 score 排序候選；同分時依 secondary_score 和 symbol 穩定排序。",
+    "prefix": "candidates.sort"
+  },
+  "candidates.symbol": {
+    "body": "candidates.symbol(${1:candidate})",
+    "description": "讀取 candidate 的標的代碼。",
+    "prefix": "candidates.symbol"
+  },
+  "candidates.take": {
+    "body": "candidates.take(${1:items}, ${2:count})",
+    "description": "回傳排序後候選的前 N 筆。",
+    "prefix": "candidates.take"
   },
   "config.get": {
     "body": "config.get(${1:name}, ${2:defval})",
@@ -469,7 +519,7 @@
   },
   "options.build_strategy": {
     "body": "options.build_strategy(${1:chain}, ${2:name}, ${3:qty}, ${4:target_delta})",
-    "description": "用於把策略名稱和期權鏈轉成可檢查的標準 legs，不直接下單。",
+    "description": "用於把 BUY_CALL、BUY_PUT、SELL_PUT、SELL_CALL、價差、跨式與鐵兀鷹等策略名稱轉成可檢查的標準 legs，不直接下單。",
     "prefix": "options.build_strategy"
   },
   "options.calls": {
@@ -534,7 +584,7 @@
   },
   "options.strategies": {
     "body": "options.strategies(${1:context}, ${2:family})",
-    "description": "用於依市場環境分類挑選候選期權策略名稱。",
+    "description": "用於依市場環境分類挑選候選期權策略名稱，支援 momentum、trend、index、value family。",
     "prefix": "options.strategies"
   },
   "options.strike_range": {
@@ -649,7 +699,7 @@
   },
   "request.factor": {
     "body": "request.factor(${1:name}, ${2:interval}, ${3:field})",
-    "description": "用於讀取預載因子資料；內建 volatility 因子會綁定目前回測主標的，提供 iv/current_iv、hv10、hv20、hv30、iv_percentile、iv_rank、price_observations、iv_observations 等 1d 欄位。",
+    "description": "用於讀取預載因子資料；三參形式讀取回測主標的，四參位置形式可指定標的。內建 volatility 因子提供 iv/current_iv、hv10、hv20、hv30、iv_percentile、iv_rank、price_observations、iv_observations 等 1d 欄位。",
     "prefix": "request.factor"
   },
   "request.fundamental": {
@@ -957,6 +1007,11 @@
     "description": "用於衡量目前值在近期視窗中的百分位排名。",
     "prefix": "ta.percentrank"
   },
+  "ta.percentrank_valid": {
+    "body": "ta.percentrank_valid(${1:source}, ${2:length}, ${3:min_samples})",
+    "description": "用於以有效觀測值計算目前值的歷史分位；缺失值會忽略，樣本不足時回傳 na。",
+    "prefix": "ta.percentrank_valid"
+  },
   "ta.rsi": {
     "body": "ta.rsi(${1:source}, ${2:length})",
     "description": "用於衡量超買超賣或動能強弱。",
@@ -981,6 +1036,11 @@
     "body": "ta.wma(${1:source}, ${2:length})",
     "description": "用於計算線性加權均線，近期資料權重較高。",
     "prefix": "ta.wma"
+  },
+  "trace.emit": {
+    "body": "trace.emit(${1:stage}, ${2:symbol}, ${3:reason})",
+    "description": "記錄有上限且去重的策略流程事件，供回測 DSL diagnostics 檢視。",
+    "prefix": "trace.emit"
   },
   "universe.symbols": {
     "body": "universe.symbols(${1:code})",

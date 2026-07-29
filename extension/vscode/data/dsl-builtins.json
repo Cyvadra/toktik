@@ -345,6 +345,134 @@
       "snippet": "alpha.zscore(${1:x}, ${2:window})"
     },
     {
+      "name": "array.contains",
+      "kind": "function",
+      "params": [
+        "items",
+        "value"
+      ],
+      "signature": "array.contains(items, value)",
+      "summary": "檢查陣列是否包含指定值；可用於比對 point-in-time universe 與目前持倉標的。",
+      "example": "still_member = array.contains(symbols, contract.underlying(leg))",
+      "returnValue": "布林",
+      "snippet": "array.contains(${1:items}, ${2:value})"
+    },
+    {
+      "name": "candidates.add",
+      "kind": "function",
+      "params": [
+        "items",
+        "candidate"
+      ],
+      "signature": "candidates.add(items, candidate)",
+      "summary": "回傳加入 candidate 後的新候選陣列。",
+      "example": "items = candidates.add(items, item)",
+      "returnValue": "陣列",
+      "snippet": "candidates.add(${1:items}, ${2:candidate})"
+    },
+    {
+      "name": "candidates.contains_symbol",
+      "kind": "function",
+      "params": [
+        "items",
+        "symbol"
+      ],
+      "signature": "candidates.contains_symbol(items, symbol)",
+      "summary": "檢查候選陣列是否包含標的，適合在原 universe 迴圈中保留可預載請求。",
+      "example": "selected = candidates.contains_symbol(top, symbol)",
+      "returnValue": "布林",
+      "snippet": "candidates.contains_symbol(${1:items}, ${2:symbol})"
+    },
+    {
+      "name": "candidates.new",
+      "kind": "function",
+      "params": [
+        "symbol",
+        "score",
+        "secondary_score",
+        "payload"
+      ],
+      "signature": "candidates.new(symbol, score, secondary_score, payload)",
+      "summary": "建立供橫截面排序使用的候選標的；payload 可保留排序後執行所需的資料。",
+      "example": "item = candidates.new(\"AAPL\", rsi14, 0, [name, legs])",
+      "returnValue": "candidate",
+      "snippet": "candidates.new(${1:symbol}, ${2:score}, ${3:secondary_score}, ${4:payload})"
+    },
+    {
+      "name": "candidates.payload",
+      "kind": "function",
+      "params": [
+        "candidate"
+      ],
+      "signature": "candidates.payload(candidate)",
+      "summary": "讀取 candidate 建立時保留的 payload。",
+      "example": "payload = candidates.payload(top[0])",
+      "returnValue": "任意值",
+      "snippet": "candidates.payload(${1:candidate})"
+    },
+    {
+      "name": "candidates.score",
+      "kind": "function",
+      "params": [
+        "candidate"
+      ],
+      "signature": "candidates.score(candidate)",
+      "summary": "讀取 candidate 的主排序分數。",
+      "example": "score = candidates.score(top[0])",
+      "returnValue": "數值",
+      "snippet": "candidates.score(${1:candidate})"
+    },
+    {
+      "name": "candidates.secondary_score",
+      "kind": "function",
+      "params": [
+        "candidate"
+      ],
+      "signature": "candidates.secondary_score(candidate)",
+      "summary": "讀取 candidate 的次排序分數。",
+      "example": "tie = candidates.secondary_score(top[0])",
+      "returnValue": "數值",
+      "snippet": "candidates.secondary_score(${1:candidate})"
+    },
+    {
+      "name": "candidates.sort",
+      "kind": "function",
+      "params": [
+        "items",
+        "direction"
+      ],
+      "signature": "candidates.sort(items, direction)",
+      "summary": "依 score 排序候選；同分時依 secondary_score 和 symbol 穩定排序。",
+      "example": "ranked = candidates.sort(items, \"desc\")",
+      "returnValue": "陣列",
+      "snippet": "candidates.sort(${1:items}, ${2:direction})"
+    },
+    {
+      "name": "candidates.symbol",
+      "kind": "function",
+      "params": [
+        "candidate"
+      ],
+      "signature": "candidates.symbol(candidate)",
+      "summary": "讀取 candidate 的標的代碼。",
+      "example": "symbol = candidates.symbol(top[0])",
+      "returnValue": "字串",
+      "snippet": "candidates.symbol(${1:candidate})"
+    },
+    {
+      "name": "candidates.take",
+      "kind": "function",
+      "params": [
+        "items",
+        "count"
+      ],
+      "signature": "candidates.take(items, count)",
+      "summary": "回傳排序後候選的前 N 筆。",
+      "example": "top = candidates.take(ranked, 12)",
+      "returnValue": "陣列",
+      "snippet": "candidates.take(${1:items}, ${2:count})"
+    },
+    {
       "name": "config.get",
       "kind": "function",
       "params": [
@@ -605,6 +733,15 @@
       "snippet": "close"
     },
     {
+      "name": "close_raw",
+      "kind": "constant",
+      "signature": "close_raw",
+      "summary": "用於讀取未復權收盤價；涉及期權 strike、行權價比較或原始價格檢查時使用。",
+      "example": "itm = close_raw \u003e option_strike",
+      "returnValue": "series",
+      "snippet": "close_raw"
+    },
+    {
       "name": "high",
       "kind": "constant",
       "signature": "high",
@@ -612,6 +749,15 @@
       "example": "breakout = close \u003e ta.highest(high, 20)[1]",
       "returnValue": "series",
       "snippet": "high"
+    },
+    {
+      "name": "high_raw",
+      "kind": "constant",
+      "signature": "high_raw",
+      "summary": "用於讀取未復權最高價。",
+      "example": "raw_range = high_raw - low_raw",
+      "returnValue": "series",
+      "snippet": "high_raw"
     },
     {
       "name": "input",
@@ -649,6 +795,15 @@
       "example": "stop_price = ta.lowest(low, 10)",
       "returnValue": "series",
       "snippet": "low"
+    },
+    {
+      "name": "low_raw",
+      "kind": "constant",
+      "signature": "low_raw",
+      "summary": "用於讀取未復權最低價。",
+      "example": "raw_range = high_raw - low_raw",
+      "returnValue": "series",
+      "snippet": "low_raw"
     },
     {
       "name": "math_e",
@@ -710,6 +865,15 @@
       "example": "green_bar = close \u003e open",
       "returnValue": "series",
       "snippet": "open"
+    },
+    {
+      "name": "open_raw",
+      "kind": "constant",
+      "signature": "open_raw",
+      "summary": "用於讀取未復權開盤價。",
+      "example": "gap_raw = open_raw / close_raw[1] - 1",
+      "returnValue": "series",
+      "snippet": "open_raw"
     },
     {
       "name": "plot",
@@ -1306,8 +1470,8 @@
         "target_delta"
       ],
       "signature": "options.build_strategy(chain, name, qty, target_delta)",
-      "summary": "用於把策略名稱和期權鏈轉成可檢查的標準 legs，不直接下單。",
-      "example": "legs = options.build_strategy(chain, \"BUY_CALL\", 1, 0.35)",
+      "summary": "用於把 BUY_CALL、BUY_PUT、SELL_PUT、SELL_CALL、價差、跨式與鐵兀鷹等策略名稱轉成可檢查的標準 legs，不直接下單。",
+      "example": "legs = options.build_strategy(chain, \"IRON_CONDOR\", 1, 0.35)",
       "returnValue": "leg 陣列",
       "snippet": "options.build_strategy(${1:chain}, ${2:name}, ${3:qty}, ${4:target_delta})"
     },
@@ -1477,8 +1641,8 @@
         "family"
       ],
       "signature": "options.strategies(context, family)",
-      "summary": "用於依市場環境分類挑選候選期權策略名稱。",
-      "example": "names = options.strategies(ctx, \"momentum\")",
+      "summary": "用於依市場環境分類挑選候選期權策略名稱，支援 momentum、trend、index、value family。",
+      "example": "names = options.strategies(ctx, \"value\")",
       "returnValue": "陣列",
       "snippet": "options.strategies(${1:context}, ${2:family})"
     },
@@ -1785,8 +1949,8 @@
         "field"
       ],
       "signature": "request.factor(name, interval, field)",
-      "summary": "用於讀取預載因子資料；內建 volatility 因子會綁定目前回測主標的，提供 iv/current_iv、hv10、hv20、hv30、iv_percentile、iv_rank、price_observations、iv_observations 等 1d 欄位。",
-      "example": "iv_rank = request.factor(\"volatility\", \"1d\", \"iv_rank\")",
+      "summary": "用於讀取預載因子資料；三參形式讀取回測主標的，四參位置形式可指定標的。內建 volatility 因子提供 iv/current_iv、hv10、hv20、hv30、iv_percentile、iv_rank、price_observations、iv_observations 等 1d 欄位。",
+      "example": "iv_rank = request.factor(\"volatility\", \"AAPL\", \"1d\", \"iv_rank\")",
       "returnValue": "series",
       "snippet": "request.factor(${1:name}, ${2:interval}, ${3:field})"
     },
@@ -2549,6 +2713,20 @@
       "snippet": "ta.percentrank(${1:source}, ${2:length})"
     },
     {
+      "name": "ta.percentrank_valid",
+      "kind": "function",
+      "params": [
+        "source",
+        "length",
+        "min_samples"
+      ],
+      "signature": "ta.percentrank_valid(source, length, min_samples)",
+      "summary": "用於以有效觀測值計算目前值的歷史分位；缺失值會忽略，樣本不足時回傳 na。",
+      "example": "rank = ta.percentrank_valid(pe, 630, 200)",
+      "returnValue": "series",
+      "snippet": "ta.percentrank_valid(${1:source}, ${2:length}, ${3:min_samples})"
+    },
+    {
       "name": "ta.rsi",
       "kind": "function",
       "params": [
@@ -2615,6 +2793,20 @@
       "snippet": "ta.wma(${1:source}, ${2:length})"
     },
     {
+      "name": "trace.emit",
+      "kind": "function",
+      "params": [
+        "stage",
+        "symbol",
+        "reason"
+      ],
+      "signature": "trace.emit(stage, symbol, reason)",
+      "summary": "記錄有上限且去重的策略流程事件，供回測 DSL diagnostics 檢視。",
+      "example": "trace.emit(\"candidate_match\", symbol, \"momentum\")",
+      "returnValue": "na",
+      "snippet": "trace.emit(${1:stage}, ${2:symbol}, ${3:reason})"
+    },
+    {
       "name": "universe.symbols",
       "kind": "function",
       "params": [
@@ -2650,6 +2842,20 @@
       "alpha.ts_sum",
       "alpha.zscore"
     ],
+    "array": [
+      "array.contains"
+    ],
+    "candidates": [
+      "candidates.add",
+      "candidates.contains_symbol",
+      "candidates.new",
+      "candidates.payload",
+      "candidates.score",
+      "candidates.secondary_score",
+      "candidates.sort",
+      "candidates.symbol",
+      "candidates.take"
+    ],
     "config": [
       "config.get",
       "config.string"
@@ -2677,16 +2883,20 @@
       "bar_index",
       "buy",
       "close",
+      "close_raw",
       "high",
+      "high_raw",
       "input",
       "len",
       "low",
+      "low_raw",
       "math_e",
       "math_phi",
       "math_pi",
       "na",
       "nz",
       "open",
+      "open_raw",
       "plot",
       "sell",
       "volume"
@@ -2874,11 +3084,15 @@
       "ta.highest",
       "ta.lowest",
       "ta.percentrank",
+      "ta.percentrank_valid",
       "ta.rsi",
       "ta.sma",
       "ta.stdev",
       "ta.valuewhen",
       "ta.wma"
+    ],
+    "trace": [
+      "trace.emit"
     ],
     "universe": [
       "universe.symbols"
@@ -2886,9 +3100,11 @@
   },
   "counts": {
     "alpha": 20,
+    "array": 1,
+    "candidates": 9,
     "config": 2,
     "contract": 17,
-    "core": 16,
+    "core": 20,
     "event": 12,
     "group": 7,
     "input": 4,
@@ -2905,7 +3121,8 @@
     "spread": 16,
     "str": 8,
     "strategy": 9,
-    "ta": 19,
+    "ta": 20,
+    "trace": 1,
     "universe": 1
   },
   "rawDocs": [
@@ -3131,6 +3348,114 @@
       "ReturnValue": "數值"
     },
     {
+      "Name": "array.contains",
+      "Kind": "function",
+      "Params": [
+        "items",
+        "value"
+      ],
+      "Summary": "檢查陣列是否包含指定值；可用於比對 point-in-time universe 與目前持倉標的。",
+      "Example": "still_member = array.contains(symbols, contract.underlying(leg))",
+      "ReturnValue": "布林"
+    },
+    {
+      "Name": "candidates.add",
+      "Kind": "function",
+      "Params": [
+        "items",
+        "candidate"
+      ],
+      "Summary": "回傳加入 candidate 後的新候選陣列。",
+      "Example": "items = candidates.add(items, item)",
+      "ReturnValue": "陣列"
+    },
+    {
+      "Name": "candidates.contains_symbol",
+      "Kind": "function",
+      "Params": [
+        "items",
+        "symbol"
+      ],
+      "Summary": "檢查候選陣列是否包含標的，適合在原 universe 迴圈中保留可預載請求。",
+      "Example": "selected = candidates.contains_symbol(top, symbol)",
+      "ReturnValue": "布林"
+    },
+    {
+      "Name": "candidates.new",
+      "Kind": "function",
+      "Params": [
+        "symbol",
+        "score",
+        "secondary_score",
+        "payload"
+      ],
+      "Summary": "建立供橫截面排序使用的候選標的；payload 可保留排序後執行所需的資料。",
+      "Example": "item = candidates.new(\"AAPL\", rsi14, 0, [name, legs])",
+      "ReturnValue": "candidate"
+    },
+    {
+      "Name": "candidates.payload",
+      "Kind": "function",
+      "Params": [
+        "candidate"
+      ],
+      "Summary": "讀取 candidate 建立時保留的 payload。",
+      "Example": "payload = candidates.payload(top[0])",
+      "ReturnValue": "任意值"
+    },
+    {
+      "Name": "candidates.score",
+      "Kind": "function",
+      "Params": [
+        "candidate"
+      ],
+      "Summary": "讀取 candidate 的主排序分數。",
+      "Example": "score = candidates.score(top[0])",
+      "ReturnValue": "數值"
+    },
+    {
+      "Name": "candidates.secondary_score",
+      "Kind": "function",
+      "Params": [
+        "candidate"
+      ],
+      "Summary": "讀取 candidate 的次排序分數。",
+      "Example": "tie = candidates.secondary_score(top[0])",
+      "ReturnValue": "數值"
+    },
+    {
+      "Name": "candidates.sort",
+      "Kind": "function",
+      "Params": [
+        "items",
+        "direction"
+      ],
+      "Summary": "依 score 排序候選；同分時依 secondary_score 和 symbol 穩定排序。",
+      "Example": "ranked = candidates.sort(items, \"desc\")",
+      "ReturnValue": "陣列"
+    },
+    {
+      "Name": "candidates.symbol",
+      "Kind": "function",
+      "Params": [
+        "candidate"
+      ],
+      "Summary": "讀取 candidate 的標的代碼。",
+      "Example": "symbol = candidates.symbol(top[0])",
+      "ReturnValue": "字串"
+    },
+    {
+      "Name": "candidates.take",
+      "Kind": "function",
+      "Params": [
+        "items",
+        "count"
+      ],
+      "Summary": "回傳排序後候選的前 N 筆。",
+      "Example": "top = candidates.take(ranked, 12)",
+      "ReturnValue": "陣列"
+    },
+    {
       "Name": "config.get",
       "Kind": "function",
       "Params": [
@@ -3349,11 +3674,27 @@
       "ReturnValue": "series"
     },
     {
+      "Name": "close_raw",
+      "Kind": "constant",
+      "Params": null,
+      "Summary": "用於讀取未復權收盤價；涉及期權 strike、行權價比較或原始價格檢查時使用。",
+      "Example": "itm = close_raw \u003e option_strike",
+      "ReturnValue": "series"
+    },
+    {
       "Name": "high",
       "Kind": "constant",
       "Params": null,
       "Summary": "用於偵測近期高點、突破條件或計算震幅類指標。",
       "Example": "breakout = close \u003e ta.highest(high, 20)[1]",
+      "ReturnValue": "series"
+    },
+    {
+      "Name": "high_raw",
+      "Kind": "constant",
+      "Params": null,
+      "Summary": "用於讀取未復權最高價。",
+      "Example": "raw_range = high_raw - low_raw",
       "ReturnValue": "series"
     },
     {
@@ -3386,6 +3727,14 @@
       "Params": null,
       "Summary": "用於偵測近期低點、停損位置或回撤條件。",
       "Example": "stop_price = ta.lowest(low, 10)",
+      "ReturnValue": "series"
+    },
+    {
+      "Name": "low_raw",
+      "Kind": "constant",
+      "Params": null,
+      "Summary": "用於讀取未復權最低價。",
+      "Example": "raw_range = high_raw - low_raw",
       "ReturnValue": "series"
     },
     {
@@ -3439,6 +3788,14 @@
       "Params": null,
       "Summary": "用於判斷當根 K 線方向或估算開盤後價格變化。",
       "Example": "green_bar = close \u003e open",
+      "ReturnValue": "series"
+    },
+    {
+      "Name": "open_raw",
+      "Kind": "constant",
+      "Params": null,
+      "Summary": "用於讀取未復權開盤價。",
+      "Example": "gap_raw = open_raw / close_raw[1] - 1",
       "ReturnValue": "series"
     },
     {
@@ -3951,8 +4308,8 @@
         "qty",
         "target_delta"
       ],
-      "Summary": "用於把策略名稱和期權鏈轉成可檢查的標準 legs，不直接下單。",
-      "Example": "legs = options.build_strategy(chain, \"BUY_CALL\", 1, 0.35)",
+      "Summary": "用於把 BUY_CALL、BUY_PUT、SELL_PUT、SELL_CALL、價差、跨式與鐵兀鷹等策略名稱轉成可檢查的標準 legs，不直接下單。",
+      "Example": "legs = options.build_strategy(chain, \"IRON_CONDOR\", 1, 0.35)",
       "ReturnValue": "leg 陣列"
     },
     {
@@ -4096,8 +4453,8 @@
         "context",
         "family"
       ],
-      "Summary": "用於依市場環境分類挑選候選期權策略名稱。",
-      "Example": "names = options.strategies(ctx, \"momentum\")",
+      "Summary": "用於依市場環境分類挑選候選期權策略名稱，支援 momentum、trend、index、value family。",
+      "Example": "names = options.strategies(ctx, \"value\")",
       "ReturnValue": "陣列"
     },
     {
@@ -4362,8 +4719,8 @@
         "interval",
         "field"
       ],
-      "Summary": "用於讀取預載因子資料；內建 volatility 因子會綁定目前回測主標的，提供 iv/current_iv、hv10、hv20、hv30、iv_percentile、iv_rank、price_observations、iv_observations 等 1d 欄位。",
-      "Example": "iv_rank = request.factor(\"volatility\", \"1d\", \"iv_rank\")",
+      "Summary": "用於讀取預載因子資料；三參形式讀取回測主標的，四參位置形式可指定標的。內建 volatility 因子提供 iv/current_iv、hv10、hv20、hv30、iv_percentile、iv_rank、price_observations、iv_observations 等 1d 欄位。",
+      "Example": "iv_rank = request.factor(\"volatility\", \"AAPL\", \"1d\", \"iv_rank\")",
       "ReturnValue": "series"
     },
     {
@@ -5018,6 +5375,18 @@
       "ReturnValue": "series"
     },
     {
+      "Name": "ta.percentrank_valid",
+      "Kind": "function",
+      "Params": [
+        "source",
+        "length",
+        "min_samples"
+      ],
+      "Summary": "用於以有效觀測值計算目前值的歷史分位；缺失值會忽略，樣本不足時回傳 na。",
+      "Example": "rank = ta.percentrank_valid(pe, 630, 200)",
+      "ReturnValue": "series"
+    },
+    {
       "Name": "ta.rsi",
       "Kind": "function",
       "Params": [
@@ -5072,6 +5441,18 @@
       "Summary": "用於計算線性加權均線，近期資料權重較高。",
       "Example": "weighted = ta.wma(close, 20)",
       "ReturnValue": "series"
+    },
+    {
+      "Name": "trace.emit",
+      "Kind": "function",
+      "Params": [
+        "stage",
+        "symbol",
+        "reason"
+      ],
+      "Summary": "記錄有上限且去重的策略流程事件，供回測 DSL diagnostics 檢視。",
+      "Example": "trace.emit(\"candidate_match\", symbol, \"momentum\")",
+      "ReturnValue": "na"
     },
     {
       "Name": "universe.symbols",

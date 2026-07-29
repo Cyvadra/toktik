@@ -18,7 +18,7 @@ type DSLCompletionData = {
 
 export async function activate(context: vscode.ExtensionContext) {
   const data = await loadCompletionData(context);
-  const provider = vscode.languages.registerCompletionItemProvider(
+  const completionProvider = vscode.languages.registerCompletionItemProvider(
     { language: 'toktik-dsl' },
     {
       provideCompletionItems() {
@@ -30,8 +30,27 @@ export async function activate(context: vscode.ExtensionContext) {
     },
     '.',
   );
+  const builtinsByName = new Map(data.builtins.map(builtin => [builtin.name, builtin]));
+  const hoverProvider = vscode.languages.registerHoverProvider(
+    { language: 'toktik-dsl' },
+    {
+      provideHover(document, position) {
+        const range = document.getWordRangeAtPosition(
+          position,
+          /[\p{L}_][\p{L}\p{N}_]*(?:\s*\.\s*[\p{L}_][\p{L}\p{N}_]*)*/u,
+        );
+        if (!range) {
+          return undefined;
+        }
 
-  context.subscriptions.push(provider);
+        const name = document.getText(range).replace(/\s*\.\s*/g, '.');
+        const builtin = builtinsByName.get(name);
+        return builtin ? new vscode.Hover(documentation(builtin), range) : undefined;
+      },
+    },
+  );
+
+  context.subscriptions.push(completionProvider, hoverProvider);
 }
 
 export function deactivate() {}
