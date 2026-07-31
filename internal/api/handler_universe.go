@@ -10,23 +10,23 @@ import (
 
 // GetUniverseMembers handles GET /api/v1/universes/{code}/members.
 //
-// @Summary      Get named universe members
-// @Description  Returns point-in-time members when as_of is supplied, or every membership interval overlapping the half-open [from, to) range. Supply either as_of or a range; dates accept YYYY-MM-DD or RFC3339.
-// @Tags         Universes
-// @Produce      json
-// @Param        code    path   string  true   "Named universe code"
-// @Param        market  query  string  false  "Market; defaults to us-stocks"
-// @Param        as_of   query  string  false  "Point-in-time date (YYYY-MM-DD or RFC3339); cannot be combined with a range"
-// @Param        from    query  string  false  "Inclusive range start (YYYY-MM-DD or RFC3339)"
-// @Param        to      query  string  false  "Exclusive range end (YYYY-MM-DD or RFC3339)"
-// @Param        limit   query  int     false  "Maximum intervals returned; defaults to 5000 and is capped at 500000"
-// @Success      200  {object}  dto.UniverseMembersResponse
-// @Failure      400  {object}  dto.ErrorResponse
-// @Failure      401  {object}  dto.ErrorResponse
-// @Failure      404  {object}  dto.ErrorResponse
-// @Failure      500  {object}  dto.ErrorResponse
-// @Failure      501  {object}  dto.ErrorResponse
-// @Router       /universes/{code}/members [get]
+//	@Summary		Get named universe members
+//	@Description	Returns point-in-time members when as_of is supplied, or every membership interval overlapping the half-open [from, to) range. Supply either as_of or a range; dates accept YYYY-MM-DD or RFC3339.
+//	@Tags			Universes
+//	@Produce		json
+//	@Param			code	path		string	true	"Named universe code"
+//	@Param			market	query		string	false	"Market; defaults to us-stocks"
+//	@Param			as_of	query		string	false	"Point-in-time date (YYYY-MM-DD or RFC3339); cannot be combined with a range"
+//	@Param			from	query		string	false	"Inclusive range start (YYYY-MM-DD or RFC3339)"
+//	@Param			to		query		string	false	"Exclusive range end (YYYY-MM-DD or RFC3339)"
+//	@Param			limit	query		int		false	"Maximum intervals returned; defaults to 5000 and is capped at 500000"
+//	@Success		200		{object}	dto.UniverseMembersResponse
+//	@Failure		400		{object}	dto.ErrorResponse
+//	@Failure		401		{object}	dto.ErrorResponse
+//	@Failure		404		{object}	dto.ErrorResponse
+//	@Failure		500		{object}	dto.ErrorResponse
+//	@Failure		501		{object}	dto.ErrorResponse
+//	@Router			/universes/{code}/members [get]
 func (h *Handler) GetUniverseMembers(c *gin.Context) {
 	if h.universes == nil {
 		c.JSON(http.StatusNotImplemented, dto.ErrorResponse{Error: "universe provider not configured"})
@@ -80,19 +80,19 @@ func (h *Handler) GetUniverseMembers(c *gin.Context) {
 
 // RebuildUniverse handles POST /api/v1/universes/rebuild.
 //
-// @Summary      Rebuild named universe membership
-// @Description  Triggers an asynchronous rebuild over a server-derived half-open [from, to) range. The end is the latest date shared by SPY stock and option daily data; force_refresh=true (the default) starts from the configured rebuild history, while false resumes from existing membership. source_type defaults to turnover_intersection_union, which derives a daily union of liquid US stock/option underlyings across requested turnover lookbacks. preset_symbols and provider_holdings require symbols or members. Set dry_run=true to calculate the result without changing stored membership or recording a run. For turnover_intersection_union, force_rebuild_source=true refreshes the materialized turnover source pool before rebuilding membership; by default only missing source dates are filled. Identical requests already running are ignored by request_hash. A configured API key authenticator is required even when local-client auth bypass is enabled.
-// @Tags         Universes
-// @Accept       json
-// @Produce      json
-// @Param        body  body      dto.UniverseRebuildRequest  true  "Universe rebuild configuration"
-// @Success      202   {object}  dto.UniverseRebuildAccepted
-// @Failure      400   {object}  dto.ErrorResponse
-// @Failure      401   {object}  dto.ErrorResponse
-// @Failure      403   {object}  dto.ErrorResponse
-// @Failure      500   {object}  dto.ErrorResponse
-// @Failure      501   {object}  dto.ErrorResponse
-// @Router       /universes/rebuild [post]
+//	@Summary		Rebuild named universe membership
+//	@Description	Triggers an asynchronous rebuild over a server-derived half-open [from, to) range. The end is the latest date shared by SPY stock and option daily data; force_refresh=true (the default) starts from the configured rebuild history, while false resumes from existing membership. source_type defaults to turnover_intersection_union, which derives a daily union of liquid US stock/option underlyings across requested turnover lookbacks. preset_symbols and provider_holdings require symbols or members. Set dry_run=true to calculate the result without changing stored membership or recording a run. For turnover_intersection_union, force_rebuild_source=true refreshes the materialized turnover source pool before rebuilding membership; by default only missing source dates are filled. Identical requests already running are ignored by request_hash. A configured API key authenticator is required even when local-client auth bypass is enabled.
+//	@Tags			Universes
+//	@Accept			json
+//	@Produce		json
+//	@Param			body	body		dto.UniverseRebuildRequest	true	"Universe rebuild configuration"
+//	@Success		202		{object}	dto.UniverseRebuildAccepted
+//	@Failure		400		{object}	dto.ErrorResponse
+//	@Failure		401		{object}	dto.ErrorResponse
+//	@Failure		403		{object}	dto.ErrorResponse
+//	@Failure		500		{object}	dto.ErrorResponse
+//	@Failure		501		{object}	dto.ErrorResponse
+//	@Router			/universes/rebuild [post]
 func (h *Handler) RebuildUniverse(c *gin.Context) {
 	if h.universes == nil {
 		c.JSON(http.StatusNotImplemented, dto.ErrorResponse{Error: "universe provider not configured"})

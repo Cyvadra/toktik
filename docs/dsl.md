@@ -235,6 +235,7 @@ aapl_iv_rank = request.security("us", "AAPL", "1d", iv_rank_base)
 | 模組 | 數量 |
 | --- | --- |
 | `alpha` | 20 |
+| `array` | 1 |
 | `candidates` | 9 |
 | `config` | 2 |
 | `contract` | 17 |
@@ -283,6 +284,12 @@ aapl_iv_rank = request.security("us", "AAPL", "1d", iv_rank_base)
 | `alpha.ts_std` | `alpha.ts_std(x, window)` | `函數` | `數值` | `std20 = alpha.ts_std(close, 20)` | 用於衡量近期視窗波動度。 |
 | `alpha.ts_sum` | `alpha.ts_sum(x, window)` | `函數` | `數值` | `sum_vol = alpha.ts_sum(volume, 20)` | 用於計算近期視窗總和，例如累積成交量或累積報酬。 |
 | `alpha.zscore` | `alpha.zscore(x, window)` | `函數` | `數值` | `z = alpha.zscore(close, 20)` | 用於衡量目前值偏離近期均值幾個標準差，常作為均值回歸或異常波動濾網。 |
+
+### array
+
+| 名稱 | 簽名 | 種類 | 回傳 | 範例 | 用途 |
+| --- | --- | --- | --- | --- | --- |
+| `array.contains` | `array.contains(items, value)` | `函數` | `布林` | `still_member = array.contains(symbols, contract.underlying(leg))` | 檢查陣列是否包含指定值；可用於比對 point-in-time universe 與目前持倉標的。 |
 
 ### candidates
 
@@ -748,7 +755,7 @@ Toktik DSL 不是完整 TradingView Pine Script v6 實作；語法風格接近 P
 - Consumes: `application/json`
 - Produces: `application/json`
 - Summary: Rebuild named universe membership
-- Description: Rebuilds membership over a server-derived half-open [from, to) range. The end is the latest date shared by SPY stock and option daily data; force_refresh=true (the default) starts from the configured rebuild history, while false resumes from existing membership. source_type defaults to turnover_intersection_union, which derives a daily union of liquid US stock/option underlyings across requested turnover lookbacks. preset_symbols and provider_holdings require symbols or members. Set dry_run=true to calculate the result without changing stored membership or recording a run. A configured API key authenticator is required even when local-client auth bypass is enabled.
+- Description: Triggers an asynchronous rebuild over a server-derived half-open [from, to) range. The end is the latest date shared by SPY stock and option daily data; force_refresh=true (the default) starts from the configured rebuild history, while false resumes from existing membership. source_type defaults to turnover_intersection_union, which derives a daily union of liquid US stock/option underlyings across requested turnover lookbacks. preset_symbols and provider_holdings require symbols or members. Set dry_run=true to calculate the result without changing stored membership or recording a run. For turnover_intersection_union, force_rebuild_source=true refreshes the materialized turnover source pool before rebuilding membership; by default only missing source dates are filled. Identical requests already running are ignored by request_hash. A configured API key authenticator is required even when local-client auth bypass is enabled.
 
 #### Parameters
 
@@ -760,7 +767,7 @@ Toktik DSL 不是完整 TradingView Pine Script v6 實作；語法風格接近 P
 
 | Status | Schema | Description |
 | --- | --- | --- |
-| 200 | [UniverseRebuildResponse](#universerebuildresponse) | OK |
+| 202 | [UniverseRebuildAccepted](#universerebuildaccepted) | Accepted |
 | 400 | [ErrorResponse](#errorresponse) | Bad Request |
 | 401 | [ErrorResponse](#errorresponse) | Unauthorized |
 | 403 | [ErrorResponse](#errorresponse) | Forbidden |
@@ -1402,6 +1409,23 @@ data: {"run_id":"c40505f1a16f02f33380b4ccbe4f74db","status":"running","progress"
 | market | string | no | Resolved market. |
 | to | string | no | Exclusive interval query end. |
 
+### UniverseRebuildAccepted
+
+- Schema: `github_com_Cyvadra_toktik_internal_dto.UniverseRebuildAccepted`
+- Type: `object`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| accepted | boolean | no | True when a background rebuild was started. |
+| code | string | no | Resolved universe code. |
+| ignored | boolean | no | True when an identical rebuild is already running. |
+| market | string | no | Resolved market. |
+| message | string | no | Human-readable trigger outcome. |
+| request_hash | string | no | Stable hash of the normalized rebuild request. |
+| source_type | [UniverseSourceType](#universesourcetype) | no | Source requested for the rebuild. |
+| started_at | string | no | Background rebuild start time. |
+| status | string | no | queued or already_running. |
+
 ### UniverseRebuildRequest
 
 - Schema: `github_com_Cyvadra_toktik_internal_dto.UniverseRebuildRequest`
@@ -1411,6 +1435,7 @@ data: {"run_id":"c40505f1a16f02f33380b4ccbe4f74db","status":"running","progress"
 | --- | --- | --- | --- |
 | code | string | no | Required named universe code. |
 | dry_run | boolean | no | Calculate without persisting membership or run metadata. |
+| force_rebuild_source | boolean | no | Rebuild the materialized turnover source pool before rebuilding membership. |
 | force_refresh | boolean | no | Full rebuild when true; defaults to true for JSON requests. |
 | limit | integer | no | Members retained per turnover lookback; default is 60. |
 | lookback_days | array<integer> | no | Turnover lookbacks in trading days; values outside 7..252 are ignored and default is 7,20,60,120. |
@@ -1419,22 +1444,3 @@ data: {"run_id":"c40505f1a16f02f33380b4ccbe4f74db","status":"running","progress"
 | non_etf_only | boolean | no | Turnover source ETF exclusion; default is true. |
 | source_type | [UniverseSourceType](#universesourcetype) | no | turnover_intersection_union (default), preset_symbols, or provider_holdings. |
 | symbols | array<string> | no | Static symbols required by preset_symbols and provider_holdings when members is empty. |
-
-### UniverseRebuildResponse
-
-- Schema: `github_com_Cyvadra_toktik_internal_dto.UniverseRebuildResponse`
-- Type: `object`
-
-| Field | Type | Required | Description |
-| --- | --- | --- | --- |
-| as_of | string | no | Rebuild start date retained for compatibility. |
-| code | string | no | Resolved universe code. |
-| data | array<[UniverseMember](#universemember)> | no | Calculated membership intervals. |
-| dry_run | boolean | no | Whether the result was calculated without persistence. |
-| from | string | no | Inclusive rebuild start. |
-| lookback_days | array<integer> | no | Effective turnover lookbacks. |
-| market | string | no | Resolved market. |
-| member_count | integer | no | Number of compressed membership intervals returned. |
-| run_id | string | no | Deterministic identifier for this result. |
-| source_type | [UniverseSourceType](#universesourcetype) | no | Source used to build members. |
-| to | string | no | Exclusive rebuild end. |
