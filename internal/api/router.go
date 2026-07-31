@@ -64,6 +64,7 @@ func NewRouterFromDeps(d Deps) *gin.Engine {
 	}
 	r.Use(SecurityHeadersMiddleware())
 	r.Use(CORSMiddleware(d.Config.API))
+	r.Use(RequestPriorityMiddleware())
 
 	// Per-request timeout. Streaming endpoints (SSE, HTML reports) opt
 	// out so they are not killed mid-stream.

@@ -12,6 +12,7 @@ import (
 	"github.com/Cyvadra/toktik/internal/chrepo"
 	"github.com/Cyvadra/toktik/internal/config"
 	"github.com/Cyvadra/toktik/internal/logorepo"
+	"github.com/Cyvadra/toktik/internal/requestpriority"
 	"github.com/Cyvadra/toktik/internal/service"
 	"github.com/Cyvadra/toktik/internal/universerepo"
 	"github.com/Cyvadra/toktik/pkg/feeds"
@@ -143,6 +144,7 @@ func initAPIStore(ctx context.Context, runtimeCfg config.Runtime) (cache.Store, 
 }
 
 func startAPIRefreshers(ctx context.Context, runtimeCfg config.Runtime, services *apiCoreServices, polygonSvc *service.PolygonService, cacheStore cache.Store) apiRefresherGroup {
+	ctx = requestpriority.WithBackground(ctx)
 	return apiRefresherGroup{
 		turnover: service.StartUSTurnoverIntersectionCacheRefresher(
 			ctx,

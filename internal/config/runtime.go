@@ -17,6 +17,11 @@ import (
 const (
 	EnvConfigPath                            = "TOKTIK_CONFIG"
 	EnvClickHouseDSN                         = "CLICKHOUSE_DSN"
+	EnvClickHousePriorityEnabled             = "TOKTIK_CLICKHOUSE_PRIORITY_ENABLED"
+	EnvClickHousePriorityMaxQueries          = "TOKTIK_CLICKHOUSE_PRIORITY_MAX_CONCURRENT_QUERIES"
+	EnvClickHousePriorityMaxThreads          = "TOKTIK_CLICKHOUSE_PRIORITY_MAX_CONCURRENT_THREADS"
+	EnvClickHousePriorityBackgroundQueries   = "TOKTIK_CLICKHOUSE_PRIORITY_BACKGROUND_QUERIES"
+	EnvClickHousePriorityBackgroundThreads   = "TOKTIK_CLICKHOUSE_PRIORITY_BACKGROUND_THREADS"
 	EnvMySQLDSN                              = "MYSQL_DSN"
 	EnvMySQLHost                             = "MYSQL_HOST"
 	EnvMySQLUser                             = "MYSQL_USER"
@@ -112,7 +117,16 @@ type Runtime struct {
 }
 
 type ClickHouse struct {
-	DSN string `yaml:"dsn"`
+	DSN      string             `yaml:"dsn"`
+	Priority ClickHousePriority `yaml:"priority"`
+}
+
+type ClickHousePriority struct {
+	Enabled              bool `yaml:"enabled"`
+	MaxConcurrentQueries int  `yaml:"max_concurrent_queries"`
+	MaxConcurrentThreads int  `yaml:"max_concurrent_threads"`
+	BackgroundQueries    int  `yaml:"background_queries"`
+	BackgroundThreads    int  `yaml:"background_threads"`
 }
 
 type MySQL struct {
@@ -451,6 +465,31 @@ func (c *Runtime) applyEnvOverrides() {
 	}
 	if value := strings.TrimSpace(os.Getenv(EnvClickHouseDSN)); value != "" {
 		c.ClickHouse.DSN = value
+	}
+	if value := strings.TrimSpace(os.Getenv(EnvClickHousePriorityEnabled)); value != "" {
+		if parsed, err := strconv.ParseBool(value); err == nil {
+			c.ClickHouse.Priority.Enabled = parsed
+		}
+	}
+	if value := strings.TrimSpace(os.Getenv(EnvClickHousePriorityMaxQueries)); value != "" {
+		if parsed, err := strconv.Atoi(value); err == nil {
+			c.ClickHouse.Priority.MaxConcurrentQueries = parsed
+		}
+	}
+	if value := strings.TrimSpace(os.Getenv(EnvClickHousePriorityMaxThreads)); value != "" {
+		if parsed, err := strconv.Atoi(value); err == nil {
+			c.ClickHouse.Priority.MaxConcurrentThreads = parsed
+		}
+	}
+	if value := strings.TrimSpace(os.Getenv(EnvClickHousePriorityBackgroundQueries)); value != "" {
+		if parsed, err := strconv.Atoi(value); err == nil {
+			c.ClickHouse.Priority.BackgroundQueries = parsed
+		}
+	}
+	if value := strings.TrimSpace(os.Getenv(EnvClickHousePriorityBackgroundThreads)); value != "" {
+		if parsed, err := strconv.Atoi(value); err == nil {
+			c.ClickHouse.Priority.BackgroundThreads = parsed
+		}
 	}
 	if value := strings.TrimSpace(os.Getenv(EnvMySQLDSN)); value != "" {
 		c.MySQL.DSN = value

@@ -19,6 +19,7 @@ import (
 	"github.com/Cyvadra/toktik/internal/datafeed"
 	"github.com/Cyvadra/toktik/internal/dto"
 	"github.com/Cyvadra/toktik/internal/report"
+	"github.com/Cyvadra/toktik/internal/requestpriority"
 	"github.com/Cyvadra/toktik/pkg/dsl/bridge"
 	"github.com/Cyvadra/toktik/pkg/dsl/diagnostics"
 	"github.com/Cyvadra/toktik/pkg/feeds"
@@ -445,7 +446,7 @@ func (s *PortfolioBacktestService) StartStrategyBacktest(_ context.Context, req 
 		return nil, fmt.Errorf("generate run id: %w", err)
 	}
 	now := s.now().UTC()
-	runCtx, cancel := context.WithCancel(context.Background())
+	runCtx, cancel := context.WithCancel(requestpriority.WithBackground(context.Background()))
 	run := &portfolioBacktestRun{
 		id:          runID,
 		cancel:      cancel,

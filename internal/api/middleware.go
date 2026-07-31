@@ -14,6 +14,7 @@ import (
 	"github.com/Cyvadra/toktik/internal/apikeyauth"
 	"github.com/Cyvadra/toktik/internal/config"
 	"github.com/Cyvadra/toktik/internal/dto"
+	"github.com/Cyvadra/toktik/internal/requestpriority"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 )
@@ -39,7 +40,7 @@ type APIKeyAuthenticator interface {
 func CORSMiddleware(cfg config.API) gin.HandlerFunc {
 	c := cors.Config{
 		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-		AllowHeaders:     []string{"Origin", "Content-Type", "Accept", "Authorization", "X-API-Key"},
+		AllowHeaders:     []string{"Origin", "Content-Type", "Accept", "Authorization", "X-API-Key", requestpriority.Header},
 		ExposeHeaders:    []string{"Content-Length"},
 		AllowCredentials: true,
 		MaxAge:           12 * time.Hour,
@@ -72,6 +73,15 @@ func isLANOrigin(origin string) bool {
 		return false
 	}
 	return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast()
+}
+
+// RequestPriorityMiddleware attaches the client scheduling class to the request context.
+func RequestPriorityMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		priority := requestpriority.ParseHeader(c.GetHeader(requestpriority.Header))
+		c.Request = c.Request.WithContext(requestpriority.WithPriority(c.Request.Context(), priority))
+		c.Next()
+	}
 }
 
 // APIKeyAuth returns a gin middleware that checks the X-API-Key header using
@@ -316,6 +326,7 @@ func SlogRequestLogger() gin.HandlerFunc {
 			"status", status,
 			"latency_ms", latency.Milliseconds(),
 			"client_ip", c.ClientIP(),
+			"request_priority", requestpriority.FromContext(c.Request.Context()),
 		)
 	}
 }

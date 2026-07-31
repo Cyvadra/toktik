@@ -35,6 +35,7 @@ import (
 	"github.com/Cyvadra/toktik/internal/apikeyauth"
 	"github.com/Cyvadra/toktik/internal/apikeyrepo"
 	"github.com/Cyvadra/toktik/internal/calendarrepo"
+	"github.com/Cyvadra/toktik/internal/chpriority"
 	"github.com/Cyvadra/toktik/internal/chrepo"
 	appCli "github.com/Cyvadra/toktik/internal/cli"
 	"github.com/Cyvadra/toktik/internal/config"
@@ -127,6 +128,17 @@ func run() error {
 	})
 	if err != nil {
 		return fmt.Errorf("connect clickhouse: %w", err)
+	}
+	if runtimeCfg.ClickHouse.Priority.Enabled {
+		if err := chpriority.Init(ctx, conn, chpriority.SchedulerLimits{
+			MaxConcurrentQueries: runtimeCfg.ClickHouse.Priority.MaxConcurrentQueries,
+			MaxConcurrentThreads: runtimeCfg.ClickHouse.Priority.MaxConcurrentThreads,
+			BackgroundQueries:    runtimeCfg.ClickHouse.Priority.BackgroundQueries,
+			BackgroundThreads:    runtimeCfg.ClickHouse.Priority.BackgroundThreads,
+		}); err != nil {
+			return err
+		}
+		conn = chpriority.Wrap(conn, chpriority.DefaultWorkloads())
 	}
 	universeDDLFile, err := appCli.ResolveSchemaFile("", appCli.UniverseSchemaFile)
 	if err != nil {

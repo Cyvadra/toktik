@@ -14,6 +14,7 @@ import (
 
 	"github.com/Cyvadra/toktik/internal/chrepo"
 	"github.com/Cyvadra/toktik/internal/dto"
+	"github.com/Cyvadra/toktik/internal/requestpriority"
 	"github.com/Cyvadra/toktik/internal/universerepo"
 )
 
@@ -234,7 +235,7 @@ func (s *UniverseService) runRebuildJob(req dto.UniverseRebuildRequest, requestH
 		delete(s.rebuildJobs, requestHash)
 		s.rebuildJobsMu.Unlock()
 	}()
-	ctx := context.Background()
+	ctx := requestpriority.WithBackground(context.Background())
 	slog.Info("start universe rebuild", "market", req.Market, "code", req.Code, "source_type", req.SourceType, "request_hash", requestHash, "started_at", startedAt)
 	resp, err := s.Rebuild(ctx, req)
 	if err != nil {

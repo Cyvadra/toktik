@@ -172,6 +172,11 @@ func TestLoadRuntimeFromPathYAML(t *testing.T) {
 
 func TestLoadRuntimeFromPathEnvOverrides(t *testing.T) {
 	t.Setenv(EnvClickHouseDSN, "clickhouse://env@clickhouse:9000/envdb")
+	t.Setenv(EnvClickHousePriorityEnabled, "true")
+	t.Setenv(EnvClickHousePriorityMaxQueries, "20")
+	t.Setenv(EnvClickHousePriorityMaxThreads, "12")
+	t.Setenv(EnvClickHousePriorityBackgroundQueries, "2")
+	t.Setenv(EnvClickHousePriorityBackgroundThreads, "3")
 	t.Setenv(EnvListenAddr, ":9090")
 	t.Setenv(EnvCORSOrigins, "https://alpha.example, https://beta.example")
 	t.Setenv(EnvRateLimitRPS, "75")
@@ -207,6 +212,9 @@ func TestLoadRuntimeFromPathEnvOverrides(t *testing.T) {
 
 	if cfg.ClickHouse.DSN != "clickhouse://env@clickhouse:9000/envdb" {
 		t.Fatalf("unexpected clickhouse dsn override: %q", cfg.ClickHouse.DSN)
+	}
+	if !cfg.ClickHouse.Priority.Enabled || cfg.ClickHouse.Priority.MaxConcurrentQueries != 20 || cfg.ClickHouse.Priority.MaxConcurrentThreads != 12 || cfg.ClickHouse.Priority.BackgroundQueries != 2 || cfg.ClickHouse.Priority.BackgroundThreads != 3 {
+		t.Fatalf("unexpected ClickHouse priority override: %#v", cfg.ClickHouse.Priority)
 	}
 	if cfg.APIServer.ListenAddr != ":9090" {
 		t.Fatalf("unexpected listen addr override: %q", cfg.APIServer.ListenAddr)

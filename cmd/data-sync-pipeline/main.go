@@ -19,11 +19,13 @@ import (
 	clickhouse "github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/Cyvadra/toktik/internal/cache"
+	"github.com/Cyvadra/toktik/internal/chpriority"
 	appCli "github.com/Cyvadra/toktik/internal/cli"
 	"github.com/Cyvadra/toktik/internal/config"
 	"github.com/Cyvadra/toktik/internal/cryptooptions"
 	"github.com/Cyvadra/toktik/internal/dataintegrity"
 	"github.com/Cyvadra/toktik/internal/forexmarket"
+	"github.com/Cyvadra/toktik/internal/requestpriority"
 	"github.com/Cyvadra/toktik/internal/service"
 	"github.com/Cyvadra/toktik/internal/syncpipeline"
 	pipelinejobs "github.com/Cyvadra/toktik/internal/syncpipeline/jobs"
@@ -292,8 +294,8 @@ func integrityCommand(args []string) error {
 	if err != nil {
 		return err
 	}
-	ctx := context.Background()
-	conn, err := connectPipelineClickHouse(ctx, cmdCtx.ClickHouseDSN, retryOpts)
+	ctx := requestpriority.WithBackground(context.Background())
+	conn, err := connectPipelineClickHouse(ctx, cmdCtx.Runtime, cmdCtx.ClickHouseDSN, retryOpts)
 	if err != nil {
 		return err
 	}
@@ -392,11 +394,12 @@ func runCommand(args []string) error {
 	printMissingSelectedDependencyWarnings(cfg, selected)
 	ctx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stopSignals()
+	ctx = requestpriority.WithBackground(ctx)
 	retryOpts, err := resolveDBRetryOptions(cfg.Runner, *dbRetryAttempts, *dbRetryInitialDelay, *dbRetryMaxDelay)
 	if err != nil {
 		return err
 	}
-	conn, err := connectPipelineClickHouse(ctx, cmdCtx.ClickHouseDSN, retryOpts)
+	conn, err := connectPipelineClickHouse(ctx, cmdCtx.Runtime, cmdCtx.ClickHouseDSN, retryOpts)
 	if err != nil {
 		return err
 	}
@@ -649,8 +652,8 @@ func statusCommand(args []string) error {
 	if err != nil {
 		return err
 	}
-	ctx := context.Background()
-	conn, err := connectPipelineClickHouse(ctx, cmdCtx.ClickHouseDSN, retryOpts)
+	ctx := requestpriority.WithBackground(context.Background())
+	conn, err := connectPipelineClickHouse(ctx, cmdCtx.Runtime, cmdCtx.ClickHouseDSN, retryOpts)
 	if err != nil {
 		return err
 	}
@@ -691,7 +694,7 @@ func auditCommand(args []string) error {
 		return err
 	}
 	ctx := context.Background()
-	conn, err := connectPipelineClickHouse(ctx, cmdCtx.ClickHouseDSN, retryOpts)
+	conn, err := connectPipelineClickHouse(ctx, cmdCtx.Runtime, cmdCtx.ClickHouseDSN, retryOpts)
 	if err != nil {
 		return err
 	}
@@ -994,12 +997,15 @@ func resolveRuntimeClickHouseDSN(rawDSN string) (config.Runtime, string) {
 	return runtimeCfg, runtimeCfg.ClickHouse.DSN
 }
 
-func connectPipelineClickHouse(ctx context.Context, dsn string, retry syncpipeline.RetryOptions) (driver.Conn, error) {
+func connectPipelineClickHouse(ctx context.Context, runtimeCfg config.Runtime, dsn string, retry syncpipeline.RetryOptions) (driver.Conn, error) {
 	conn, err := syncpipeline.RetryValue(ctx, retry, slog.Default(), "connect ClickHouse", func(ctx context.Context) (driver.Conn, error) {
 		return usmarket.ConnectClickHouse(ctx, dsn)
 	})
 	if err != nil {
 		return nil, fmt.Errorf("connect ClickHouse: %w", err)
+	}
+	if runtimeCfg.ClickHouse.Priority.Enabled {
+		conn = chpriority.Wrap(conn, chpriority.DefaultWorkloads())
 	}
 	return conn, nil
 }
