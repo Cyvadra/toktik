@@ -91,3 +91,23 @@ func TestAlphaRankExcludesNaNFromDenominator(t *testing.T) {
 		t.Fatalf("alpha.rank = %#v, want %g", got, want)
 	}
 }
+
+func TestAlphaArgExtremeReturnsRawBarOffsetAcrossNaNGap(t *testing.T) {
+	ip := NewInterpreter(nil)
+	RegisterAlphaBuiltins(ip)
+
+	s := NewSeries()
+	for _, value := range []float64{1, 9, math.NaN(), 4} {
+		s.Append(value)
+	}
+	args := []Value{SeriesVal(s), FloatVal(4)}
+
+	argMin := ip.builtins["alpha.ts_argmin"].FnPtr().Native(args)
+	if argMin.IsNa() || argMin.Float() != 3 {
+		t.Fatalf("alpha.ts_argmin = %#v, want raw bar offset 3", argMin)
+	}
+	argMax := ip.builtins["alpha.ts_argmax"].FnPtr().Native(args)
+	if argMax.IsNa() || argMax.Float() != 2 {
+		t.Fatalf("alpha.ts_argmax = %#v, want raw bar offset 2", argMax)
+	}
+}

@@ -66,6 +66,7 @@ type Interpreter struct {
 	// failing call on every bar only reports once instead of flooding the
 	// diagnostics list.
 	builtinFailures map[string]struct{}
+	runtimeWarnings map[string]struct{}
 
 	// ExecutionBudget bounds total interpreter work for a single bar. It is
 	// shared by statements, loop iterations, and user-defined function calls.
@@ -146,6 +147,7 @@ func NewInterpreter(prog *ast.Program) *Interpreter {
 		traceKeys:        make(map[string]struct{}),
 		unresolvedIdents: make(map[string]struct{}),
 		builtinFailures:  make(map[string]struct{}),
+		runtimeWarnings:  make(map[string]struct{}),
 	}
 	RegisterCoreBuiltins(ip)
 	return ip
@@ -1140,8 +1142,20 @@ func (ip *Interpreter) evalDot(e *ast.DotExpr, scope *Scope) Value {
 		if v, ok2 := scope.Get(composedName2); ok2 {
 			return v
 		}
+		ip.reportRuntimeWarning(
+			"dsl.unknown_field",
+			composedName,
+			fmt.Sprintf("field %q is not defined", composedName),
+			"Check for typos or unsupported nested field access; unresolved fields evaluate to na.",
+		)
+		return NaVal()
 	}
-	// For series: field lookup (not implemented beyond above convention).
+	ip.reportRuntimeWarning(
+		"dsl.unknown_field",
+		e.Field,
+		fmt.Sprintf("field %q cannot be resolved on this expression", e.Field),
+		"Nested field access is not supported; unresolved fields evaluate to na.",
+	)
 	return NaVal()
 }
 
@@ -1160,8 +1174,33 @@ func (ip *Interpreter) evalIndex(e *ast.IndexExpr, scope *Scope) Value {
 		if i >= 0 && i < len(left.array) {
 			return left.array[i]
 		}
+		ip.reportRuntimeWarning(
+			"dsl.index_out_of_range",
+			fmt.Sprintf("%d:%d", i, len(left.array)),
+			fmt.Sprintf("array index %d is out of range for length %d", i, len(left.array)),
+			"Check array bounds before indexing; out-of-range access evaluates to na.",
+		)
 	}
 	return NaVal()
+}
+
+func (ip *Interpreter) reportRuntimeWarning(code, key, message, hint string) {
+	if ip.Diagnostics == nil {
+		return
+	}
+	dedupeKey := code + ":" + key
+	if _, seen := ip.runtimeWarnings[dedupeKey]; seen {
+		return
+	}
+	ip.runtimeWarnings[dedupeKey] = struct{}{}
+	barIndex := ip.BarIndex
+	ip.Diagnostics.Add(diagnostics.Diagnostic{
+		Severity: diagnostics.SeverityWarning,
+		Code:     code,
+		Message:  message,
+		BarIndex: &barIndex,
+		Hint:     hint,
+	})
 }
 
 // valEqual compares two Values for equality. Arrays are compared

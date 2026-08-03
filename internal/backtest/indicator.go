@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"sort"
 	"sync"
 )
 
@@ -55,6 +56,10 @@ type OptionalDepsProvider interface {
 // resolveIndicators computes all registered indicators using topological sort.
 // It modifies the data map in-place, adding computed series.
 func resolveIndicators(registered map[string]Indicator, data map[string][]float64) error {
+	if err := validateIndicatorOutputs(registered, data); err != nil {
+		return err
+	}
+
 	// Build dependency graph
 	inDegree := make(map[string]int)
 	dependents := make(map[string][]string) // dep → list of indicators that need it
@@ -99,6 +104,7 @@ func resolveIndicators(registered map[string]Indicator, data map[string][]float6
 	var order []string
 	for len(queue) > 0 {
 		// Process all items at current level in parallel
+		sort.Strings(queue)
 		currentLevel := queue
 		queue = nil
 
@@ -138,7 +144,7 @@ func resolveIndicators(registered map[string]Indicator, data map[string][]float6
 				// Optional deps: inject what exists, or an all-NaN slice.
 				if op, ok := indicator.(OptionalDepsProvider); ok {
 					mu.Lock()
-					n := dataLen(data)
+					seriesLength := dataLen(data)
 					mu.Unlock()
 					for _, dep := range op.OptionalDeps() {
 						mu.Lock()
@@ -147,7 +153,7 @@ func resolveIndicators(registered map[string]Indicator, data map[string][]float6
 						} else if col, ok := results[dep]; ok {
 							inputs[dep] = col
 						} else {
-							nan := make([]float64, n)
+							nan := make([]float64, seriesLength)
 							for i := range nan {
 								nan[i] = math.NaN()
 							}
@@ -176,13 +182,14 @@ func resolveIndicators(registered map[string]Indicator, data map[string][]float6
 			return computeErr
 		}
 
-		// Merge results into data
-		for name, series := range results {
-			data[name] = series
+		// Merge results into data in stable order.
+		for _, name := range sortedSeriesKeys(results) {
+			data[name] = results[name]
 		}
-		for _, outputs := range multiResults {
-			for name, series := range outputs {
-				data[name] = series
+		for _, indicatorName := range sortedMultiResultKeys(multiResults) {
+			outputs := multiResults[indicatorName]
+			for _, name := range sortedSeriesKeys(outputs) {
+				data[name] = outputs[name]
 			}
 		}
 
@@ -202,6 +209,49 @@ func resolveIndicators(registered map[string]Indicator, data map[string][]float6
 	}
 
 	return nil
+}
+
+func validateIndicatorOutputs(registered map[string]Indicator, data map[string][]float64) error {
+	owners := make(map[string]string, len(data)+len(registered))
+	for name := range data {
+		owners[name] = "raw data"
+	}
+	registeredNames := make([]string, 0, len(registered))
+	for name := range registered {
+		registeredNames = append(registeredNames, name)
+	}
+	sort.Strings(registeredNames)
+	for _, indicatorName := range registeredNames {
+		outputs := []string{indicatorName}
+		if multi, ok := registered[indicatorName].(MultiIndicator); ok {
+			outputs = multi.OutputNames(indicatorName)
+		}
+		for _, outputName := range outputs {
+			if previous, exists := owners[outputName]; exists {
+				return fmt.Errorf("indicator output %q from %q conflicts with %s", outputName, indicatorName, previous)
+			}
+			owners[outputName] = fmt.Sprintf("indicator %q", indicatorName)
+		}
+	}
+	return nil
+}
+
+func sortedSeriesKeys(items map[string][]float64) []string {
+	keys := make([]string, 0, len(items))
+	for key := range items {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func sortedMultiResultKeys(items map[string]map[string][]float64) []string {
+	keys := make([]string, 0, len(items))
+	for key := range items {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // computeEMA is a helper for vectorized EMA computation compatible with TradingView ta.ema.

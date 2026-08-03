@@ -159,10 +159,9 @@ func (dp *DataPreparer) Prepare(ctx context.Context, market, symbol, interval st
 	}
 
 	// Align secondary data
-	alignMaps := make([][]int, len(setupCtx.securities))
-	alignMaps[0] = nil
-	for i := 1; i < len(secDataSets); i++ {
-		alignMaps[i] = alignSeries(primaryDS, secDataSets[i], setupCtx.primaryRef.Interval, setupCtx.securities[i].ref.Interval)
+	alignMaps, err := buildSecurityAlignMaps(primaryDS, secDataSets, setupCtx)
+	if err != nil {
+		return nil, err
 	}
 
 	// Load external factor datasets in parallel
@@ -223,8 +222,9 @@ func (dp *DataPreparer) Prepare(ctx context.Context, market, symbol, interval st
 			advanceStep(fmt.Sprintf("loaded factor %s/%s", setupCtx.factors[r.index].ref.Name, setupCtx.factors[r.index].ref.Interval))
 		}
 
-		for i := range factorDataSets {
-			factorAlignMaps[i] = alignSeries(primaryDS, factorDataSets[i], setupCtx.primaryRef.Interval, setupCtx.factors[i].ref.Interval)
+		factorAlignMaps, err = buildFactorAlignMaps(primaryDS, factorDataSets, setupCtx)
+		if err != nil {
+			return nil, err
 		}
 	}
 
@@ -334,27 +334,42 @@ func trimPreparedWindow(primaryDS *DataSet, secDataSets []*DataSet, factorDataSe
 	if startBar >= primaryDS.Len {
 		return nil, nil, nil, fmt.Errorf("no data returned for %s/%s/%s at or after requested start", setupCtx.primaryRef.Market, setupCtx.primaryRef.Symbol, setupCtx.primaryRef.Interval)
 	}
-	if startBar == 0 {
-		return primaryDS, buildSecurityAlignMaps(primaryDS, secDataSets, setupCtx), buildFactorAlignMaps(primaryDS, factorDataSets, setupCtx), nil
+	trimmedPrimary := primaryDS
+	if startBar > 0 {
+		trimmedPrimary = primaryDS.Slice(startBar, primaryDS.Len)
 	}
-
-	trimmedPrimary := primaryDS.Slice(startBar, primaryDS.Len)
-	return trimmedPrimary, buildSecurityAlignMaps(trimmedPrimary, secDataSets, setupCtx), buildFactorAlignMaps(trimmedPrimary, factorDataSets, setupCtx), nil
+	securityAlignMaps, err := buildSecurityAlignMaps(trimmedPrimary, secDataSets, setupCtx)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	factorAlignMaps, err := buildFactorAlignMaps(trimmedPrimary, factorDataSets, setupCtx)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return trimmedPrimary, securityAlignMaps, factorAlignMaps, nil
 }
 
-func buildSecurityAlignMaps(primaryDS *DataSet, secDataSets []*DataSet, setupCtx *SetupContext) [][]int {
+func buildSecurityAlignMaps(primaryDS *DataSet, secDataSets []*DataSet, setupCtx *SetupContext) ([][]int, error) {
 	alignMaps := make([][]int, len(setupCtx.securities))
 	alignMaps[0] = nil
 	for i := 1; i < len(secDataSets); i++ {
-		alignMaps[i] = alignSeries(primaryDS, secDataSets[i], setupCtx.primaryRef.Interval, setupCtx.securities[i].ref.Interval)
+		mapping, err := alignSeries(primaryDS, secDataSets[i], setupCtx.primaryRef.Interval, setupCtx.securities[i].ref.Interval)
+		if err != nil {
+			return nil, fmt.Errorf("align security %s/%s: %w", setupCtx.securities[i].ref.Market, setupCtx.securities[i].ref.Symbol, err)
+		}
+		alignMaps[i] = mapping
 	}
-	return alignMaps
+	return alignMaps, nil
 }
 
-func buildFactorAlignMaps(primaryDS *DataSet, factorDataSets []*DataSet, setupCtx *SetupContext) [][]int {
+func buildFactorAlignMaps(primaryDS *DataSet, factorDataSets []*DataSet, setupCtx *SetupContext) ([][]int, error) {
 	alignMaps := make([][]int, len(setupCtx.factors))
 	for i := range factorDataSets {
-		alignMaps[i] = alignSeries(primaryDS, factorDataSets[i], setupCtx.primaryRef.Interval, setupCtx.factors[i].ref.Interval)
+		mapping, err := alignSeries(primaryDS, factorDataSets[i], setupCtx.primaryRef.Interval, setupCtx.factors[i].ref.Interval)
+		if err != nil {
+			return nil, fmt.Errorf("align factor %s/%s: %w", setupCtx.factors[i].ref.Name, setupCtx.factors[i].ref.Interval, err)
+		}
+		alignMaps[i] = mapping
 	}
-	return alignMaps
+	return alignMaps, nil
 }

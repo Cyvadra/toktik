@@ -8,11 +8,13 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/Cyvadra/toktik/internal/backtest"
 	"github.com/Cyvadra/toktik/internal/dto"
+	"github.com/Cyvadra/toktik/internal/report"
 	"github.com/Cyvadra/toktik/pkg/dsl/bridge"
 	_ "github.com/Cyvadra/toktik/pkg/dsl/catalog"
 	"github.com/Cyvadra/toktik/pkg/strategies"
@@ -282,7 +284,7 @@ plot(ta.sma(close, length), title="SMA")`,
 	if resp.Strategies[0].Runtime.OptionsChainRequired {
 		t.Fatalf("expected spot DSL to skip options chain, got %+v", resp.Strategies[0].Runtime)
 	}
-	if feed.loads == 0 {
+	if feed.loads.Load() == 0 {
 		t.Fatal("expected prepare preflight to load market data")
 	}
 }
@@ -433,8 +435,8 @@ plot(ta.sma(close, length), title="SMA")`,
 	if accepted.RunID == "" {
 		t.Fatal("expected run id")
 	}
-	if feed.loads != 0 {
-		t.Fatalf("StartStrategyBacktest should accept without preflight data loads, got %d", feed.loads)
+	if feed.loads.Load() != 0 {
+		t.Fatalf("StartStrategyBacktest should accept without preflight data loads, got %d", feed.loads.Load())
 	}
 }
 
@@ -471,6 +473,36 @@ plot(close, title="Close")`,
 	}
 	if _, err := os.Stat(reportPath); err != nil {
 		t.Fatalf("expected report file at %q: %v", reportPath, err)
+	}
+}
+
+func TestLookupRunRestoresTerminalStatusFromManifest(t *testing.T) {
+	reportsRoot := t.TempDir()
+	svc := NewPortfolioBacktestService(nil, nil).WithReportsRoot(reportsRoot)
+	t.Cleanup(func() { _ = svc.Close() })
+	runID := "0123456789abcdef0123456789abcdef"
+	completedAt := time.Date(2026, 8, 2, 12, 0, 0, 0, time.UTC)
+	status := &dto.StrategyBacktestRunStatus{
+		RunID:       runID,
+		Status:      backtestStatusCompleted,
+		Request:     dto.StrategyBacktestRunRequest{Asset: "BTC", DSL: "strategy(\"restored\")"},
+		CreatedAt:   completedAt.Add(-time.Minute),
+		UpdatedAt:   completedAt,
+		CompletedAt: &completedAt,
+		Result: &dto.StrategyBacktestRunResult{Summaries: []dto.StrategyBacktestSummary{
+			{StrategyName: "restored", FinalEquity: 101},
+		}},
+	}
+	if err := report.WriteRunManifest(svc.runDirectory(runID), report.NewRunManifest(status)); err != nil {
+		t.Fatalf("WriteRunManifest returned error: %v", err)
+	}
+
+	got, err := svc.GetStrategyBacktestRun(context.Background(), runID)
+	if err != nil {
+		t.Fatalf("GetStrategyBacktestRun returned error: %v", err)
+	}
+	if got.Status != backtestStatusCompleted || got.Result.Summaries[0].FinalEquity != 101 {
+		t.Fatalf("restored status = %+v", got)
 	}
 }
 
@@ -1018,7 +1050,7 @@ func (s *stubNamedStrategy) Init(*backtest.SetupContext) error { return nil }
 func (s *stubNamedStrategy) OnBar(*backtest.BarContext) {}
 
 type validationTestFeed struct {
-	loads int
+	loads atomic.Int64
 }
 
 type stubPortfolioUniverseResolver struct {
@@ -1039,7 +1071,7 @@ func (f *validationTestFeed) Fields() []string {
 }
 
 func (f *validationTestFeed) Load(_ context.Context, req backtest.DataRequest) (*backtest.DataSet, error) {
-	f.loads++
+	f.loads.Add(1)
 	ts := []time.Time{req.From, req.From.Add(time.Hour), req.From.Add(2 * time.Hour), req.From.Add(3 * time.Hour), req.From.Add(4 * time.Hour), req.From.Add(5 * time.Hour)}
 	ds := backtest.NewDataSet(len(ts))
 	ds.SetTimestamps(ts)

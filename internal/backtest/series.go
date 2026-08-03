@@ -1,6 +1,7 @@
 package backtest
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 	"time"
@@ -8,45 +9,41 @@ import (
 	"github.com/Cyvadra/toktik/pkg/feeds"
 )
 
-var _ = alignTimestamps
-
 // alignSeries maps each primary bar to the latest secondary bar that is
 // confirmed by the primary bar close.
 //
 // Confirmation rule:
 // secondary_bar_close_time <= primary_bar_close_time
 //
-// When interval parsing fails, it falls back to open-time mapping:
-// secondary_bar_open_time <= primary_bar_open_time
 // Returns -1 for primary bars that precede all secondary data.
 //
 // Both inputs must be sorted ascending by timestamp.
-func alignSeries(primary, secondary *DataSet, primaryInterval, secondaryInterval string) []int {
+func alignSeries(primary, secondary *DataSet, primaryInterval, secondaryInterval string) ([]int, error) {
 	mapping := make([]int, primary.Len)
 	if secondary.Len == 0 {
 		for i := range mapping {
 			mapping[i] = -1
 		}
-		return mapping
+		return mapping, nil
 	}
 
 	primaryDur, primaryDurOK := parseIntervalDuration(primaryInterval)
 	secondaryDur, secondaryDurOK := parseIntervalDuration(secondaryInterval)
-	useCloseConfirmed := primaryDurOK && secondaryDurOK
+	if !primaryDurOK || !secondaryDurOK {
+		return nil, fmt.Errorf(
+			"cannot align series with unparseable intervals (primary=%q secondary=%q): open-time fallback would introduce look-ahead bias",
+			primaryInterval,
+			secondaryInterval,
+		)
+	}
 
 	secTimes := secondary.Timestamps
 	for i, pt := range primary.Timestamps {
-		target := pt
-		if useCloseConfirmed {
-			target = target.Add(primaryDur)
-		}
+		target := pt.Add(primaryDur)
 
 		// Binary search: find largest j where secondaryTime(j) <= target
 		j := sort.Search(len(secTimes), func(k int) bool {
-			secTime := secTimes[k]
-			if useCloseConfirmed {
-				secTime = secTime.Add(secondaryDur)
-			}
+			secTime := secTimes[k].Add(secondaryDur)
 			return secTime.After(target)
 		}) - 1
 
@@ -56,7 +53,7 @@ func alignSeries(primary, secondary *DataSet, primaryInterval, secondaryInterval
 			mapping[i] = j
 		}
 	}
-	return mapping
+	return mapping, nil
 }
 
 func parseIntervalDuration(interval string) (time.Duration, bool) {
@@ -94,12 +91,4 @@ func allDigits(s string) bool {
 		}
 	}
 	return true
-}
-
-// alignTimestamps returns the alignment mapping between two timestamp slices.
-// This is a convenience wrapper when you don't have full DataSets.
-func alignTimestamps(primary, secondary []time.Time) []int {
-	p := &DataSet{Timestamps: primary, Len: len(primary)}
-	s := &DataSet{Timestamps: secondary, Len: len(secondary)}
-	return alignSeries(p, s, "", "")
 }

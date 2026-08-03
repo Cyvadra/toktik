@@ -246,7 +246,7 @@ func RegisterAlphaBuiltins(ip *Interpreter) {
 	registerWindowReducer(ip, "alpha.ts_skewness", 3, skewness)
 	registerWindowReducer(ip, "alpha.ts_kurtosis", 4, kurtosis)
 
-	// Index-returning reducers (0 = most recent within the NaN-filtered window).
+	// Index-returning reducers return a raw bar offset (0 = most recent).
 	registerWindowIndexReducer(ip, "alpha.ts_argmin", func(a, b float64) bool { return a < b })
 	registerWindowIndexReducer(ip, "alpha.ts_argmax", func(a, b float64) bool { return a > b })
 }
@@ -273,10 +273,7 @@ func registerWindowReducer(ip *Interpreter, name string, minLen int, reduce func
 	})
 }
 
-// registerWindowIndexReducer registers a builtin of the form fn(series,
-// window) that returns the index (0 = most recent) of the extreme value
-// within a NaN-filtered rolling window, per the better(candidate, current)
-// comparator.
+// registerWindowIndexReducer returns the raw bar offset of the extreme valid value.
 func registerWindowIndexReducer(ip *Interpreter, name string, better func(candidate, current float64) bool) {
 	ip.RegisterBuiltin(name, func(args []Value) Value {
 		if len(args) < 2 {
@@ -286,15 +283,18 @@ func registerWindowIndexReducer(ip *Interpreter, name string, better func(candid
 		if s == nil || w <= 0 {
 			return NaVal()
 		}
-		vals := lastN(s, w)
-		if len(vals) == 0 {
-			return NaVal()
-		}
-		idx := 0
-		for i := 1; i < len(vals); i++ {
-			if better(vals[i], vals[idx]) {
+		vals := rawLastN(s, w)
+		idx := -1
+		for i, value := range vals {
+			if math.IsNaN(value) {
+				continue
+			}
+			if idx < 0 || better(value, vals[idx]) {
 				idx = i
 			}
+		}
+		if idx < 0 {
+			return NaVal()
 		}
 		return FloatVal(float64(idx))
 	})

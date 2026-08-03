@@ -1081,3 +1081,35 @@ func TestCompoundPlusEqConcatenatesStrings(t *testing.T) {
 		t.Fatalf("x = %q, want \"ab\"", x.Str())
 	}
 }
+
+func TestUnknownDotFieldReportsWarning(t *testing.T) {
+	prog, errs := parser.Parse("x = strategy.unknown_field")
+	if len(errs) > 0 {
+		t.Fatal(errs)
+	}
+	ip := NewInterpreter(prog)
+	var diags diagnostics.List
+	ip.Diagnostics = &diags
+	ip.Init()
+	ip.OnBar()
+
+	if len(diags) != 1 || diags[0].Code != "dsl.unknown_field" || diags[0].Severity != diagnostics.SeverityWarning {
+		t.Fatalf("diagnostics = %+v, want one unknown_field warning", diags)
+	}
+}
+
+func TestArrayIndexOutOfRangeReportsWarningOnce(t *testing.T) {
+	prog, errs := parser.Parse("items = [1]\nx = items[2]\ny = items[2]")
+	if len(errs) > 0 {
+		t.Fatal(errs)
+	}
+	ip := NewInterpreter(prog)
+	var diags diagnostics.List
+	ip.Diagnostics = &diags
+	ip.Init()
+	ip.OnBar()
+
+	if len(diags) != 1 || diags[0].Code != "dsl.index_out_of_range" || diags[0].Severity != diagnostics.SeverityWarning {
+		t.Fatalf("diagnostics = %+v, want one index_out_of_range warning", diags)
+	}
+}

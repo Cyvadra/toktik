@@ -524,6 +524,7 @@ func (s *PortfolioBacktestService) CancelStrategyBacktest(_ context.Context, run
 		return nil, err
 	}
 	run.cancelRun(s.now().UTC(), "backtest run canceled")
+	s.persistRunManifest(run)
 	return run.snapshot(), nil
 }
 
@@ -546,7 +547,28 @@ func (s *PortfolioBacktestService) lookupRun(runID string) (*portfolioBacktestRu
 	run := s.runs[runID]
 	s.mu.RUnlock()
 	if run == nil {
-		return nil, dto.NewNotFoundError("backtest run %q not found", runID)
+		if !validBacktestRunID(runID) {
+			return nil, dto.NewNotFoundError("backtest run %q not found", runID)
+		}
+		manifest, err := report.ReadRunManifest(s.runDirectory(runID))
+		if err != nil || manifest.Status == nil || manifest.Status.RunID != runID {
+			return nil, dto.NewNotFoundError("backtest run %q not found", runID)
+		}
+		return &portfolioBacktestRun{
+			id:          runID,
+			request:     manifest.Status.Request,
+			status:      manifest.Status.Status,
+			createdAt:   manifest.Status.CreatedAt,
+			updatedAt:   manifest.Status.UpdatedAt,
+			startedAt:   manifest.Status.StartedAt,
+			completedAt: manifest.Status.CompletedAt,
+			progress:    manifest.Status.Progress,
+			result:      manifest.Status.Result,
+			errText:     manifest.Status.Error,
+			subscribers: make(map[chan dto.StrategyBacktestSSEvent]struct{}),
+			closed:      true,
+			finished:    true,
+		}, nil
 	}
 	return run, nil
 }
@@ -559,6 +581,7 @@ func (s *PortfolioBacktestService) executeRun(ctx context.Context, run *portfoli
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			run.markFailed(s.now().UTC(), fmt.Sprintf("panic: %v", recovered))
+			s.persistRunManifest(run)
 		}
 	}()
 
@@ -567,12 +590,29 @@ func (s *PortfolioBacktestService) executeRun(ctx context.Context, run *portfoli
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			run.cancelRun(completedAt, "backtest run canceled")
+			s.persistRunManifest(run)
 			return
 		}
 		run.markFailed(completedAt, err.Error())
+		s.persistRunManifest(run)
 		return
 	}
 	run.markCompleted(completedAt, result)
+	s.persistRunManifest(run)
+}
+
+func (s *PortfolioBacktestService) runDirectory(runID string) string {
+	return filepath.Join(defaultString(s.reportsRoot, defaultBacktestHTMLDir), defaultAPIRunHTMLSubdir, runID)
+}
+
+func (s *PortfolioBacktestService) persistRunManifest(run *portfolioBacktestRun) {
+	if run == nil {
+		return
+	}
+	status := run.snapshot()
+	if err := report.WriteRunManifest(s.runDirectory(run.id), report.NewRunManifest(status)); err != nil {
+		slog.Error("persist backtest run manifest", "run_id", run.id, "error", err)
+	}
 }
 
 func (s *PortfolioBacktestService) ValidateStrategyBacktest(ctx context.Context, req dto.StrategyBacktestRunRequest) (*dto.StrategyBacktestValidationResponse, error) {
@@ -597,7 +637,7 @@ func (s *PortfolioBacktestService) runBacktest(ctx context.Context, run *portfol
 		}
 	}
 
-	runDir := filepath.Join(defaultString(s.reportsRoot, defaultBacktestHTMLDir), defaultAPIRunHTMLSubdir, run.id)
+	runDir := s.runDirectory(run.id)
 	// Intentionally ignore req.HTMLOutput for API runs: a user-controlled
 	// path would let the API write reports anywhere on disk and would
 	// later be served back by the report endpoint, opening a path
@@ -1133,6 +1173,14 @@ func newBacktestRunID() (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(buf), nil
+}
+
+func validBacktestRunID(runID string) bool {
+	if len(runID) != 32 {
+		return false
+	}
+	_, err := hex.DecodeString(runID)
+	return err == nil
 }
 
 func (r *portfolioBacktestRun) markRunning(startedAt time.Time) bool {
