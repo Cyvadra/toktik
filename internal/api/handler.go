@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/Cyvadra/toktik/internal/dto"
+	deribitpkg "github.com/Cyvadra/toktik/pkg/deribit"
 	polygonpkg "github.com/Cyvadra/toktik/pkg/polygon"
 	"github.com/gin-gonic/gin"
 )
@@ -43,6 +44,7 @@ type Handler struct {
 	financeCalendar   FinanceCalendarProvider
 	logos             LogoProvider
 	polygon           PolygonProvider
+	deribit           DeribitProvider
 	showInternalError bool
 	requireAPIKey     bool
 
@@ -83,6 +85,7 @@ func NewHandler(d Deps) *Handler {
 		financeCalendar:   d.FinanceCalendar,
 		logos:             d.Logos,
 		polygon:           d.Polygon,
+		deribit:           d.Deribit,
 		showInternalError: strings.EqualFold(strings.TrimSpace(d.Config.API.Environment), "dev"),
 		requireAPIKey:     d.APIKeys != nil,
 		reportsRoot:       root,
@@ -116,6 +119,15 @@ func handleServiceError(c *gin.Context, err error, showInternalError bool) {
 			status = http.StatusBadGateway
 		}
 		c.JSON(status, dto.ErrorResponse{Error: polygonErrorMessage(polygonErr)})
+		return
+	}
+	var deribitHTTPError *deribitpkg.HTTPStatusError
+	var deribitRPCError *deribitpkg.RPCError
+	var deribitResponseError *deribitpkg.ResponseError
+	var deribitRequestError *deribitpkg.RequestError
+	if errors.As(err, &deribitHTTPError) || errors.As(err, &deribitRPCError) || errors.As(err, &deribitResponseError) || errors.As(err, &deribitRequestError) {
+		slog.Error("deribit upstream error", "error", err)
+		c.JSON(http.StatusBadGateway, dto.ErrorResponse{Error: "deribit upstream error"})
 		return
 	}
 	slog.Error("internal error", "error", err)

@@ -34,6 +34,7 @@ func TestLoadRuntimeFromPathYAML(t *testing.T) {
 		"  schema_dir: \"/srv/toktik/schema\"\n" +
 		"deribit:\n" +
 		"  base_url: \"https://deribit-proxy.internal\"\n" +
+		"  proxy_url: \"http://localhost:17892\"\n" +
 		"tiger:\n" +
 		"  tiger_id: \"20100001\"\n" +
 		"  private_key: \"runtime-private-key\"\n" +
@@ -120,6 +121,9 @@ func TestLoadRuntimeFromPathYAML(t *testing.T) {
 	if cfg.Deribit.BaseURL != "https://deribit-proxy.internal" {
 		t.Fatalf("unexpected deribit base url: %q", cfg.Deribit.BaseURL)
 	}
+	if cfg.Deribit.ProxyURL != "http://localhost:17892" {
+		t.Fatalf("unexpected deribit proxy url: %q", cfg.Deribit.ProxyURL)
+	}
 	if cfg.Tiger.TigerID != "20100001" || cfg.Tiger.Account != "acct-1" {
 		t.Fatalf("unexpected tiger identity config: %#v", cfg.Tiger)
 	}
@@ -187,6 +191,7 @@ func TestLoadRuntimeFromPathEnvOverrides(t *testing.T) {
 	t.Setenv(EnvMySQLDatabase, "env-db")
 	t.Setenv(EnvSchemaDir, "/opt/toktik/schema")
 	t.Setenv(EnvDeribitBaseURL, "https://deribit-env.example")
+	t.Setenv(EnvDeribitProxyURL, "http://localhost:17891")
 	t.Setenv(EnvTigerID, "20109999")
 	t.Setenv(EnvTigerPrivateKey, "env-private-key")
 	t.Setenv(EnvTigerAccount, "env-account")
@@ -246,6 +251,9 @@ func TestLoadRuntimeFromPathEnvOverrides(t *testing.T) {
 	}
 	if cfg.Deribit.BaseURL != "https://deribit-env.example" {
 		t.Fatalf("unexpected deribit override: %q", cfg.Deribit.BaseURL)
+	}
+	if cfg.Deribit.ProxyURL != "http://localhost:17891" {
+		t.Fatalf("unexpected deribit proxy override: %q", cfg.Deribit.ProxyURL)
 	}
 	if cfg.Tiger.TigerID != "20109999" || cfg.Tiger.Account != "env-account" || cfg.Tiger.Environment != "SANDBOX" {
 		t.Fatalf("unexpected tiger identity override: %#v", cfg.Tiger)

@@ -51,6 +51,8 @@ paths:
 
 deribit:
   base_url: "https://www.deribit.com"
+  # Optional explicit HTTP proxy. When empty, standard proxy environment variables apply.
+  proxy_url: ""
 
 tiger:
   tiger_id: ""

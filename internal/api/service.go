@@ -159,3 +159,7 @@ type PolygonProvider interface {
 	QueryOptionQuotes(ctx context.Context, req dto.PolygonOptionQuotesRequest) (*dto.PolygonQuoteResponse, error)
 	QueryOptionTrades(ctx context.Context, req dto.PolygonOptionTradesRequest) (*dto.PolygonTradeResponse, error)
 }
+
+type DeribitProvider interface {
+	QueryOptionChain(ctx context.Context, req dto.DeribitOptionChainRequest) (*dto.DeribitOptionChainResponse, error)
+}

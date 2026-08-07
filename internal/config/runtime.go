@@ -36,6 +36,7 @@ const (
 	EnvAPITrafficFlushSeconds                = "TOKTIK_API_TRAFFIC_FLUSH_SECONDS"
 	EnvSchemaDir                             = "TOKTIK_SCHEMA_DIR"
 	EnvDeribitBaseURL                        = "DERIBIT_BASE_URL"
+	EnvDeribitProxyURL                       = "DERIBIT_PROXY_URL"
 	EnvFMPAPIKey                             = "FMP_API_KEY"
 	EnvFMPCacheDir                           = "TOKTIK_FMP_CACHE_DIR"
 	EnvTigerID                               = "TIGEROPEN_TIGER_ID"
@@ -164,7 +165,8 @@ type Paths struct {
 }
 
 type Deribit struct {
-	BaseURL string `yaml:"base_url"`
+	BaseURL  string `yaml:"base_url"`
+	ProxyURL string `yaml:"proxy_url"`
 }
 
 type Tiger struct {
@@ -540,6 +542,9 @@ func (c *Runtime) applyEnvOverrides() {
 	}
 	if value := strings.TrimSpace(os.Getenv(EnvDeribitBaseURL)); value != "" {
 		c.Deribit.BaseURL = value
+	}
+	if value := strings.TrimSpace(os.Getenv(EnvDeribitProxyURL)); value != "" {
+		c.Deribit.ProxyURL = value
 	}
 	if value := strings.TrimSpace(os.Getenv(EnvTigerID)); value != "" {
 		c.Tiger.TigerID = value

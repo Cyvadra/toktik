@@ -36,6 +36,7 @@ type Deps struct {
 	FinanceCalendar   FinanceCalendarProvider
 	Logos             LogoProvider
 	Polygon           PolygonProvider // optional
+	Deribit           DeribitProvider // optional
 	APIKeys           APIKeyAuthenticator
 	TrafficMeter      *TrafficMeter
 
@@ -279,6 +280,10 @@ func registerRoutes(v1 *gin.RouterGroup, h *Handler) {
 	polygonOptions.GET("/aggregates", h.GetPolygonOptionAggregates)
 	polygonOptions.GET("/quotes", h.GetPolygonOptionQuotes)
 	polygonOptions.GET("/trades", h.GetPolygonOptionTrades)
+
+	deribitGroup := v1.Group("/deribit")
+	deribitOptions := deribitGroup.Group("/options")
+	deribitOptions.GET("/chain", h.GetDeribitOptionChain)
 
 	v1.GET("/strategies", h.ListStrategies)
 }

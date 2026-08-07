@@ -190,10 +190,14 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("init polygon service: %w", err)
 	}
+	deribitSvc, err := service.NewDeribitServiceFromConfig(runtimeCfg, cacheStore)
+	if err != nil {
+		return fmt.Errorf("init deribit service: %w", err)
+	}
 
 	stop := make(chan struct{})
 	defer close(stop)
-	deps := buildAPIDeps(runtimeCfg, repo, factorStore, apiServices, polygonSvc, cacheStore, apiKeyAuth, stop)
+	deps := buildAPIDeps(runtimeCfg, repo, factorStore, apiServices, polygonSvc, deribitSvc, cacheStore, apiKeyAuth, stop)
 	if runtimeCfg.API.TrafficEnabled {
 		trafficMeter := api.NewTrafficMeter()
 		trafficStats := service.NewTrafficStatsService(repo)
