@@ -119,7 +119,7 @@ Key design decisions:
 
 ### API Surface
 
-The canonical route table is registered in `internal/api/router.go`; generated endpoint references live in `docs/swagger.json`, `docs/swagger.yaml`, and `docs/db-market-indicator-api.md`. Major route groups:
+The canonical route table is registered in `internal/api/router.go`; generated endpoint references live in `docs/swagger/market/`, `docs/swagger/backtests/`, `docs/swagger/third-party/`, and their corresponding Markdown exports. Major route groups:
 
 | Group | Purpose |
 |-------|---------|

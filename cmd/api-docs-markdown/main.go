@@ -184,6 +184,29 @@ var backtestSections = []sectionSpec{
 	},
 }
 
+var thirdPartySections = []sectionSpec{
+	{
+		Title: "Polygon Realtime Market Data",
+		Endpoints: []endpointSpec{
+			{Method: "GET", Path: "/polygon/stocks/snapshot", Label: "US stock snapshot"},
+			{Method: "GET", Path: "/polygon/stocks/aggregates", Label: "US stock aggregates"},
+			{Method: "GET", Path: "/polygon/stocks/quotes", Label: "US stock quotes"},
+			{Method: "GET", Path: "/polygon/stocks/trades", Label: "US stock trades"},
+			{Method: "GET", Path: "/polygon/options/contract", Label: "US option contract"},
+			{Method: "GET", Path: "/polygon/options/chain", Label: "US option chain snapshot"},
+			{Method: "GET", Path: "/polygon/options/aggregates", Label: "US option aggregates"},
+			{Method: "GET", Path: "/polygon/options/quotes", Label: "US option quotes"},
+			{Method: "GET", Path: "/polygon/options/trades", Label: "US option trades"},
+		},
+	},
+	{
+		Title: "Deribit Realtime Market Data",
+		Endpoints: []endpointSpec{
+			{Method: "GET", Path: "/deribit/options/chain", Label: "Crypto option chain snapshot"},
+		},
+	},
+}
+
 var backtestSchemaDocs = map[string]map[string]string{
 	"StrategyBacktestDSLDiagnostic": {
 		"severity":  "Diagnostic severity, for example error or warning.",
@@ -393,10 +416,10 @@ var backtestSchemaDocs = map[string]map[string]string{
 }
 
 func main() {
-	input := flag.String("input", "docs/swagger.json", "Path to Swagger JSON")
+	input := flag.String("input", "docs/swagger/market/swagger.json", "Path to Swagger JSON")
 	output := flag.String("output", "docs/db-market-indicator-api.md", "Path to output Markdown")
 	title := flag.String("title", "Database Market Data & Indicator API", "Markdown title")
-	scope := flag.String("scope", "market", "Document scope: market or backtests")
+	scope := flag.String("scope", "market", "Document scope: market, backtests, or third-party")
 	flag.Parse()
 
 	doc, err := loadSwagger(*input)
@@ -450,6 +473,13 @@ func renderConfig(scope string) (renderSpec, error) {
 			Scope:       "本文檔匯出 named universe、策略回測與 DSL 工作流 API。API operation 與 schema 的摘要、行為和欄位描述均來自 Swagger 註釋；教學與 DSL 語言參考由本生成器輸出。",
 			SchemaIntro: "本節展開上方 API 使用到的 request/response schema。巢狀 DTO 也會被納入，方便客戶不打開 Swagger 也能檢查完整 JSON 結構。",
 			SchemaDocs:  backtestSchemaDocs,
+		}, nil
+	case "third-party", "thirdparty", "external":
+		return renderSpec{
+			Sections:    thirdPartySections,
+			Kind:        "third-party",
+			Scope:       "This document exports realtime and near-realtime third-party provider endpoints. It includes Polygon-backed US stock and US option endpoints plus the Deribit crypto option-chain endpoint. It intentionally excludes database-backed market, analytics, and backtest APIs.",
+			SchemaIntro: "This section expands every request and response schema referenced by the third-party endpoints above. Nested DTOs are included so clients can inspect the complete JSON shape without opening Swagger.",
 		}, nil
 	default:
 		return renderSpec{}, fmt.Errorf("unknown scope %q", scope)

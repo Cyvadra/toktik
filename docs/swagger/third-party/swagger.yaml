@@ -1,0 +1,973 @@
+basePath: /api/v1
+definitions:
+  github_com_Cyvadra_toktik_internal_dto.DeribitOptionChainContract:
+    properties:
+      askPrice:
+        type: number
+      bidPrice:
+        type: number
+      contract:
+        $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.DeribitOptionContract'
+      day:
+        $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.DeribitOptionDay'
+      impliedVolatility:
+        type: number
+      lastPrice:
+        type: number
+      markPrice:
+        type: number
+      midPrice:
+        type: number
+      openInterest:
+        type: number
+      premiumCurrency:
+        type: string
+      timestamp:
+        type: integer
+      underlyingAsset:
+        $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.DeribitUnderlyingAsset'
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.DeribitOptionChainResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.DeribitOptionChainContract'
+        type: array
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.DeribitOptionContract:
+    properties:
+      baseCurrency:
+        type: string
+      contractType:
+        type: string
+      exerciseStyle:
+        type: string
+      expirationDate:
+        type: string
+      quoteCurrency:
+        type: string
+      strikePrice:
+        type: number
+      ticker:
+        type: string
+      underlyingTicker:
+        type: string
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.DeribitOptionDay:
+    properties:
+      changePercent:
+        type: number
+      high:
+        type: number
+      low:
+        type: number
+      volume:
+        type: number
+      volumeUSD:
+        type: number
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.DeribitUnderlyingAsset:
+    properties:
+      price:
+        type: number
+      ticker:
+        type: string
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.ErrorResponse:
+    properties:
+      error:
+        type: string
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.PolygonAggregateResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/github_com_Cyvadra_toktik_pkg_polygon.AggregateBar'
+        type: array
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.PolygonOptionChainResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/github_com_Cyvadra_toktik_pkg_polygon.OptionChainContract'
+        type: array
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.PolygonOptionContractResponse:
+    properties:
+      data:
+        $ref: '#/definitions/github_com_Cyvadra_toktik_pkg_polygon.OptionContract'
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.PolygonQuoteResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/github_com_Cyvadra_toktik_pkg_polygon.Quote'
+        type: array
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.PolygonStockSnapshotResponse:
+    properties:
+      data:
+        $ref: '#/definitions/github_com_Cyvadra_toktik_pkg_polygon.StockSnapshot'
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.PolygonTradeResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/github_com_Cyvadra_toktik_pkg_polygon.Trade'
+        type: array
+    type: object
+  github_com_Cyvadra_toktik_pkg_polygon.AggregateBar:
+    properties:
+      adjusted:
+        type: boolean
+      close:
+        type: number
+      high:
+        type: number
+      low:
+        type: number
+      open:
+        type: number
+      otc:
+        type: boolean
+      ticker:
+        type: string
+      timestamp:
+        type: integer
+      tradeCount:
+        type: integer
+      volume:
+        type: number
+      vwap:
+        type: number
+    type: object
+  github_com_Cyvadra_toktik_pkg_polygon.OptionChainContract:
+    properties:
+      breakEvenPrice:
+        type: number
+      contract:
+        $ref: '#/definitions/github_com_Cyvadra_toktik_pkg_polygon.OptionContract'
+      day:
+        $ref: '#/definitions/github_com_Cyvadra_toktik_pkg_polygon.OptionDay'
+      fairMarketUpdated:
+        type: integer
+      fairMarketValue:
+        type: number
+      greeks:
+        $ref: '#/definitions/github_com_Cyvadra_toktik_pkg_polygon.OptionGreeks'
+      impliedVolatility:
+        type: number
+      lastQuote:
+        $ref: '#/definitions/github_com_Cyvadra_toktik_pkg_polygon.Quote'
+      lastTrade:
+        $ref: '#/definitions/github_com_Cyvadra_toktik_pkg_polygon.Trade'
+      openInterest:
+        type: number
+      underlyingAsset:
+        $ref: '#/definitions/github_com_Cyvadra_toktik_pkg_polygon.UnderlyingAsset'
+    type: object
+  github_com_Cyvadra_toktik_pkg_polygon.OptionContract:
+    properties:
+      cfi:
+        type: string
+      contractType:
+        type: string
+      correction:
+        type: integer
+      exerciseStyle:
+        type: string
+      expirationDate:
+        type: string
+      primaryExchange:
+        type: string
+      sharesPerContract:
+        type: number
+      strikePrice:
+        type: number
+      ticker:
+        type: string
+      underlyingTicker:
+        type: string
+    type: object
+  github_com_Cyvadra_toktik_pkg_polygon.OptionDay:
+    properties:
+      change:
+        type: number
+      changePercent:
+        type: number
+      close:
+        type: number
+      high:
+        type: number
+      lastUpdated:
+        type: integer
+      low:
+        type: number
+      open:
+        type: number
+      previousClose:
+        type: number
+      volume:
+        type: number
+      vwap:
+        type: number
+    type: object
+  github_com_Cyvadra_toktik_pkg_polygon.OptionGreeks:
+    properties:
+      delta:
+        type: number
+      gamma:
+        type: number
+      theta:
+        type: number
+      vega:
+        type: number
+    type: object
+  github_com_Cyvadra_toktik_pkg_polygon.Quote:
+    properties:
+      askExchange:
+        type: integer
+      askPrice:
+        type: number
+      askSize:
+        type: number
+      bidExchange:
+        type: integer
+      bidPrice:
+        type: number
+      bidSize:
+        type: number
+      conditions:
+        items:
+          type: integer
+        type: array
+      indicators:
+        items:
+          type: integer
+        type: array
+      participantTimestamp:
+        type: integer
+      sequenceNumber:
+        type: integer
+      sipTimestamp:
+        type: integer
+      tape:
+        type: integer
+      trfTimestamp:
+        type: integer
+    type: object
+  github_com_Cyvadra_toktik_pkg_polygon.SnapshotBar:
+    properties:
+      close:
+        type: number
+      high:
+        type: number
+      low:
+        type: number
+      open:
+        type: number
+      volume:
+        type: number
+      vwap:
+        type: number
+    type: object
+  github_com_Cyvadra_toktik_pkg_polygon.SnapshotMinuteBar:
+    properties:
+      accumulatedVolume:
+        type: integer
+      close:
+        type: number
+      high:
+        type: number
+      low:
+        type: number
+      open:
+        type: number
+      timestamp:
+        type: integer
+      tradeCount:
+        type: integer
+      volume:
+        type: number
+      vwap:
+        type: number
+    type: object
+  github_com_Cyvadra_toktik_pkg_polygon.StockSnapshot:
+    properties:
+      day:
+        $ref: '#/definitions/github_com_Cyvadra_toktik_pkg_polygon.SnapshotBar'
+      fairMarketValue:
+        type: number
+      lastQuote:
+        $ref: '#/definitions/github_com_Cyvadra_toktik_pkg_polygon.Quote'
+      lastTrade:
+        $ref: '#/definitions/github_com_Cyvadra_toktik_pkg_polygon.Trade'
+      minute:
+        $ref: '#/definitions/github_com_Cyvadra_toktik_pkg_polygon.SnapshotMinuteBar'
+      previousDay:
+        $ref: '#/definitions/github_com_Cyvadra_toktik_pkg_polygon.SnapshotBar'
+      ticker:
+        type: string
+      todaysChange:
+        type: number
+      todaysChangePerc:
+        type: number
+      updated:
+        type: integer
+    type: object
+  github_com_Cyvadra_toktik_pkg_polygon.Trade:
+    properties:
+      conditions:
+        items:
+          type: integer
+        type: array
+      correction:
+        type: integer
+      decimalSize:
+        type: string
+      exchange:
+        type: integer
+      id:
+        type: string
+      participantTimestamp:
+        type: integer
+      price:
+        type: number
+      sequenceNumber:
+        type: integer
+      sipTimestamp:
+        type: integer
+      size:
+        type: number
+      tape:
+        type: integer
+      trfId:
+        type: integer
+      trfTimestamp:
+        type: integer
+    type: object
+  github_com_Cyvadra_toktik_pkg_polygon.UnderlyingAsset:
+    properties:
+      changeToBreakEven:
+        type: number
+      lastUpdated:
+        type: integer
+      price:
+        type: number
+      ticker:
+        type: string
+      timeframe:
+        type: string
+      value:
+        type: number
+    type: object
+host: localhost:9010
+info:
+  contact:
+    email: dev@toktik.dev
+    name: Toktik Dev Team
+    url: https://toktik.dev
+  description: Backend data services for multi-market analytics, including market
+    data retrieval, feature/factor/fundamental queries, screening, strategy catalog,
+    and backtesting.
+  license:
+    name: Proprietary
+    url: https://toktik.dev/license
+  termsOfService: https://toktik.dev/terms
+  title: Toktik Options Platform API
+  version: "1.0"
+paths:
+  /deribit/options/chain:
+    get:
+      description: Returns a realtime Deribit option chain. Option premium prices
+        use the native premium currency; implied volatility is returned as a decimal.
+      parameters:
+      - description: Underlying currency (for example BTC or ETH)
+        in: query
+        name: underlying
+        required: true
+        type: string
+      - description: Exact expiration date (YYYY-MM-DD)
+        in: query
+        name: expiration_date
+        type: string
+      - description: Minimum expiration date
+        in: query
+        name: expiration_date_gte
+        type: string
+      - description: Expiration date greater than
+        in: query
+        name: expiration_date_gt
+        type: string
+      - description: Maximum expiration date
+        in: query
+        name: expiration_date_lte
+        type: string
+      - description: Expiration date less than
+        in: query
+        name: expiration_date_lt
+        type: string
+      - description: call or put
+        in: query
+        name: contract_type
+        type: string
+      - description: Exact strike price
+        in: query
+        name: strike_price
+        type: number
+      - description: Minimum strike price
+        in: query
+        name: strike_price_gte
+        type: number
+      - description: Strike price greater than
+        in: query
+        name: strike_price_gt
+        type: number
+      - description: Maximum strike price
+        in: query
+        name: strike_price_lte
+        type: number
+      - description: Strike price less than
+        in: query
+        name: strike_price_lt
+        type: number
+      - description: Sort direction (asc or desc)
+        in: query
+        name: order
+        type: string
+      - description: Sort field
+        in: query
+        name: sort
+        type: string
+      - description: Maximum contracts (max 1000; zero returns all)
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.DeribitOptionChainResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+        "501":
+          description: Not Implemented
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+        "502":
+          description: Bad Gateway
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+        "504":
+          description: Gateway Timeout
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+      summary: Get realtime crypto option chain snapshot via Deribit
+      tags:
+      - Deribit
+  /polygon/options/aggregates:
+    get:
+      description: Proxies Polygon aggregate bars for a US option contract over a
+        requested time window.
+      parameters:
+      - description: Option ticker
+        in: query
+        name: ticker
+        required: true
+        type: string
+      - description: Aggregate multiplier
+        in: query
+        name: multiplier
+        type: integer
+      - description: Timespan (minute,hour,day,...)
+        in: query
+        name: timespan
+        required: true
+        type: string
+      - description: Start time (RFC3339 or YYYY-MM-DD)
+        in: query
+        name: from
+        required: true
+        type: string
+      - description: End time (RFC3339 or YYYY-MM-DD)
+        in: query
+        name: to
+        required: true
+        type: string
+      - description: Adjusted results
+        in: query
+        name: adjusted
+        type: boolean
+      - description: Sort direction
+        in: query
+        name: sort
+        type: string
+      - description: Page size
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.PolygonAggregateResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+      summary: Get US option aggregate bars via Polygon
+      tags:
+      - Polygon
+  /polygon/options/chain:
+    get:
+      description: Proxies Polygon option chain snapshots for a US underlying. This
+        is the recommended endpoint for realtime option surface reads.
+      parameters:
+      - description: Underlying ticker symbol
+        in: query
+        name: underlying
+        required: true
+        type: string
+      - description: Exact expiration date
+        in: query
+        name: expiration_date
+        type: string
+      - description: Minimum expiration date
+        in: query
+        name: expiration_date_gte
+        type: string
+      - description: Expiration date greater than
+        in: query
+        name: expiration_date_gt
+        type: string
+      - description: Maximum expiration date
+        in: query
+        name: expiration_date_lte
+        type: string
+      - description: Expiration date less than
+        in: query
+        name: expiration_date_lt
+        type: string
+      - description: call or put
+        in: query
+        name: contract_type
+        type: string
+      - description: Exact strike price
+        in: query
+        name: strike_price
+        type: number
+      - description: Minimum strike price
+        in: query
+        name: strike_price_gte
+        type: number
+      - description: Strike price greater than
+        in: query
+        name: strike_price_gt
+        type: number
+      - description: Maximum strike price
+        in: query
+        name: strike_price_lte
+        type: number
+      - description: Strike price less than
+        in: query
+        name: strike_price_lt
+        type: number
+      - description: Sort direction
+        in: query
+        name: order
+        type: string
+      - description: Sort field
+        in: query
+        name: sort
+        type: string
+      - description: Page size (max 250)
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.PolygonOptionChainResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+      summary: Get realtime US option chain snapshot via Polygon
+      tags:
+      - Polygon
+  /polygon/options/contract:
+    get:
+      description: Returns static contract metadata for a single OCC-style Polygon
+        option ticker.
+      parameters:
+      - description: Option ticker, e.g. O:SPY251219C00650000
+        in: query
+        name: ticker
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.PolygonOptionContractResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+      summary: Get US option contract metadata via Polygon
+      tags:
+      - Polygon
+  /polygon/options/quotes:
+    get:
+      description: Proxies Polygon quote history for a US option contract.
+      parameters:
+      - description: Option ticker
+        in: query
+        name: ticker
+        required: true
+        type: string
+      - description: Exact timestamp
+        in: query
+        name: timestamp
+        type: string
+      - description: Timestamp greater than or equal
+        in: query
+        name: timestamp_gte
+        type: string
+      - description: Timestamp greater than
+        in: query
+        name: timestamp_gt
+        type: string
+      - description: Timestamp less than or equal
+        in: query
+        name: timestamp_lte
+        type: string
+      - description: Timestamp less than
+        in: query
+        name: timestamp_lt
+        type: string
+      - description: Sort order
+        in: query
+        name: order
+        type: string
+      - description: Sort field
+        in: query
+        name: sort
+        type: string
+      - description: Page size
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.PolygonQuoteResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+      summary: Get US option quotes via Polygon
+      tags:
+      - Polygon
+  /polygon/options/trades:
+    get:
+      description: Proxies Polygon trade history for a US option contract.
+      parameters:
+      - description: Option ticker
+        in: query
+        name: ticker
+        required: true
+        type: string
+      - description: Exact timestamp
+        in: query
+        name: timestamp
+        type: string
+      - description: Timestamp greater than or equal
+        in: query
+        name: timestamp_gte
+        type: string
+      - description: Timestamp greater than
+        in: query
+        name: timestamp_gt
+        type: string
+      - description: Timestamp less than or equal
+        in: query
+        name: timestamp_lte
+        type: string
+      - description: Timestamp less than
+        in: query
+        name: timestamp_lt
+        type: string
+      - description: Sort order
+        in: query
+        name: order
+        type: string
+      - description: Sort field
+        in: query
+        name: sort
+        type: string
+      - description: Page size
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.PolygonTradeResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+      summary: Get US option trades via Polygon
+      tags:
+      - Polygon
+  /polygon/stocks/aggregates:
+    get:
+      description: Proxies Polygon aggregate bars for historical or near-realtime
+        stock data with short-TTL caching based on the requested time window.
+      parameters:
+      - description: Stock ticker symbol
+        in: query
+        name: ticker
+        required: true
+        type: string
+      - description: Aggregate multiplier
+        in: query
+        name: multiplier
+        type: integer
+      - description: Timespan (minute,hour,day,...)
+        in: query
+        name: timespan
+        required: true
+        type: string
+      - description: Start time (RFC3339 or YYYY-MM-DD)
+        in: query
+        name: from
+        required: true
+        type: string
+      - description: End time (RFC3339 or YYYY-MM-DD)
+        in: query
+        name: to
+        required: true
+        type: string
+      - description: Adjusted results
+        in: query
+        name: adjusted
+        type: boolean
+      - description: Sort direction
+        in: query
+        name: sort
+        type: string
+      - description: Page size
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.PolygonAggregateResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+      summary: Get US stock aggregate bars via Polygon
+      tags:
+      - Polygon
+  /polygon/stocks/quotes:
+    get:
+      description: Proxies Polygon quote history for a stock ticker. Use near-now
+        windows for realtime quote polling.
+      parameters:
+      - description: Stock ticker symbol
+        in: query
+        name: symbol
+        required: true
+        type: string
+      - description: Exact timestamp
+        in: query
+        name: timestamp
+        type: string
+      - description: Timestamp greater than or equal
+        in: query
+        name: timestamp_gte
+        type: string
+      - description: Timestamp greater than
+        in: query
+        name: timestamp_gt
+        type: string
+      - description: Timestamp less than or equal
+        in: query
+        name: timestamp_lte
+        type: string
+      - description: Timestamp less than
+        in: query
+        name: timestamp_lt
+        type: string
+      - description: Sort order
+        in: query
+        name: order
+        type: string
+      - description: Sort field
+        in: query
+        name: sort
+        type: string
+      - description: Page size
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.PolygonQuoteResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+      summary: Get US stock quotes via Polygon
+      tags:
+      - Polygon
+  /polygon/stocks/snapshot:
+    get:
+      description: Proxies Polygon stock snapshot data. This endpoint bypasses the
+        platform database and is intended for realtime client reads.
+      parameters:
+      - description: 'Stock ticker symbol (alias: symbol)'
+        in: query
+        name: ticker
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.PolygonStockSnapshotResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+      summary: Get realtime US stock snapshot via Polygon
+      tags:
+      - Polygon
+  /polygon/stocks/trades:
+    get:
+      description: Proxies Polygon trade history for a stock ticker. Use this when
+        you need prints instead of NBBO quotes.
+      parameters:
+      - description: Stock ticker symbol
+        in: query
+        name: symbol
+        required: true
+        type: string
+      - description: Exact timestamp
+        in: query
+        name: timestamp
+        type: string
+      - description: Timestamp greater than or equal
+        in: query
+        name: timestamp_gte
+        type: string
+      - description: Timestamp greater than
+        in: query
+        name: timestamp_gt
+        type: string
+      - description: Timestamp less than or equal
+        in: query
+        name: timestamp_lte
+        type: string
+      - description: Timestamp less than
+        in: query
+        name: timestamp_lt
+        type: string
+      - description: Sort order
+        in: query
+        name: order
+        type: string
+      - description: Sort field
+        in: query
+        name: sort
+        type: string
+      - description: Page size
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.PolygonTradeResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+      summary: Get US stock trades via Polygon
+      tags:
+      - Polygon
+securityDefinitions:
+  ApiKeyAuth:
+    in: header
+    name: X-API-Key
+    type: apiKey
+swagger: "2.0"

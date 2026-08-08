@@ -4,7 +4,7 @@
 
 # Backtests & DSL API
 
-- Source Swagger: `docs/swagger.json`
+- Source Swagger: `docs/swagger/backtests/swagger.json`
 - API title: `Toktik Options Platform API`
 - API version: `1.0`
 

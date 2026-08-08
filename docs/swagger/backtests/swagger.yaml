@@ -1,0 +1,1019 @@
+basePath: /api/v1
+definitions:
+  github_com_Cyvadra_toktik_internal_dto.ErrorResponse:
+    properties:
+      error:
+        type: string
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.StrategyBacktestDSLDiagnostic:
+    properties:
+      bar_index:
+        type: integer
+      code:
+        type: string
+      function:
+        type: string
+      hint:
+        type: string
+      message:
+        type: string
+      severity:
+        type: string
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.StrategyBacktestDSLParam:
+    properties:
+      default: {}
+      max:
+        type: number
+      min:
+        type: number
+      name:
+        type: string
+      options:
+        items:
+          type: string
+        type: array
+      step:
+        type: number
+      title:
+        type: string
+      type:
+        type: string
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.StrategyBacktestDSLProfile:
+    properties:
+      regular_trade:
+        type: string
+      uses_options:
+        type: boolean
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.StrategyBacktestPortfolioLeg:
+    properties:
+      asset:
+        type: string
+      market:
+        type: string
+      weight:
+        type: number
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.StrategyBacktestProgress:
+    properties:
+      completed:
+        type: boolean
+      current:
+        type: integer
+      message:
+        type: string
+      percent:
+        type: number
+      phase:
+        type: string
+      started_at:
+        type: string
+      timestamp:
+        type: string
+      total:
+        type: integer
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.StrategyBacktestResourcePlan:
+    properties:
+      estimated_contracts:
+        type: integer
+      from:
+        type: string
+      interval:
+        type: string
+      min_dte:
+        type: integer
+      option_chain_underlyings:
+        type: integer
+      runtime_dynamic_requests:
+        type: integer
+      static_data_requests:
+        type: integer
+      target_dte:
+        type: integer
+      to:
+        type: string
+      universe_codes:
+        items:
+          type: string
+        type: array
+      universe_coverage:
+        items:
+          $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.StrategyBacktestUniverseCoverage'
+        type: array
+      universe_size:
+        type: integer
+      warnings:
+        items:
+          type: string
+        type: array
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.StrategyBacktestRunAccepted:
+    properties:
+      created_at:
+        type: string
+      events_url:
+        type: string
+      report_url:
+        type: string
+      run_id:
+        type: string
+      status:
+        type: string
+      status_url:
+        type: string
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.StrategyBacktestRunRequest:
+    properties:
+      asset:
+        type: string
+      capital:
+        type: number
+      commission_model:
+        type: string
+      commission_value:
+        type: number
+      direction:
+        type: string
+      dsl:
+        type: string
+      dsl_params:
+        additionalProperties: true
+        type: object
+      dsl_profile:
+        $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.StrategyBacktestDSLProfile'
+      from:
+        type: string
+      html_output:
+        type: string
+      instrument:
+        type: string
+      interval:
+        type: string
+      long_delta_max:
+        type: number
+      long_delta_min:
+        type: number
+      ma_period:
+        type: integer
+      market:
+        type: string
+      max_hold_hours:
+        type: number
+      min_expiry_days:
+        type: integer
+      min_premium:
+        type: number
+      p_threshold:
+        type: number
+      portfolio:
+        items:
+          $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.StrategyBacktestPortfolioLeg'
+        type: array
+      position_size:
+        type: number
+      report_chart_interval:
+        type: string
+      report_chart_market:
+        type: string
+      report_chart_prefix:
+        type: string
+      report_chart_symbol:
+        type: string
+      short_delta_max:
+        type: number
+      short_delta_min:
+        type: number
+      signal_source:
+        type: string
+      slippage_pct:
+        type: number
+      spread_entry_price_mode:
+        type: string
+      spread_exit_price_mode:
+        type: string
+      spread_valuation_price_mode:
+        type: string
+      strategy:
+        type: string
+      symbols:
+        items:
+          type: string
+        type: array
+      target_expiry_days:
+        type: integer
+      to:
+        type: string
+      universe_code:
+        type: string
+      universe_market:
+        type: string
+      weights:
+        items:
+          type: number
+        type: array
+    required:
+    - capital
+    - from
+    - to
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.StrategyBacktestRunResult:
+    properties:
+      overview_html_path:
+        type: string
+      overview_report_url:
+        type: string
+      report_url:
+        type: string
+      summaries:
+        items:
+          $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.StrategyBacktestSummary'
+        type: array
+      warnings:
+        items:
+          $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.StrategyBacktestRuntimeWarning'
+        type: array
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.StrategyBacktestRunStatus:
+    properties:
+      completed_at:
+        type: string
+      created_at:
+        type: string
+      error:
+        type: string
+      progress:
+        $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.StrategyBacktestProgress'
+      report_url:
+        type: string
+      request:
+        $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.StrategyBacktestRunRequest'
+      result:
+        $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.StrategyBacktestRunResult'
+      run_id:
+        type: string
+      started_at:
+        type: string
+      status:
+        type: string
+      updated_at:
+        type: string
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.StrategyBacktestRuntimeWarning:
+    properties:
+      bar_index:
+        type: integer
+      code:
+        type: string
+      details:
+        additionalProperties:
+          type: string
+        type: object
+      leg_index:
+        type: integer
+      message:
+        type: string
+      policy:
+        type: string
+      severity:
+        type: string
+      spread_id:
+        type: integer
+      symbol:
+        type: string
+      timestamp:
+        type: string
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.StrategyBacktestSpreadSummary:
+    properties:
+      closed_spreads:
+        type: integer
+      losing_spreads:
+        type: integer
+      open_spreads:
+        type: integer
+      total_pnl:
+        type: number
+      total_spreads:
+        type: integer
+      win_rate:
+        type: number
+      winning_spreads:
+        type: integer
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.StrategyBacktestSummary:
+    properties:
+      account_unit:
+        type: string
+      annualized_return:
+        type: number
+      avg_loss:
+        type: number
+      avg_win:
+        type: number
+      bars_count:
+        type: integer
+      calmar_ratio:
+        type: number
+      capital_mode:
+        type: string
+      capital_note:
+        type: string
+      capital_profile:
+        type: string
+      end_time:
+        type: string
+      final_equity:
+        type: number
+      html_path:
+        type: string
+      initial_capital:
+        type: number
+      losing_trades:
+        type: integer
+      max_drawdown:
+        type: number
+      profit_factor:
+        type: number
+      report_url:
+        type: string
+      sharpe_ratio:
+        type: number
+      spread_summary:
+        $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.StrategyBacktestSpreadSummary'
+      start_time:
+        type: string
+      strategy_name:
+        type: string
+      total_fees:
+        type: number
+      total_return:
+        type: number
+      total_trades:
+        type: integer
+      warnings:
+        items:
+          $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.StrategyBacktestRuntimeWarning'
+        type: array
+      win_rate:
+        type: number
+      winning_trades:
+        type: integer
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.StrategyBacktestUniverseCoverage:
+    properties:
+      bars_with_members:
+        type: integer
+      code:
+        type: string
+      first_covered_date:
+        type: string
+      last_covered_date:
+        type: string
+      max_members_per_bar:
+        type: integer
+      min_members_per_bar:
+        type: integer
+      replay_bars:
+        type: integer
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.StrategyBacktestValidationItem:
+    properties:
+      canonical_name:
+        type: string
+      display_name:
+        type: string
+      dsl_diagnostics:
+        items:
+          $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.StrategyBacktestDSLDiagnostic'
+        type: array
+      dsl_params:
+        items:
+          $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.StrategyBacktestDSLParam'
+        type: array
+      profile_label:
+        type: string
+      profile_source:
+        type: string
+      regular_trade:
+        type: string
+      runtime:
+        $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.StrategyBacktestValidationRuntime'
+      uses_options:
+        type: boolean
+      warnings:
+        items:
+          type: string
+        type: array
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.StrategyBacktestValidationResponse:
+    properties:
+      resource_plan:
+        $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.StrategyBacktestResourcePlan'
+      strategies:
+        items:
+          $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.StrategyBacktestValidationItem'
+        type: array
+      strategy_count:
+        type: integer
+      strategy_label:
+        type: string
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.StrategyBacktestValidationRuntime:
+    properties:
+      capital_explanation:
+        type: string
+      capital_mode:
+        type: string
+      capital_unit:
+        type: string
+      instrument:
+        type: string
+      market:
+        type: string
+      options_chain_required:
+        type: boolean
+      options_unit:
+        type: string
+      regular_trade_summary:
+        type: string
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.StrategyCatalogEntry:
+    properties:
+      aliases:
+        items:
+          type: string
+        type: array
+      groups:
+        items:
+          type: string
+        type: array
+      name:
+        type: string
+      profile_label:
+        type: string
+      regular_trade:
+        type: string
+      uses_options:
+        type: boolean
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.StrategyCatalogResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.StrategyCatalogEntry'
+        type: array
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.UniverseMember:
+    properties:
+      ingested_at:
+        description: Storage ingestion timestamp.
+        type: string
+      market:
+        description: Market containing the symbol.
+        type: string
+      metadata:
+        description: Optional caller-supplied JSON or text metadata.
+        type: string
+      rank:
+        description: Optional source rank; static members without a rank are ranked
+          by symbol.
+        type: integer
+      score:
+        description: Optional source score, such as combined turnover.
+        type: number
+      source:
+        description: Source type that created the membership.
+        type: string
+      source_run_id:
+        description: Deterministic identifier for the rebuild result.
+        type: string
+      symbol:
+        description: Symbol, normalized to uppercase for static sources.
+        type: string
+      universe_code:
+        description: Named universe code.
+        type: string
+      valid_from:
+        description: Inclusive membership start.
+        type: string
+      valid_to:
+        description: Exclusive membership end.
+        type: string
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.UniverseMembersResponse:
+    properties:
+      as_of:
+        description: Point-in-time date for an as_of query.
+        type: string
+      code:
+        description: Resolved universe code.
+        type: string
+      data:
+        description: Matching membership records.
+        items:
+          $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.UniverseMember'
+        type: array
+      from:
+        description: Inclusive interval query start.
+        type: string
+      market:
+        description: Resolved market.
+        type: string
+      to:
+        description: Exclusive interval query end.
+        type: string
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.UniverseRebuildAccepted:
+    properties:
+      accepted:
+        description: True when a background rebuild was started.
+        type: boolean
+      code:
+        description: Resolved universe code.
+        type: string
+      ignored:
+        description: True when an identical rebuild is already running.
+        type: boolean
+      market:
+        description: Resolved market.
+        type: string
+      message:
+        description: Human-readable trigger outcome.
+        type: string
+      request_hash:
+        description: Stable hash of the normalized rebuild request.
+        type: string
+      source_type:
+        allOf:
+        - $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.UniverseSourceType'
+        description: Source requested for the rebuild.
+      started_at:
+        description: Background rebuild start time.
+        type: string
+      status:
+        description: queued or already_running.
+        type: string
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.UniverseRebuildRequest:
+    properties:
+      code:
+        description: Required named universe code.
+        type: string
+      dry_run:
+        description: Calculate without persisting membership or run metadata.
+        type: boolean
+      force_rebuild_source:
+        description: Rebuild the materialized turnover source pool before rebuilding
+          membership.
+        type: boolean
+      force_refresh:
+        description: Full rebuild when true; defaults to true for JSON requests.
+        type: boolean
+      limit:
+        description: Members retained per turnover lookback; default is 60.
+        type: integer
+      lookback_days:
+        description: Turnover lookbacks in trading days; values outside 7..252 are
+          ignored and default is 7,20,60,120.
+        items:
+          type: integer
+        type: array
+      market:
+        description: Market; defaults to us-stocks.
+        type: string
+      members:
+        description: Static members required by preset_symbols and provider_holdings
+          when symbols is empty.
+        items:
+          $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.UniverseMember'
+        type: array
+      non_etf_only:
+        description: Turnover source ETF exclusion; default is true.
+        type: boolean
+      source_type:
+        allOf:
+        - $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.UniverseSourceType'
+        description: turnover_intersection_union (default), preset_symbols, or provider_holdings.
+      symbols:
+        description: Static symbols required by preset_symbols and provider_holdings
+          when members is empty.
+        items:
+          type: string
+        type: array
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.UniverseSourceType:
+    enum:
+    - turnover_intersection_union
+    - preset_symbols
+    - provider_holdings
+    type: string
+    x-enum-varnames:
+    - UniverseSourceTurnoverIntersectionUnion
+    - UniverseSourcePresetSymbols
+    - UniverseSourceProviderHoldings
+host: localhost:9010
+info:
+  contact:
+    email: dev@toktik.dev
+    name: Toktik Dev Team
+    url: https://toktik.dev
+  description: Backend data services for multi-market analytics, including market
+    data retrieval, feature/factor/fundamental queries, screening, strategy catalog,
+    and backtesting.
+  license:
+    name: Proprietary
+    url: https://toktik.dev/license
+  termsOfService: https://toktik.dev/terms
+  title: Toktik Options Platform API
+  version: "1.0"
+paths:
+  /backtests/runs:
+    post:
+      consumes:
+      - application/json
+      description: Submits a strategy or DSL backtest run and returns immediately
+        with run_id, status_url, events_url, and report_url. The run executes asynchronously
+        in memory. Query progress and completed results with GET /backtests/runs/{runID};
+        stream live progress with GET /backtests/runs/{runID}/events; fetch HTML reports
+        with GET /backtests/runs/{runID}/report or /backtests/runs/{runID}/reports/{reportID}.
+        Completed JSON results are embedded in StrategyBacktestRunStatus.result.summaries.
+      parameters:
+      - description: Backtest run configuration
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.StrategyBacktestRunRequest'
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: Accepted
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.StrategyBacktestRunAccepted'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+        "501":
+          description: Not Implemented
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+      summary: Start an async strategy backtest
+      tags:
+      - Backtests
+  /backtests/runs/{runID}:
+    get:
+      description: Returns the latest run status for a backtest. While running, inspect
+        progress.phase, progress.percent, progress.current, progress.total, and progress.message.
+        When status is completed, result.summaries contains per-strategy metrics such
+        as bars_count, initial_capital, final_equity, total_return, annualized_return,
+        sharpe_ratio, max_drawdown, total_trades, win_rate, total_fees, report_url,
+        and optional spread_summary. When status is failed, error contains the failure
+        reason.
+      parameters:
+      - description: Backtest run ID
+        in: path
+        name: runID
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.StrategyBacktestRunStatus'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+        "501":
+          description: Not Implemented
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+      summary: Get backtest run status and result
+      tags:
+      - Backtests
+  /backtests/runs/{runID}/events:
+    get:
+      description: Streams server-sent events for a backtest run. Events contain StrategyBacktestRunStatus
+        snapshots, including progress updates and final completed/failed status. Clients
+        should still call GET /backtests/runs/{runID} after reconnects or stream completion
+        to obtain the authoritative final result.
+      parameters:
+      - description: Backtest run ID
+        in: path
+        name: runID
+        required: true
+        type: string
+      produces:
+      - text/event-stream
+      responses:
+        "200":
+          description: SSE stream of backtest events
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+        "501":
+          description: Not Implemented
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+      summary: Stream backtest run events (SSE)
+      tags:
+      - Backtests
+  /backtests/runs/{runID}/report:
+    get:
+      description: Returns the primary HTML report for a completed backtest run. If
+        the run is still queued or running, the endpoint returns 202 with the current
+        StrategyBacktestRunStatus JSON so clients can continue polling. If no report
+        is available for the completed run, it returns 409.
+      parameters:
+      - description: Backtest run ID
+        in: path
+        name: runID
+        required: true
+        type: string
+      produces:
+      - text/html
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: string
+        "202":
+          description: Accepted
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.StrategyBacktestRunStatus'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+        "501":
+          description: Not Implemented
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+      summary: Get primary backtest report
+      tags:
+      - Backtests
+  /backtests/runs/{runID}/reports/{reportID}:
+    get:
+      description: Returns a named HTML report variant for a completed backtest run.
+        Use reportID=overview for the portfolio/aggregate overview, or a 1-based numeric
+        reportID for a per-strategy detail report. If the run is not complete, returns
+        202 with current StrategyBacktestRunStatus JSON.
+      parameters:
+      - description: Backtest run ID
+        in: path
+        name: runID
+        required: true
+        type: string
+      - description: 'Report selector: overview or 1..N'
+        in: path
+        name: reportID
+        required: true
+        type: string
+      produces:
+      - text/html
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: string
+        "202":
+          description: Accepted
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.StrategyBacktestRunStatus'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+        "501":
+          description: Not Implemented
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+      summary: Get a named backtest report
+      tags:
+      - Backtests
+  /backtests/validate:
+    post:
+      consumes:
+      - application/json
+      description: Validates a strategy backtest payload before execution. The response
+        resolves strategy catalog metadata, inferred DSL profile, input parameter
+        schema, diagnostics, warnings, capital mode, option-chain requirements, and
+        prepare-time data availability without starting an async run. Use this endpoint
+        to build client forms and catch DSL/runtime configuration problems before
+        POST /backtests/runs.
+      parameters:
+      - description: Backtest validation configuration
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.StrategyBacktestRunRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.StrategyBacktestValidationResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+        "501":
+          description: Not Implemented
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+      summary: Validate a strategy or DSL backtest request
+      tags:
+      - Backtests
+  /strategies:
+    get:
+      description: Returns all available strategy templates with metadata and group
+        classification.
+      parameters:
+      - description: Filter by strategy group
+        in: query
+        name: group
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.StrategyCatalogResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+      summary: List registered strategies
+      tags:
+      - Strategies
+  /universes/{code}/members:
+    get:
+      description: Returns point-in-time members when as_of is supplied, or every
+        membership interval overlapping the half-open [from, to) range. Supply either
+        as_of or a range; dates accept YYYY-MM-DD or RFC3339.
+      parameters:
+      - description: Named universe code
+        in: path
+        name: code
+        required: true
+        type: string
+      - description: Market; defaults to us-stocks
+        in: query
+        name: market
+        type: string
+      - description: Point-in-time date (YYYY-MM-DD or RFC3339); cannot be combined
+          with a range
+        in: query
+        name: as_of
+        type: string
+      - description: Inclusive range start (YYYY-MM-DD or RFC3339)
+        in: query
+        name: from
+        type: string
+      - description: Exclusive range end (YYYY-MM-DD or RFC3339)
+        in: query
+        name: to
+        type: string
+      - description: Maximum intervals returned; defaults to 5000 and is capped at
+          500000
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.UniverseMembersResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+        "501":
+          description: Not Implemented
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+      summary: Get named universe members
+      tags:
+      - Universes
+  /universes/rebuild:
+    post:
+      consumes:
+      - application/json
+      description: Triggers an asynchronous rebuild over a server-derived half-open
+        [from, to) range. The end is the latest date shared by SPY stock and option
+        daily data; force_refresh=true (the default) starts from the configured rebuild
+        history, while false resumes from existing membership. source_type defaults
+        to turnover_intersection_union, which derives a daily union of liquid US stock/option
+        underlyings across requested turnover lookbacks. preset_symbols and provider_holdings
+        require symbols or members. Set dry_run=true to calculate the result without
+        changing stored membership or recording a run. For turnover_intersection_union,
+        force_rebuild_source=true refreshes the materialized turnover source pool
+        before rebuilding membership; by default only missing source dates are filled.
+        Identical requests already running are ignored by request_hash. A configured
+        API key authenticator is required even when local-client auth bypass is enabled.
+      parameters:
+      - description: Universe rebuild configuration
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.UniverseRebuildRequest'
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: Accepted
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.UniverseRebuildAccepted'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+        "501":
+          description: Not Implemented
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+      summary: Rebuild named universe membership
+      tags:
+      - Universes
+securityDefinitions:
+  ApiKeyAuth:
+    in: header
+    name: X-API-Key
+    type: apiKey
+swagger: "2.0"

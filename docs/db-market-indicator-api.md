@@ -4,7 +4,7 @@
 
 # Database Market Data & Indicator API
 
-- Source Swagger: `docs/swagger.json`
+- Source Swagger: `docs/swagger/market/swagger.json`
 - API title: `Toktik Options Platform API`
 - API version: `1.0`
 
