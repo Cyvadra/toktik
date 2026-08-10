@@ -1,6 +1,10 @@
 package dslscripts
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/Cyvadra/toktik/pkg/dsl/parser"
+)
 
 func TestReadStrategyValidatesName(t *testing.T) {
 	tests := []struct {
@@ -27,5 +31,15 @@ func TestReadStrategyValidatesName(t *testing.T) {
 				t.Fatal("ReadStrategy returned empty content")
 			}
 		})
+	}
+}
+
+func TestCryptoIVSmileProbeParses(t *testing.T) {
+	source, err := ReadStrategy("crypto-iv-smile-probe.toktik")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, errors := parser.Parse(source); len(errors) > 0 {
+		t.Fatalf("parse IV smile probe: %v", errors)
 	}
 }

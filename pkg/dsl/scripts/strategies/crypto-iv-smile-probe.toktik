@@ -1,0 +1,29 @@
+//@version=6
+strategy("crypto-iv-smile-probe")
+
+underlying = input.string("BTC", title="Underlying", options=["BTC", "ETH"])
+distance_ratio = input.float(0.20, title="Strike Distance Ratio", minval=0, maxval=1, step=0.01)
+
+chain = options.chain("crypto-options", underlying)
+surface = options.iv_smile_surface(chain, distance_ratio)
+expiries = options.iv_smile_expirations(surface)
+
+plot(len(expiries), title="smile_expiration_count", precision=0)
+
+if len(expiries) > 0
+    smile = options.iv_smile(surface, expiries[0])
+    call_raw_atm = options.iv_smile_at(smile, "call", close, false)
+    call_smoothed_atm = options.iv_smile_at(smile, "call", close, true)
+    put_raw_atm = options.iv_smile_at(smile, "put", close, false)
+    put_smoothed_atm = options.iv_smile_at(smile, "put", close, true)
+
+    plot(options.iv_smile_total_oi(smile), title="front_smile_total_oi", precision=2)
+    plot(options.iv_smile_oi_coverage(smile, "call"), title="front_call_oi_coverage", precision=4)
+    plot(options.iv_smile_oi_coverage(smile, "put"), title="front_put_oi_coverage", precision=4)
+    plot(len(options.iv_smile_strikes(smile, "call")), title="front_call_strike_count", precision=0)
+    plot(len(options.iv_smile_strikes(smile, "put")), title="front_put_strike_count", precision=0)
+    plot(call_raw_atm, title="front_call_raw_iv_at_spot", precision=4)
+    plot(call_smoothed_atm, title="front_call_smoothed_iv_at_spot", precision=4)
+    plot(put_raw_atm, title="front_put_raw_iv_at_spot", precision=4)
+    plot(put_smoothed_atm, title="front_put_smoothed_iv_at_spot", precision=4)
+    plot(put_smoothed_atm - call_smoothed_atm, title="front_smoothed_put_call_skew", precision=4)
