@@ -14,6 +14,7 @@ func TestDSLStrategiesParse(t *testing.T) {
 		"golden-cross-dsl",
 		"ema-atr-spot-dsl",
 		"delta-filter-dsl",
+		"crypto-iv-smile-probe",
 		"strong-momentum-dsl",
 		"daily-picks-dsl",
 		"daily-picks-core-dsl",

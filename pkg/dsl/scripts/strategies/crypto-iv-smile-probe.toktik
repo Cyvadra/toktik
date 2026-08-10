@@ -4,26 +4,68 @@ strategy("crypto-iv-smile-probe")
 underlying = input.string("BTC", title="Underlying", options=["BTC", "ETH"])
 distance_ratio = input.float(0.20, title="Strike Distance Ratio", minval=0, maxval=1, step=0.01)
 
-chain = options.chain("crypto-options", underlying)
+chain = options.chain("crypto", underlying)
+calls = options.calls(chain)
+puts = options.puts(chain)
 surface = options.iv_smile_surface(chain, distance_ratio)
 expiries = options.iv_smile_expirations(surface)
 
-plot(len(expiries), title="smile_expiration_count", precision=0)
+front_total_oi = na
+front_call_oi_coverage = na
+front_put_oi_coverage = na
+front_call_strike_count = na
+front_put_strike_count = na
+front_call_raw_iv_at_spot = na
+front_call_smoothed_iv_at_spot = na
+front_put_raw_iv_at_spot = na
+front_put_smoothed_iv_at_spot = na
+front_smoothed_put_call_skew = na
+next_total_oi = na
+next_call_raw_iv_at_spot = na
+next_call_smoothed_iv_at_spot = na
+next_put_raw_iv_at_spot = na
+next_put_smoothed_iv_at_spot = na
+next_smoothed_put_call_skew = na
 
 if len(expiries) > 0
-    smile = options.iv_smile(surface, expiries[0])
-    call_raw_atm = options.iv_smile_at(smile, "call", close, false)
-    call_smoothed_atm = options.iv_smile_at(smile, "call", close, true)
-    put_raw_atm = options.iv_smile_at(smile, "put", close, false)
-    put_smoothed_atm = options.iv_smile_at(smile, "put", close, true)
+    front = options.iv_smile(surface, expiries[0])
+    front_total_oi := options.iv_smile_total_oi(front)
+    front_call_oi_coverage := options.iv_smile_oi_coverage(front, "call")
+    front_put_oi_coverage := options.iv_smile_oi_coverage(front, "put")
+    front_call_strike_count := len(options.iv_smile_strikes(front, "call"))
+    front_put_strike_count := len(options.iv_smile_strikes(front, "put"))
+    front_call_raw_iv_at_spot := options.iv_smile_at(front, "call", close, false)
+    front_call_smoothed_iv_at_spot := options.iv_smile_at(front, "call", close, true)
+    front_put_raw_iv_at_spot := options.iv_smile_at(front, "put", close, false)
+    front_put_smoothed_iv_at_spot := options.iv_smile_at(front, "put", close, true)
+    front_smoothed_put_call_skew := front_put_smoothed_iv_at_spot - front_call_smoothed_iv_at_spot
 
-    plot(options.iv_smile_total_oi(smile), title="front_smile_total_oi", precision=2)
-    plot(options.iv_smile_oi_coverage(smile, "call"), title="front_call_oi_coverage", precision=4)
-    plot(options.iv_smile_oi_coverage(smile, "put"), title="front_put_oi_coverage", precision=4)
-    plot(len(options.iv_smile_strikes(smile, "call")), title="front_call_strike_count", precision=0)
-    plot(len(options.iv_smile_strikes(smile, "put")), title="front_put_strike_count", precision=0)
-    plot(call_raw_atm, title="front_call_raw_iv_at_spot", precision=4)
-    plot(call_smoothed_atm, title="front_call_smoothed_iv_at_spot", precision=4)
-    plot(put_raw_atm, title="front_put_raw_iv_at_spot", precision=4)
-    plot(put_smoothed_atm, title="front_put_smoothed_iv_at_spot", precision=4)
-    plot(put_smoothed_atm - call_smoothed_atm, title="front_smoothed_put_call_skew", precision=4)
+    if len(expiries) > 1
+        next = options.iv_smile(surface, expiries[1])
+        next_total_oi := options.iv_smile_total_oi(next)
+        next_call_raw_iv_at_spot := options.iv_smile_at(next, "call", close, false)
+        next_call_smoothed_iv_at_spot := options.iv_smile_at(next, "call", close, true)
+        next_put_raw_iv_at_spot := options.iv_smile_at(next, "put", close, false)
+        next_put_smoothed_iv_at_spot := options.iv_smile_at(next, "put", close, true)
+        next_smoothed_put_call_skew := next_put_smoothed_iv_at_spot - next_call_smoothed_iv_at_spot
+
+plot(options.len(chain), title="chain_contract_count", precision=0)
+plot(options.len(calls), title="chain_call_contract_count", precision=0)
+plot(options.len(puts), title="chain_put_contract_count", precision=0)
+plot(len(expiries), title="smile_expiration_count", precision=0)
+plot(front_total_oi, title="front_smile_total_oi", precision=2)
+plot(front_call_oi_coverage, title="front_call_oi_coverage", precision=4)
+plot(front_put_oi_coverage, title="front_put_oi_coverage", precision=4)
+plot(front_call_strike_count, title="front_call_strike_count", precision=0)
+plot(front_put_strike_count, title="front_put_strike_count", precision=0)
+plot(front_call_raw_iv_at_spot, title="front_call_raw_iv_at_spot", precision=4)
+plot(front_call_smoothed_iv_at_spot, title="front_call_smoothed_iv_at_spot", precision=4)
+plot(front_put_raw_iv_at_spot, title="front_put_raw_iv_at_spot", precision=4)
+plot(front_put_smoothed_iv_at_spot, title="front_put_smoothed_iv_at_spot", precision=4)
+plot(front_smoothed_put_call_skew, title="front_smoothed_put_call_skew", precision=4)
+plot(next_total_oi, title="next_smile_total_oi", precision=2)
+plot(next_call_raw_iv_at_spot, title="next_call_raw_iv_at_spot", precision=4)
+plot(next_call_smoothed_iv_at_spot, title="next_call_smoothed_iv_at_spot", precision=4)
+plot(next_put_raw_iv_at_spot, title="next_put_raw_iv_at_spot", precision=4)
+plot(next_put_smoothed_iv_at_spot, title="next_put_smoothed_iv_at_spot", precision=4)
+plot(next_smoothed_put_call_skew, title="next_smoothed_put_call_skew", precision=4)

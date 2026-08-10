@@ -172,6 +172,7 @@ func NewCryptoOptionsChainProvider(ctx context.Context, conn driver.Conn, baseAs
 					}
 					log.Printf("[chain] using %s cache to discover %d candidate contracts, then loading %s bar snapshots for %s", cacheInterval, len(symbolIDs), interval, baseAsset)
 					return &CryptoOptionsChainProvider{
+						underlying:  baseAsset,
 						byTimestamp: byTimestamp,
 						resolution:  resolution,
 					}, nil
@@ -188,6 +189,7 @@ func NewCryptoOptionsChainProvider(ctx context.Context, conn driver.Conn, baseAs
 			}
 			if rowCount > 0 {
 				return &CryptoOptionsChainProvider{
+					underlying:  baseAsset,
 					byTimestamp: byTimestamp,
 					resolution:  resolution,
 				}, nil

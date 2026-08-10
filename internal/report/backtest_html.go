@@ -4511,18 +4511,70 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
       return chart;
     }
 
-		var chartSyncState = { syncing: false, synced: new WeakSet() };
+		var chartSyncState = { syncingCrosshair: false, synced: new WeakSet(), lastRangeKey: null };
+
+		function visibleRangeKey(range) {
+			if (!range || range.from === undefined || range.to === undefined) return null;
+			return String(normalizeUnixSeconds(range.from)) + ':' + String(normalizeUnixSeconds(range.to));
+		}
+
+		function pointTime(point) {
+			return point ? normalizeUnixSeconds(point.time) : null;
+		}
+
+		function pointValue(point) {
+			if (!point) return null;
+			if (typeof point.value === 'number' && isFinite(point.value)) return point.value;
+			if (typeof point.close === 'number' && isFinite(point.close)) return point.close;
+			return null;
+		}
+
+		function setChartCrosshairSource(chart, series, data) {
+			if (!chart) return;
+			var values = new Map();
+			(data || []).forEach(function(point) {
+				var time = pointTime(point);
+				var value = pointValue(point);
+				if (time !== null && value !== null) values.set(time, value);
+			});
+			chart.__toktikCrosshairSource = { series: series, values: values };
+		}
+
+		function syncCrosshair(sourceChart, timeValue) {
+			if (chartSyncState.syncingCrosshair) return;
+			var time = normalizeUnixSeconds(timeValue);
+			chartSyncState.syncingCrosshair = true;
+			syncedCharts.forEach(function(targetChart) {
+				if (!targetChart || targetChart === sourceChart) return;
+				if (time === null) {
+					if (typeof targetChart.clearCrosshairPosition === 'function') targetChart.clearCrosshairPosition();
+					return;
+				}
+				var source = targetChart.__toktikCrosshairSource;
+				var value = source && source.values ? source.values.get(time) : null;
+				if (source && source.series && typeof value === 'number' && typeof targetChart.setCrosshairPosition === 'function') {
+					targetChart.setCrosshairPosition(value, time, source.series);
+				} else if (typeof targetChart.clearCrosshairPosition === 'function') {
+					targetChart.clearCrosshairPosition();
+				}
+			});
+			chartSyncState.syncingCrosshair = false;
+			renderDataWindow(time);
+		}
 
 		function registerSyncedChart(chart) {
 			if (!chart || chartSyncState.synced.has(chart)) return;
 			chartSyncState.synced.add(chart);
 			chart.timeScale().subscribeVisibleTimeRangeChange(function(range) {
-				if (!range || chartSyncState.syncing) return;
-				chartSyncState.syncing = true;
+				var rangeKey = visibleRangeKey(range);
+				if (!rangeKey || rangeKey === chartSyncState.lastRangeKey) return;
+				chartSyncState.lastRangeKey = rangeKey;
 				syncedCharts.forEach(function(otherChart) {
 					if (otherChart !== chart) otherChart.timeScale().setVisibleRange(range);
 				});
-				chartSyncState.syncing = false;
+			});
+			chart.subscribeCrosshairMove(function(param) {
+				syncCrosshair(chart, param && param.time !== undefined ? param.time : null);
 			});
 		}
 
@@ -4727,6 +4779,9 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
 			charts.push(chart);
 			if (options && options.sync === false) return;
 			syncedCharts.push(chart);
+			if (options && options.crosshairSeries) {
+				setChartCrosshairSource(chart, options.crosshairSeries, options.crosshairData);
+			}
 			registerSyncedChart(chart);
 		}
 
@@ -4799,21 +4854,21 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
 				callback();
 				return;
 			}
-			var visibleRange = chart.timeScale().getVisibleLogicalRange();
+			var visibleRange = chart.timeScale().getVisibleRange();
 			callback();
 			if (visibleRange) {
-				chart.timeScale().setVisibleLogicalRange(visibleRange);
+				chart.timeScale().setVisibleRange(visibleRange);
 			}
 		}
 
 		function preserveVisibleRanges(targetCharts, callback) {
 			var ranges = targetCharts.map(function(chart) {
-				return chart ? chart.timeScale().getVisibleLogicalRange() : null;
+				return chart ? chart.timeScale().getVisibleRange() : null;
 			});
 			callback();
 			targetCharts.forEach(function(chart, index) {
 				if (chart && ranges[index]) {
-					chart.timeScale().setVisibleLogicalRange(ranges[index]);
+					chart.timeScale().setVisibleRange(ranges[index]);
 				}
 			});
 		}
@@ -4855,8 +4910,7 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
 				crosshairMarkerBorderColor: palette.exposureLine,
 				crosshairMarkerBackgroundColor: palette.exposureLine,
 			});
-			charts.push(settledContextChart);
-			registerSyncedChart(settledContextChart);
+			addChart(settledContextChart, { crosshairSeries: settledExposurePlot, crosshairData: settledExposureSeries });
 		}
 
 		function renderSettledContext(showSettled) {
@@ -4874,6 +4928,7 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
 			settledFloatingProfitPlot.setData(filterHistogramSeriesByTimes(settledFloatingProfitSeries, activeSet, currentIdleFilterEnabled));
 			settledFloatingLossPlot.setData(filterHistogramSeriesByTimes(settledFloatingLossSeries, activeSet, currentIdleFilterEnabled));
 			settledExposurePlot.setData(filterLineSeriesByTimes(settledExposureSeries, activeSet, currentIdleFilterEnabled));
+			setChartCrosshairSource(settledContextChart, settledExposurePlot, filterLineSeriesByTimes(settledExposureSeries, activeSet, currentIdleFilterEnabled));
 		}
 
 		function renderEquitySeriesMode(showSettled, options) {
@@ -4938,11 +4993,10 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
 			if (!featureChartEl || featureChart) return;
 			featureChart = createChart('underlying-feature-chart', 220);
 			if (!featureChart) return;
-			charts.push(featureChart);
-			registerSyncedChart(featureChart);
+			addChart(featureChart);
 			if (underlyingChart) {
-				var visibleRange = underlyingChart.timeScale().getVisibleLogicalRange();
-				if (visibleRange) featureChart.timeScale().setVisibleLogicalRange(visibleRange);
+				var visibleRange = underlyingChart.timeScale().getVisibleRange();
+				if (visibleRange) featureChart.timeScale().setVisibleRange(visibleRange);
 				else featureChart.timeScale().fitContent();
 			}
 		}
@@ -5041,6 +5095,7 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
 					if (featureChart) featureChart.removeSeries(plot);
 				});
 				featurePlots.clear();
+				setChartCrosshairSource(featureChart, null, []);
 				return;
 			}
 
@@ -5068,6 +5123,9 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
 					plot.setData(filterLineSeriesByTimes(column.series, activeSet, currentIdleFilterEnabled));
 				});
 			});
+			var crosshairColumn = selectedColumns[0];
+			var crosshairPlot = crosshairColumn ? featurePlots.get(crosshairColumn.source) : null;
+			setChartCrosshairSource(featureChart, crosshairPlot, crosshairColumn ? filterLineSeriesByTimes(crosshairColumn.series, activeSet, currentIdleFilterEnabled) : []);
 
 			if (featureTitle) featureTitle.textContent = selectedColumns.length === 1 ? selectedColumns[0].label : '特征子图 · ' + selectedColumns.length + ' 条序列';
 			if (featureSubtitle) featureSubtitle.textContent = selectedColumns.map(function(column) {
@@ -5085,13 +5143,6 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
 			if (featureEmpty) featureEmpty.classList.add('hidden');
 			if (featureChartEl) featureChartEl.classList.remove('hidden');
 
-			if (featureChart && !featureChart.__toktikCrosshairBound) {
-				featureChart.__toktikCrosshairBound = true;
-				featureChart.subscribeCrosshairMove(function(param) {
-					if (!param || param.time === undefined) return;
-					renderDataWindow(Number(param.time));
-				});
-			}
 		}
 
 		function renderDataWindow(unixSeconds) {
@@ -5164,7 +5215,7 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
         pc.timeScale().fitContent();
 				underlyingChart = pc;
 				underlyingSeries = cs;
-				addChart(pc);
+				addChart(pc, { crosshairSeries: cs, crosshairData: underlyingCandles });
 				renderOverlayPlots();
       }
     }
@@ -5210,7 +5261,7 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
       el.setData(equitySeries);
 			equityChart = ec;
 			equityPlot = el;
-				addChart(ec);
+				addChart(ec, { crosshairSeries: el, crosshairData: equitySeries });
     }
 
 		if (quoteNetValueSeries.length > 0) {
@@ -5250,7 +5301,7 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
         puc.timeScale().fitContent();
 				quoteNetValueChart = puc;
 				quoteNetValuePlot = pul;
-				addChart(puc);
+				addChart(puc, { crosshairSeries: pul, crosshairData: quoteNetValueSeries });
       }
     }
 
@@ -5276,7 +5327,7 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
 			}
 			qdc.timeScale().fitContent();
 			quoteDailyChart = qdc;
-				addChart(qdc);
+				addChart(qdc, { crosshairSeries: quoteDailyPlot, crosshairData: dailyQuoteNetValueSeries });
 		  }
 		}
 
@@ -5309,7 +5360,7 @@ const htmlTemplate = `{{ define "classicSpreadEventCard" }}
       dc.timeScale().fitContent();
 			drawdownChart = dc;
 			drawdownPlot = dl;
-			addChart(dc);
+			addChart(dc, { crosshairSeries: dl, crosshairData: drawdownSeries });
     }
 
 		function applyIdleFilter(enabled) {
@@ -6036,26 +6087,54 @@ const combinedHTMLTemplate = `{{ define "combinedSpreadEventCard" }}
 			return chart;
 		}
 
-		function syncVisibleRanges(charts) {
-			let syncing = false;
-			charts.forEach(function(sourceChart) {
-				sourceChart.timeScale().subscribeVisibleLogicalRangeChange(function(range) {
-					if (!range || syncing) {
-						return;
-					}
-					syncing = true;
-					charts.forEach(function(targetChart) {
-						if (targetChart !== sourceChart) {
-							targetChart.timeScale().setVisibleLogicalRange(range);
+		function seriesValueMap(data) {
+			const values = new Map();
+			(data || []).forEach(function(point) {
+				const time = normalizeUnixSeconds(point && point.time);
+				const value = typeof (point && point.value) === 'number'
+					? point.value
+					: point && point.close;
+				if (time !== null && typeof value === 'number' && isFinite(value)) {
+					values.set(time, value);
+				}
+			});
+			return values;
+		}
+
+		function syncReportCharts(chartSources) {
+			let syncingCrosshair = false;
+			let lastRangeKey = null;
+			chartSources.forEach(function(source) {
+				source.chart.timeScale().subscribeVisibleTimeRangeChange(function(range) {
+					const rangeKey = range && range.from !== undefined && range.to !== undefined
+						? String(normalizeUnixSeconds(range.from)) + ':' + String(normalizeUnixSeconds(range.to))
+						: null;
+					if (!rangeKey || rangeKey === lastRangeKey) return;
+					lastRangeKey = rangeKey;
+					chartSources.forEach(function(target) {
+						if (target !== source) target.chart.timeScale().setVisibleRange(range);
+					});
+				});
+				source.chart.subscribeCrosshairMove(function(param) {
+					if (syncingCrosshair) return;
+					const time = normalizeUnixSeconds(param && param.time !== undefined ? param.time : null);
+					syncingCrosshair = true;
+					chartSources.forEach(function(target) {
+						if (target === source) return;
+						const value = time === null ? undefined : target.values.get(time);
+						if (typeof value === 'number') {
+							target.chart.setCrosshairPosition(value, time, target.series);
+						} else {
+							target.chart.clearCrosshairPosition();
 						}
 					});
-					syncing = false;
+					syncingCrosshair = false;
 				});
 			});
 		}
 
 		strategyReports.forEach(function(report) {
-			const charts = [];
+			const chartSources = [];
 
 			if (report.hasUnderlyingChart && report.underlyingCandles.length > 0) {
 				const priceChart = createResponsiveChart(report.anchorId + '-underlying-chart', 560, {
@@ -6080,7 +6159,11 @@ const combinedHTMLTemplate = `{{ define "combinedSpreadEventCard" }}
 					candleSeries.setData(report.underlyingCandles);
 					candleSeries.setMarkers(report.underlyingMarkers);
 					priceChart.timeScale().fitContent();
-					charts.push(priceChart);
+					chartSources.push({
+						chart: priceChart,
+						series: candleSeries,
+						values: seriesValueMap(report.underlyingCandles)
+					});
 				}
 			}
 
@@ -6095,7 +6178,11 @@ const combinedHTMLTemplate = `{{ define "combinedSpreadEventCard" }}
 					});
 					volumeSeries.setData(report.underlyingVolume);
 					volumeChart.timeScale().fitContent();
-					charts.push(volumeChart);
+					chartSources.push({
+						chart: volumeChart,
+						series: volumeSeries,
+						values: seriesValueMap(report.underlyingVolume)
+					});
 				}
 			}
 
@@ -6118,7 +6205,11 @@ const combinedHTMLTemplate = `{{ define "combinedSpreadEventCard" }}
 				});
 				equityLine.setData(report.equitySeries);
 				equityChart.timeScale().fitContent();
-				charts.push(equityChart);
+				chartSources.push({
+					chart: equityChart,
+					series: equityLine,
+					values: seriesValueMap(report.equitySeries)
+				});
 			}
 
 			const drawdownChart = createResponsiveChart(report.anchorId + '-drawdown-chart', 320, {
@@ -6140,11 +6231,15 @@ const combinedHTMLTemplate = `{{ define "combinedSpreadEventCard" }}
 				});
 				drawdownLine.setData(report.drawdownSeries);
 				drawdownChart.timeScale().fitContent();
-				charts.push(drawdownChart);
+				chartSources.push({
+					chart: drawdownChart,
+					series: drawdownLine,
+					values: seriesValueMap(report.drawdownSeries)
+				});
 			}
 
-			if (charts.length > 1) {
-				syncVisibleRanges(charts);
+			if (chartSources.length > 1) {
+				syncReportCharts(chartSources);
 			}
 		});
 	</script>

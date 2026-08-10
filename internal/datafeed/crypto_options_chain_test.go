@@ -64,6 +64,26 @@ func TestExpandCachedChainContractsReplicatesDailyCacheAcrossIntradayBuckets(t *
 	}
 }
 
+func TestCachedChainProviderSupportsExplicitUnderlyingLookup(t *testing.T) {
+	t.Parallel()
+
+	timestamp := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	provider := &CryptoOptionsChainProvider{
+		underlying: "BTC",
+		byTimestamp: map[int64][]backtest.OptionContract{
+			timestamp.Unix(): {{Symbol: "BTC-TEST"}},
+		},
+		resolution: 24 * time.Hour,
+	}
+
+	if got := provider.AvailableContractsFor(timestamp, "crypto", "BTC"); len(got) != 1 {
+		t.Fatalf("explicit crypto/BTC lookup returned %d contracts, want 1", len(got))
+	}
+	if got := provider.AvailableContractsFor(timestamp, "crypto", "ETH"); len(got) != 0 {
+		t.Fatalf("explicit crypto/ETH lookup returned %d contracts, want 0", len(got))
+	}
+}
+
 func TestSplitTimeWindowsCoversWholeRangeWithoutGaps(t *testing.T) {
 	t.Parallel()
 

@@ -1168,8 +1168,17 @@ func TestWriteBacktestHTMLIncludesSettledEquityToggle(t *testing.T) {
 	if !strings.Contains(html, "subscribeVisibleTimeRangeChange") {
 		t.Fatalf("expected generated html to synchronize charts by visible time range")
 	}
-	if strings.Contains(html, "subscribeVisibleLogicalRangeChange") {
-		t.Fatalf("did not expect generated html to synchronize charts by logical range")
+	for _, logicalRangeAPI := range []string{
+		"subscribeVisibleLogicalRangeChange",
+		"getVisibleLogicalRange",
+		"setVisibleLogicalRange",
+	} {
+		if strings.Contains(html, logicalRangeAPI) {
+			t.Fatalf("did not expect generated html to use logical range API %q", logicalRangeAPI)
+		}
+	}
+	if !strings.Contains(html, "setCrosshairPosition") || !strings.Contains(html, "clearCrosshairPosition") {
+		t.Fatalf("expected generated html to synchronize and clear chart crosshairs")
 	}
 }
 
@@ -1229,8 +1238,11 @@ func TestWriteBacktestHTMLIncludesHoverColumnSubplotControls(t *testing.T) {
 	if !strings.Contains(html, "feature-legend-value") {
 		t.Fatalf("expected generated html to include live feature legend values")
 	}
-	if !strings.Contains(html, "featureChart.subscribeCrosshairMove") {
-		t.Fatalf("expected generated html to sync subplot hover with the shared data window")
+	if !strings.Contains(html, "function syncCrosshair") {
+		t.Fatalf("expected generated html to include shared chart crosshair synchronization")
+	}
+	if !strings.Contains(html, "setCrosshairPosition") || !strings.Contains(html, "clearCrosshairPosition") {
+		t.Fatalf("expected generated html to position and clear synchronized crosshairs")
 	}
 }
 
