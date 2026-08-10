@@ -535,12 +535,12 @@ func (s *CryptoOptionsService) queryIVSmilePoints(ctx context.Context, chainView
 	for rows.Next() {
 		var timestamp, expiration time.Time
 		var optionType string
-		var strike, iv, openInterest float64
+		var strike, iv, openInterest float32
 		if err := rows.Scan(&timestamp, &expiration, &optionType, &strike, &iv, &openInterest); err != nil {
 			return nil, fmt.Errorf("scan IV smile point: %w", err)
 		}
 		key := timestamp.UTC().Unix()
-		points[key] = append(points[key], optionsanalytics.IVPoint{Expiration: expiration, OptionType: optionType, Strike: strike, IV: iv, OpenInterest: openInterest})
+		points[key] = append(points[key], optionsanalytics.IVPoint{Expiration: expiration, OptionType: optionType, Strike: float64(strike), IV: float64(iv), OpenInterest: float64(openInterest)})
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate IV smile points: %w", err)
