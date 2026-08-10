@@ -1,0 +1,2245 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>{{ .Title }}</title>
+<script>
+	(function() {
+		var theme = 'light';
+		try {
+			var stored = localStorage.getItem('toktik-report-theme');
+			if (stored === 'light' || stored === 'dark') {
+				theme = stored;
+			} else if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+				theme = 'dark';
+			}
+		} catch (error) {
+			if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+				theme = 'dark';
+			}
+		}
+		document.documentElement.setAttribute('data-theme', theme);
+	})();
+</script>
+<script src="https://unpkg.com/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+	/* ============ 1. Design tokens ============ */
+	:root {
+		--page: #edf0f4;
+		--panel: #ffffff;
+		--panel-2: #f6f8fa;
+		--panel-3: #ecf1f5;
+		--chart-surface: #ffffff;
+		--ink: #0d1522;
+		--ink-2: #3a4657;
+		--muted: #67727f;
+		--faint: #8d99a6;
+		--line: #dfe6ec;
+		--line-2: #cbd6e0;
+		--accent: #0f766e;
+		--accent-strong: #0d9488;
+		--accent-soft: #f0fdfa;
+		--accent-ring: rgba(13,148,136,.28);
+		--blue: #1d4ed8;
+		--blue-soft: #eff6ff;
+		--gain: #15803d;
+		--loss: #c2410c;
+		--danger: #be123c;
+		--b-emerald: #047857; --b-emerald-bg: #ecfdf5; --b-emerald-ring: rgba(4,120,87,.30);
+		--b-amber: #b45309;   --b-amber-bg: #fffbeb;   --b-amber-ring: rgba(180,83,9,.30);
+		--b-sky: #0369a1;     --b-sky-bg: #f0f9ff;     --b-sky-ring: rgba(3,105,161,.30);
+		--b-rose: #be123c;    --b-rose-bg: #fff1f2;    --b-rose-ring: rgba(190,18,60,.30);
+		--b-teal: #0f766e;    --b-teal-bg: #f0fdfa;    --b-teal-ring: rgba(15,118,110,.24);
+		--b-violet: #6d28d9;  --b-violet-bg: #f5f3ff;  --b-violet-ring: rgba(109,40,217,.30);
+		--shadow: 0 1px 2px rgba(13,21,34,.04), 0 10px 28px rgba(13,21,34,.05);
+		--radius: 12px;
+	}
+	html[data-theme="light"] { color-scheme: light; }
+	html[data-theme="dark"] {
+		color-scheme: dark;
+		--page: #090e15;
+		--panel: #0f1621;
+		--panel-2: #141d2a;
+		--panel-3: #1a2534;
+		--chart-surface: #0f1621;
+		--ink: #e9eff6;
+		--ink-2: #b3bfd0;
+		--muted: #8593a5;
+		--faint: #5f6f80;
+		--line: rgba(148,163,184,.14);
+		--line-2: rgba(148,163,184,.26);
+		--accent: #2dd4bf;
+		--accent-strong: #5eead4;
+		--accent-soft: rgba(45,212,191,.08);
+		--accent-ring: rgba(45,212,191,.38);
+		--blue: #60a5fa;
+		--blue-soft: rgba(96,165,250,.10);
+		--gain: #4ade80;
+		--loss: #fb923c;
+		--danger: #fb7185;
+		--b-emerald: #34d399; --b-emerald-bg: rgba(52,211,153,.10); --b-emerald-ring: rgba(52,211,153,.35);
+		--b-amber: #fbbf24;   --b-amber-bg: rgba(251,191,36,.10);   --b-amber-ring: rgba(251,191,36,.35);
+		--b-sky: #38bdf8;     --b-sky-bg: rgba(56,189,248,.10);     --b-sky-ring: rgba(56,189,248,.35);
+		--b-rose: #fb7185;    --b-rose-bg: rgba(251,113,133,.10);   --b-rose-ring: rgba(251,113,133,.35);
+		--b-teal: #2dd4bf;    --b-teal-bg: rgba(45,212,191,.10);    --b-teal-ring: rgba(45,212,191,.30);
+		--b-violet: #a78bfa;  --b-violet-bg: rgba(167,139,250,.12); --b-violet-ring: rgba(167,139,250,.35);
+		--shadow: 0 1px 2px rgba(0,0,0,.35), 0 14px 36px rgba(0,0,0,.30);
+	}
+
+	/* ============ 2. Base ============ */
+	*, *::before, *::after { box-sizing: border-box; }
+	html { scroll-behavior: smooth; }
+	body {
+		margin: 0;
+		background: var(--page);
+		font-family: 'IBM Plex Sans', system-ui, -apple-system, sans-serif;
+		font-size: 13px;
+		line-height: 1.55;
+		color: var(--ink-2);
+		-webkit-font-smoothing: antialiased;
+	}
+	h1, h2, h3, h4, p, dl, dd, figure { margin: 0; }
+	a { color: var(--blue); text-decoration: none; }
+	button { font-family: inherit; background: none; border: none; padding: 0; color: inherit; }
+	.mono, .stat-value, .tbl td.num, .mc-value { font-family: 'IBM Plex Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; }
+	.hidden { display: none !important; }
+	section[id], [id^="spread-"] { scroll-margin-top: 76px; }
+	::selection { background: var(--accent-soft); color: var(--accent); }
+
+	/* ============ 3. Topbar ============ */
+	.topbar {
+		position: sticky; top: 0; z-index: 60;
+		background: var(--page);
+		background: color-mix(in srgb, var(--page) 86%, transparent);
+		backdrop-filter: blur(10px);
+		-webkit-backdrop-filter: blur(10px);
+		border-bottom: 1px solid var(--line);
+	}
+	.topbar-inner {
+		max-width: 1480px; margin: 0 auto; padding: 0 20px;
+		min-height: 52px; display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+	}
+	.brand { display: inline-flex; align-items: center; gap: 8px; font-family: 'IBM Plex Mono', monospace; font-size: 11px; letter-spacing: .18em; text-transform: uppercase; color: var(--accent); font-weight: 600; }
+	.brand::before { content: ""; width: 8px; height: 8px; border-radius: 2px; background: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+	.topbar-title { font-size: 12px; color: var(--muted); max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+	.topbar-nav { display: none; gap: 6px; margin-left: 8px; }
+	.topbar-controls { margin-left: auto; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 0; }
+	.nav-chip {
+		font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: var(--muted);
+		padding: 4px 10px; border: 1px solid transparent; border-radius: 999px; transition: color .15s, border-color .15s, background .15s;
+	}
+	.nav-chip:hover { color: var(--accent); border-color: var(--accent-ring); background: var(--accent-soft); }
+	@media (min-width: 1100px) { .topbar-nav { display: flex; } }
+
+	.select {
+		appearance: none; -webkit-appearance: none;
+		background-color: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+		color: var(--ink-2); font-size: 12px; font-family: inherit; padding: 6px 28px 6px 10px; cursor: pointer;
+		background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%238a94a3' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+		background-repeat: no-repeat; background-position: right 10px center;
+		transition: border-color .15s;
+	}
+	.select:hover { border-color: var(--line-2); }
+	.select:focus-visible { outline: 2px solid var(--accent-ring); outline-offset: 1px; }
+	.check {
+		display: inline-flex; align-items: center; gap: 7px; cursor: pointer; user-select: none;
+		font-size: 12px; color: var(--ink-2);
+		border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; background: var(--panel);
+		transition: border-color .15s;
+	}
+	.check:hover { border-color: var(--line-2); }
+	.check input { accent-color: var(--accent); margin: 0; }
+	.check input:disabled { accent-color: var(--faint); }
+
+	/* ============ 4. Page & hero ============ */
+	.page { max-width: 1480px; margin: 0 auto; padding: 24px 20px 40px; }
+	.hero { margin-bottom: 20px; }
+	.eyebrow {
+		font-family: 'IBM Plex Mono', monospace; font-size: 11px; font-weight: 500;
+		letter-spacing: .18em; text-transform: uppercase; color: var(--accent);
+	}
+	.eyebrow-blue { color: var(--blue); }
+	.hero-title { font-size: 26px; font-weight: 700; color: var(--ink); letter-spacing: -.01em; margin-top: 6px; }
+	.hero-meta { margin-top: 6px; font-size: 12.5px; color: var(--muted); }
+	.hero-stats {
+		margin-top: 18px; display: grid; gap: 10px;
+		grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+	}
+	.stat {
+		background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+		padding: 12px 14px; box-shadow: var(--shadow);
+	}
+	.stat-label { font-size: 11px; color: var(--muted); }
+	.stat-value { margin-top: 5px; font-size: 18px; font-weight: 600; color: var(--ink); }
+	.stat-value.is-pos, .pos { color: var(--gain); }
+	.stat-value.is-neg, .neg { color: var(--loss); }
+	.hero-facts {
+		margin-top: 12px; display: grid; gap: 10px;
+		grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+	}
+	.fact {
+		background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+		padding: 12px 14px;
+	}
+	.fact-label { font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; letter-spacing: .14em; text-transform: uppercase; color: var(--faint); }
+	.fact-value { margin-top: 5px; font-size: 13.5px; font-weight: 600; color: var(--ink); }
+	.fact-value.plain { font-weight: 400; color: var(--ink-2); line-height: 1.6; }
+
+	/* ============ 5. Sections ============ */
+	.section {
+		background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+		box-shadow: var(--shadow); padding: 18px 20px; margin-bottom: 16px;
+	}
+	.section-head {
+		display: flex; align-items: flex-start; justify-content: space-between;
+		gap: 14px; flex-wrap: wrap; margin-bottom: 14px;
+	}
+	.section-head h2 { font-size: 15px; font-weight: 650; color: var(--ink); margin-top: 3px; letter-spacing: .01em; }
+	.section-desc { margin-top: 4px; font-size: 12px; color: var(--muted); max-width: 72ch; }
+	.section-tools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+	.chips { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+	.chip {
+		font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: var(--muted);
+		background: var(--panel-2); border: 1px solid var(--line); border-radius: 999px; padding: 3px 10px;
+	}
+	.btn {
+		display: inline-flex; align-items: center; gap: 6px;
+		font-size: 12px; color: var(--ink-2); background: var(--panel);
+		border: 1px solid var(--line); border-radius: 8px; padding: 6px 12px; cursor: pointer;
+		transition: border-color .15s, color .15s, background .15s;
+	}
+	.btn:hover { border-color: var(--accent-ring); color: var(--accent); background: var(--accent-soft); }
+	.badge {
+		display: inline-flex; align-items: center;
+		font-family: 'IBM Plex Mono', monospace; font-size: 11px;
+		padding: 2px 8px; border-radius: 6px;
+	}
+	.text-up { color: var(--gain); }
+	.text-down { color: var(--loss); }
+	.legend { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding-top: 4px; }
+	.legend-item { display: inline-flex; align-items: center; gap: 6px; font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: var(--muted); }
+	.dot { width: 8px; height: 8px; border-radius: 999px; display: inline-block; }
+	.dot-up { background: var(--gain); }
+	.dot-down { background: var(--loss); }
+	.dot-open { background: var(--blue); }
+	.dot-close { background: var(--danger); }
+	.note-warn {
+		font-size: 12px; color: var(--b-amber); background: var(--b-amber-bg);
+		border: 1px solid var(--b-amber-ring); border-radius: 8px; padding: 8px 12px; margin-bottom: 12px;
+	}
+	.chart-note { margin-top: 10px; font-size: 12px; color: var(--muted); }
+	.chart-frame {
+		background: var(--chart-surface); border: 1px solid var(--line);
+		border-radius: 10px; padding: 6px;
+	}
+
+	/* ============ 6. Metric cards & perf table ============ */
+	.metric-cards { display: grid; gap: 12px; margin-bottom: 16px; }
+	@media (min-width: 1024px) { .metric-cards { grid-template-columns: 1fr 1fr; } }
+	.metric-cards.single { grid-template-columns: 1fr; }
+	.metric-card {
+		border: 1px solid var(--line); border-top: 2px solid var(--accent);
+		border-radius: 10px; background: var(--panel-2); padding: 14px 16px;
+	}
+	.metric-card.blue { border-top-color: var(--blue); }
+	.mc-name { font-family: 'IBM Plex Mono', monospace; font-size: 11px; letter-spacing: .16em; text-transform: uppercase; color: var(--accent); font-weight: 600; }
+	.metric-card.blue .mc-name { color: var(--blue); }
+	.mc-desc { margin-top: 3px; font-size: 11.5px; color: var(--muted); }
+	.mc-grid { margin-top: 12px; display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(104px, 1fr)); }
+	.mc-label { font-size: 11px; color: var(--muted); }
+	.mc-value { margin-top: 3px; font-size: 13.5px; font-weight: 600; color: var(--ink); }
+
+	.perf-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; }
+	.perf-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+	.perf-table th, .perf-table td { padding: 7px 14px; white-space: nowrap; }
+	.perf-table .perf-groups th {
+		font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; font-weight: 600;
+		letter-spacing: .14em; text-transform: uppercase; color: var(--accent);
+		text-align: left; border-bottom: 1px solid var(--line-2); background: var(--panel-2);
+	}
+	.perf-table tbody tr { border-bottom: 1px solid var(--line); }
+	.perf-table tbody tr:last-child { border-bottom: none; }
+	.perf-table td.k { color: var(--muted); }
+	.perf-table td.v { font-family: 'IBM Plex Mono', monospace; color: var(--ink); font-variant-numeric: tabular-nums; text-align: right; }
+
+	/* ============ 7. Tables ============ */
+	.tbl-wrap { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+	.tbl-scroll { max-height: 34rem; overflow: auto; content-visibility: auto; contain-intrinsic-size: 1200px; }
+	.tbl { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+	.tbl thead th {
+		position: sticky; top: 0; z-index: 2; background: var(--panel-2);
+		font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; font-weight: 600;
+		letter-spacing: .1em; text-transform: uppercase; color: var(--muted);
+		text-align: left; padding: 8px 14px; border-bottom: 1px solid var(--line-2);
+		white-space: nowrap;
+	}
+	.tbl tbody td { padding: 7px 14px; border-bottom: 1px solid var(--line); color: var(--ink-2); white-space: nowrap; }
+	.tbl tbody tr:last-child td { border-bottom: none; }
+	.tbl .mono { color: var(--ink); }
+	.attrib-grid { display: grid; gap: 12px; }
+	@media (min-width: 1200px) { .attrib-grid { grid-template-columns: 1fr 1fr; } }
+	.attrib-grid .tbl-wrap { overflow-x: auto; }
+	.attrib-name { font-weight: 600; color: var(--ink); }
+	.attrib-sub { margin-top: 2px; font-size: 11px; color: var(--faint); }
+
+	/* ============ 8. Data window & feature panel ============ */
+	.dw-panel {
+		border: 1px solid var(--line); border-radius: 10px;
+		background: var(--panel-2); padding: 12px 14px; margin-bottom: 12px;
+	}
+	.dw-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+	.dw-time { font-family: 'IBM Plex Mono', monospace; font-size: 11.5px; color: var(--muted); }
+	#underlying-data-window-grid {
+		margin-top: 10px; display: grid; gap: 8px;
+		grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
+	}
+	.data-window-card {
+		background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 9px 11px;
+	}
+	.data-window-card-button { width: 100%; text-align: left; cursor: pointer; transition: border-color .15s, background .15s; }
+	.data-window-card-button:hover { border-color: var(--accent-ring); background: var(--accent-soft); }
+	.data-window-card-button.active { border-color: var(--accent); background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent-ring); }
+	.dw-label { font-family: 'IBM Plex Mono', monospace; font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--faint); display: block; }
+	.dw-value { display: block; margin-top: 4px; font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: var(--ink); font-variant-numeric: tabular-nums; }
+	.dw-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+	.dw-side { display: flex; flex-direction: column; align-items: flex-end; gap: 5px; }
+	.dw-state { font-family: 'IBM Plex Mono', monospace; font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: var(--faint); }
+	.dw-state.is-on { color: var(--accent); }
+	.dw-tag { font-family: 'IBM Plex Mono', monospace; font-size: 10px; letter-spacing: .1em; color: var(--blue); }
+	.dw-empty { font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: var(--muted); }
+
+	.feature-panel { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 12px; }
+	.feature-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
+	.feature-empty-state {
+		border: 1px dashed var(--line-2); border-radius: 8px; padding: 16px;
+		text-align: center; color: var(--muted); font-size: 12px; background: var(--panel-2);
+	}
+	.feature-legend { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+	.legend-chip {
+		display: inline-flex; align-items: center; gap: 7px;
+		border: 1px solid var(--line); background: var(--panel-2);
+		border-radius: 999px; padding: 4px 10px; font-size: 11.5px; color: var(--ink-2);
+	}
+	.feature-legend-swatch { display: inline-block; width: 9px; height: 9px; border-radius: 999px; }
+	.feature-legend-value { color: var(--ink); }
+	.feature-frame { padding: 4px; }
+
+	/* ============ 9. Drawdown group cards ============ */
+	.dd-grid { display: grid; gap: 10px; }
+	@media (min-width: 900px) { .dd-grid { grid-template-columns: repeat(2, 1fr); } }
+	@media (min-width: 1280px) { .dd-grid { grid-template-columns: repeat(3, 1fr); } }
+	.dd-card {
+		display: block; border: 1px solid var(--line); border-radius: 10px;
+		background: var(--panel-2); padding: 14px 16px; color: inherit;
+		transition: border-color .15s, background .15s;
+	}
+	.dd-card:hover { border-color: var(--accent-ring); background: var(--accent-soft); }
+	.dd-card-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+	.dd-title { font-weight: 600; color: var(--ink); font-size: 13px; margin-bottom: 6px; }
+	.dd-label { font-family: 'IBM Plex Mono', monospace; font-size: 10px; letter-spacing: .14em; text-transform: uppercase; color: var(--faint); }
+	.dd-value { margin-top: 3px; font-family: 'IBM Plex Mono', monospace; font-size: 15px; font-weight: 600; color: var(--danger); }
+	.dd-stats { margin-top: 12px; display: grid; grid-template-columns: 1fr 1fr; gap: 8px 12px; }
+	.dd-stats dt { font-size: 11px; color: var(--muted); }
+	.dd-stats dd { margin-top: 2px; font-family: 'IBM Plex Mono', monospace; font-size: 12.5px; color: var(--ink); font-variant-numeric: tabular-nums; }
+	.dd-wide { grid-column: 1 / -1; }
+
+	/* ============ 10. Notes & footer ============ */
+	.notes { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+	.notes li {
+		font-size: 12.5px; color: var(--muted);
+		border-left: 2px solid var(--accent-ring); padding-left: 10px;
+	}
+	.page-footer {
+		margin-top: 8px; padding: 12px 4px 0;
+		font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; letter-spacing: .08em;
+		color: var(--faint); display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap;
+	}
+
+	/* ============ 11. Deferred-content compatibility ============
+	 * Trade rows / spread cards / spread groups HTML is string-built in Go
+	 * (internal/report) with the class names below. Keep these selectors in
+	 * sync with backtest_html_payload.go and backtest_html_spreads.go.
+	 */
+	.flex { display: flex; }
+	.inline-flex { display: inline-flex; }
+	.grid { display: grid; }
+	.flex-wrap { flex-wrap: wrap; }
+	.items-center { align-items: center; }
+	.justify-between { justify-content: space-between; }
+	.gap-2 { gap: .5rem; }
+	.gap-3 { gap: .75rem; }
+	.gap-5 { gap: 1.25rem; }
+	.space-y-3 > * + * { margin-top: .75rem; }
+	.space-y-4 > * + * { margin-top: 1rem; }
+	.space-y-5 > * + * { margin-top: 1.25rem; }
+	.w-full { width: 100%; }
+	.min-w-full { min-width: 100%; }
+	.overflow-hidden { overflow: hidden; }
+	.overflow-x-auto { overflow-x: auto; }
+	.cursor-pointer { cursor: pointer; }
+	.transition { transition: background .15s ease, border-color .15s ease, color .15s ease; }
+	.text-left { text-align: left; }
+	.font-medium { font-weight: 500; }
+	.font-semibold { font-weight: 600; }
+	.underline { text-decoration: underline; }
+	.underline-offset-2 { text-underline-offset: 2px; }
+	.text-\[10px\] { font-size: 10px; }
+	.text-\[11px\] { font-size: 11px; }
+	.text-xs { font-size: 12px; }
+	.text-sm { font-size: 13px; }
+	.p-4 { padding: 1rem; }
+	.px-2 { padding-left: .5rem; padding-right: .5rem; }
+	.px-2\.5 { padding-left: .625rem; padding-right: .625rem; }
+	.px-4 { padding-left: 1rem; padding-right: 1rem; }
+	.py-0\.5 { padding-top: .125rem; padding-bottom: .125rem; }
+	.py-1 { padding-top: .25rem; padding-bottom: .25rem; }
+	.py-1\.5 { padding-top: .375rem; padding-bottom: .375rem; }
+	.py-2 { padding-top: .5rem; padding-bottom: .5rem; }
+	.py-2\.5 { padding-top: .625rem; padding-bottom: .625rem; }
+	.py-3 { padding-top: .75rem; padding-bottom: .75rem; }
+	.mb-3 { margin-bottom: .75rem; }
+	.mb-4 { margin-bottom: 1rem; }
+	.mb-5 { margin-bottom: 1.25rem; }
+	.mt-1 { margin-top: .25rem; }
+	.mt-2 { margin-top: .5rem; }
+	.border { border: 1px solid var(--line); }
+	.border-b { border-bottom: 1px solid var(--line); }
+	.border-t { border-top: 1px solid var(--line); }
+	.border-white\/5, .border-white\/8, .border-white\/10 { border-color: var(--line); }
+	.divide-y > * + * { border-top: 1px solid var(--line); }
+	.rounded { border-radius: 6px; }
+	.rounded-md { border-radius: 6px; }
+	.rounded-lg { border-radius: 10px; }
+	.rounded-xl { border-radius: 12px; }
+	.bg-white\/5, .bg-white\/\[0\.02\], .bg-white\/\[0\.03\] { background: var(--panel-2); }
+	.text-white { color: var(--ink); }
+	.text-slate-100 { color: var(--ink); }
+	.text-slate-200 { color: var(--ink); }
+	.text-slate-300 { color: var(--ink-2); }
+	.text-slate-400 { color: var(--muted); }
+	.text-slate-500 { color: var(--faint); }
+	.text-emerald-200, .text-emerald-300 { color: var(--b-emerald); }
+	.text-amber-200, .text-amber-300 { color: var(--b-amber); }
+	.text-sky-200, .text-sky-300 { color: var(--b-sky); }
+	.text-rose-200 { color: var(--danger); }
+	.text-teal-200, .text-teal-300 { color: var(--accent); }
+	.text-violet-300 { color: var(--b-violet); }
+	.bg-emerald-500\/15 { background: var(--b-emerald-bg); }
+	.bg-amber-500\/15 { background: var(--b-amber-bg); }
+	.bg-sky-500\/10, .bg-sky-500\/15 { background: var(--b-sky-bg); }
+	.bg-rose-500\/15 { background: var(--b-rose-bg); }
+	.bg-teal-500\/10 { background: var(--b-teal-bg); }
+	.bg-violet-500\/15 { background: var(--b-violet-bg); }
+	.ring-1 { box-shadow: inset 0 0 0 1px var(--ring, var(--line-2)); }
+	.ring-emerald-400\/40 { --ring: var(--b-emerald-ring); }
+	.ring-amber-400\/40 { --ring: var(--b-amber-ring); }
+	.ring-sky-400\/20 { --ring: var(--b-sky-ring); }
+	.ring-sky-400\/40 { --ring: var(--b-sky-ring); }
+	.ring-rose-400\/40 { --ring: var(--b-rose-ring); }
+	.ring-teal-400\/20 { --ring: var(--b-teal-ring); }
+	.ring-violet-400\/30 { --ring: var(--b-violet-ring); }
+	.hover\:bg-white\/\[0\.045\]:hover { background: var(--panel-3); }
+	.hover\:text-sky-200:hover { color: var(--b-sky); }
+	.hover\:border-sky-400\/40:hover { border-color: var(--b-sky); }
+	.focus\:outline-none:focus { outline: none; }
+	.focus-visible\:ring-2:focus-visible { outline: 2px solid var(--accent-ring); outline-offset: 1px; }
+	@media (min-width: 768px) { .md\:grid-cols-2 { grid-template-columns: repeat(2, 1fr); } }
+	@media (min-width: 1280px) {
+		.xl\:grid-cols-4 { grid-template-columns: repeat(4, 1fr); }
+		.xl\:grid-cols-5 { grid-template-columns: repeat(5, 1fr); }
+	}
+	/* Spread group <details> chrome */
+	.spread-group-summary { list-style: none; }
+	.spread-group-summary::-webkit-details-marker { display: none; }
+	.spread-group-chevron { display: inline-block; transition: transform .15s ease; }
+	details[open] > .spread-group-summary .spread-group-chevron { transform: rotate(90deg); }
+	.spread-group-state-open { display: inline; }
+	.spread-group-state-closed { display: none; }
+	details[open] > .spread-group-summary .spread-group-state-open { display: none; }
+	details[open] > .spread-group-summary .spread-group-state-closed { display: inline; }
+	.spread-metric-card {
+		background: var(--panel-2); border: 1px solid var(--line);
+		border-radius: 8px; padding: 10px 12px; min-height: 78px;
+	}
+
+	/* ============ 12. Print ============ */
+	@media print {
+		.topbar, .btn, .dw-panel button, .section-tools { display: none !important; }
+		body { background: #fff; }
+		.section { box-shadow: none; break-inside: avoid; }
+		html { scroll-behavior: auto; }
+	}
+</style>
+</head>
+<body>
+<div class="page-shell" id="top">
+	<div class="topbar">
+		<div class="topbar-inner">
+			<span class="brand">回测报告</span>
+			<span class="topbar-title">{{ .StrategyName }}</span>
+			<nav class="topbar-nav">
+				<a class="nav-chip" href="#section-performance">表现</a>
+				<a class="nav-chip" href="#section-market">范围</a>
+				{{ if .PortfolioAttribution.InstrumentRows }}<a class="nav-chip" href="#section-attribution">归因</a>{{ end }}
+				{{ if .HasUnderlyingChart }}<a class="nav-chip" href="#section-chart-price">价格</a>{{ end }}
+				<a class="nav-chip" href="#section-chart-equity">权益</a>
+				{{ if .HasQuoteNetValue }}<a class="nav-chip" href="#section-chart-quote">净值</a>{{ end }}
+				<a class="nav-chip" href="#section-chart-drawdown">回撤</a>
+				{{ if not .NoSpreadRows }}<a class="nav-chip" href="#section-spreads">价差</a>{{ end }}
+				{{ if not .NoTradeRows }}<a class="nav-chip" href="#section-trades">成交</a>{{ end }}
+				{{ if .Notes }}<a class="nav-chip" href="#section-notes">说明</a>{{ end }}
+			</nav>
+			<div class="topbar-controls">
+				<label class="check" title="压缩无持仓无交易的平坦时段（应用于所有图表）">
+					<input id="toggle-ignore-idle" type="checkbox" />
+					<span>忽略空闲时段</span>
+				</label>
+				<select id="theme-select" class="select" aria-label="主题">
+					<option value="light">亮色</option>
+					<option value="dark">暗色</option>
+				</select>
+				<select id="timezone-select" class="select" aria-label="时区">
+					<option value="utc">UTC</option>
+					<option value="local">本地时间</option>
+				</select>
+			</div>
+		</div>
+	</div>
+
+	<div class="page">
+		<header class="hero">
+			<div class="eyebrow">Backtest Report</div>
+			<h1 class="hero-title">{{ .StrategyName }}</h1>
+			<p class="hero-meta">{{ .Asset }} · {{ .Interval }} · {{ .Period }} · 生成于 {{ .GeneratedAt }}{{ if .DisplayIsDaily }} · 已统一聚合到 1 Day 日终粒度{{ end }}</p>
+			<div class="hero-stats">
+				<div class="stat"><div class="stat-label">最终权益</div><div class="stat-value">{{ .FinalEquity }}</div></div>
+				<div class="stat"><div class="stat-label">净盈亏</div><div class="stat-value" data-autosign>{{ .NetPnL }}</div></div>
+				<div class="stat"><div class="stat-label">总收益率</div><div class="stat-value" data-autosign>{{ .TotalReturn }}</div></div>
+				<div class="stat"><div class="stat-label">年化收益</div><div class="stat-value" data-autosign>{{ .AnnualizedReturn }}</div></div>
+				<div class="stat"><div class="stat-label">最大回撤</div><div class="stat-value neg">{{ .MaxDrawdown }}</div></div>
+				<div class="stat"><div class="stat-label">夏普比率</div><div class="stat-value" data-autosign>{{ .SharpeRatio }}</div></div>
+				<div class="stat"><div class="stat-label">卡玛比</div><div class="stat-value" data-autosign>{{ .CalmarRatio }}</div></div>
+				<div class="stat"><div class="stat-label">总手续费</div><div class="stat-value">{{ .TotalFees }}</div></div>
+			</div>
+			<div class="hero-facts">
+				<div class="fact"><div class="fact-label">资金计价</div><div class="fact-value">{{ .CapitalMode }}</div></div>
+				<div class="fact"><div class="fact-label">策略画像</div><div class="fact-value">{{ .CapitalProfile }}</div></div>
+				<div class="fact"><div class="fact-label">解释</div><div class="fact-value plain">{{ .CapitalNote }}</div></div>
+			</div>
+		</header>
+
+		<section class="section" id="section-performance">
+			<div class="section-head">
+				<div>
+					<div class="eyebrow">Performance</div>
+					<h2>策略表现</h2>
+					<p class="section-desc">基于逐 bar 权益序列统计 · 无风险利率 0% · 年化 365 天</p>
+				</div>
+			</div>
+			<div class="metric-cards{{ if not .HasAssetPerformance }} single{{ end }}">
+				<div class="metric-card">
+					<div class="mc-name">{{ .StrategyPerformance.Name }}</div>
+					<p class="mc-desc">单位 {{ .StrategyPerformance.ValueUnit }} · 与下方 U 本位净值图口径一致</p>
+					<div class="mc-grid">
+						<div><div class="mc-label">年化收益</div><div class="mc-value" data-autosign>{{ .StrategyPerformance.AnnualizedReturn }}</div></div>
+						<div><div class="mc-label">年化波动</div><div class="mc-value">{{ .StrategyPerformance.AnnualizedVolatility }}</div></div>
+						<div><div class="mc-label">最大回撤</div><div class="mc-value neg">{{ .StrategyPerformance.MaxDrawdown }}</div></div>
+						<div><div class="mc-label">夏普比率</div><div class="mc-value" data-autosign>{{ .StrategyPerformance.SharpeRatio }}</div></div>
+						<div><div class="mc-label">卡玛比</div><div class="mc-value" data-autosign>{{ .StrategyPerformance.CalmarRatio }}</div></div>
+					</div>
+				</div>
+				{{ if .HasAssetPerformance }}
+				<div class="metric-card blue">
+					<div class="mc-name">{{ .AssetPerformance.Name }}</div>
+					<p class="mc-desc">单位 {{ .AssetPerformance.ValueUnit }} · 与下方 Buy&amp;Hold 基准曲线口径一致</p>
+					<div class="mc-grid">
+						<div><div class="mc-label">年化收益</div><div class="mc-value" data-autosign>{{ .AssetPerformance.AnnualizedReturn }}</div></div>
+						<div><div class="mc-label">年化波动</div><div class="mc-value">{{ .AssetPerformance.AnnualizedVolatility }}</div></div>
+						<div><div class="mc-label">最大回撤</div><div class="mc-value neg">{{ .AssetPerformance.MaxDrawdown }}</div></div>
+						<div><div class="mc-label">夏普比率</div><div class="mc-value" data-autosign>{{ .AssetPerformance.SharpeRatio }}</div></div>
+						<div><div class="mc-label">卡玛比</div><div class="mc-value" data-autosign>{{ .AssetPerformance.CalmarRatio }}</div></div>
+					</div>
+				</div>
+				{{ end }}
+			</div>
+			<div class="perf-wrap">
+				<table class="perf-table">
+					<thead>
+						<tr class="perf-groups">
+							<th colspan="2">资金与收益</th>
+							<th colspan="2">风险</th>
+							{{ if not .NoTradeRows }}<th colspan="2">交易</th>{{ end }}
+							<th colspan="2">权益</th>
+							{{ if .SpreadSummary }}<th colspan="2">价差</th>{{ end }}
+						</tr>
+					</thead>
+					<tbody>
+						<tr>
+							<td class="k">初始资金</td><td class="v">{{ .InitialCapital }}</td>
+							<td class="k">最大回撤</td><td class="v neg">{{ .MaxDrawdown }}</td>
+							{{ if not .NoTradeRows }}<td class="k">原始成交</td><td class="v">{{ .TradeOverview.RawFills }}</td>{{ end }}
+							<td class="k">权益峰值</td><td class="v">{{ .EquityAnalysis.PeakEquity }}</td>
+							{{ if .SpreadSummary }}<td class="k">总数</td><td class="v">{{ .SpreadSummary.TotalSpreads }}</td>{{ end }}
+						</tr>
+						<tr>
+							<td class="k">最终权益</td><td class="v">{{ .FinalEquity }}</td>
+							<td class="k">夏普比率</td><td class="v" data-autosign>{{ .SharpeRatio }}</td>
+							{{ if not .NoTradeRows }}<td class="k">往返交易</td><td class="v">{{ .TradeOverview.RoundTrips }}</td>{{ end }}
+							<td class="k">最低权益</td><td class="v">{{ .EquityAnalysis.LowestEquity }}</td>
+							{{ if .SpreadSummary }}<td class="k">已平仓</td><td class="v">{{ .SpreadSummary.ClosedSpreads }}</td>{{ end }}
+						</tr>
+						<tr>
+							<td class="k">净盈亏</td><td class="v" data-autosign>{{ .NetPnL }}</td>
+							<td class="k">卡玛比</td><td class="v" data-autosign>{{ .CalmarRatio }}</td>
+							{{ if not .NoTradeRows }}<td class="k">多头 / 空头</td><td class="v">{{ .TradeOverview.LongFills }} / {{ .TradeOverview.ShortFills }}</td>{{ end }}
+							<td class="k">峰值时间</td><td class="v">{{ .EquityAnalysis.PeakTime }}</td>
+							{{ if .SpreadSummary }}<td class="k">未平仓</td><td class="v">{{ .SpreadSummary.OpenSpreads }}</td>{{ end }}
+						</tr>
+						<tr>
+							<td class="k">总收益率</td><td class="v" data-autosign>{{ .TotalReturn }}</td>
+							<td class="k">年化波动率</td><td class="v">{{ .AnnualizedVolatility }}</td>
+							{{ if not .NoTradeRows }}<td class="k">毛利润</td><td class="v">{{ .TradeOverview.GrossProfit }}</td>{{ end }}
+							<td class="k">最低点时间</td><td class="v">{{ .EquityAnalysis.LowestTime }}</td>
+							{{ if .SpreadSummary }}<td class="k">盈利</td><td class="v">{{ .SpreadSummary.WinningSpreads }}</td>{{ end }}
+						</tr>
+						<tr>
+							<td class="k">年化收益</td><td class="v" data-autosign>{{ .AnnualizedReturn }}</td>
+							<td class="k">Bar 波动率</td><td class="v">{{ .EquityAnalysis.BarReturnVolatility }}</td>
+							{{ if not .NoTradeRows }}<td class="k">毛亏损</td><td class="v">{{ .TradeOverview.GrossLoss }}</td>{{ end }}
+							<td class="k">上涨 Bars</td><td class="v">{{ .EquityAnalysis.PositiveBars }}</td>
+							{{ if .SpreadSummary }}<td class="k">亏损</td><td class="v">{{ .SpreadSummary.LosingSpreads }}</td>{{ end }}
+						</tr>
+						<tr>
+							<td class="k">总手续费</td><td class="v">{{ .TotalFees }}</td>
+							<td class="k">最差 Bar</td><td class="v">{{ .EquityAnalysis.WorstBarReturn }}</td>
+							{{ if not .NoTradeRows }}<td class="k">交易净盈亏</td><td class="v" data-autosign>{{ .TradeOverview.NetPnL }}</td>{{ end }}
+							<td class="k">下跌 Bars</td><td class="v">{{ .EquityAnalysis.NegativeBars }}</td>
+							{{ if .SpreadSummary }}<td class="k">胜率</td><td class="v">{{ .SpreadSummary.WinRate }}</td>{{ end }}
+						</tr>
+						<tr>
+							<td class="k">Bars 数</td><td class="v">{{ .BarsCount }}</td>
+							<td class="k">回撤时长</td><td class="v">{{ .EquityAnalysis.MaxDrawdownDuration }}</td>
+							{{ if not .NoTradeRows }}<td class="k">平均往返盈亏</td><td class="v" data-autosign>{{ .TradeOverview.AvgPnLPerRoundTrip }}</td>{{ end }}
+							<td class="k">平盘 Bars</td><td class="v">{{ .EquityAnalysis.FlatBars }}</td>
+							{{ if .SpreadSummary }}<td class="k">价差盈亏</td><td class="v" data-autosign>{{ .SpreadSummary.TotalPnL }}</td>{{ end }}
+						</tr>
+						<tr>
+							<td class="k"></td><td class="v"></td>
+							<td class="k">回撤持续 Bars</td><td class="v">{{ .EquityAnalysis.MaxDrawdownDurationBars }}</td>
+							{{ if not .NoTradeRows }}<td class="k">平均手续费</td><td class="v">{{ .TradeOverview.AvgCommissionPerFill }}</td>{{ else }}<td class="k"></td><td class="v"></td>{{ end }}
+							<td class="k"></td><td class="v"></td>
+							{{ if .SpreadSummary }}<td class="k"></td><td class="v"></td>{{ end }}
+						</tr>
+					</tbody>
+				</table>
+			</div>
+		</section>
+
+		<section class="section" id="section-market">
+			<div class="section-head">
+				<div>
+					<div class="eyebrow">Market Scope</div>
+					<h2>交易范围</h2>
+					<p class="section-desc">{{ .MarketMix.Description }}</p>
+				</div>
+				<div class="chips">
+					<span class="chip">标的/合约 {{ .MarketMix.SecurityCount }}</span>
+					<span class="chip">市场 {{ .MarketMix.MarketCount }}</span>
+					<span class="chip">普通成交 {{ .MarketMix.RegularTradeCount }}</span>
+					<span class="chip">期权腿 {{ .MarketMix.OptionLegCount }}</span>
+				</div>
+			</div>
+			{{ if .SecurityMix }}
+			<div class="tbl-wrap">
+				<table class="tbl">
+					<thead><tr><th>标的 / 合约</th><th>事件数</th><th>名义金额</th><th>净现金 / 已实现</th></tr></thead>
+					<tbody>
+						{{ range .SecurityMix }}<tr><td class="mono">{{ .Security }}</td><td class="mono">{{ .Trades }}</td><td class="mono">{{ .Notional }}</td><td class="mono">{{ .NetCash }}</td></tr>{{ end }}
+					</tbody>
+				</table>
+			</div>
+			{{ end }}
+		</section>
+
+		{{ if .PortfolioAttribution.InstrumentRows }}
+		<section class="section" id="section-attribution">
+			<div class="section-head">
+				<div>
+					<div class="eyebrow">Attribution</div>
+					<h2>组合归因</h2>
+					<p class="section-desc">{{ .PortfolioAttribution.Description }}</p>
+				</div>
+				<div class="chips">
+					<span class="chip">普通成交净现金 {{ .PortfolioAttribution.RegularNetCash }}</span>
+					<span class="chip">期权已实现盈亏 {{ .PortfolioAttribution.OptionRealizedPnL }}</span>
+				</div>
+			</div>
+			<div class="attrib-grid">
+				<div class="tbl-wrap">
+					<table class="tbl">
+						<thead><tr><th>工具族</th><th>事件</th><th>名义金额</th><th>归因</th><th>细节</th></tr></thead>
+						<tbody>
+							{{ range .PortfolioAttribution.InstrumentRows }}<tr><td><span class="attrib-name">{{ .Name }}</span><div class="attrib-sub mono">{{ .Family }}</div></td><td class="mono">{{ .Events }}</td><td class="mono">{{ .Notional }}</td><td class="mono {{ .PnLClass }}">{{ .PnL }}</td><td>{{ .Details }}</td></tr>{{ end }}
+						</tbody>
+					</table>
+				</div>
+				{{ if .PortfolioAttribution.UnderlyingRows }}
+				<div class="tbl-wrap">
+					<table class="tbl">
+						<thead><tr><th>Underlying / 标的</th><th>类型</th><th>事件</th><th>名义金额</th><th>归因</th></tr></thead>
+						<tbody>
+							{{ range .PortfolioAttribution.UnderlyingRows }}<tr><td><span class="attrib-name mono">{{ .Name }}</span><div class="attrib-sub">{{ .Details }}</div></td><td>{{ .Family }}</td><td class="mono">{{ .Events }}</td><td class="mono">{{ .Notional }}</td><td class="mono {{ .PnLClass }}">{{ .PnL }}</td></tr>{{ end }}
+						</tbody>
+					</table>
+				</div>
+				{{ end }}
+			</div>
+		</section>
+		{{ end }}
+
+		{{ if .HasUnderlyingChart }}
+		<section class="section" id="section-chart-price">
+			<div class="section-head">
+				<div>
+					<div class="eyebrow">Price</div>
+					<h2>参考价格图</h2>
+					<p class="section-desc">显示 {{ .UnderlyingChartLabel }} · 数据源 {{ .UnderlyingChartSource }}{{ if .UnderlyingChartOverride }} · 用户显式覆盖{{ end }}</p>
+				</div>
+				<div class="legend">
+					<span class="legend-item"><i class="dot dot-up"></i>买入</span>
+					<span class="legend-item"><i class="dot dot-down"></i>卖出</span>
+					<span class="legend-item"><i class="dot dot-open"></i>开仓</span>
+					<span class="legend-item"><i class="dot dot-close"></i>平仓</span>
+				</div>
+			</div>
+			{{ if .UnderlyingChartNote }}<p class="note-warn">{{ .UnderlyingChartNote }}</p>{{ end }}
+			<div class="dw-panel" id="underlying-data-window">
+				<div class="dw-head">
+					<div>
+						<div class="eyebrow">数据窗口</div>
+						<p class="section-desc">将鼠标悬停在蜡烛图上可查看 OHLC{{ if .HasUnderlyingVolume }}、{{ .UnderlyingVolumeLabel }}{{ end }}{{ if .HasHoverColumns }} 以及策略列{{ end }}{{ if .HasFeatureColumns }}。点击非叠加策略列卡片可在子图中切换显示{{ end }}。</p>
+					</div>
+					<div id="underlying-data-window-time" class="dw-time"></div>
+				</div>
+				<div id="underlying-data-window-grid"></div>
+			</div>
+			<div class="chart-frame">
+				<div id="underlying-chart" style="width:100%;height:420px;"></div>
+			</div>
+			{{ if .HasFeatureColumns }}
+			<div id="underlying-feature-panel" class="feature-panel hidden">
+				<div class="feature-head">
+					<div>
+						<div id="underlying-feature-title" class="eyebrow eyebrow-blue">特征子图</div>
+						<p id="underlying-feature-subtitle" class="section-desc">点击数据窗口中的非叠加策略列，可在价格图下方绘制多条序列。</p>
+					</div>
+					<button id="underlying-feature-clear" type="button" class="btn hidden">清空全部</button>
+				</div>
+				<div id="underlying-feature-empty" class="feature-empty-state mono">未选择任何特征。</div>
+				<div id="underlying-feature-legend" class="feature-legend hidden"></div>
+				<div class="chart-frame feature-frame hidden" id="underlying-feature-frame">
+					<div id="underlying-feature-chart" style="width:100%;height:220px;"></div>
+				</div>
+			</div>
+			{{ end }}
+		</section>
+		{{ end }}
+
+		<section class="section" id="section-chart-equity">
+			<div class="section-head">
+				<div>
+					<div class="eyebrow">Equity</div>
+					<h2>权益曲线</h2>
+					<div class="chips">
+						<span class="chip">范围 {{ .EquityMin }} 至 {{ .EquityMax }}</span>
+						<span class="chip">手续费 {{ .TotalFees }}</span>
+					</div>
+					<p id="equity-mode-note" class="section-desc">{{ if .DisplayIsDaily }}当前图表已按 1 Day 聚合，展示每个 UTC 日的最后一个权益点；切换后仅保留已结算权益。{{ else }}默认展示逐 bar 净值；切换后仅保留已结算收益点，并在下方显示区间浮盈浮亏与持仓暴露。{{ end }}</p>
+				</div>
+				<label class="check" data-equity-mode="settled">
+					<input id="toggle-settled-equity" type="checkbox" />
+					<span>仅显示已结算权益</span>
+				</label>
+			</div>
+			<div class="chart-frame">
+				<div id="equity-chart" style="width:100%;height:300px;"></div>
+			</div>
+			<div id="settled-context-panel" class="feature-panel hidden">
+				<div class="feature-head">
+					<div>
+						<div class="eyebrow">已结算模式上下文</div>
+						<p class="section-desc">绿色 / 红色柱表示两次结算之间的最大浮盈 / 浮亏，白线表示持仓暴露强度。</p>
+					</div>
+				</div>
+				<div class="chart-frame">
+					<div id="settled-context-chart" style="width:100%;height:180px;"></div>
+				</div>
+			</div>
+		</section>
+
+		{{ if .HasQuoteNetValue }}
+		<section class="section" id="section-chart-quote">
+			<div class="section-head">
+				<div>
+					<div class="eyebrow">Quote Net Value</div>
+					<h2>U 本位净值</h2>
+					<div class="chips">
+						<span class="chip">范围 {{ .QuoteNetValueMin }} 至 {{ .QuoteNetValueMax }}</span>
+						<span class="chip">{{ .QuoteNetValueNote }}</span>
+					</div>
+				</div>
+			</div>
+			<div class="chart-frame">
+				<div id="quote-net-value-chart" style="width:100%;height:300px;"></div>
+			</div>
+			{{ if .HasBuyHoldBenchmark }}<p class="chart-note">Buy&amp;Hold 范围 {{ .BuyHoldMin }} 至 {{ .BuyHoldMax }} · {{ .BuyHoldNote }}</p>{{ end }}
+			<div class="metric-cards{{ if not .HasBuyHoldPerformance }} single{{ end }}" style="margin-top:14px;margin-bottom:0;">
+				<div class="metric-card">
+					<div class="mc-name">{{ .QuotePerformance.Name }}</div>
+					<div class="mc-grid">
+						<div><div class="mc-label">年化收益</div><div class="mc-value" data-autosign>{{ .QuotePerformance.AnnualizedReturn }}</div></div>
+						<div><div class="mc-label">年化波动</div><div class="mc-value">{{ .QuotePerformance.AnnualizedVolatility }}</div></div>
+						<div><div class="mc-label">最大回撤</div><div class="mc-value neg">{{ .QuotePerformance.MaxDrawdown }}</div></div>
+						<div><div class="mc-label">夏普比率</div><div class="mc-value" data-autosign>{{ .QuotePerformance.SharpeRatio }}</div></div>
+						<div><div class="mc-label">卡玛比</div><div class="mc-value" data-autosign>{{ .QuotePerformance.CalmarRatio }}</div></div>
+					</div>
+				</div>
+				{{ if .HasBuyHoldPerformance }}
+				<div class="metric-card blue">
+					<div class="mc-name">{{ .BuyHoldPerformance.Name }}</div>
+					<div class="mc-grid">
+						<div><div class="mc-label">年化收益</div><div class="mc-value" data-autosign>{{ .BuyHoldPerformance.AnnualizedReturn }}</div></div>
+						<div><div class="mc-label">年化波动</div><div class="mc-value">{{ .BuyHoldPerformance.AnnualizedVolatility }}</div></div>
+						<div><div class="mc-label">最大回撤</div><div class="mc-value neg">{{ .BuyHoldPerformance.MaxDrawdown }}</div></div>
+						<div><div class="mc-label">夏普比率</div><div class="mc-value" data-autosign>{{ .BuyHoldPerformance.SharpeRatio }}</div></div>
+						<div><div class="mc-label">卡玛比</div><div class="mc-value" data-autosign>{{ .BuyHoldPerformance.CalmarRatio }}</div></div>
+					</div>
+				</div>
+				{{ end }}
+			</div>
+		</section>
+		{{ end }}
+
+		{{ if .HasDailyQuoteNetValue }}
+		<section class="section" id="section-chart-daily-quote">
+			<div class="section-head">
+				<div>
+					<div class="eyebrow">Daily EOD</div>
+					<h2>1 Day 日终净值</h2>
+					<p class="section-desc">{{ .DailyQuoteNetValueNote }}</p>
+				</div>
+			</div>
+			<div class="chart-frame">
+				<div id="quote-daily-chart" style="width:100%;height:280px;"></div>
+			</div>
+		</section>
+		{{ end }}
+
+		{{ if .HasDailyAssetPnL }}
+		<section class="section" id="section-chart-daily-asset">
+			<div class="section-head">
+				<div>
+					<div class="eyebrow">Daily Asset PnL</div>
+					<h2>1 Day Asset 本位 PnL</h2>
+					<p class="section-desc">{{ .DailyAssetPnLNote }}</p>
+				</div>
+			</div>
+			<div class="chart-frame">
+				<div id="asset-daily-pnl-chart" style="width:100%;height:280px;"></div>
+			</div>
+		</section>
+		{{ end }}
+
+		<section class="section" id="section-chart-drawdown">
+			<div class="section-head">
+				<div>
+					<div class="eyebrow">Drawdown</div>
+					<h2>回撤</h2>
+				</div>
+				<div class="chips"><span class="chip">最大回撤 {{ .DrawdownMax }}</span></div>
+			</div>
+			<div class="chart-frame">
+				<div id="drawdown-chart" style="width:100%;height:220px;"></div>
+			</div>
+		</section>
+
+		{{ if .TopDrawdownGroups }}
+		<section class="section" id="section-top-drawdown">
+			<div class="section-head">
+				<div>
+					<div class="eyebrow">Risk Hotspots</div>
+					<h2>最大回撤前 5 订单组</h2>
+					<p class="section-desc">按组内最大回撤从高到低排序</p>
+				</div>
+			</div>
+			<div class="dd-grid">
+				{{ range .TopDrawdownGroups }}
+				<a href="#{{ .AnchorID }}" class="dd-card">
+					<div class="dd-card-top">
+						<div>
+							<div class="dd-title">组 #{{ .ID }} {{ .Tag }}</div>
+							<span class="badge {{ .StatusClass }}">{{ .Status }}</span>
+						</div>
+						<div style="text-align:right;">
+							<div class="dd-label">最大回撤</div>
+							<div class="dd-value">{{ .MaxDrawdown }}</div>
+						</div>
+					</div>
+					<dl class="dd-stats">
+						<div><dt>最高权益</dt><dd>{{ .HighestEquity }}</dd></div>
+						<div><dt>最低权益</dt><dd>{{ .LowestEquity }}</dd></div>
+						<div class="dd-wide"><dt>组盈亏</dt><dd data-autosign>{{ .TotalPnL }}</dd></div>
+					</dl>
+				</a>
+				{{ end }}
+			</div>
+		</section>
+		{{ end }}
+
+		{{ if not .NoSpreadRows }}
+		<section class="section" id="section-spreads">
+			<div class="section-head">
+				<div>
+					<div class="eyebrow">Spread Activity</div>
+					<h2>价差活动</h2>
+					<p class="section-desc">开仓和平仓会拆分为独立事件，并按时间排序。可使用跳转链接在同一价差的两个事件之间切换；分组支持折叠查看。</p>
+				</div>
+				<div class="section-tools">
+					<span class="chip">{{ .SpreadsCount }} 个持仓 · {{ len .Spreads }} 个事件</span>
+					{{ if .SpreadGroups }}
+					<button type="button" class="btn" data-spread-groups-toggle="collapse">全部折叠</button>
+					<button type="button" class="btn" data-spread-groups-toggle="expand">全部展开</button>
+					{{ end }}
+				</div>
+			</div>
+			<div id="spread-sections-container"></div>
+		</section>
+		{{ end }}
+
+		{{ if not .NoTradeRows }}
+		<section class="section" id="section-trades">
+			<div class="section-head">
+				<div>
+					<div class="eyebrow">Trade Log</div>
+					<h2>成交明细</h2>
+				</div>
+				<div class="section-tools"><span class="chip">{{ .TradesCount }} 笔成交</span></div>
+			</div>
+			<div class="tbl-wrap">
+				<div class="tbl-scroll">
+					<table class="tbl">
+						<thead>
+							<tr>
+								<th>时间</th>
+								<th>标的</th>
+								<th>方向</th>
+								<th>原因</th>
+								<th>数量</th>
+								<th>成交价</th>
+								<th>手续费</th>
+								<th>滑点</th>
+								<th>净额</th>
+							</tr>
+						</thead>
+						<tbody id="trades-rows-container"></tbody>
+					</table>
+				</div>
+			</div>
+		</section>
+		{{ end }}
+
+		{{ if .Notes }}
+		<section class="section" id="section-notes">
+			<div class="section-head">
+				<div>
+					<div class="eyebrow">Notes</div>
+					<h2>说明</h2>
+				</div>
+			</div>
+			<ul class="notes">
+				{{ range .Notes }}<li>{{ . }}</li>{{ end }}
+			</ul>
+		</section>
+		{{ end }}
+
+		<footer class="page-footer">
+			<span>TOKTiK · BACKTEST REPORT</span>
+			<span>静态单文件 · 图表数据内嵌（gzip + base64）</span>
+		</footer>
+	</div>
+</div>
+
+<script>
+	const compressedChartPayload = {{ .CompressedChartPayload }};
+	const compressedTradeRowsHTML = {{ .CompressedTradeRowsHTML }};
+	const compressedSpreadSectionsHTML = {{ .CompressedSpreadSectionsHTML }};
+	const underlyingVolumeLabel = {{ .UnderlyingVolumeLabel }};
+
+	function decodeCompressedJSON(key, fallbackValue) {
+		const encoded = compressedChartPayload[key];
+		if (!encoded) {
+			return fallbackValue;
+		}
+		if (!window.pako) {
+			console.warn('pako unavailable; chart payload skipped for', key);
+			return fallbackValue;
+		}
+		try {
+			const binary = atob(encoded);
+			const bytes = new Uint8Array(binary.length);
+			for (let index = 0; index < binary.length; index++) {
+				bytes[index] = binary.charCodeAt(index);
+			}
+			const decoded = window.pako.ungzip(bytes, { to: 'string' });
+			return JSON.parse(decoded);
+		} catch (error) {
+			console.warn('failed to decode chart payload', key, error);
+			return fallbackValue;
+		}
+	}
+
+	function decodeCompressedText(encoded) {
+		if (!encoded || !window.pako) {
+			return '';
+		}
+		try {
+			const binary = atob(encoded);
+			const bytes = new Uint8Array(binary.length);
+			for (let index = 0; index < binary.length; index++) {
+				bytes[index] = binary.charCodeAt(index);
+			}
+			return window.pako.ungzip(bytes, { to: 'string' });
+		} catch (error) {
+			console.warn('failed to decode html payload', error);
+			return '';
+		}
+	}
+
+	function hydrateDeferredHTML() {
+		const tradeRowsContainer = document.getElementById('trades-rows-container');
+		if (tradeRowsContainer && compressedTradeRowsHTML) {
+			tradeRowsContainer.innerHTML = decodeCompressedText(compressedTradeRowsHTML);
+		}
+		const spreadSectionsContainer = document.getElementById('spread-sections-container');
+		if (spreadSectionsContainer && compressedSpreadSectionsHTML) {
+			spreadSectionsContainer.innerHTML = decodeCompressedText(compressedSpreadSectionsHTML);
+		}
+	}
+
+	const underlyingCandles = decodeCompressedJSON('underlyingCandles', []);
+	const underlyingVolumeSeries = decodeCompressedJSON('underlyingVolumeSeries', []);
+	const underlyingMarkers = decodeCompressedJSON('underlyingMarkers', []);
+	const hoverColumns = decodeCompressedJSON('hoverColumns', []);
+	const equitySeries = decodeCompressedJSON('equitySeries', []);
+	const settledEquitySeries = decodeCompressedJSON('settledEquitySeries', []);
+	const settledFloatingProfitSeries = decodeCompressedJSON('settledFloatingProfit', []);
+	const settledFloatingLossSeries = decodeCompressedJSON('settledFloatingLoss', []);
+	const settledExposureSeries = decodeCompressedJSON('settledExposure', []);
+	const quoteNetValueSeries = decodeCompressedJSON('quoteNetValueSeries', []);
+	const dailyQuoteNetValueSeries = decodeCompressedJSON('dailyQuoteNetValue', []);
+	const dailyBuyHoldSeries = decodeCompressedJSON('dailyBuyHold', []);
+	const dailyAssetPnLSeries = decodeCompressedJSON('dailyAssetPnL', []);
+	const buyHoldSeries = decodeCompressedJSON('buyHoldSeries', []);
+	const drawdownSeries = decodeCompressedJSON('drawdownSeries', []);
+	const activeTimes = decodeCompressedJSON('activeTimes', []);
+	const displayIsDaily = {{ if .DisplayIsDaily }}true{{ else }}false{{ end }};
+	hydrateDeferredHTML();
+
+	// ---- Timezone display mode ----
+	function detectDefaultTimeZoneMode() {
+		try {
+			var tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+			return (tz && tz !== 'UTC') ? 'local' : 'utc';
+		} catch (e) {
+			return 'utc';
+		}
+	}
+
+	function formatDateTimeForMode(timeValue, mode) {
+		var unixSeconds = normalizeUnixSeconds(timeValue);
+		if (unixSeconds === null) return '';
+		var date = new Date(unixSeconds * 1000);
+		if (mode === 'local') {
+			return date.getFullYear() + '-' +
+				String(date.getMonth() + 1).padStart(2, '0') + '-' +
+				String(date.getDate()).padStart(2, '0') + ' ' +
+				String(date.getHours()).padStart(2, '0') + ':' +
+				String(date.getMinutes()).padStart(2, '0');
+		}
+		return date.getUTCFullYear() + '-' +
+			String(date.getUTCMonth() + 1).padStart(2, '0') + '-' +
+			String(date.getUTCDate()).padStart(2, '0') + ' ' +
+			String(date.getUTCHours()).padStart(2, '0') + ':' +
+			String(date.getUTCMinutes()).padStart(2, '0') + ' UTC';
+	}
+
+	function rewriteVisibleDateText(mode) {
+		var dateElements = document.querySelectorAll('[data-utc-time]');
+		dateElements.forEach(function(el) {
+			var utcTime = parseInt(el.getAttribute('data-utc-time'), 10);
+			if (!isNaN(utcTime)) {
+				el.textContent = formatDateTimeForMode(utcTime, mode);
+			}
+		});
+	}
+
+	function applyTimeZoneMode(mode) {
+		var select = document.getElementById('timezone-select');
+		if (select) select.value = mode;
+		rewriteVisibleDateText(mode);
+	}
+
+	// ---- Chart themes ----
+	const themePalettes = {
+		light: {
+			background: '#ffffff',
+			text: '#67727f',
+			grid: '#eef2f6',
+			border: '#dfe6ec',
+			crosshairV: 'rgba(15,118,114,0.25)',
+			crosshairVLabel: '#0f766e',
+			crosshairH: 'rgba(194,65,12,0.20)',
+			crosshairHLabel: '#c2410c',
+			settledLine: '#0d1522',
+			settledMarker: '#0d1522',
+			settledMarkerBg: '#ffffff',
+			exposureLine: 'rgba(58,70,87,0.9)'
+		},
+		dark: {
+			background: '#0f1621',
+			text: '#8593a5',
+			grid: 'rgba(148,163,184,0.08)',
+			border: 'rgba(148,163,184,0.16)',
+			crosshairV: 'rgba(45,212,191,0.30)',
+			crosshairVLabel: '#0f766e',
+			crosshairH: 'rgba(251,146,60,0.28)',
+			crosshairHLabel: '#9a3412',
+			settledLine: '#e9eff6',
+			settledMarker: '#e9eff6',
+			settledMarkerBg: '#0f1621',
+			exposureLine: 'rgba(233,239,246,0.85)'
+		}
+	};
+
+	function currentThemeName() {
+		var theme = document.documentElement.getAttribute('data-theme');
+		return theme === 'dark' ? 'dark' : 'light';
+	}
+
+	function currentThemePalette() {
+		return themePalettes[currentThemeName()] || themePalettes.light;
+	}
+
+	function buildChartTheme(palette) {
+		return {
+			layout: {
+				background: { color: palette.background },
+				textColor: palette.text,
+				fontFamily: 'IBM Plex Mono, monospace'
+			},
+			grid: {
+				vertLines: { color: palette.grid },
+				horzLines: { color: palette.grid }
+			},
+			timeScale: {
+				borderColor: palette.border,
+				timeVisible: true,
+				secondsVisible: false,
+				minBarSpacing: 0.1,
+				rightOffset: 0,
+				fixLeftEdge: true,
+				fixRightEdge: true
+			},
+			rightPriceScale: {
+				borderColor: palette.border
+			},
+			crosshair: {
+				vertLine: { color: palette.crosshairV, labelBackgroundColor: palette.crosshairVLabel },
+				horzLine: { color: palette.crosshairH, labelBackgroundColor: palette.crosshairHLabel }
+			}
+		};
+	}
+
+	const utcMonthNames = ['1月', '2月', '3月', '4月', '5月', '6月', '7月', '8月', '9月', '10月', '11月', '12月'];
+
+	function padUTC(value) {
+		return String(value).padStart(2, '0');
+	}
+
+	function normalizeUnixSeconds(timeValue) {
+		if (typeof timeValue === 'number' && isFinite(timeValue)) {
+			return timeValue;
+		}
+		if (timeValue && typeof timeValue.timestamp === 'number' && isFinite(timeValue.timestamp)) {
+			return timeValue.timestamp;
+		}
+		if (
+			timeValue &&
+			typeof timeValue.year === 'number' &&
+			typeof timeValue.month === 'number' &&
+			typeof timeValue.day === 'number'
+		) {
+			return Math.floor(Date.UTC(timeValue.year, timeValue.month - 1, timeValue.day) / 1000);
+		}
+		return null;
+	}
+
+	function formatUTCDateTime(timeValue, includeSeconds) {
+		var unixSeconds = normalizeUnixSeconds(timeValue);
+		if (unixSeconds === null) {
+			return '';
+		}
+		var date = new Date(unixSeconds * 1000);
+		var formatted =
+			date.getUTCFullYear() + '-' +
+			padUTC(date.getUTCMonth() + 1) + '-' +
+			padUTC(date.getUTCDate()) + ' ' +
+			padUTC(date.getUTCHours()) + ':' +
+			padUTC(date.getUTCMinutes());
+		if (includeSeconds) {
+			formatted += ':' + padUTC(date.getUTCSeconds());
+		}
+		return formatted + ' UTC';
+	}
+
+	function formatUTCTickLabel(timeValue) {
+		var unixSeconds = normalizeUnixSeconds(timeValue);
+		if (unixSeconds === null) {
+			return '';
+		}
+		var date = new Date(unixSeconds * 1000);
+		if (date.getUTCHours() === 0 && date.getUTCMinutes() === 0 && date.getUTCSeconds() === 0) {
+			return utcMonthNames[date.getUTCMonth()] + padUTC(date.getUTCDate()) + '日';
+		}
+		return padUTC(date.getUTCHours()) + ':' + padUTC(date.getUTCMinutes());
+	}
+
+	function createChart(id, height, extraOptions) {
+		var el = document.getElementById(id);
+		if (!el || typeof LightweightCharts === 'undefined') return null;
+		var chart = LightweightCharts.createChart(el, Object.assign({
+			width: el.clientWidth, height: height,
+			handleScroll: true, handleScale: true,
+			localization: {
+				locale: 'zh-CN',
+				timeFormatter: function(timeValue) { return formatUTCDateTime(timeValue, true); },
+				tickMarkFormatter: function(timeValue) { return formatUTCTickLabel(timeValue); }
+			}
+		}, buildChartTheme(currentThemePalette()), extraOptions || {}));
+		if (typeof ResizeObserver !== 'undefined') {
+			new ResizeObserver(function() { chart.applyOptions({ width: el.clientWidth }); }).observe(el);
+		}
+		return chart;
+	}
+
+	// ---- Linked-chart range & crosshair sync ----
+	// Range sync is serialized on a microtask so lightweight-charts can settle
+	// its own bar-space mapping before followers adopt the same time range; this
+	// avoids the transitional over-shrink/misalignment when operating one chart.
+	var chartSyncState = { syncingCrosshair: false, rangeScheduled: false, lastRangeKey: null };
+
+	function visibleRangeKey(range) {
+		if (!range || range.from === undefined || range.to === undefined) return null;
+		return String(normalizeUnixSeconds(range.from)) + ':' + String(normalizeUnixSeconds(range.to));
+	}
+
+	function pointTime(point) {
+		return point ? normalizeUnixSeconds(point.time) : null;
+	}
+
+	function pointValue(point) {
+		if (!point) return null;
+		if (typeof point.value === 'number' && isFinite(point.value)) return point.value;
+		if (typeof point.close === 'number' && isFinite(point.close)) return point.close;
+		return null;
+	}
+
+	function setChartCrosshairSource(chart, series, data) {
+		if (!chart) return;
+		var values = new Map();
+		(data || []).forEach(function(point) {
+			var time = pointTime(point);
+			var value = pointValue(point);
+			if (time !== null && value !== null) values.set(time, value);
+		});
+		chart.__toktikCrosshairSource = { series: series, values: values };
+	}
+
+	function syncCrosshair(sourceChart, timeValue) {
+		if (chartSyncState.syncingCrosshair) return;
+		var time = normalizeUnixSeconds(timeValue);
+		chartSyncState.syncingCrosshair = true;
+		syncedCharts.forEach(function(targetChart) {
+			if (!targetChart || targetChart === sourceChart) return;
+			if (time === null) {
+				if (typeof targetChart.clearCrosshairPosition === 'function') targetChart.clearCrosshairPosition();
+				return;
+			}
+			var source = targetChart.__toktikCrosshairSource;
+			var value = source && source.values ? source.values.get(time) : null;
+			if (source && source.series && typeof value === 'number' && typeof targetChart.setCrosshairPosition === 'function') {
+				targetChart.setCrosshairPosition(value, time, source.series);
+			} else if (typeof targetChart.clearCrosshairPosition === 'function') {
+				targetChart.clearCrosshairPosition();
+			}
+		});
+		chartSyncState.syncingCrosshair = false;
+		renderDataWindow(time);
+	}
+
+	function registerSyncedChart(chart) {
+		if (!chart) return;
+		chart.timeScale().subscribeVisibleTimeRangeChange(function(range) {
+			if (chartSyncState.rangeScheduled || !range) return;
+			var rangeKey = visibleRangeKey(range);
+			if (!rangeKey || rangeKey === chartSyncState.lastRangeKey) return;
+			chartSyncState.lastRangeKey = rangeKey;
+			chartSyncState.rangeScheduled = true;
+			Promise.resolve().then(function() {
+				syncedCharts.forEach(function(otherChart) {
+					if (otherChart !== chart) otherChart.timeScale().setVisibleRange(range);
+				});
+				chartSyncState.rangeScheduled = false;
+			});
+		});
+		chart.subscribeCrosshairMove(function(param) {
+			syncCrosshair(chart, param && param.time !== undefined ? param.time : null);
+		});
+	}
+
+	// ---- Idle-time filtering ----
+	function buildActiveTimeSet() {
+		var set = new Set();
+		if (!Array.isArray(activeTimes)) return set;
+		activeTimes.forEach(function(t) {
+			if (typeof t === 'number') set.add(t);
+		});
+		return set;
+	}
+
+	function filterLineSeriesByTimes(series, activeSet, enabled) {
+		if (!enabled || activeSet.size === 0) return series;
+		return series.filter(function(point) {
+			return activeSet.has(point.time);
+		});
+	}
+	function filterCandleSeriesByTimes(series, activeSet, enabled) {
+		if (!enabled || activeSet.size === 0) return series;
+		return series.filter(function(point) {
+			return activeSet.has(point.time);
+		});
+	}
+	function filterMarkerSeriesByTimes(series, activeSet, enabled) {
+		if (!enabled || activeSet.size === 0) return series;
+		return series.filter(function(point) {
+			return activeSet.has(point.time);
+		});
+	}
+	function filterHistogramSeriesByTimes(series, activeSet, enabled) {
+		if (!enabled || activeSet.size === 0) return series;
+		return series.filter(function(point) {
+			return activeSet.has(point.time);
+		});
+	}
+
+	function buildBaseTimeline() {
+		var seen = new Set();
+		var times = [];
+		function appendTimes(series) {
+			(series || []).forEach(function(point) {
+				if (!point || typeof point.time !== 'number' || seen.has(point.time)) return;
+				seen.add(point.time);
+				times.push(point.time);
+			});
+		}
+		appendTimes(underlyingCandles);
+		appendTimes(equitySeries);
+		appendTimes(settledEquitySeries);
+		appendTimes(settledFloatingProfitSeries);
+		appendTimes(settledFloatingLossSeries);
+		appendTimes(settledExposureSeries);
+		appendTimes(drawdownSeries);
+		appendTimes(quoteNetValueSeries);
+		appendTimes(buyHoldSeries);
+		appendTimes(dailyQuoteNetValueSeries);
+		appendTimes(dailyBuyHoldSeries);
+		times.sort(function(a, b) { return a - b; });
+		return times;
+	}
+
+	function currentTimeline() {
+		if (!currentIdleFilterEnabled || activeSet.size === 0) return baseTimeline.slice();
+		return baseTimeline.filter(function(time) {
+			return activeSet.has(time);
+		});
+	}
+
+	function applyVisibleTimeRange(range) {
+		if (!range || range.from === undefined || range.to === undefined) return;
+		syncedCharts.forEach(function(chart) {
+			if (chart) chart.timeScale().setVisibleRange(range);
+		});
+	}
+
+	function resolveSeriesTimeRange(seriesCollections) {
+		var collections = Array.isArray(seriesCollections) ? seriesCollections : [seriesCollections];
+		var minTime = null;
+		var maxTime = null;
+		collections.forEach(function(series) {
+			(series || []).forEach(function(point) {
+				if (!point || typeof point.time !== 'number' || !isFinite(point.time)) return;
+				if (minTime === null || point.time < minTime) minTime = point.time;
+				if (maxTime === null || point.time > maxTime) maxTime = point.time;
+			});
+		});
+		if (minTime === null || maxTime === null) return null;
+		return { from: minTime, to: maxTime };
+	}
+
+	function applyChartFullRange(chart, seriesCollections) {
+		if (!chart) return;
+		var range = resolveSeriesTimeRange(seriesCollections);
+		if (range) chart.timeScale().setVisibleRange(range);
+	}
+
+	function fitChartsToVisibleData() {
+		var timeline = currentTimeline();
+		if (!timeline.length) return;
+		applyVisibleTimeRange({ from: timeline[0], to: timeline[timeline.length - 1] });
+	}
+
+	function nearestTimeIndex(timeline, targetTime) {
+		if (!timeline.length) return -1;
+		var left = 0;
+		var right = timeline.length - 1;
+		while (left <= right) {
+			var middle = Math.floor((left + right) / 2);
+			var candidate = timeline[middle];
+			if (candidate === targetTime) return middle;
+			if (candidate < targetTime) left = middle + 1;
+			else right = middle - 1;
+		}
+		if (left >= timeline.length) return timeline.length - 1;
+		if (right < 0) return 0;
+		return Math.abs(timeline[left] - targetTime) < Math.abs(timeline[right] - targetTime) ? left : right;
+	}
+
+	function focusChartsAtEvent(targetTime, windowStart, windowEnd) {
+		var timeline = currentTimeline();
+		if (!timeline.length || typeof targetTime !== 'number' || !isFinite(targetTime)) return;
+		var startIndex = nearestTimeIndex(timeline, targetTime);
+		var endIndex = startIndex;
+		if (typeof windowStart === 'number' && isFinite(windowStart) && typeof windowEnd === 'number' && isFinite(windowEnd)) {
+			startIndex = nearestTimeIndex(timeline, Math.min(windowStart, windowEnd));
+			endIndex = nearestTimeIndex(timeline, Math.max(windowStart, windowEnd));
+		}
+		if (startIndex < 0 || endIndex < 0) return;
+		if (endIndex < startIndex) {
+			var swap = startIndex;
+			startIndex = endIndex;
+			endIndex = swap;
+		}
+		var span = endIndex - startIndex;
+		var padding = span > 0 ? Math.max(4, Math.round(span * 0.35)) : 12;
+		startIndex = Math.max(0, startIndex - padding);
+		endIndex = Math.min(timeline.length - 1, endIndex + padding);
+		applyVisibleTimeRange({ from: timeline[startIndex], to: timeline[endIndex] });
+		var chartHost = document.getElementById('underlying-chart') || document.getElementById('equity-chart');
+		if (chartHost && typeof chartHost.scrollIntoView === 'function') {
+			chartHost.scrollIntoView({ behavior: 'smooth', block: 'center' });
+		}
+	}
+
+	function syncCharts(charts) {
+		charts.forEach(registerSyncedChart);
+	}
+
+	// ---- Chart & UI state ----
+	var charts = [];
+	var syncedCharts = [];
+	var activeSet = buildActiveTimeSet();
+	var baseTimeline = buildBaseTimeline();
+	var hasActiveFilter = activeSet.size > 1;
+
+	var underlyingChart = null;
+	var underlyingSeries = null;
+	var underlyingVolumePlot = null;
+	var overlayPlots = new Map();
+	var featureChart = null;
+	var featurePlots = new Map();
+	var featurePanel = document.getElementById('underlying-feature-panel');
+	var featureChartEl = document.getElementById('underlying-feature-chart');
+	var featureFrame = document.getElementById('underlying-feature-frame');
+	var featureEmpty = document.getElementById('underlying-feature-empty');
+	var featureLegend = document.getElementById('underlying-feature-legend');
+	var featureTitle = document.getElementById('underlying-feature-title');
+	var featureSubtitle = document.getElementById('underlying-feature-subtitle');
+	var featureClear = document.getElementById('underlying-feature-clear');
+	var equityChart = null;
+	var equityPlot = null;
+	var settledEquityPlot = null;
+	var settledContextPanel = document.getElementById('settled-context-panel');
+	var settledContextChart = null;
+	var settledFloatingProfitPlot = null;
+	var settledFloatingLossPlot = null;
+	var settledExposurePlot = null;
+	var settledModeEnabled = false;
+	var equityModeNote = document.getElementById('equity-mode-note');
+	var quoteNetValueChart = null;
+	var quoteNetValuePlot = null;
+	var quoteBuyHoldPlot = null;
+	var quoteDailyChart = null;
+	var quoteDailyPlot = null;
+	var quoteDailyBuyHoldPlot = null;
+	var assetDailyPnLChart = null;
+	var assetDailyPnLPlot = null;
+	var drawdownChart = null;
+	var drawdownPlot = null;
+	var dataWindowGrid = document.getElementById('underlying-data-window-grid');
+	var dataWindowTime = document.getElementById('underlying-data-window-time');
+	var candleByTime = new Map();
+	var volumeByTime = new Map();
+	var hoverColumnMaps = [];
+	var selectedHoverColumnSources = new Set();
+	var currentDataWindowTime = null;
+	var currentIdleFilterEnabled = false;
+
+	function addChart(chart, options) {
+		if (!chart) return;
+		charts.push(chart);
+		if (options && options.sync === false) return;
+		syncedCharts.push(chart);
+		if (options && options.crosshairSeries) {
+			setChartCrosshairSource(chart, options.crosshairSeries, options.crosshairData);
+		}
+		registerSyncedChart(chart);
+	}
+
+	underlyingCandles.forEach(function(point) {
+		candleByTime.set(point.time, point);
+	});
+	underlyingVolumeSeries.forEach(function(point) {
+		volumeByTime.set(point.time, point.value);
+	});
+	hoverColumnMaps = hoverColumns.map(function(column) {
+		var values = new Map();
+		(column.values || []).forEach(function(point) {
+			values.set(point.time, point.value);
+		});
+		return {
+			source: column.source,
+			label: column.label || column.source,
+			decimals: typeof column.decimals === 'number' ? column.decimals : 2,
+			overlay: column.overlay === true,
+			values: values,
+			series: Array.isArray(column.values) ? column.values : []
+		};
+	});
+
+	function selectedHoverColumns() {
+		return hoverColumnMaps.filter(function(column) {
+			return !column.overlay && selectedHoverColumnSources.has(column.source);
+		});
+	}
+
+	function overlayHoverColumns() {
+		return hoverColumnMaps.filter(function(column) {
+			return column.overlay === true;
+		});
+	}
+
+	function formatTimestamp(unixSeconds) {
+		if (typeof unixSeconds !== 'number') {
+			return '未悬停图表';
+		}
+		return formatUTCDateTime(unixSeconds, true);
+	}
+
+	function formatNumber(value, decimals) {
+		if (typeof value !== 'number' || !isFinite(value)) {
+			return 'n/a';
+		}
+		return value.toLocaleString('zh-CN', {
+			minimumFractionDigits: decimals,
+			maximumFractionDigits: decimals
+		});
+	}
+
+	function escapeHTML(value) {
+		return String(value)
+			.replace(/&/g, '&amp;')
+			.replace(/</g, '&lt;')
+			.replace(/>/g, '&gt;')
+			.replace(/\"/g, '&quot;')
+			.replace(/'/g, '&#39;');
+	}
+
+	function featureColor(index) {
+		var palette = ['#38bdf8', '#f472b6', '#f59e0b', '#a3e635', '#22d3ee', '#fb7185', '#c084fc', '#facc15'];
+		return palette[index % palette.length];
+	}
+
+	function preserveVisibleRange(chart, callback) {
+		if (!chart) {
+			callback();
+			return;
+		}
+		var visibleRange = chart.timeScale().getVisibleRange();
+		callback();
+		if (visibleRange) {
+			chart.timeScale().setVisibleRange(visibleRange);
+		}
+	}
+
+	function preserveVisibleRanges(targetCharts, callback) {
+		var ranges = targetCharts.map(function(chart) {
+			return chart ? chart.timeScale().getVisibleRange() : null;
+		});
+		callback();
+		targetCharts.forEach(function(chart, index) {
+			if (chart && ranges[index]) {
+				chart.timeScale().setVisibleRange(ranges[index]);
+			}
+		});
+	}
+
+	// ---- Settled equity mode ----
+	function ensureSettledContextChart() {
+		if (!settledContextPanel || settledContextChart) return;
+		settledContextChart = createChart('settled-context-chart', 180);
+		if (!settledContextChart) return;
+		var palette = currentThemePalette();
+		settledContextChart.applyOptions({
+			leftPriceScale: {
+				visible: true,
+				borderColor: palette.border
+			},
+			rightPriceScale: {
+				visible: true,
+				borderColor: palette.border
+			}
+		});
+		settledFloatingProfitPlot = settledContextChart.addHistogramSeries({
+			priceScaleId: 'right',
+			priceLineVisible: false,
+			lastValueVisible: false,
+			base: 0,
+		});
+		settledFloatingLossPlot = settledContextChart.addHistogramSeries({
+			priceScaleId: 'right',
+			priceLineVisible: false,
+			lastValueVisible: false,
+			base: 0,
+		});
+		settledExposurePlot = settledContextChart.addLineSeries({
+			priceScaleId: 'left',
+			color: palette.exposureLine,
+			lineWidth: 2,
+			priceLineVisible: false,
+			lastValueVisible: true,
+			crosshairMarkerRadius: 3,
+			crosshairMarkerBorderColor: palette.exposureLine,
+			crosshairMarkerBackgroundColor: palette.exposureLine,
+		});
+		addChart(settledContextChart, { crosshairSeries: settledExposurePlot, crosshairData: settledExposureSeries });
+	}
+
+	function renderSettledContext(showSettled) {
+		if (!settledContextPanel) return;
+		if (!showSettled) {
+			settledContextPanel.classList.add('hidden');
+			if (settledFloatingProfitPlot) settledFloatingProfitPlot.setData([]);
+			if (settledFloatingLossPlot) settledFloatingLossPlot.setData([]);
+			if (settledExposurePlot) settledExposurePlot.setData([]);
+			return;
+		}
+		settledContextPanel.classList.remove('hidden');
+		ensureSettledContextChart();
+		if (!settledContextChart) return;
+		settledFloatingProfitPlot.setData(filterHistogramSeriesByTimes(settledFloatingProfitSeries, activeSet, currentIdleFilterEnabled));
+		settledFloatingLossPlot.setData(filterHistogramSeriesByTimes(settledFloatingLossSeries, activeSet, currentIdleFilterEnabled));
+		settledExposurePlot.setData(filterLineSeriesByTimes(settledExposureSeries, activeSet, currentIdleFilterEnabled));
+		setChartCrosshairSource(settledContextChart, settledExposurePlot, filterLineSeriesByTimes(settledExposureSeries, activeSet, currentIdleFilterEnabled));
+	}
+
+	function renderEquitySeriesMode(showSettled, options) {
+		if (!equityPlot || !settledEquityPlot) return;
+		settledModeEnabled = showSettled === true;
+		var shouldRefit = !options || options.refit !== false;
+		equityPlot.setData(settledModeEnabled ? [] : filterLineSeriesByTimes(equitySeries, activeSet, currentIdleFilterEnabled));
+		settledEquityPlot.setData(settledModeEnabled ? filterLineSeriesByTimes(settledEquitySeries, activeSet, currentIdleFilterEnabled) : []);
+		if (equityModeNote) {
+			equityModeNote.textContent = settledModeEnabled
+				? (displayIsDaily ? '当前仅展示按 1 Day 聚合后的已结算权益；下方面板给出每个 UTC 日内的最大浮盈 / 浮亏与日终持仓暴露。' : '当前仅展示已结算权益点；下方面板会给出每次结算之间的最大浮盈 / 浮亏与持仓暴露。')
+				: (displayIsDaily ? '当前图表已按 1 Day 聚合，展示每个 UTC 日的最后一个权益点；切换后仅保留已结算权益。' : '默认展示逐 bar 净值；切换后仅保留已结算收益点，并在下方显示区间浮盈浮亏与持仓暴露。');
+		}
+		renderSettledContext(settledModeEnabled);
+		if (shouldRefit) fitChartsToVisibleData();
+	}
+
+	// ---- Data window ----
+	function appendDataWindowItem(items, label, value) {
+		items.push(
+			'<div class="data-window-card">' +
+			'<span class="dw-label">' + escapeHTML(label) + '</span>' +
+			'<span class="dw-value">' + escapeHTML(value) + '</span>' +
+			'</div>'
+		);
+	}
+
+	function appendFeatureWindowItem(items, label, value, source, active, color) {
+		items.push(
+			'<button type="button" class="data-window-card data-window-card-button' + (active ? ' active' : '') + '" data-hover-source="' + escapeHTML(source) + '">' +
+			'<div class="dw-row">' +
+			'<div>' +
+			'<span class="dw-label">' + escapeHTML(label) + '</span>' +
+			'<span class="dw-value">' + escapeHTML(value) + '</span>' +
+			'</div>' +
+			'<div class="dw-side">' +
+			'<span class="feature-legend-swatch" style="background:' + escapeHTML(color) + '"></span>' +
+			'<span class="dw-state' + (active ? ' is-on' : '') + '">' + (active ? '已显示' : '添加') + '</span>' +
+			'</div>' +
+			'</div>' +
+			'</button>'
+		);
+	}
+
+	function appendOverlayWindowItem(items, label, value, color) {
+		items.push(
+			'<div class="data-window-card">' +
+			'<div class="dw-row">' +
+			'<div>' +
+			'<span class="dw-label">' + escapeHTML(label) + '</span>' +
+			'<span class="dw-value">' + escapeHTML(value) + '</span>' +
+			'</div>' +
+			'<div class="dw-side">' +
+			'<span class="feature-legend-swatch" style="background:' + escapeHTML(color) + '"></span>' +
+			'<div class="dw-tag">叠加</div>' +
+			'</div>' +
+			'</div>' +
+			'</div>'
+		);
+	}
+
+	// ---- Feature subplot & overlays ----
+	// Creates the bare chart only; series data must exist before the chart can
+	// join range sync or accept a visible range (empty time scale throws).
+	function createFeatureChartIfNeeded() {
+		if (!featureChartEl || featureChart) return false;
+		featureChart = createChart('underlying-feature-chart', 220);
+		return featureChart !== null;
+	}
+
+	function ensureFeaturePlot(source, color) {
+		var plot = featurePlots.get(source);
+		if (plot || !featureChart) {
+			return plot;
+		}
+		plot = featureChart.addLineSeries({
+			color: color,
+			lineWidth: 2,
+			priceLineVisible: false,
+			lastValueVisible: true,
+			crosshairMarkerRadius: 4,
+			crosshairMarkerBorderColor: color,
+			crosshairMarkerBackgroundColor: color
+		});
+		featurePlots.set(source, plot);
+		return plot;
+	}
+
+	function ensureOverlayPlot(source, color) {
+		var plot = overlayPlots.get(source);
+		if (plot || !underlyingChart) {
+			return plot;
+		}
+		plot = underlyingChart.addLineSeries({
+			priceScaleId: 'right',
+			color: color,
+			lineWidth: 2,
+			priceLineVisible: false,
+			lastValueVisible: true,
+			crosshairMarkerRadius: 4,
+			crosshairMarkerBorderColor: color,
+			crosshairMarkerBackgroundColor: color
+		});
+		overlayPlots.set(source, plot);
+		return plot;
+	}
+
+	function renderOverlayPlots() {
+		if (!underlyingChart) return;
+		preserveVisibleRange(underlyingChart, function() {
+			var overlayColumns = overlayHoverColumns();
+			var activeSources = new Set(overlayColumns.map(function(column) { return column.source; }));
+			overlayPlots.forEach(function(plot, source) {
+				if (!activeSources.has(source)) {
+					underlyingChart.removeSeries(plot);
+					overlayPlots.delete(source);
+				}
+			});
+			overlayColumns.forEach(function(column, index) {
+				var color = featureColor(index);
+				var plot = ensureOverlayPlot(column.source, color);
+				if (!plot) return;
+				plot.applyOptions({
+					color: color,
+					crosshairMarkerBorderColor: color,
+					crosshairMarkerBackgroundColor: color
+				});
+				plot.setData(filterLineSeriesByTimes(column.series, activeSet, currentIdleFilterEnabled));
+			});
+		});
+	}
+
+	function renderFeatureLegend(columns, unixSeconds) {
+		if (!featureLegend) return;
+		if (!columns.length) {
+			featureLegend.classList.add('hidden');
+			featureLegend.innerHTML = '';
+			return;
+		}
+		featureLegend.classList.remove('hidden');
+		featureLegend.innerHTML = columns.map(function(column) {
+			var value = typeof unixSeconds === 'number' ? column.values.get(unixSeconds) : undefined;
+			var decimals = typeof column.decimals === 'number' ? column.decimals : 2;
+			return '<div class="legend-chip">' +
+				'<span class="feature-legend-swatch" style="background:' + escapeHTML(featureColor(column.index)) + '"></span>' +
+				'<span class="mono">' + escapeHTML(column.label) + '</span>' +
+				'<span class="mono feature-legend-value">' + escapeHTML(formatNumber(value, decimals)) + '</span>' +
+				'</div>';
+		}).join('');
+	}
+
+	function renderFeatureChart() {
+		if (!featurePanel) return;
+		var selectedColumns = selectedHoverColumns();
+		if (!selectedColumns.length) {
+			featurePanel.classList.add('hidden');
+			if (featureClear) featureClear.classList.add('hidden');
+			if (featureEmpty) featureEmpty.classList.remove('hidden');
+			if (featureLegend) featureLegend.classList.add('hidden');
+			if (featureFrame) featureFrame.classList.add('hidden');
+			featurePlots.forEach(function(plot) {
+				if (featureChart) featureChart.removeSeries(plot);
+			});
+			featurePlots.clear();
+			setChartCrosshairSource(featureChart, null, []);
+			return;
+		}
+
+		featurePanel.classList.remove('hidden');
+		var featureJustCreated = createFeatureChartIfNeeded();
+		if (!featureChart) return;
+
+		preserveVisibleRange(featureChart, function() {
+			var activeSources = new Set(selectedColumns.map(function(column) { return column.source; }));
+			featurePlots.forEach(function(plot, source) {
+				if (!activeSources.has(source)) {
+					featureChart.removeSeries(plot);
+					featurePlots.delete(source);
+				}
+			});
+			selectedColumns.forEach(function(column, index) {
+				var color = featureColor(index);
+				var plot = ensureFeaturePlot(column.source, color);
+				if (!plot) return;
+				plot.applyOptions({
+					color: color,
+					crosshairMarkerBorderColor: color,
+					crosshairMarkerBackgroundColor: color
+				});
+				plot.setData(filterLineSeriesByTimes(column.series, activeSet, currentIdleFilterEnabled));
+			});
+		});
+		var crosshairColumn = selectedColumns[0];
+		var crosshairPlot = crosshairColumn ? featurePlots.get(crosshairColumn.source) : null;
+		setChartCrosshairSource(featureChart, crosshairPlot, crosshairColumn ? filterLineSeriesByTimes(crosshairColumn.series, activeSet, currentIdleFilterEnabled) : []);
+		if (featureJustCreated) {
+			addChart(featureChart);
+			if (underlyingChart) {
+				var visibleRange = underlyingChart.timeScale().getVisibleRange();
+				if (visibleRange) featureChart.timeScale().setVisibleRange(visibleRange);
+				else featureChart.timeScale().fitContent();
+			}
+		}
+
+		if (featureTitle) featureTitle.textContent = selectedColumns.length === 1 ? selectedColumns[0].label : '特征子图 · ' + selectedColumns.length + ' 条序列';
+		if (featureSubtitle) featureSubtitle.textContent = selectedColumns.map(function(column) {
+			return column.label + ' (' + column.source + ')';
+		}).join(' · ');
+		renderFeatureLegend(selectedColumns.map(function(column) {
+			return {
+				index: hoverColumnMaps.findIndex(function(candidate) { return candidate.source === column.source; }),
+				label: column.label,
+				decimals: column.decimals,
+				values: column.values,
+			};
+		}), currentDataWindowTime);
+		if (featureClear) featureClear.classList.remove('hidden');
+		if (featureEmpty) featureEmpty.classList.add('hidden');
+		if (featureFrame) featureFrame.classList.remove('hidden');
+
+	}
+
+	function renderDataWindow(unixSeconds) {
+		if (!dataWindowGrid) {
+			return;
+		}
+		var resolvedTime = typeof unixSeconds === 'number' ? unixSeconds : null;
+		if (resolvedTime === null && underlyingCandles.length > 0) {
+			resolvedTime = underlyingCandles[underlyingCandles.length - 1].time;
+		}
+		if (dataWindowTime) {
+			dataWindowTime.textContent = formatTimestamp(resolvedTime);
+		}
+		if (resolvedTime === null) {
+			currentDataWindowTime = null;
+			dataWindowGrid.innerHTML = '<div class="data-window-card dw-empty">无可用图表数据。</div>';
+			return;
+		}
+		currentDataWindowTime = resolvedTime;
+		var candle = candleByTime.get(resolvedTime);
+		var items = [];
+		if (candle) {
+			appendDataWindowItem(items, '开盘', formatNumber(candle.open, 2));
+			appendDataWindowItem(items, '最高', formatNumber(candle.high, 2));
+			appendDataWindowItem(items, '最低', formatNumber(candle.low, 2));
+			appendDataWindowItem(items, '收盘', formatNumber(candle.close, 2));
+		}
+		if (volumeByTime.has(resolvedTime)) {
+			appendDataWindowItem(items, underlyingVolumeLabel || '成交量', formatNumber(volumeByTime.get(resolvedTime), 0));
+		}
+		hoverColumnMaps.forEach(function(column, index) {
+			if (column.overlay) {
+				appendOverlayWindowItem(items, column.label, formatNumber(column.values.get(resolvedTime), column.decimals), featureColor(index));
+				return;
+			}
+			appendFeatureWindowItem(items, column.label, formatNumber(column.values.get(resolvedTime), column.decimals), column.source, selectedHoverColumnSources.has(column.source), featureColor(index));
+		});
+		dataWindowGrid.innerHTML = items.join('');
+		renderFeatureLegend(selectedHoverColumns().map(function(column) {
+			return {
+				index: hoverColumnMaps.findIndex(function(candidate) { return candidate.source === column.source; }),
+				label: column.label,
+				decimals: column.decimals,
+				values: column.values,
+			};
+		}), resolvedTime);
+	}
+
+	// ---- Chart construction ----
+	if (underlyingCandles.length > 0) {
+		var pc = createChart('underlying-chart', 420);
+		if (pc) {
+			var cs = pc.addCandlestickSeries({
+				priceScaleId: 'right',
+				upColor: '#22c55e', downColor: '#f97316',
+				wickUpColor: '#22c55e', wickDownColor: '#f97316',
+				borderUpColor: '#22c55e', borderDownColor: '#f97316'
+			});
+			cs.priceScale().applyOptions({
+				scaleMargins: { top: 0.04, bottom: underlyingVolumeSeries.length > 0 ? 0.24 : 0.06 }
+			});
+			cs.setData(underlyingCandles);
+			cs.setMarkers(underlyingMarkers);
+			pc.subscribeCrosshairMove(function(param) {
+				if (!param || param.time === undefined) {
+					renderDataWindow(null);
+					return;
+				}
+				renderDataWindow(Number(param.time));
+			});
+			pc.timeScale().fitContent();
+			underlyingChart = pc;
+			underlyingSeries = cs;
+			addChart(pc, { crosshairSeries: cs, crosshairData: underlyingCandles });
+			renderOverlayPlots();
+		}
+	}
+
+	if (underlyingVolumeSeries.length > 0) {
+		if (underlyingChart) {
+			var pvs = underlyingChart.addHistogramSeries({
+				priceScaleId: 'volume',
+				priceFormat: { type: 'volume' },
+				priceLineVisible: false,
+				lastValueVisible: false,
+				lastPriceAnimation: 0,
+				base: 0
+			});
+			pvs.setData(underlyingVolumeSeries);
+			underlyingChart.priceScale('volume').applyOptions({
+				scaleMargins: { top: 0.8, bottom: 0.02 },
+				borderVisible: false
+			});
+			underlyingVolumePlot = pvs;
+		}
+	}
+
+	renderDataWindow(null);
+
+	var ec = createChart('equity-chart', 300);
+	if (ec) {
+		var palette = currentThemePalette();
+		var el = ec.addAreaSeries({
+			lineColor: '#2dd4bf', topColor: 'rgba(45,212,191,0.28)',
+			bottomColor: 'rgba(45,212,191,0.02)', lineWidth: 2
+		});
+		settledEquityPlot = ec.addLineSeries({
+			color: palette.settledLine,
+			lineWidth: 2,
+			priceLineVisible: true,
+			lastValueVisible: true,
+			crosshairMarkerRadius: 5,
+			crosshairMarkerBorderColor: palette.settledMarker,
+			crosshairMarkerBackgroundColor: palette.settledMarkerBg
+		});
+		settledEquityPlot.setData([]);
+		el.setData(equitySeries);
+		equityChart = ec;
+		equityPlot = el;
+		addChart(ec, { crosshairSeries: el, crosshairData: equitySeries });
+	}
+
+	if (quoteNetValueSeries.length > 0) {
+		var puc = createChart('quote-net-value-chart', 300);
+		if (puc) {
+			var palette = currentThemePalette();
+			if (buyHoldSeries.length > 0) {
+				puc.applyOptions({
+					leftPriceScale: {
+						visible: true,
+						borderColor: palette.border
+					},
+					rightPriceScale: {
+						visible: true,
+						borderColor: palette.border
+					}
+				});
+			}
+			var pul = puc.addAreaSeries({
+				lineColor: '#a78bfa', topColor: 'rgba(167,139,250,0.25)',
+				bottomColor: 'rgba(167,139,250,0.02)', lineWidth: 2
+			});
+			pul.setData(quoteNetValueSeries);
+			if (buyHoldSeries.length > 0) {
+				quoteBuyHoldPlot = puc.addLineSeries({
+					priceScaleId: 'left',
+					color: '#60a5fa',
+					lineWidth: 2,
+					priceLineVisible: true,
+					lastValueVisible: true,
+					crosshairMarkerRadius: 4,
+					crosshairMarkerBorderColor: '#60a5fa',
+					crosshairMarkerBackgroundColor: '#60a5fa'
+				});
+				quoteBuyHoldPlot.setData(buyHoldSeries);
+			}
+			puc.timeScale().fitContent();
+			quoteNetValueChart = puc;
+			quoteNetValuePlot = pul;
+			addChart(puc, { crosshairSeries: pul, crosshairData: quoteNetValueSeries });
+		}
+	}
+
+	if (dailyQuoteNetValueSeries.length > 0) {
+		var qdc = createChart('quote-daily-chart', 280);
+		if (qdc) {
+			quoteDailyPlot = qdc.addAreaSeries({
+				lineColor: '#22d3ee', topColor: 'rgba(34,211,238,0.22)',
+				bottomColor: 'rgba(34,211,238,0.03)', lineWidth: 2
+			});
+			quoteDailyPlot.setData(dailyQuoteNetValueSeries);
+			if (dailyBuyHoldSeries.length > 0) {
+				quoteDailyBuyHoldPlot = qdc.addLineSeries({
+					color: '#60a5fa',
+					lineWidth: 2,
+					priceLineVisible: true,
+					lastValueVisible: true,
+					crosshairMarkerRadius: 4,
+					crosshairMarkerBorderColor: '#60a5fa',
+					crosshairMarkerBackgroundColor: '#60a5fa'
+				});
+				quoteDailyBuyHoldPlot.setData(dailyBuyHoldSeries);
+			}
+			qdc.timeScale().fitContent();
+			quoteDailyChart = qdc;
+			addChart(qdc, { crosshairSeries: quoteDailyPlot, crosshairData: dailyQuoteNetValueSeries });
+		}
+	}
+
+	if (dailyAssetPnLSeries.length > 0) {
+		var apc = createChart('asset-daily-pnl-chart', 280, { handleScroll: false, handleScale: false });
+		if (apc) {
+			assetDailyPnLPlot = apc.addLineSeries({
+				color: '#f59e0b',
+				lineWidth: 2,
+				priceLineVisible: true,
+				lastValueVisible: true,
+				crosshairMarkerRadius: 4,
+				crosshairMarkerBorderColor: '#f59e0b',
+				crosshairMarkerBackgroundColor: '#f59e0b'
+			});
+			assetDailyPnLPlot.setData(dailyAssetPnLSeries);
+			assetDailyPnLChart = apc;
+			addChart(apc, { sync: false });
+			applyChartFullRange(assetDailyPnLChart, [dailyAssetPnLSeries]);
+		}
+	}
+
+	var dc = createChart('drawdown-chart', 220);
+	if (dc) {
+		var dl = dc.addAreaSeries({
+			lineColor: '#fbbf24', topColor: 'rgba(251,191,36,0.25)',
+			bottomColor: 'rgba(251,191,36,0.02)', lineWidth: 2
+		});
+		dl.setData(drawdownSeries);
+		dc.timeScale().fitContent();
+		drawdownChart = dc;
+		drawdownPlot = dl;
+		addChart(dc, { crosshairSeries: dl, crosshairData: drawdownSeries });
+	}
+
+	// ---- Idle filter application ----
+	function applyIdleFilter(enabled) {
+		var useFilter = enabled && hasActiveFilter;
+		currentIdleFilterEnabled = useFilter;
+
+		if (underlyingSeries) {
+			underlyingSeries.setData(filterCandleSeriesByTimes(underlyingCandles, activeSet, useFilter));
+			underlyingSeries.setMarkers(filterMarkerSeriesByTimes(underlyingMarkers, activeSet, useFilter));
+		}
+		if (underlyingVolumePlot) {
+			underlyingVolumePlot.setData(filterHistogramSeriesByTimes(underlyingVolumeSeries, activeSet, useFilter));
+		}
+		renderOverlayPlots();
+		renderEquitySeriesMode(settledModeEnabled, { refit: false });
+		if (quoteNetValuePlot) {
+			quoteNetValuePlot.setData(filterLineSeriesByTimes(quoteNetValueSeries, activeSet, useFilter));
+		}
+		if (quoteBuyHoldPlot) {
+			quoteBuyHoldPlot.setData(filterLineSeriesByTimes(buyHoldSeries, activeSet, useFilter));
+		}
+		if (drawdownPlot) {
+			drawdownPlot.setData(filterLineSeriesByTimes(drawdownSeries, activeSet, useFilter));
+		}
+		renderFeatureChart();
+		renderDataWindow(currentDataWindowTime);
+		fitChartsToVisibleData();
+		applyChartFullRange(assetDailyPnLChart, [dailyAssetPnLSeries]);
+	}
+
+	if (syncedCharts.length > 1) syncCharts(syncedCharts);
+	renderEquitySeriesMode(false, { refit: false });
+	fitChartsToVisibleData();
+	if (window.requestAnimationFrame) {
+		window.requestAnimationFrame(function() {
+			fitChartsToVisibleData();
+		});
+	}
+	applyChartFullRange(assetDailyPnLChart, [dailyAssetPnLSeries]);
+
+	// ---- Event wiring ----
+	if (dataWindowGrid) {
+		dataWindowGrid.addEventListener('click', function(event) {
+			var target = event.target;
+			if (!target || typeof target.closest !== 'function') return;
+			var featureButton = target.closest('[data-hover-source]');
+			if (!featureButton) return;
+			var source = featureButton.getAttribute('data-hover-source');
+			if (selectedHoverColumnSources.has(source)) selectedHoverColumnSources.delete(source);
+			else selectedHoverColumnSources.add(source);
+			renderFeatureChart();
+			renderDataWindow(currentDataWindowTime);
+		});
+	}
+
+	if (featureClear) {
+		featureClear.addEventListener('click', function() {
+			selectedHoverColumnSources.clear();
+			renderFeatureChart();
+			renderDataWindow(currentDataWindowTime);
+		});
+	}
+
+	var toggle = document.getElementById('toggle-ignore-idle');
+	if (toggle) {
+		toggle.disabled = !hasActiveFilter;
+		if (!hasActiveFilter) {
+			toggle.checked = false;
+			toggle.title = '时间轴上未检测到活跃持仓或交易。';
+		}
+		toggle.addEventListener('change', function(e) {
+			applyIdleFilter(e.target.checked);
+		});
+	}
+
+	var spreadGroupButtons = document.querySelectorAll('[data-spread-groups-toggle]');
+	if (spreadGroupButtons.length > 0) {
+		spreadGroupButtons.forEach(function(button) {
+			button.addEventListener('click', function() {
+				var action = button.getAttribute('data-spread-groups-toggle');
+				document.querySelectorAll('[data-spread-group]').forEach(function(group) {
+					group.open = action === 'expand';
+				});
+			});
+		});
+	}
+
+	document.addEventListener('click', function(event) {
+		var target = event.target;
+		if (!target || typeof target.closest !== 'function') return;
+		var locateButton = target.closest('[data-chart-jump-time]');
+		if (!locateButton) return;
+		var jumpTime = parseInt(locateButton.getAttribute('data-chart-jump-time'), 10);
+		var windowStart = parseInt(locateButton.getAttribute('data-chart-window-start'), 10);
+		var windowEnd = parseInt(locateButton.getAttribute('data-chart-window-end'), 10);
+		focusChartsAtEvent(
+			isNaN(jumpTime) ? NaN : jumpTime,
+			isNaN(windowStart) ? NaN : windowStart,
+			isNaN(windowEnd) ? NaN : windowEnd
+		);
+	});
+
+	var timezoneSelect = document.getElementById('timezone-select');
+	if (timezoneSelect) {
+		timezoneSelect.addEventListener('change', function(e) {
+			applyTimeZoneMode(e.target.value);
+		});
+	}
+	var themeSelect = document.getElementById('theme-select');
+	if (themeSelect) {
+		themeSelect.value = currentThemeName();
+		themeSelect.addEventListener('change', function(e) {
+			var nextTheme = e.target.value === 'dark' ? 'dark' : 'light';
+			try {
+				localStorage.setItem('toktik-report-theme', nextTheme);
+			} catch (error) {
+				console.warn('failed to persist report theme', error);
+			}
+			document.documentElement.setAttribute('data-theme', nextTheme);
+			window.location.reload();
+		});
+	}
+	applyTimeZoneMode(detectDefaultTimeZoneMode());
+
+	var settledToggle = document.getElementById('toggle-settled-equity');
+	if (settledToggle) {
+		settledToggle.addEventListener('change', function(e) {
+			renderEquitySeriesMode(e.target.checked);
+		});
+	}
+
+	// Sign-aware coloring for headline metrics ("+"/"-" prefixed values).
+	document.querySelectorAll('[data-autosign]').forEach(function(el) {
+		var text = (el.textContent || '').trim();
+		if (text.charAt(0) === '+') el.classList.add('is-pos');
+		else if (text.charAt(0) === '-') el.classList.add('is-neg');
+	});
+</script>
+</body>
+</html>

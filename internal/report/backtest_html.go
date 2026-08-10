@@ -285,5 +285,5 @@ func hasFeatureColumns(columns []hoverColumnPayload) bool {
 	return false
 }
 
-//go:embed templates/backtest.html.tmpl
+//go:embed templates/backtest.html
 var htmlTemplate string
