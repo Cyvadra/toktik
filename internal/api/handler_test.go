@@ -23,6 +23,8 @@ type mockQuerier struct {
 	barsResp    *dto.BarResponse
 	symbolsResp *dto.SymbolResponse
 	greeksResp  *dto.GreeksResponse
+	ivSmileResp *dto.CryptoIVSmileHistoryResponse
+	ivSmileReq  dto.CryptoIVSmileHistoryRequest
 	btResp      *backtest.Result
 	err         error
 }
@@ -167,6 +169,25 @@ func (m *mockQuerier) RunBacktest(_ context.Context, _ dto.BacktestRequest) (*ba
 }
 func (m *mockQuerier) QueryChain(_ context.Context, _ dto.CryptoOptionChainRequest) (*dto.CryptoOptionChainResponse, error) {
 	return nil, m.err
+}
+func (m *mockQuerier) QueryIVSmileHistory(_ context.Context, req dto.CryptoIVSmileHistoryRequest) (*dto.CryptoIVSmileHistoryResponse, error) {
+	m.ivSmileReq = req
+	return m.ivSmileResp, m.err
+}
+
+func TestGetCryptoIVSmileHistoryBindsQuery(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	provider := &mockQuerier{ivSmileResp: &dto.CryptoIVSmileHistoryResponse{BaseAsset: "BTC", Interval: "7d", Data: []dto.CryptoIVSmileSurface{}}}
+	r := NewRouter(provider, &mockUSStocksQuerier{}, &mockUSOptionsQuerier{}, &mockInfra{}, &mockFeature{}, nil, nil, nil, nil, nil, nil)
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/api/v1/markets/crypto-options/iv-smile-history?base_asset=BTC&from=2026-01-01&to=2026-02-01&interval=7d&max_strike_distance_ratio=0&limit=12", nil)
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", w.Code, w.Body.String())
+	}
+	if provider.ivSmileReq.Interval != "7d" || provider.ivSmileReq.Limit != 12 || provider.ivSmileReq.MaxStrikeDistanceRatio == nil || *provider.ivSmileReq.MaxStrikeDistanceRatio != 0 {
+		t.Fatalf("bound request = %+v", provider.ivSmileReq)
+	}
 }
 
 func (m *mockLogoProvider) GetLogo(_ context.Context, symbol string) (*dto.USStockLogoImage, error) {

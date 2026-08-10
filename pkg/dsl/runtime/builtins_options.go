@@ -18,6 +18,21 @@ import (
 // so passing -1 through is safe and recognizable in traces.
 var invalidSpreadID = FloatVal(-1)
 
+func floatArrayVal(values []float64) Value {
+	result := make([]Value, len(values))
+	for i, value := range values {
+		result[i] = FloatVal(value)
+	}
+	return ArrayVal(result)
+}
+
+func optionalBool(args []Value, index int, defaultValue bool) bool {
+	if len(args) <= index {
+		return defaultValue
+	}
+	return args[index].Bool()
+}
+
 const (
 	OptionStrategyBuyCall           = "BUY_CALL"
 	OptionStrategyBuyPut            = "BUY_PUT"
@@ -65,6 +80,17 @@ type OptionsBridge interface {
 	ChainBestSpread(chain interface{}) interface{}
 	// ChainSortByDelta returns contracts sorted by delta proximity.
 	ChainSortByDelta(chain interface{}, targetDelta float64) []interface{}
+	// IVSmileSurface builds a same-bar, all-expirations IV smile surface.
+	IVSmileSurface(chain interface{}, maxStrikeDistanceRatio float64) interface{}
+	IVSmileExpirations(surface interface{}) []float64
+	IVSmile(surface interface{}, expiration float64) interface{}
+	IVSmileExpiry(smile interface{}) float64
+	IVSmileTotalOI(smile interface{}) float64
+	IVSmileOICoverage(smile interface{}, optionType string) float64
+	IVSmileStrikes(smile interface{}, optionType string) []float64
+	IVSmileValues(smile interface{}, optionType string, smoothed bool) []float64
+	IVSmileOpenInterests(smile interface{}, optionType string) []float64
+	IVSmileAt(smile interface{}, optionType string, strike float64, smoothed bool) float64
 
 	// Contract field accessors.
 	ContractSymbol(c interface{}) string
@@ -285,6 +311,100 @@ func RegisterOptionsBuiltins(ip *Interpreter) {
 			vals[i] = ObjVal(c)
 		}
 		return ArrayVal(vals)
+	})
+
+	// ------- options.iv_smile_surface(chain, max_strike_distance_ratio?) -------
+	ip.RegisterBuiltinWithParams("options.iv_smile_surface", []string{"chain", "max_strike_distance_ratio"}, func(args []Value) Value {
+		b := ob()
+		if b == nil || len(args) < 1 {
+			return NaVal()
+		}
+		ratio := argFloat(args, 1, 0.20)
+		surface := b.IVSmileSurface(args[0].Obj(), ratio)
+		if surface == nil {
+			return NaVal()
+		}
+		return ObjVal(surface)
+	})
+
+	// ------- options.iv_smile_expirations(surface) -------
+	ip.RegisterBuiltin("options.iv_smile_expirations", func(args []Value) Value {
+		b := ob()
+		if b == nil || len(args) < 1 {
+			return ArrayVal(nil)
+		}
+		return floatArrayVal(b.IVSmileExpirations(args[0].Obj()))
+	})
+
+	// ------- options.iv_smile(surface, expiration) -------
+	ip.RegisterBuiltin("options.iv_smile", func(args []Value) Value {
+		b := ob()
+		if b == nil || len(args) < 2 {
+			return NaVal()
+		}
+		smile := b.IVSmile(args[0].Obj(), args[1].Float())
+		if smile == nil {
+			return NaVal()
+		}
+		return ObjVal(smile)
+	})
+
+	// ------- IV smile metadata and curve accessors -------
+	ip.RegisterBuiltin("options.iv_smile_expiry", func(args []Value) Value {
+		b := ob()
+		if b == nil || len(args) < 1 {
+			return NaVal()
+		}
+		return FloatVal(b.IVSmileExpiry(args[0].Obj()))
+	})
+	ip.RegisterBuiltin("options.iv_smile_total_oi", func(args []Value) Value {
+		b := ob()
+		if b == nil || len(args) < 1 {
+			return NaVal()
+		}
+		return FloatVal(b.IVSmileTotalOI(args[0].Obj()))
+	})
+	ip.RegisterBuiltin("options.iv_smile_oi_coverage", func(args []Value) Value {
+		b := ob()
+		if b == nil || len(args) < 2 {
+			return NaVal()
+		}
+		return FloatVal(b.IVSmileOICoverage(args[0].Obj(), args[1].Str()))
+	})
+	for name, read := range map[string]func(OptionsBridge, interface{}, string) []float64{
+		"options.iv_smile_strikes": func(b OptionsBridge, smile interface{}, optionType string) []float64 {
+			return b.IVSmileStrikes(smile, optionType)
+		},
+		"options.iv_smile_open_interests": func(b OptionsBridge, smile interface{}, optionType string) []float64 {
+			return b.IVSmileOpenInterests(smile, optionType)
+		},
+	} {
+		read := read
+		ip.RegisterBuiltin(name, func(args []Value) Value {
+			b := ob()
+			if b == nil || len(args) < 2 {
+				return ArrayVal(nil)
+			}
+			return floatArrayVal(read(b, args[0].Obj(), args[1].Str()))
+		})
+	}
+	ip.RegisterBuiltinWithParams("options.iv_smile_values", []string{"smile", "option_type", "smoothed"}, func(args []Value) Value {
+		b := ob()
+		if b == nil || len(args) < 2 {
+			return ArrayVal(nil)
+		}
+		return floatArrayVal(b.IVSmileValues(args[0].Obj(), args[1].Str(), optionalBool(args, 2, true)))
+	})
+	ip.RegisterBuiltinWithParams("options.iv_smile_at", []string{"smile", "option_type", "strike", "smoothed"}, func(args []Value) Value {
+		b := ob()
+		if b == nil || len(args) < 3 {
+			return NaVal()
+		}
+		value := b.IVSmileAt(args[0].Obj(), args[1].Str(), args[2].Float(), optionalBool(args, 3, true))
+		if math.IsNaN(value) {
+			return NaVal()
+		}
+		return FloatVal(value)
 	})
 
 	// ------- options.strategies(context, family?) → array of strategy names -------

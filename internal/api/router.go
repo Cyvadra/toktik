@@ -215,6 +215,7 @@ func registerRoutes(v1 *gin.RouterGroup, h *Handler) {
 	marketCryptoOptions.GET("/symbols", h.GetSymbols)
 	marketCryptoOptions.GET("/greeks", h.GetGreeks)
 	marketCryptoOptions.GET("/chain", h.GetCryptoOptionChain)
+	marketCryptoOptions.GET("/iv-smile-history", h.GetCryptoIVSmileHistory)
 	marketCryptoOptions.POST("/backtest", h.RunBacktest)
 
 	marketCryptoSpot := markets.Group("/crypto-spot")

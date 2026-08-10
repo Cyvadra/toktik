@@ -632,3 +632,34 @@ func (h *Handler) GetCryptoOptionChain(c *gin.Context) {
 
 	c.JSON(http.StatusOK, resp)
 }
+
+// GetCryptoIVSmileHistory handles GET /api/v1/markets/crypto-options/iv-smile-history.
+//
+//	@Summary		Get crypto option IV smile history
+//	@Description	Returns OI-weighted Call and Put IV smile surfaces for all expirations at each daily or seven-day snapshot.
+//	@Tags			CryptoOptions
+//	@Produce		json
+//	@Param			base_asset					query		string	true	"Base asset (e.g. BTC, ETH)"
+//	@Param			from						query		string	true	"Start time (RFC3339 or YYYY-MM-DD)"
+//	@Param			to							query		string	true	"End time (RFC3339 or YYYY-MM-DD)"
+//	@Param			interval					query		string	false	"Snapshot interval (default 1d)"	Enums(1d,7d)
+//	@Param			max_strike_distance_ratio	query		number	false	"Maximum relative strike distance used by smoothing (default 0.20)"
+//	@Param			limit						query		int		false	"Max surfaces (default 30, max 100)"
+//	@Param			cursor						query		string	false	"Opaque surface cursor"
+//	@Success		200							{object}	dto.CryptoIVSmileHistoryResponse
+//	@Failure		400							{object}	dto.ErrorResponse
+//	@Failure		500							{object}	dto.ErrorResponse
+//	@Router			/markets/crypto-options/iv-smile-history [get]
+func (h *Handler) GetCryptoIVSmileHistory(c *gin.Context) {
+	var req dto.CryptoIVSmileHistoryRequest
+	if err := c.ShouldBindQuery(&req); err != nil {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: err.Error()})
+		return
+	}
+	resp, err := h.cryptoOptions.QueryIVSmileHistory(c.Request.Context(), req)
+	if err != nil {
+		h.handleServiceError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, resp)
+}

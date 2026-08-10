@@ -16,6 +16,7 @@ type CryptoOptionsQuerier interface {
 	QueryGreeks(ctx context.Context, req dto.GreeksRequest) (*dto.GreeksResponse, error)
 	RunBacktest(ctx context.Context, req dto.BacktestRequest) (*backtest.Result, error)
 	QueryChain(ctx context.Context, req dto.CryptoOptionChainRequest) (*dto.CryptoOptionChainResponse, error)
+	QueryIVSmileHistory(ctx context.Context, req dto.CryptoIVSmileHistoryRequest) (*dto.CryptoIVSmileHistoryResponse, error)
 }
 
 // USStocksQuerier defines the operations needed for low-level US stock endpoints.

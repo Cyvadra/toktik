@@ -1,10 +1,12 @@
 package bridge
 
 import (
+	"math"
 	"strings"
 	"time"
 
 	"github.com/Cyvadra/toktik/internal/backtest"
+	"github.com/Cyvadra/toktik/internal/optionsanalytics"
 	"github.com/Cyvadra/toktik/pkg/dsl/runtime"
 	"github.com/Cyvadra/toktik/pkg/feeds"
 )
@@ -113,6 +115,150 @@ func (b *barContextBridge) ChainSortByDelta(chain interface{}, targetDelta float
 		return out
 	}
 	return nil
+}
+
+func (b *barContextBridge) IVSmileSurface(chain interface{}, maxStrikeDistanceRatio float64) interface{} {
+	ch, ok := chain.(*backtest.OptionsChain)
+	if !ok || ch == nil {
+		return nil
+	}
+	contracts := ch.Contracts()
+	points := make([]optionsanalytics.IVPoint, 0, len(contracts))
+	for _, contract := range contracts {
+		points = append(points, optionsanalytics.IVPoint{
+			Expiration:   contract.Expiration,
+			OptionType:   string(contract.Type),
+			Strike:       contract.StrikePrice,
+			IV:           contract.IV,
+			OpenInterest: contract.OpenInterest,
+		})
+	}
+	surface, err := optionsanalytics.BuildIVSmileSurface(points, maxStrikeDistanceRatio)
+	if err != nil || len(surface.Expirations) == 0 {
+		return nil
+	}
+	return surface
+}
+
+func (b *barContextBridge) IVSmileExpirations(surface interface{}) []float64 {
+	typed, ok := surface.(*optionsanalytics.IVSmileSurface)
+	if !ok || typed == nil {
+		return nil
+	}
+	values := make([]float64, len(typed.Expirations))
+	for i, smile := range typed.Expirations {
+		values[i] = float64(smile.Expiration.UTC().Unix())
+	}
+	return values
+}
+
+func (b *barContextBridge) IVSmile(surface interface{}, expiration float64) interface{} {
+	typed, ok := surface.(*optionsanalytics.IVSmileSurface)
+	if !ok || typed == nil || math.IsNaN(expiration) || math.IsInf(expiration, 0) {
+		return nil
+	}
+	for i := range typed.Expirations {
+		if float64(typed.Expirations[i].Expiration.UTC().Unix()) == expiration {
+			return &typed.Expirations[i]
+		}
+	}
+	return nil
+}
+
+func (b *barContextBridge) IVSmileExpiry(smile interface{}) float64 {
+	if typed, ok := smile.(*optionsanalytics.ExpirationSmile); ok && typed != nil {
+		return float64(typed.Expiration.UTC().Unix())
+	}
+	return math.NaN()
+}
+
+func (b *barContextBridge) IVSmileTotalOI(smile interface{}) float64 {
+	if typed, ok := smile.(*optionsanalytics.ExpirationSmile); ok && typed != nil {
+		return typed.TotalOI
+	}
+	return math.NaN()
+}
+
+func (b *barContextBridge) IVSmileOICoverage(smile interface{}, optionType string) float64 {
+	curve := smileCurve(smile, optionType)
+	if len(curve.Points) == 0 {
+		return math.NaN()
+	}
+	return float64(curve.PositiveOIPoints) / float64(len(curve.Points))
+}
+
+func (b *barContextBridge) IVSmileStrikes(smile interface{}, optionType string) []float64 {
+	curve := smileCurve(smile, optionType)
+	values := make([]float64, len(curve.Points))
+	for i, point := range curve.Points {
+		values[i] = point.Strike
+	}
+	return values
+}
+
+func (b *barContextBridge) IVSmileValues(smile interface{}, optionType string, smoothed bool) []float64 {
+	curve := smileCurve(smile, optionType)
+	values := make([]float64, len(curve.Points))
+	for i, point := range curve.Points {
+		values[i] = point.RawIV
+		if smoothed {
+			values[i] = point.SmoothedIV
+		}
+	}
+	return values
+}
+
+func (b *barContextBridge) IVSmileOpenInterests(smile interface{}, optionType string) []float64 {
+	curve := smileCurve(smile, optionType)
+	values := make([]float64, len(curve.Points))
+	for i, point := range curve.Points {
+		values[i] = point.OpenInterest
+	}
+	return values
+}
+
+func (b *barContextBridge) IVSmileAt(smile interface{}, optionType string, strike float64, smoothed bool) float64 {
+	curve := smileCurve(smile, optionType)
+	if len(curve.Points) == 0 || !isFinite(strike) || strike < curve.Points[0].Strike || strike > curve.Points[len(curve.Points)-1].Strike {
+		return math.NaN()
+	}
+	for i, point := range curve.Points {
+		value := point.RawIV
+		if smoothed {
+			value = point.SmoothedIV
+		}
+		if point.Strike == strike {
+			return value
+		}
+		if i > 0 && strike < point.Strike {
+			previous := curve.Points[i-1]
+			previousValue := previous.RawIV
+			if smoothed {
+				previousValue = previous.SmoothedIV
+			}
+			return previousValue + (value-previousValue)*(strike-previous.Strike)/(point.Strike-previous.Strike)
+		}
+	}
+	return math.NaN()
+}
+
+func smileCurve(smile interface{}, optionType string) optionsanalytics.Curve {
+	typed, ok := smile.(*optionsanalytics.ExpirationSmile)
+	if !ok || typed == nil {
+		return optionsanalytics.Curve{}
+	}
+	switch strings.ToLower(strings.TrimSpace(optionType)) {
+	case "call", "c":
+		return typed.Call
+	case "put", "p":
+		return typed.Put
+	default:
+		return optionsanalytics.Curve{}
+	}
+}
+
+func isFinite(value float64) bool {
+	return !math.IsNaN(value) && !math.IsInf(value, 0)
 }
 
 func (b *barContextBridge) ContractSymbol(c interface{}) string {

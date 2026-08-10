@@ -1568,6 +1568,136 @@
       "snippet": "options.expiry_range(${1:chain}, ${2:min_days}, ${3:max_days})"
     },
     {
+      "name": "options.iv_smile",
+      "kind": "function",
+      "params": [
+        "surface",
+        "expiration"
+      ],
+      "signature": "options.iv_smile(surface, expiration)",
+      "summary": "用於從 IV smile surface 精確取得指定 UTC Unix 秒到期日的 Call/Put smile。",
+      "example": "smile = options.iv_smile(surface, expiries[0])",
+      "returnValue": "IV smile",
+      "snippet": "options.iv_smile(${1:surface}, ${2:expiration})"
+    },
+    {
+      "name": "options.iv_smile_at",
+      "kind": "function",
+      "params": [
+        "smile",
+        "option_type",
+        "strike",
+        "smoothed"
+      ],
+      "signature": "options.iv_smile_at(smile, option_type, strike, smoothed)",
+      "summary": "用於取得指定 strike 的 IV；曲線內部採線性插值，範圍外回傳 na。",
+      "example": "put_iv = options.iv_smile_at(smile, \"put\", close, true)",
+      "returnValue": "數值",
+      "snippet": "options.iv_smile_at(${1:smile}, ${2:option_type}, ${3:strike}, ${4:smoothed})"
+    },
+    {
+      "name": "options.iv_smile_expirations",
+      "kind": "function",
+      "params": [
+        "surface"
+      ],
+      "signature": "options.iv_smile_expirations(surface)",
+      "summary": "用於取得 IV smile surface 中所有到期日的 UTC Unix 秒，供策略顯式選擇期限。",
+      "example": "expiries = options.iv_smile_expirations(surface)",
+      "returnValue": "陣列",
+      "snippet": "options.iv_smile_expirations(${1:surface})"
+    },
+    {
+      "name": "options.iv_smile_expiry",
+      "kind": "function",
+      "params": [
+        "smile"
+      ],
+      "signature": "options.iv_smile_expiry(smile)",
+      "summary": "用於取得 IV smile 的 UTC Unix 秒到期日。",
+      "example": "expiry = options.iv_smile_expiry(smile)",
+      "returnValue": "數值",
+      "snippet": "options.iv_smile_expiry(${1:smile})"
+    },
+    {
+      "name": "options.iv_smile_oi_coverage",
+      "kind": "function",
+      "params": [
+        "smile",
+        "option_type"
+      ],
+      "signature": "options.iv_smile_oi_coverage(smile, option_type)",
+      "summary": "用於取得指定 Call 或 Put 曲線中 OI 大於零的點占比。",
+      "example": "coverage = options.iv_smile_oi_coverage(smile, \"put\")",
+      "returnValue": "數值",
+      "snippet": "options.iv_smile_oi_coverage(${1:smile}, ${2:option_type})"
+    },
+    {
+      "name": "options.iv_smile_open_interests",
+      "kind": "function",
+      "params": [
+        "smile",
+        "option_type"
+      ],
+      "signature": "options.iv_smile_open_interests(smile, option_type)",
+      "summary": "用於取得與 IV smile strike 對齊的 OI 陣列。",
+      "example": "ois = options.iv_smile_open_interests(smile, \"call\")",
+      "returnValue": "陣列",
+      "snippet": "options.iv_smile_open_interests(${1:smile}, ${2:option_type})"
+    },
+    {
+      "name": "options.iv_smile_strikes",
+      "kind": "function",
+      "params": [
+        "smile",
+        "option_type"
+      ],
+      "signature": "options.iv_smile_strikes(smile, option_type)",
+      "summary": "用於取得指定 Call 或 Put IV smile 的 strike 陣列。",
+      "example": "strikes = options.iv_smile_strikes(smile, \"call\")",
+      "returnValue": "陣列",
+      "snippet": "options.iv_smile_strikes(${1:smile}, ${2:option_type})"
+    },
+    {
+      "name": "options.iv_smile_surface",
+      "kind": "function",
+      "params": [
+        "chain",
+        "max_strike_distance_ratio"
+      ],
+      "signature": "options.iv_smile_surface(chain, max_strike_distance_ratio)",
+      "summary": "用於從目前 bar 的期權鏈建立所有到期日的 OI 加權 IV smile surface；不會自動選擇到期日。",
+      "example": "surface = options.iv_smile_surface(options.chain(\"crypto-options\", \"BTC\"), 0.20)",
+      "returnValue": "IV smile surface",
+      "snippet": "options.iv_smile_surface(${1:chain}, ${2:max_strike_distance_ratio})"
+    },
+    {
+      "name": "options.iv_smile_total_oi",
+      "kind": "function",
+      "params": [
+        "smile"
+      ],
+      "signature": "options.iv_smile_total_oi(smile)",
+      "summary": "用於取得指定期限 Call 與 Put 曲線的總 OI。",
+      "example": "oi = options.iv_smile_total_oi(smile)",
+      "returnValue": "數值",
+      "snippet": "options.iv_smile_total_oi(${1:smile})"
+    },
+    {
+      "name": "options.iv_smile_values",
+      "kind": "function",
+      "params": [
+        "smile",
+        "option_type",
+        "smoothed"
+      ],
+      "signature": "options.iv_smile_values(smile, option_type, smoothed)",
+      "summary": "用於取得 raw 或 OI 加權平滑後的 IV 陣列；預設回傳平滑 IV。",
+      "example": "ivs = options.iv_smile_values(smile, \"put\", true)",
+      "returnValue": "陣列",
+      "snippet": "options.iv_smile_values(${1:smile}, ${2:option_type}, ${3:smoothed})"
+    },
+    {
       "name": "options.len",
       "kind": "function",
       "params": [
@@ -2970,6 +3100,16 @@
       "options.expiry_min",
       "options.expiry_nearest",
       "options.expiry_range",
+      "options.iv_smile",
+      "options.iv_smile_at",
+      "options.iv_smile_expirations",
+      "options.iv_smile_expiry",
+      "options.iv_smile_oi_coverage",
+      "options.iv_smile_open_interests",
+      "options.iv_smile_strikes",
+      "options.iv_smile_surface",
+      "options.iv_smile_total_oi",
+      "options.iv_smile_values",
       "options.len",
       "options.min_premium",
       "options.open_strategy",
@@ -3111,7 +3251,7 @@
     "leg": 2,
     "market": 9,
     "math": 13,
-    "options": 16,
+    "options": 26,
     "order": 10,
     "portfolio": 6,
     "ref": 6,
@@ -4389,6 +4529,116 @@
       "Summary": "用於從期權鏈中篩出符合到期日、Delta、權利金或履約價條件的候選合約。",
       "Example": "chain30 = options.expiry_range(options.chain(\"us-options\", \"SPY\"), 20, 45)",
       "ReturnValue": "期權鏈或值"
+    },
+    {
+      "Name": "options.iv_smile",
+      "Kind": "function",
+      "Params": [
+        "surface",
+        "expiration"
+      ],
+      "Summary": "用於從 IV smile surface 精確取得指定 UTC Unix 秒到期日的 Call/Put smile。",
+      "Example": "smile = options.iv_smile(surface, expiries[0])",
+      "ReturnValue": "IV smile"
+    },
+    {
+      "Name": "options.iv_smile_at",
+      "Kind": "function",
+      "Params": [
+        "smile",
+        "option_type",
+        "strike",
+        "smoothed"
+      ],
+      "Summary": "用於取得指定 strike 的 IV；曲線內部採線性插值，範圍外回傳 na。",
+      "Example": "put_iv = options.iv_smile_at(smile, \"put\", close, true)",
+      "ReturnValue": "數值"
+    },
+    {
+      "Name": "options.iv_smile_expirations",
+      "Kind": "function",
+      "Params": [
+        "surface"
+      ],
+      "Summary": "用於取得 IV smile surface 中所有到期日的 UTC Unix 秒，供策略顯式選擇期限。",
+      "Example": "expiries = options.iv_smile_expirations(surface)",
+      "ReturnValue": "陣列"
+    },
+    {
+      "Name": "options.iv_smile_expiry",
+      "Kind": "function",
+      "Params": [
+        "smile"
+      ],
+      "Summary": "用於取得 IV smile 的 UTC Unix 秒到期日。",
+      "Example": "expiry = options.iv_smile_expiry(smile)",
+      "ReturnValue": "數值"
+    },
+    {
+      "Name": "options.iv_smile_oi_coverage",
+      "Kind": "function",
+      "Params": [
+        "smile",
+        "option_type"
+      ],
+      "Summary": "用於取得指定 Call 或 Put 曲線中 OI 大於零的點占比。",
+      "Example": "coverage = options.iv_smile_oi_coverage(smile, \"put\")",
+      "ReturnValue": "數值"
+    },
+    {
+      "Name": "options.iv_smile_open_interests",
+      "Kind": "function",
+      "Params": [
+        "smile",
+        "option_type"
+      ],
+      "Summary": "用於取得與 IV smile strike 對齊的 OI 陣列。",
+      "Example": "ois = options.iv_smile_open_interests(smile, \"call\")",
+      "ReturnValue": "陣列"
+    },
+    {
+      "Name": "options.iv_smile_strikes",
+      "Kind": "function",
+      "Params": [
+        "smile",
+        "option_type"
+      ],
+      "Summary": "用於取得指定 Call 或 Put IV smile 的 strike 陣列。",
+      "Example": "strikes = options.iv_smile_strikes(smile, \"call\")",
+      "ReturnValue": "陣列"
+    },
+    {
+      "Name": "options.iv_smile_surface",
+      "Kind": "function",
+      "Params": [
+        "chain",
+        "max_strike_distance_ratio"
+      ],
+      "Summary": "用於從目前 bar 的期權鏈建立所有到期日的 OI 加權 IV smile surface；不會自動選擇到期日。",
+      "Example": "surface = options.iv_smile_surface(options.chain(\"crypto-options\", \"BTC\"), 0.20)",
+      "ReturnValue": "IV smile surface"
+    },
+    {
+      "Name": "options.iv_smile_total_oi",
+      "Kind": "function",
+      "Params": [
+        "smile"
+      ],
+      "Summary": "用於取得指定期限 Call 與 Put 曲線的總 OI。",
+      "Example": "oi = options.iv_smile_total_oi(smile)",
+      "ReturnValue": "數值"
+    },
+    {
+      "Name": "options.iv_smile_values",
+      "Kind": "function",
+      "Params": [
+        "smile",
+        "option_type",
+        "smoothed"
+      ],
+      "Summary": "用於取得 raw 或 OI 加權平滑後的 IV 陣列；預設回傳平滑 IV。",
+      "Example": "ivs = options.iv_smile_values(smile, \"put\", true)",
+      "ReturnValue": "陣列"
     },
     {
       "Name": "options.len",

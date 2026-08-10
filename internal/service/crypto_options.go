@@ -3,8 +3,12 @@ package service
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
+	"math"
+	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
@@ -12,13 +16,16 @@ import (
 	"github.com/Cyvadra/toktik/internal/chrepo"
 	"github.com/Cyvadra/toktik/internal/cryptooptions"
 	"github.com/Cyvadra/toktik/internal/dto"
+	"github.com/Cyvadra/toktik/internal/optionsanalytics"
 )
 
 const (
-	defaultBarLimit    = 1000
-	maxBarLimit        = 10000
-	defaultSymbolLimit = 100
-	maxSymbolLimit     = 1000
+	defaultBarLimit     = 1000
+	maxBarLimit         = 10000
+	defaultSymbolLimit  = 100
+	maxSymbolLimit      = 1000
+	defaultIVSmileLimit = 30
+	maxIVSmileLimit     = 100
 )
 
 // CryptoOptionsService provides market data queries backed by ClickHouse.
@@ -409,4 +416,193 @@ func (s *CryptoOptionsService) QueryChain(ctx context.Context, req dto.CryptoOpt
 		resp.Data = snapshots
 	}
 	return resp, nil
+}
+
+type ivSmileCursor struct {
+	Version  int    `json:"v"`
+	Interval string `json:"interval"`
+	Anchor   string `json:"anchor"`
+	Offset   int    `json:"offset"`
+}
+
+// QueryIVSmileHistory returns all-expiration, OI-weighted IV smile surfaces.
+func (s *CryptoOptionsService) QueryIVSmileHistory(ctx context.Context, req dto.CryptoIVSmileHistoryRequest) (*dto.CryptoIVSmileHistoryResponse, error) {
+	from, to, err := dto.ParseTimeRange(req.From, req.To)
+	if err != nil {
+		return nil, err
+	}
+	baseAsset := strings.ToUpper(strings.TrimSpace(req.BaseAsset))
+	if baseAsset == "" {
+		return nil, dto.NewValidationError("base_asset is required")
+	}
+	interval := strings.ToLower(strings.TrimSpace(req.Interval))
+	if interval == "" {
+		interval = "1d"
+	}
+	if interval != "1d" && interval != "7d" {
+		return nil, dto.NewValidationError("unsupported IV smile interval %q (supported: 1d, 7d)", interval)
+	}
+	ratio := optionsanalytics.DefaultStrikeDistanceRatio
+	if req.MaxStrikeDistanceRatio != nil {
+		ratio = *req.MaxStrikeDistanceRatio
+	}
+	if math.IsNaN(ratio) || math.IsInf(ratio, 0) || ratio < 0 || ratio > 1 {
+		return nil, dto.NewValidationError("max_strike_distance_ratio must be between 0 and 1")
+	}
+	limit := clamp(req.Limit, defaultIVSmileLimit, maxIVSmileLimit)
+	offset := 0
+	if req.Cursor != "" {
+		cursor, err := decodeIVSmileCursor(req.Cursor)
+		if err != nil {
+			return nil, dto.NewValidationError("invalid cursor: %v", err)
+		}
+		if cursor.Interval != interval || cursor.Anchor != from.UTC().Format(time.RFC3339) {
+			return nil, dto.NewValidationError("cursor does not match interval or from")
+		}
+		offset = cursor.Offset
+	}
+
+	chainView, ok := cryptooptions.ChainPrecomputedIntervals["1d"]
+	if !ok {
+		return nil, fmt.Errorf("daily crypto option chain cache is not configured")
+	}
+	timestamps, err := s.queryIVSmileTimestamps(ctx, chainView, baseAsset, from, to)
+	if err != nil {
+		return nil, err
+	}
+	timestamps = sampleIVSmileTimestamps(timestamps, from, interval)
+	if offset < 0 || offset > len(timestamps) {
+		return nil, dto.NewValidationError("cursor offset is out of range")
+	}
+	remaining := timestamps[offset:]
+	hasNext := len(remaining) > limit
+	if hasNext {
+		remaining = remaining[:limit]
+	}
+
+	response := &dto.CryptoIVSmileHistoryResponse{
+		BaseAsset: baseAsset, Interval: interval,
+		Algorithm: optionsanalytics.AlgorithmName, AlgorithmVersion: optionsanalytics.AlgorithmVersion,
+		Kernel: []float64{1, 4, 16, 4, 1}, MaxStrikeDistanceRatio: ratio,
+		Data: make([]dto.CryptoIVSmileSurface, 0, len(remaining)),
+	}
+	if len(remaining) > 0 {
+		pointsByTimestamp, err := s.queryIVSmilePoints(ctx, chainView, baseAsset, remaining)
+		if err != nil {
+			return nil, err
+		}
+		for _, timestamp := range remaining {
+			surface, err := optionsanalytics.BuildIVSmileSurface(pointsByTimestamp[timestamp.Unix()], ratio)
+			if err != nil {
+				return nil, err
+			}
+			response.Data = append(response.Data, cryptoIVSmileSurfaceDTO(timestamp, surface))
+		}
+	}
+	if hasNext {
+		response.NextCursor = encodeIVSmileCursor(ivSmileCursor{Version: 1, Interval: interval, Anchor: from.UTC().Format(time.RFC3339), Offset: offset + len(remaining)})
+	}
+	return response, nil
+}
+
+func (s *CryptoOptionsService) queryIVSmileTimestamps(ctx context.Context, chainView, baseAsset string, from, to time.Time) ([]time.Time, error) {
+	rows, err := s.repo.Query(ctx, chquery.CryptoOptionsChainTimestampsSQL(chainView, baseAsset, from, to))
+	if err != nil {
+		return nil, fmt.Errorf("query IV smile timestamps: %w", err)
+	}
+	defer rows.Close()
+	var timestamps []time.Time
+	for rows.Next() {
+		var timestamp time.Time
+		if err := rows.Scan(&timestamp); err != nil {
+			return nil, fmt.Errorf("scan IV smile timestamp: %w", err)
+		}
+		timestamps = append(timestamps, timestamp.UTC())
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate IV smile timestamps: %w", err)
+	}
+	return timestamps, nil
+}
+
+func (s *CryptoOptionsService) queryIVSmilePoints(ctx context.Context, chainView, baseAsset string, timestamps []time.Time) (map[int64][]optionsanalytics.IVPoint, error) {
+	rows, err := s.repo.Query(ctx, chquery.CryptoOptionsChainPointsAtTimestampsSQL(chainView, baseAsset, timestamps))
+	if err != nil {
+		return nil, fmt.Errorf("query IV smile points: %w", err)
+	}
+	defer rows.Close()
+	points := make(map[int64][]optionsanalytics.IVPoint, len(timestamps))
+	for rows.Next() {
+		var timestamp, expiration time.Time
+		var optionType string
+		var strike, iv, openInterest float64
+		if err := rows.Scan(&timestamp, &expiration, &optionType, &strike, &iv, &openInterest); err != nil {
+			return nil, fmt.Errorf("scan IV smile point: %w", err)
+		}
+		key := timestamp.UTC().Unix()
+		points[key] = append(points[key], optionsanalytics.IVPoint{Expiration: expiration, OptionType: optionType, Strike: strike, IV: iv, OpenInterest: openInterest})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate IV smile points: %w", err)
+	}
+	return points, nil
+}
+
+func sampleIVSmileTimestamps(timestamps []time.Time, from time.Time, interval string) []time.Time {
+	if interval == "1d" {
+		return append([]time.Time(nil), timestamps...)
+	}
+	sorted := append([]time.Time(nil), timestamps...)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Before(sorted[j]) })
+	result := make([]time.Time, 0, len(sorted)/7+1)
+	anchor := from.UTC()
+	for index := 0; index < len(sorted); {
+		bucketEnd := anchor.Add(7 * 24 * time.Hour)
+		last := time.Time{}
+		for index < len(sorted) && sorted[index].Before(bucketEnd) {
+			last = sorted[index]
+			index++
+		}
+		if !last.IsZero() {
+			result = append(result, last)
+		}
+		anchor = bucketEnd
+	}
+	return result
+}
+
+func encodeIVSmileCursor(cursor ivSmileCursor) string {
+	payload, _ := json.Marshal(cursor)
+	return base64.RawURLEncoding.EncodeToString(payload)
+}
+
+func decodeIVSmileCursor(value string) (ivSmileCursor, error) {
+	payload, err := base64.RawURLEncoding.DecodeString(value)
+	if err != nil {
+		return ivSmileCursor{}, err
+	}
+	var cursor ivSmileCursor
+	if err := json.Unmarshal(payload, &cursor); err != nil {
+		return ivSmileCursor{}, err
+	}
+	if cursor.Version != 1 || cursor.Offset < 0 {
+		return ivSmileCursor{}, fmt.Errorf("unsupported cursor")
+	}
+	return cursor, nil
+}
+
+func cryptoIVSmileSurfaceDTO(timestamp time.Time, surface *optionsanalytics.IVSmileSurface) dto.CryptoIVSmileSurface {
+	result := dto.CryptoIVSmileSurface{Timestamp: timestamp.UTC(), Expirations: make([]dto.CryptoIVExpirationSmile, 0, len(surface.Expirations))}
+	for _, smile := range surface.Expirations {
+		result.Expirations = append(result.Expirations, dto.CryptoIVExpirationSmile{Expiration: smile.Expiration, TotalOI: smile.TotalOI, Call: cryptoIVSmileCurveDTO(smile.Call), Put: cryptoIVSmileCurveDTO(smile.Put)})
+	}
+	return result
+}
+
+func cryptoIVSmileCurveDTO(curve optionsanalytics.Curve) dto.CryptoIVSmileCurve {
+	result := dto.CryptoIVSmileCurve{OptionType: curve.OptionType, PositiveOIPoints: curve.PositiveOIPoints, Points: make([]dto.CryptoIVSmilePoint, len(curve.Points))}
+	for i, point := range curve.Points {
+		result.Points[i] = dto.CryptoIVSmilePoint{Strike: point.Strike, RawIV: point.RawIV, SmoothedIV: point.SmoothedIV, OpenInterest: point.OpenInterest}
+	}
+	return result
 }

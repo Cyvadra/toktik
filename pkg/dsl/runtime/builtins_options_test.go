@@ -289,6 +289,31 @@ func (b *testOptionsBridge) ChainSortByDelta(chain interface{}, targetDelta floa
 	return out
 }
 
+func (b *testOptionsBridge) IVSmileSurface(chain interface{}, maxStrikeDistanceRatio float64) interface{} {
+	return nil
+}
+func (b *testOptionsBridge) IVSmileExpirations(surface interface{}) []float64 { return nil }
+func (b *testOptionsBridge) IVSmile(surface interface{}, expiration float64) interface{} {
+	return nil
+}
+func (b *testOptionsBridge) IVSmileExpiry(smile interface{}) float64  { return math.NaN() }
+func (b *testOptionsBridge) IVSmileTotalOI(smile interface{}) float64 { return math.NaN() }
+func (b *testOptionsBridge) IVSmileOICoverage(smile interface{}, optionType string) float64 {
+	return math.NaN()
+}
+func (b *testOptionsBridge) IVSmileStrikes(smile interface{}, optionType string) []float64 {
+	return nil
+}
+func (b *testOptionsBridge) IVSmileValues(smile interface{}, optionType string, smoothed bool) []float64 {
+	return nil
+}
+func (b *testOptionsBridge) IVSmileOpenInterests(smile interface{}, optionType string) []float64 {
+	return nil
+}
+func (b *testOptionsBridge) IVSmileAt(smile interface{}, optionType string, strike float64, smoothed bool) float64 {
+	return math.NaN()
+}
+
 func (b *testOptionsBridge) ContractSymbol(c interface{}) string { return asTestOption(c).symbol }
 func (b *testOptionsBridge) ContractUnderlying(c interface{}) string {
 	return asTestOption(c).underlying

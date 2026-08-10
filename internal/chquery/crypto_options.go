@@ -2,6 +2,7 @@ package chquery
 
 import (
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -136,6 +137,48 @@ LEFT JOIN %s AS s ON s.timestamp = e.timestamp AND s.symbol = e.base_asset
 ORDER BY e.timestamp ASC, m.strike_price ASC
 LIMIT %d
 `, chainView, QuotedString(baseAsset), QuotedDateTime(fromT), QuotedDateTime(toT), spotTable, limit)
+}
+
+// CryptoOptionsChainTimestampsSQL returns daily chain snapshot timestamps.
+func CryptoOptionsChainTimestampsSQL(chainView, baseAsset string, fromT, toT time.Time) string {
+	return fmt.Sprintf(`SELECT timestamp
+FROM %s
+WHERE base_asset = %s
+  AND timestamp >= toDateTime(%s, 'UTC')
+  AND timestamp < toDateTime(%s, 'UTC')
+GROUP BY timestamp
+ORDER BY timestamp ASC`, chainView, QuotedString(baseAsset), QuotedDateTime(fromT), QuotedDateTime(toT))
+}
+
+// CryptoOptionsChainPointsAtTimestampsSQL expands IV and OI points for selected snapshots.
+func CryptoOptionsChainPointsAtTimestampsSQL(chainView, baseAsset string, timestamps []time.Time) string {
+	quoted := make([]string, len(timestamps))
+	for i, timestamp := range timestamps {
+		quoted[i] = "toDateTime(" + QuotedDateTime(timestamp) + ", 'UTC')"
+	}
+	return fmt.Sprintf(`SELECT
+    e.timestamp,
+    m.expiration,
+    m.option_type,
+    m.strike_price,
+    e.mark_iv,
+    e.open_interest
+FROM (
+    SELECT
+        timestamp,
+        sid AS symbol_id,
+        mi AS mark_iv,
+        oi AS open_interest
+    FROM %s
+    ARRAY JOIN
+        symbol_ids AS sid,
+        mark_ivs AS mi,
+        open_interests AS oi
+    WHERE base_asset = %s
+      AND timestamp IN (%s)
+) AS e
+INNER JOIN (SELECT * FROM crypto_options_symbol_meta FINAL) AS m ON m.symbol_id = e.symbol_id
+ORDER BY e.timestamp ASC, m.expiration ASC, m.option_type ASC, m.strike_price ASC`, chainView, QuotedString(baseAsset), strings.Join(quoted, ", "))
 }
 
 // CryptoOptionsSymbolCollisions returns a query for checking symbol ID collisions.

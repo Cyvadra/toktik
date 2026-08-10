@@ -246,7 +246,7 @@ aapl_iv_rank = request.security("us", "AAPL", "1d", iv_rank_base)
 | `leg` | 2 |
 | `market` | 9 |
 | `math` | 13 |
-| `options` | 16 |
+| `options` | 26 |
 | `order` | 10 |
 | `portfolio` | 6 |
 | `ref` | 6 |
@@ -449,6 +449,16 @@ aapl_iv_rank = request.security("us", "AAPL", "1d", iv_rank_base)
 | `options.expiry_min` | `options.expiry_min(chain, min_days)` | `函數` | `期權鏈或值` | `chain20 = options.expiry_min(options.chain("us-options", "SPY"), 20)` | 用於從期權鏈中篩出符合到期日、Delta、權利金或履約價條件的候選合約。 |
 | `options.expiry_nearest` | `options.expiry_nearest(chain, target_days)` | `函數` | `期權鏈或值` | `near = options.expiry_nearest(options.chain("us-options", "SPY"), 30)` | 用於從期權鏈中篩出符合到期日、Delta、權利金或履約價條件的候選合約。 |
 | `options.expiry_range` | `options.expiry_range(chain, min_days, max_days)` | `函數` | `期權鏈或值` | `chain30 = options.expiry_range(options.chain("us-options", "SPY"), 20, 45)` | 用於從期權鏈中篩出符合到期日、Delta、權利金或履約價條件的候選合約。 |
+| `options.iv_smile` | `options.iv_smile(surface, expiration)` | `函數` | `IV smile` | `smile = options.iv_smile(surface, expiries[0])` | 用於從 IV smile surface 精確取得指定 UTC Unix 秒到期日的 Call/Put smile。 |
+| `options.iv_smile_at` | `options.iv_smile_at(smile, option_type, strike, smoothed)` | `函數` | `數值` | `put_iv = options.iv_smile_at(smile, "put", close, true)` | 用於取得指定 strike 的 IV；曲線內部採線性插值，範圍外回傳 na。 |
+| `options.iv_smile_expirations` | `options.iv_smile_expirations(surface)` | `函數` | `陣列` | `expiries = options.iv_smile_expirations(surface)` | 用於取得 IV smile surface 中所有到期日的 UTC Unix 秒，供策略顯式選擇期限。 |
+| `options.iv_smile_expiry` | `options.iv_smile_expiry(smile)` | `函數` | `數值` | `expiry = options.iv_smile_expiry(smile)` | 用於取得 IV smile 的 UTC Unix 秒到期日。 |
+| `options.iv_smile_oi_coverage` | `options.iv_smile_oi_coverage(smile, option_type)` | `函數` | `數值` | `coverage = options.iv_smile_oi_coverage(smile, "put")` | 用於取得指定 Call 或 Put 曲線中 OI 大於零的點占比。 |
+| `options.iv_smile_open_interests` | `options.iv_smile_open_interests(smile, option_type)` | `函數` | `陣列` | `ois = options.iv_smile_open_interests(smile, "call")` | 用於取得與 IV smile strike 對齊的 OI 陣列。 |
+| `options.iv_smile_strikes` | `options.iv_smile_strikes(smile, option_type)` | `函數` | `陣列` | `strikes = options.iv_smile_strikes(smile, "call")` | 用於取得指定 Call 或 Put IV smile 的 strike 陣列。 |
+| `options.iv_smile_surface` | `options.iv_smile_surface(chain, max_strike_distance_ratio)` | `函數` | `IV smile surface` | `surface = options.iv_smile_surface(options.chain("crypto-options", "BTC"), 0.20)` | 用於從目前 bar 的期權鏈建立所有到期日的 OI 加權 IV smile surface；不會自動選擇到期日。 |
+| `options.iv_smile_total_oi` | `options.iv_smile_total_oi(smile)` | `函數` | `數值` | `oi = options.iv_smile_total_oi(smile)` | 用於取得指定期限 Call 與 Put 曲線的總 OI。 |
+| `options.iv_smile_values` | `options.iv_smile_values(smile, option_type, smoothed)` | `函數` | `陣列` | `ivs = options.iv_smile_values(smile, "put", true)` | 用於取得 raw 或 OI 加權平滑後的 IV 陣列；預設回傳平滑 IV。 |
 | `options.len` | `options.len(chain)` | `函數` | `期權鏈或值` | `count = options.len(options.chain("us-options", "SPY"))` | 用於從期權鏈中篩出符合到期日、Delta、權利金或履約價條件的候選合約。 |
 | `options.min_premium` | `options.min_premium(chain, min_bid)` | `函數` | `期權鏈或值` | `rich = options.min_premium(options.puts(options.chain("us-options", "SPY")), 1.0)` | 用於從期權鏈中篩出符合到期日、Delta、權利金或履約價條件的候選合約。 |
 | `options.open_strategy` | `options.open_strategy(chain, name, qty, target_delta, tag)` | `函數` | `spread id` | `sid = options.open_strategy(chain, "BUY_CALL", 1, 0.35, "momentum")` | 用於明確開啟由策略名稱生成的期權 spread。 |

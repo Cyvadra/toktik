@@ -93,6 +93,58 @@ type CryptoOptionChainResponse struct {
 	NextCursor string                      `json:"next_cursor,omitempty"`
 }
 
+// CryptoIVSmileHistoryRequest requests daily IV smile surfaces for a crypto base asset.
+type CryptoIVSmileHistoryRequest struct {
+	BaseAsset              string   `form:"base_asset" binding:"required"`
+	From                   string   `form:"from" binding:"required"`
+	To                     string   `form:"to" binding:"required"`
+	Interval               string   `form:"interval" binding:"omitempty"`
+	MaxStrikeDistanceRatio *float64 `form:"max_strike_distance_ratio" binding:"omitempty"`
+	Limit                  int      `form:"limit" binding:"omitempty"`
+	Cursor                 string   `form:"cursor" binding:"omitempty"`
+}
+
+// CryptoIVSmilePoint is one raw and smoothed IV observation on a curve.
+type CryptoIVSmilePoint struct {
+	Strike       float64 `json:"strike"`
+	RawIV        float64 `json:"raw_iv"`
+	SmoothedIV   float64 `json:"smoothed_iv"`
+	OpenInterest float64 `json:"open_interest"`
+}
+
+// CryptoIVSmileCurve contains the points for one option type.
+type CryptoIVSmileCurve struct {
+	OptionType       string               `json:"option_type"`
+	PositiveOIPoints int                  `json:"positive_oi_points"`
+	Points           []CryptoIVSmilePoint `json:"points"`
+}
+
+// CryptoIVExpirationSmile contains Call and Put curves for one expiration.
+type CryptoIVExpirationSmile struct {
+	Expiration time.Time          `json:"expiration"`
+	TotalOI    float64            `json:"total_open_interest"`
+	Call       CryptoIVSmileCurve `json:"call"`
+	Put        CryptoIVSmileCurve `json:"put"`
+}
+
+// CryptoIVSmileSurface is one full-chain smile surface at a timestamp.
+type CryptoIVSmileSurface struct {
+	Timestamp   time.Time                 `json:"timestamp"`
+	Expirations []CryptoIVExpirationSmile `json:"expirations"`
+}
+
+// CryptoIVSmileHistoryResponse wraps IV smile surfaces and algorithm metadata.
+type CryptoIVSmileHistoryResponse struct {
+	BaseAsset              string                 `json:"base_asset"`
+	Interval               string                 `json:"interval"`
+	Algorithm              string                 `json:"algorithm"`
+	AlgorithmVersion       string                 `json:"algorithm_version"`
+	Kernel                 []float64              `json:"kernel"`
+	MaxStrikeDistanceRatio float64                `json:"max_strike_distance_ratio"`
+	Data                   []CryptoIVSmileSurface `json:"data"`
+	NextCursor             string                 `json:"next_cursor,omitempty"`
+}
+
 // UnderlyingInfo describes one underlying asset.
 type UnderlyingInfo struct {
 	Symbol              string   `json:"symbol"`
