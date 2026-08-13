@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/Cyvadra/toktik/internal/cache"
 	"github.com/Cyvadra/toktik/internal/dto"
@@ -124,6 +125,7 @@ func TestDeribitServiceQueryOptionChainValidation(t *testing.T) {
 		{Underlying: "BTC", ContractType: "future"},
 		{Underlying: "BTC", Order: "sideways"},
 		{Underlying: "BTC", Sort: "unknown"},
+		{Underlying: "BTC", Date: "08/13/2026"},
 		{Underlying: "BTC", ExpirationDate: "08/28/2026"},
 		{Underlying: "BTC", Limit: -1},
 	}
@@ -152,6 +154,71 @@ func TestDeribitServiceReturnsEmptySlice(t *testing.T) {
 	response, err := service.QueryOptionChain(context.Background(), dto.DeribitOptionChainRequest{Underlying: "BTC"})
 	if err != nil {
 		t.Fatalf("QueryOptionChain: %v", err)
+	}
+	if response.Data == nil || len(response.Data) != 0 {
+		t.Fatalf("Data=%#v want non-nil empty slice", response.Data)
+	}
+}
+
+func TestDeribitServiceQueryHistoricalOptionChainMapsFiltersAndCaches(t *testing.T) {
+	date := time.Date(2026, time.August, 13, 0, 0, 0, 0, time.UTC)
+	markIV := 62.5
+	markPrice := 0.12
+	bidPrice := 0.11
+	askPrice := 0.13
+	underlyingPrice := 118000.0
+	openInterest := 42.0
+	loadCalls := 0
+	client := &stubDeribitClient{}
+	service := NewDeribitService(client, cache.NewMemoryStore())
+	service.historicalLoad = func(_ context.Context, underlying string, day time.Time) ([]dto.DeribitOptionChainContract, error) {
+		loadCalls++
+		if underlying != "BTC" || !day.Equal(date) {
+			t.Fatalf("historical loader received %q at %s", underlying, day)
+		}
+		return []dto.DeribitOptionChainContract{
+			{
+				Contract:  dto.DeribitOptionContract{Ticker: "BTC-28AUG26-110000-P", UnderlyingTicker: "BTC", ContractType: "put", ExerciseStyle: "european", ExpirationDate: "2026-08-28", StrikePrice: 110000, BaseCurrency: "BTC", QuoteCurrency: "USD"},
+				MarkPrice: &markPrice, BidPrice: &bidPrice, AskPrice: &askPrice, ImpliedVolatility: &markIV, OpenInterest: &openInterest,
+				UnderlyingAsset: dto.DeribitUnderlyingAsset{Ticker: "BTC", Price: &underlyingPrice}, PremiumCurrency: "BTC", Timestamp: date.UnixMilli(),
+			},
+			{Contract: dto.DeribitOptionContract{Ticker: "BTC-28AUG26-90000-C", UnderlyingTicker: "BTC", ContractType: "call", ExerciseStyle: "european", ExpirationDate: "2026-08-28", StrikePrice: 90000, BaseCurrency: "BTC", QuoteCurrency: "USD"}},
+		}, nil
+	}
+
+	putResponse, err := service.QueryOptionChain(context.Background(), dto.DeribitOptionChainRequest{Underlying: "btc", Date: "2026-08-13", ContractType: "put"})
+	if err != nil {
+		t.Fatalf("QueryOptionChain historical put: %v", err)
+	}
+	if len(putResponse.Data) != 1 || putResponse.Data[0].Contract.Ticker != "BTC-28AUG26-110000-P" {
+		t.Fatalf("unexpected historical response: %#v", putResponse.Data)
+	}
+
+	strike := 90000.0
+	callResponse, err := service.QueryOptionChain(context.Background(), dto.DeribitOptionChainRequest{Underlying: "BTC", Date: "2026-08-13", StrikePrice: &strike})
+	if err != nil {
+		t.Fatalf("QueryOptionChain historical strike: %v", err)
+	}
+	if len(callResponse.Data) != 1 || callResponse.Data[0].Contract.Ticker != "BTC-28AUG26-90000-C" {
+		t.Fatalf("unexpected historical strike response: %#v", callResponse.Data)
+	}
+	if loadCalls != 1 {
+		t.Fatalf("historical loads=%d want 1", loadCalls)
+	}
+	if client.calls != 0 {
+		t.Fatalf("upstream calls=%d want 0", client.calls)
+	}
+}
+
+func TestDeribitServiceQueryHistoricalOptionChainReturnsEmptySlice(t *testing.T) {
+	service := NewDeribitService(&stubDeribitClient{}, nil)
+	service.historicalLoad = func(context.Context, string, time.Time) ([]dto.DeribitOptionChainContract, error) {
+		return nil, nil
+	}
+
+	response, err := service.QueryOptionChain(context.Background(), dto.DeribitOptionChainRequest{Underlying: "BTC", Date: "2026-08-13"})
+	if err != nil {
+		t.Fatalf("QueryOptionChain historical: %v", err)
 	}
 	if response.Data == nil || len(response.Data) != 0 {
 		t.Fatalf("Data=%#v want non-nil empty slice", response.Data)

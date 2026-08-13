@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/Cyvadra/toktik/internal/cache"
+	"github.com/Cyvadra/toktik/internal/chquery"
+	"github.com/Cyvadra/toktik/internal/chrepo"
 	"github.com/Cyvadra/toktik/internal/config"
 	"github.com/Cyvadra/toktik/internal/cryptooptions"
 	"github.com/Cyvadra/toktik/internal/dto"
@@ -19,6 +21,8 @@ import (
 const (
 	deribitOptionChainTTL      = 5 * time.Second
 	deribitOptionChainMaxLimit = 1000
+	deribitHistoricalChainTTL  = 24 * time.Hour
+	deribitCurrentDayChainTTL  = 5 * time.Minute
 )
 
 type deribitClient interface {
@@ -26,12 +30,21 @@ type deribitClient interface {
 }
 
 type DeribitService struct {
-	client deribitClient
-	cache  cache.Store
+	client         deribitClient
+	cache          cache.Store
+	repo           *chrepo.Repo
+	historicalLoad func(context.Context, string, time.Time) ([]dto.DeribitOptionChainContract, error)
 }
 
 func NewDeribitService(client deribitClient, store cache.Store) *DeribitService {
 	return &DeribitService{client: client, cache: store}
+}
+
+// WithHistoricalRepo enables date-based option-chain requests from local
+// ClickHouse snapshots.
+func (s *DeribitService) WithHistoricalRepo(repo *chrepo.Repo) *DeribitService {
+	s.repo = repo
+	return s
 }
 
 func NewDeribitServiceFromConfig(cfg config.Runtime, store cache.Store) (*DeribitService, error) {
@@ -58,25 +71,41 @@ func (s *DeribitService) QueryOptionChain(ctx context.Context, req dto.DeribitOp
 	if err != nil {
 		return nil, err
 	}
-	raw, err := s.OptionChain(ctx, filter.underlying)
-	if err != nil {
-		return nil, err
-	}
 
-	data := make([]dto.DeribitOptionChainContract, 0, len(raw))
-	for _, item := range raw {
-		mapped, meta, err := mapDeribitOptionChainContract(item)
+	var data []dto.DeribitOptionChainContract
+	if filter.date != nil {
+		data, err = s.historicalOptionChain(ctx, filter.underlying, *filter.date)
 		if err != nil {
-			return nil, &deribitpkg.ResponseError{Message: fmt.Sprintf("invalid instrument %q", item.InstrumentName)}
+			return nil, err
 		}
-		if !strings.EqualFold(meta.BaseAsset, filter.underlying) {
-			continue
+	} else {
+		raw, err := s.OptionChain(ctx, filter.underlying)
+		if err != nil {
+			return nil, err
 		}
-		if filter.matches(meta) {
-			data = append(data, mapped)
+		data = make([]dto.DeribitOptionChainContract, 0, len(raw))
+		for _, item := range raw {
+			mapped, meta, err := mapDeribitOptionChainContract(item)
+			if err != nil {
+				return nil, &deribitpkg.ResponseError{Message: fmt.Sprintf("invalid instrument %q", item.InstrumentName)}
+			}
+			if strings.EqualFold(meta.BaseAsset, filter.underlying) {
+				data = append(data, mapped)
+			}
 		}
 	}
+	data = filterDeribitOptionChain(data, filter)
+	return &dto.DeribitOptionChainResponse{Data: data}, nil
+}
 
+func filterDeribitOptionChain(data []dto.DeribitOptionChainContract, filter deribitOptionChainFilter) []dto.DeribitOptionChainContract {
+	filtered := make([]dto.DeribitOptionChainContract, 0, len(data))
+	for _, item := range data {
+		if filter.matchesContract(item) {
+			filtered = append(filtered, item)
+		}
+	}
+	data = filtered
 	sort.SliceStable(data, func(i, j int) bool {
 		comparison := compareDeribitContracts(data[i], data[j], filter.sortField)
 		if filter.descending {
@@ -87,11 +116,12 @@ func (s *DeribitService) QueryOptionChain(ctx context.Context, req dto.DeribitOp
 	if filter.limit > 0 && len(data) > filter.limit {
 		data = data[:filter.limit]
 	}
-	return &dto.DeribitOptionChainResponse{Data: data}, nil
+	return data
 }
 
 type deribitOptionChainFilter struct {
 	underlying    string
+	date          *time.Time
 	expiration    *time.Time
 	expirationGte *time.Time
 	expirationGt  *time.Time
@@ -122,6 +152,14 @@ func newDeribitOptionChainFilter(req dto.DeribitOptionChainRequest) (deribitOpti
 	}
 	if filter.underlying == "" {
 		return filter, dto.NewValidationError("underlying is required")
+	}
+	if strings.TrimSpace(req.Date) != "" {
+		date, err := time.Parse("2006-01-02", strings.TrimSpace(req.Date))
+		if err != nil {
+			return filter, dto.NewValidationError("date must use YYYY-MM-DD")
+		}
+		date = date.UTC()
+		filter.date = &date
 	}
 	if filter.contractType != "" && filter.contractType != "call" && filter.contractType != "put" {
 		return filter, dto.NewValidationError("contract_type must be call or put")
@@ -198,8 +236,19 @@ func validateDeribitRanges(filter deribitOptionChainFilter) error {
 }
 
 func (f deribitOptionChainFilter) matches(meta cryptooptions.SymbolMeta) bool {
-	expiration := meta.Expiration.UTC()
-	strike := float64(meta.StrikePrice)
+	return f.matchesValues(meta.Expiration, float64(meta.StrikePrice), meta.OptionType)
+}
+
+func (f deribitOptionChainFilter) matchesContract(contract dto.DeribitOptionChainContract) bool {
+	expiration, err := time.Parse("2006-01-02", contract.Contract.ExpirationDate)
+	if err != nil {
+		return false
+	}
+	return f.matchesValues(expiration, contract.Contract.StrikePrice, contract.Contract.ContractType)
+}
+
+func (f deribitOptionChainFilter) matchesValues(expiration time.Time, strike float64, contractType string) bool {
+	expiration = expiration.UTC()
 	if f.expiration != nil && !expiration.Equal(*f.expiration) {
 		return false
 	}
@@ -215,7 +264,7 @@ func (f deribitOptionChainFilter) matches(meta cryptooptions.SymbolMeta) bool {
 	if f.expirationLt != nil && !expiration.Before(*f.expirationLt) {
 		return false
 	}
-	if f.contractType != "" && meta.OptionType != f.contractType {
+	if f.contractType != "" && contractType != f.contractType {
 		return false
 	}
 	if f.strike != nil && strike != *f.strike {
@@ -234,6 +283,100 @@ func (f deribitOptionChainFilter) matches(meta cryptooptions.SymbolMeta) bool {
 		return false
 	}
 	return true
+}
+
+func (s *DeribitService) historicalOptionChain(ctx context.Context, underlying string, day time.Time) ([]dto.DeribitOptionChainContract, error) {
+	if s.historicalLoad == nil && s.repo == nil {
+		return nil, fmt.Errorf("historical Deribit option-chain provider not configured")
+	}
+	ttl := deribitHistoricalChainTTL
+	if sameUTCDay(day, time.Now()) {
+		ttl = deribitCurrentDayChainTTL
+	}
+	return cacheFetch(ctx, s.cache, deribitCacheKey("historical-option-chain:v1", underlying, day.UTC().Format("2006-01-02")), ttl, func() ([]dto.DeribitOptionChainContract, error) {
+		if s.historicalLoad != nil {
+			return s.historicalLoad(ctx, underlying, day)
+		}
+		return s.loadHistoricalOptionChain(ctx, underlying, day)
+	})
+}
+
+func (s *DeribitService) loadHistoricalOptionChain(ctx context.Context, underlying string, day time.Time) ([]dto.DeribitOptionChainContract, error) {
+	rows, err := s.repo.Query(ctx, chquery.CryptoOptionsDailyChainSQL(underlying, day))
+	if err != nil {
+		return nil, fmt.Errorf("query historical Deribit option chain: %w", err)
+	}
+	defer rows.Close()
+
+	data := make([]dto.DeribitOptionChainContract, 0)
+	for rows.Next() {
+		var row historicalDeribitOptionChainRow
+		if err := rows.Scan(&row.timestamp, &row.symbol, &row.optionType, &row.expiration, &row.strike, &row.markPrice, &row.bidPrice, &row.askPrice, &row.markIV, &row.volume, &row.openInterest, &row.underlyingPrice); err != nil {
+			return nil, fmt.Errorf("scan historical Deribit option chain: %w", err)
+		}
+		data = append(data, mapHistoricalDeribitOptionChainContract(row, underlying))
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate historical Deribit option chain: %w", err)
+	}
+	return data, nil
+}
+
+type historicalDeribitOptionChainRow struct {
+	timestamp       time.Time
+	symbol          string
+	optionType      string
+	expiration      time.Time
+	strike          float32
+	markPrice       float32
+	bidPrice        float32
+	askPrice        float32
+	markIV          float32
+	volume          float64
+	openInterest    float32
+	underlyingPrice float32
+}
+
+func mapHistoricalDeribitOptionChainContract(row historicalDeribitOptionChainRow, underlying string) dto.DeribitOptionChainContract {
+	markPrice := float64(row.markPrice)
+	bidPrice := float64(row.bidPrice)
+	askPrice := float64(row.askPrice)
+	markIV := float64(row.markIV)
+	volume := row.volume
+	openInterest := float64(row.openInterest)
+	underlyingPrice := float64(row.underlyingPrice)
+	contract := dto.DeribitOptionChainContract{
+		Contract: dto.DeribitOptionContract{
+			Ticker:           row.symbol,
+			UnderlyingTicker: underlying,
+			ContractType:     row.optionType,
+			ExerciseStyle:    "european",
+			ExpirationDate:   row.expiration.UTC().Format("2006-01-02"),
+			StrikePrice:      float64(row.strike),
+			BaseCurrency:     underlying,
+			QuoteCurrency:    "USD",
+		},
+		Day:               dto.DeribitOptionDay{Volume: &volume},
+		MarkPrice:         &markPrice,
+		BidPrice:          &bidPrice,
+		AskPrice:          &askPrice,
+		ImpliedVolatility: divideFloat(&markIV, 100),
+		OpenInterest:      &openInterest,
+		UnderlyingAsset:   dto.DeribitUnderlyingAsset{Ticker: underlying, Price: &underlyingPrice},
+		PremiumCurrency:   underlying,
+		Timestamp:         row.timestamp.UTC().UnixMilli(),
+	}
+	if bidPrice > 0 && askPrice > 0 {
+		midPrice := (bidPrice + askPrice) / 2
+		contract.MidPrice = &midPrice
+	}
+	return contract
+}
+
+func sameUTCDay(left, right time.Time) bool {
+	left = left.UTC()
+	right = right.UTC()
+	return left.Year() == right.Year() && left.YearDay() == right.YearDay()
 }
 
 func mapDeribitOptionChainContract(item deribitpkg.BookSummary) (dto.DeribitOptionChainContract, cryptooptions.SymbolMeta, error) {

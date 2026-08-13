@@ -2,6 +2,7 @@ package dto
 
 type DeribitOptionChainRequest struct {
 	Underlying        string   `form:"underlying" binding:"required"`
+	Date              string   `form:"date"`
 	ExpirationDate    string   `form:"expiration_date"`
 	ExpirationDateGte string   `form:"expiration_date_gte"`
 	ExpirationDateGt  string   `form:"expiration_date_gt"`

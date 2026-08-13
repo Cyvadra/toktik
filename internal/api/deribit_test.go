@@ -34,13 +34,13 @@ func TestGetDeribitOptionChainSuccess(t *testing.T) {
 	router := NewRouterFromDeps(Deps{Config: config.DefaultRuntime(), Deribit: provider})
 
 	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodGet, "/api/v1/deribit/options/chain?underlying=btc&contract_type=put&limit=10", nil)
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/deribit/options/chain?underlying=btc&date=2026-08-13&contract_type=put&limit=10", nil)
 	router.ServeHTTP(recorder, request)
 
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status=%d want 200 body=%s", recorder.Code, recorder.Body.String())
 	}
-	if provider.request.Underlying != "btc" || provider.request.ContractType != "put" || provider.request.Limit != 10 {
+	if provider.request.Underlying != "btc" || provider.request.Date != "2026-08-13" || provider.request.ContractType != "put" || provider.request.Limit != 10 {
 		t.Fatalf("unexpected request: %#v", provider.request)
 	}
 	if !strings.Contains(recorder.Body.String(), "BTC-28AUG26-110000-P") {

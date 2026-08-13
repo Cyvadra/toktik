@@ -304,6 +304,7 @@ The server hashes the supplied key and accepts it only when the matching databas
 | Name | In | Type | Required | Description |
 | --- | --- | --- | --- | --- |
 | underlying | query | string | yes | Underlying currency (for example BTC or ETH) |
+| date | query | string | no | Historical UTC date (YYYY-MM-DD); returns the final available local snapshot for that date |
 | expiration_date | query | string | no | Exact expiration date (YYYY-MM-DD) |
 | expiration_date_gte | query | string | no | Minimum expiration date |
 | expiration_date_gt | query | string | no | Expiration date greater than |

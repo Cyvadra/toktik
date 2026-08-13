@@ -14,6 +14,7 @@ import (
 //	@Tags			Deribit
 //	@Produce		json
 //	@Param			underlying			query		string	true	"Underlying currency (for example BTC or ETH)"
+//	@Param			date				query		string	false	"Historical UTC date (YYYY-MM-DD); returns the final available local snapshot for that date"
 //	@Param			expiration_date		query		string	false	"Exact expiration date (YYYY-MM-DD)"
 //	@Param			expiration_date_gte	query		string	false	"Minimum expiration date"
 //	@Param			expiration_date_gt	query		string	false	"Expiration date greater than"

@@ -110,7 +110,7 @@ func buildAPIDeps(runtimeCfg config.Runtime, repo *chrepo.Repo, factorStore *fee
 		FinanceCalendar:   services.financeCalendar,
 		Logos:             services.logos,
 		Polygon:           polygonSvc,
-		Deribit:           deribitSvc,
+		Deribit:           deribitSvc.WithHistoricalRepo(repo),
 		APIKeys:           apiKeyAuth,
 		Stop:              stop,
 	}

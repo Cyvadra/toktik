@@ -387,6 +387,11 @@ paths:
         name: underlying
         required: true
         type: string
+      - description: Historical UTC date (YYYY-MM-DD); returns the final available
+          local snapshot for that date
+        in: query
+        name: date
+        type: string
       - description: Exact expiration date (YYYY-MM-DD)
         in: query
         name: expiration_date

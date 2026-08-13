@@ -139,6 +139,55 @@ LIMIT %d
 `, chainView, QuotedString(baseAsset), QuotedDateTime(fromT), QuotedDateTime(toT), spotTable, limit)
 }
 
+// CryptoOptionsDailyChainSQL returns every contract in a base asset's daily
+// chain snapshot. The daily aggregate stores the final quote values for the
+// UTC day; no global row limit is applied so a full chain is never truncated.
+func CryptoOptionsDailyChainSQL(baseAsset string, day time.Time) string {
+	start := time.Date(day.UTC().Year(), day.UTC().Month(), day.UTC().Day(), 0, 0, 0, 0, time.UTC)
+	end := start.AddDate(0, 0, 1)
+	return fmt.Sprintf(`SELECT
+    e.timestamp,
+    m.symbol,
+    m.option_type,
+    m.expiration,
+    m.strike_price,
+    e.mark_price,
+    e.bid_price,
+    e.ask_price,
+    e.mark_iv,
+    e.volume,
+    e.open_interest,
+    ifNull(s.close, toFloat32(0)) AS underlying_close
+FROM (
+    SELECT
+        timestamp,
+        base_asset,
+        sid AS symbol_id,
+        bp AS bid_price,
+        ap AS ask_price,
+        mp AS mark_price,
+        mi AS mark_iv,
+        vol AS volume,
+        oi AS open_interest
+    FROM crypto_options_chain_1d
+    ARRAY JOIN
+        symbol_ids AS sid,
+        bid_prices AS bp,
+        ask_prices AS ap,
+        mark_prices AS mp,
+        mark_ivs AS mi,
+        volumes AS vol,
+        open_interests AS oi
+    WHERE base_asset = %s
+      AND timestamp >= toDateTime(%s, 'UTC')
+      AND timestamp < toDateTime(%s, 'UTC')
+) AS e
+INNER JOIN (SELECT * FROM crypto_options_symbol_meta FINAL) AS m ON m.symbol_id = e.symbol_id
+LEFT JOIN crypto_spot_bar_1d AS s ON s.timestamp = e.timestamp AND s.symbol = e.base_asset
+ORDER BY m.expiration ASC, m.strike_price ASC, m.option_type ASC, m.symbol ASC`,
+		QuotedString(baseAsset), QuotedDateTime(start), QuotedDateTime(end))
+}
+
 // CryptoOptionsChainTimestampsSQL returns daily chain snapshot timestamps.
 func CryptoOptionsChainTimestampsSQL(chainView, baseAsset string, fromT, toT time.Time) string {
 	return fmt.Sprintf(`SELECT timestamp
