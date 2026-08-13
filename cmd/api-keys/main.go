@@ -35,6 +35,7 @@ func usage() {
 Commands:
   create   Create a new API key and print the plaintext token once
   list     List API keys without plaintext tokens
+  set-rate-limit  Set an API key's per-key rate limit
   disable  Disable an API key by id
   rotate   Rotate an API key by id and print the new plaintext token once
 
@@ -47,6 +48,8 @@ func run(command string, args []string) error {
 		return createCommand(args)
 	case "list":
 		return listCommand(args)
+	case "set-rate-limit":
+		return setRateLimitCommand(args)
 	case "disable":
 		return disableCommand(args)
 	case "rotate":
@@ -168,6 +171,36 @@ func listCommand(args []string) error {
 			formatOptionalTime(key.LastUsedAt),
 		)
 	}
+	return nil
+}
+
+func setRateLimitCommand(args []string) error {
+	fs := flag.NewFlagSet("set-rate-limit", flag.ContinueOnError)
+	id := fs.Uint64("id", 0, "API key id to update")
+	rateLimitRPS := fs.Float64("rate-limit-rps", 0, "Per-key rate limit RPS; must be greater than zero")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *id == 0 {
+		return fmt.Errorf("--id is required")
+	}
+	if *rateLimitRPS <= 0 {
+		return fmt.Errorf("--rate-limit-rps must be greater than zero")
+	}
+	ctx := context.Background()
+	repo, closeDB, err := openRepo(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = closeDB() }()
+	ok, err := repo.SetRateLimit(ctx, *id, *rateLimitRPS)
+	if err != nil {
+		return fmt.Errorf("set API key rate limit: %w", err)
+	}
+	if !ok {
+		return fmt.Errorf("API key id %d not found", *id)
+	}
+	fmt.Printf("id=%d\nrate_limit_rps=%g\n", *id, *rateLimitRPS)
 	return nil
 }
 

@@ -73,6 +73,11 @@ func (r *Repo) Disable(ctx context.Context, id uint64) (bool, error) {
 	return result.RowsAffected > 0, result.Error
 }
 
+func (r *Repo) SetRateLimit(ctx context.Context, id uint64, rateLimitRPS float64) (bool, error) {
+	result := r.db.WithContext(ctx).Model(&APIKey{}).Where("id = ?", id).Update("rate_limit_rps", rateLimitRPS)
+	return result.RowsAffected > 0, result.Error
+}
+
 func (r *Repo) Rotate(ctx context.Context, id uint64, digest, prefix string) (bool, error) {
 	result := r.db.WithContext(ctx).Model(&APIKey{}).Where("id = ?", id).Updates(map[string]any{
 		"key_digest": digest,
