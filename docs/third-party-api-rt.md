@@ -26,7 +26,7 @@ The server hashes the supplied key and accepts it only when the matching databas
 
 - [Authentication](#authentication)
 - [Polygon Realtime Market Data](#polygon-realtime-market-data)
-- [Deribit Realtime Market Data](#deribit-realtime-market-data)
+- [Deribit Option Chain Data](#deribit-option-chain-data)
 - [Schemas](#schemas)
 
 ## Polygon Realtime Market Data
@@ -37,7 +37,7 @@ The server hashes the supplied key and accepts it only when the matching databas
 - Tags: `Polygon`
 - Produces: `application/json`
 - Summary: Get realtime US stock snapshot via Polygon
-- Description: Proxies Polygon stock snapshot data. This endpoint bypasses the platform database and is intended for realtime client reads.
+- Description: Proxies Polygon stock snapshot data. When stale cache fallback is enabled, successful responses are retained for 90 days and returned when Polygon is unavailable.
 
 #### Parameters
 
@@ -59,7 +59,7 @@ The server hashes the supplied key and accepts it only when the matching databas
 - Tags: `Polygon`
 - Produces: `application/json`
 - Summary: Get US stock aggregate bars via Polygon
-- Description: Proxies Polygon aggregate bars for historical or near-realtime stock data with short-TTL caching based on the requested time window.
+- Description: Proxies Polygon aggregate bars for historical or near-realtime stock data with short-TTL caching and an optional 90-day stale fallback when Polygon is unavailable.
 
 #### Parameters
 
@@ -170,7 +170,7 @@ The server hashes the supplied key and accepts it only when the matching databas
 - Tags: `Polygon`
 - Produces: `application/json`
 - Summary: Get realtime US option chain snapshot via Polygon
-- Description: Proxies Polygon option chain snapshots for a US underlying. This is the recommended endpoint for realtime option surface reads.
+- Description: Proxies Polygon option chain snapshots for a US underlying. When stale cache fallback is enabled, successful responses remain available for 90 days when Polygon is unavailable.
 
 #### Parameters
 
@@ -289,7 +289,7 @@ The server hashes the supplied key and accepts it only when the matching databas
 | 400 | [ErrorResponse](#errorresponse) | Bad Request |
 | 500 | [ErrorResponse](#errorresponse) | Internal Server Error |
 
-## Deribit Realtime Market Data
+## Deribit Option Chain Data
 
 ### Crypto option chain snapshot
 
@@ -330,6 +330,36 @@ The server hashes the supplied key and accepts it only when the matching databas
 | 502 | [ErrorResponse](#errorresponse) | Bad Gateway |
 | 504 | [ErrorResponse](#errorresponse) | Gateway Timeout |
 
+### Historical crypto option chain snapshots
+
+- Endpoint: `GET /api/v1/deribit/options/chain/history`
+- Tags: `Deribit`
+- Produces: `application/json`
+- Summary: Get historical crypto option chain snapshots
+- Description: Returns local end-of-day option-chain snapshots for each UTC date in the inclusive range. Each snapshot's contracts use the realtime Deribit option-chain structure.
+
+#### Parameters
+
+| Name | In | Type | Required | Description |
+| --- | --- | --- | --- | --- |
+| underlying | query | string | yes | Underlying currency (for example BTC or ETH) |
+| from | query | string | yes | First historical UTC date (YYYY-MM-DD) |
+| to | query | string | yes | Last historical UTC date (YYYY-MM-DD), inclusive |
+| expiration_date | query | string | no | Exact expiration date (YYYY-MM-DD) |
+| contract_type | query | string | no | call or put |
+| order | query | string | no | Sort direction (asc or desc) |
+| sort | query | string | no | Sort field |
+| limit | query | integer | no | Maximum contracts per snapshot (max 1000; zero returns all) |
+
+#### Responses
+
+| Status | Schema | Description |
+| --- | --- | --- |
+| 200 | [DeribitOptionChainHistoryResponse](#deribitoptionchainhistoryresponse) | OK |
+| 400 | [ErrorResponse](#errorresponse) | Bad Request |
+| 500 | [ErrorResponse](#errorresponse) | Internal Server Error |
+| 501 | [ErrorResponse](#errorresponse) | Not Implemented |
+
 ## Schemas
 
 This section expands every request and response schema referenced by the third-party endpoints above. Nested DTOs are included so clients can inspect the complete JSON shape without opening Swagger.
@@ -354,6 +384,15 @@ This section expands every request and response schema referenced by the third-p
 | timestamp | integer | no | - |
 | underlyingAsset | [DeribitUnderlyingAsset](#deribitunderlyingasset) | no | - |
 
+### DeribitOptionChainHistoryResponse
+
+- Schema: `github_com_Cyvadra_toktik_internal_dto.DeribitOptionChainHistoryResponse`
+- Type: `object`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| data | array<[DeribitOptionChainSnapshot](#deribitoptionchainsnapshot)> | no | - |
+
 ### DeribitOptionChainResponse
 
 - Schema: `github_com_Cyvadra_toktik_internal_dto.DeribitOptionChainResponse`
@@ -362,6 +401,16 @@ This section expands every request and response schema referenced by the third-p
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
 | data | array<[DeribitOptionChainContract](#deribitoptionchaincontract)> | no | - |
+
+### DeribitOptionChainSnapshot
+
+- Schema: `github_com_Cyvadra_toktik_internal_dto.DeribitOptionChainSnapshot`
+- Type: `object`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| data | array<[DeribitOptionChainContract](#deribitoptionchaincontract)> | no | - |
+| date | string | no | - |
 
 ### DeribitOptionContract
 

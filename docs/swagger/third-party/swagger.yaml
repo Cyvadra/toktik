@@ -27,12 +27,28 @@ definitions:
       underlyingAsset:
         $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.DeribitUnderlyingAsset'
     type: object
+  github_com_Cyvadra_toktik_internal_dto.DeribitOptionChainHistoryResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.DeribitOptionChainSnapshot'
+        type: array
+    type: object
   github_com_Cyvadra_toktik_internal_dto.DeribitOptionChainResponse:
     properties:
       data:
         items:
           $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.DeribitOptionChainContract'
         type: array
+    type: object
+  github_com_Cyvadra_toktik_internal_dto.DeribitOptionChainSnapshot:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.DeribitOptionChainContract'
+        type: array
+      date:
+        type: string
     type: object
   github_com_Cyvadra_toktik_internal_dto.DeribitOptionContract:
     properties:
@@ -474,6 +490,69 @@ paths:
       summary: Get realtime crypto option chain snapshot via Deribit
       tags:
       - Deribit
+  /deribit/options/chain/history:
+    get:
+      description: Returns local end-of-day option-chain snapshots for each UTC date
+        in the inclusive range. Each snapshot's contracts use the realtime Deribit
+        option-chain structure.
+      parameters:
+      - description: Underlying currency (for example BTC or ETH)
+        in: query
+        name: underlying
+        required: true
+        type: string
+      - description: First historical UTC date (YYYY-MM-DD)
+        in: query
+        name: from
+        required: true
+        type: string
+      - description: Last historical UTC date (YYYY-MM-DD), inclusive
+        in: query
+        name: to
+        required: true
+        type: string
+      - description: Exact expiration date (YYYY-MM-DD)
+        in: query
+        name: expiration_date
+        type: string
+      - description: call or put
+        in: query
+        name: contract_type
+        type: string
+      - description: Sort direction (asc or desc)
+        in: query
+        name: order
+        type: string
+      - description: Sort field
+        in: query
+        name: sort
+        type: string
+      - description: Maximum contracts per snapshot (max 1000; zero returns all)
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.DeribitOptionChainHistoryResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+        "501":
+          description: Not Implemented
+          schema:
+            $ref: '#/definitions/github_com_Cyvadra_toktik_internal_dto.ErrorResponse'
+      summary: Get historical crypto option chain snapshots
+      tags:
+      - Deribit
   /polygon/options/aggregates:
     get:
       description: Proxies Polygon aggregate bars for a US option contract over a
@@ -535,8 +614,9 @@ paths:
       - Polygon
   /polygon/options/chain:
     get:
-      description: Proxies Polygon option chain snapshots for a US underlying. This
-        is the recommended endpoint for realtime option surface reads.
+      description: Proxies Polygon option chain snapshots for a US underlying. When
+        stale cache fallback is enabled, successful responses remain available for
+        90 days when Polygon is unavailable.
       parameters:
       - description: Underlying ticker symbol
         in: query
@@ -766,7 +846,8 @@ paths:
   /polygon/stocks/aggregates:
     get:
       description: Proxies Polygon aggregate bars for historical or near-realtime
-        stock data with short-TTL caching based on the requested time window.
+        stock data with short-TTL caching and an optional 90-day stale fallback when
+        Polygon is unavailable.
       parameters:
       - description: Stock ticker symbol
         in: query
@@ -884,8 +965,9 @@ paths:
       - Polygon
   /polygon/stocks/snapshot:
     get:
-      description: Proxies Polygon stock snapshot data. This endpoint bypasses the
-        platform database and is intended for realtime client reads.
+      description: Proxies Polygon stock snapshot data. When stale cache fallback
+        is enabled, successful responses are retained for 90 days and returned when
+        Polygon is unavailable.
       parameters:
       - description: 'Stock ticker symbol (alias: symbol)'
         in: query

@@ -200,9 +200,10 @@ var thirdPartySections = []sectionSpec{
 		},
 	},
 	{
-		Title: "Deribit Realtime Market Data",
+		Title: "Deribit Option Chain Data",
 		Endpoints: []endpointSpec{
 			{Method: "GET", Path: "/deribit/options/chain", Label: "Crypto option chain snapshot"},
+			{Method: "GET", Path: "/deribit/options/chain/history", Label: "Historical crypto option chain snapshots"},
 		},
 	},
 }
