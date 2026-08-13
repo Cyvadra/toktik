@@ -89,7 +89,7 @@ export-backtests-api-md: swagger-backtests-docs
 	go run ./cmd/api-docs-markdown -scope backtests -input docs/swagger/backtests/swagger.json -output docs/dsl.md -title "Backtests & DSL API"
 
 export-third-party-docs: swagger-third-party-docs
-	go run ./cmd/api-docs-markdown -scope third-party -input docs/swagger/third-party/swagger.json -output docs/thrid-party-api-rt.md -title "Third-Party Realtime Market Data API"
+	go run ./cmd/api-docs-markdown -scope third-party -input docs/swagger/third-party/swagger.json -output docs/third-party-api-rt.md -title "Third-Party Realtime Market Data API"
 
 export-vscode-dsl-extension:
 	go run ./cmd/vscode-dsl-extension-data -output extension/vscode
