@@ -126,6 +126,7 @@ func TestDeribitServiceQueryOptionChainValidation(t *testing.T) {
 		{Underlying: "BTC", Order: "sideways"},
 		{Underlying: "BTC", Sort: "unknown"},
 		{Underlying: "BTC", Date: "08/13/2026"},
+		{Underlying: "BTC", From: "2026-08-12", To: "2026-08-13"},
 		{Underlying: "BTC", ExpirationDate: "08/28/2026"},
 		{Underlying: "BTC", Limit: -1},
 	}
@@ -222,5 +223,65 @@ func TestDeribitServiceQueryHistoricalOptionChainReturnsEmptySlice(t *testing.T)
 	}
 	if response.Data == nil || len(response.Data) != 0 {
 		t.Fatalf("Data=%#v want non-nil empty slice", response.Data)
+	}
+}
+
+func TestDeribitServiceQueryOptionChainHistoryIncludesEveryDayAndReusesCache(t *testing.T) {
+	dayOne := time.Date(2026, time.August, 12, 0, 0, 0, 0, time.UTC)
+	dayTwo := dayOne.AddDate(0, 0, 1)
+	loadCalls := make(map[string]int)
+	service := NewDeribitService(&stubDeribitClient{}, cache.NewMemoryStore())
+	service.historicalLoad = func(_ context.Context, underlying string, day time.Time) ([]dto.DeribitOptionChainContract, error) {
+		loadCalls[day.Format("2006-01-02")]++
+		if underlying != "BTC" {
+			t.Fatalf("underlying=%q want BTC", underlying)
+		}
+		if day.Equal(dayTwo) {
+			return nil, nil
+		}
+		return []dto.DeribitOptionChainContract{{
+			Contract: dto.DeribitOptionContract{Ticker: "BTC-28AUG26-110000-P", ContractType: "put", ExpirationDate: "2026-08-28", StrikePrice: 110000},
+		}}, nil
+	}
+
+	response, err := service.QueryOptionChainHistory(context.Background(), dto.DeribitOptionChainRequest{Underlying: "BTC", From: "2026-08-12", To: "2026-08-13", ContractType: "put"})
+	if err != nil {
+		t.Fatalf("QueryOptionChainHistory: %v", err)
+	}
+	if len(response.Data) != 2 {
+		t.Fatalf("snapshots=%d want 2", len(response.Data))
+	}
+	if response.Data[0].Date != "2026-08-12" || len(response.Data[0].Data) != 1 {
+		t.Fatalf("unexpected first snapshot: %#v", response.Data[0])
+	}
+	if response.Data[1].Date != "2026-08-13" || response.Data[1].Data == nil || len(response.Data[1].Data) != 0 {
+		t.Fatalf("unexpected empty second snapshot: %#v", response.Data[1])
+	}
+
+	_, err = service.QueryOptionChain(context.Background(), dto.DeribitOptionChainRequest{Underlying: "BTC", Date: "2026-08-12"})
+	if err != nil {
+		t.Fatalf("QueryOptionChain single day: %v", err)
+	}
+	if loadCalls["2026-08-12"] != 1 || loadCalls["2026-08-13"] != 1 {
+		t.Fatalf("historical loads=%#v want one per day", loadCalls)
+	}
+}
+
+func TestDeribitServiceQueryOptionChainHistoryValidation(t *testing.T) {
+	service := NewDeribitService(&stubDeribitClient{}, nil)
+	tests := []dto.DeribitOptionChainRequest{
+		{Underlying: "BTC", To: "2026-08-13"},
+		{Underlying: "BTC", From: "2026-08-12"},
+		{Underlying: "BTC", From: "2026/08/12", To: "2026-08-13"},
+		{Underlying: "BTC", From: "2026-08-14", To: "2026-08-13"},
+		{Underlying: "BTC", Date: "2026-08-12", From: "2026-08-12", To: "2026-08-13"},
+		{Underlying: "BTC", From: "2025-01-01", To: "2026-01-02"},
+	}
+	for _, request := range tests {
+		_, err := service.QueryOptionChainHistory(context.Background(), request)
+		var validationError *dto.ValidationError
+		if !errors.As(err, &validationError) {
+			t.Fatalf("request=%#v error=%T %v want ValidationError", request, err, err)
+		}
 	}
 }

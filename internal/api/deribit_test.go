@@ -16,14 +16,20 @@ import (
 )
 
 type mockDeribitProvider struct {
-	response *dto.DeribitOptionChainResponse
-	request  dto.DeribitOptionChainRequest
-	err      error
+	response        *dto.DeribitOptionChainResponse
+	historyResponse *dto.DeribitOptionChainHistoryResponse
+	request         dto.DeribitOptionChainRequest
+	err             error
 }
 
 func (m *mockDeribitProvider) QueryOptionChain(_ context.Context, request dto.DeribitOptionChainRequest) (*dto.DeribitOptionChainResponse, error) {
 	m.request = request
 	return m.response, m.err
+}
+
+func (m *mockDeribitProvider) QueryOptionChainHistory(_ context.Context, request dto.DeribitOptionChainRequest) (*dto.DeribitOptionChainHistoryResponse, error) {
+	m.request = request
+	return m.historyResponse, m.err
 }
 
 func TestGetDeribitOptionChainSuccess(t *testing.T) {
@@ -44,6 +50,26 @@ func TestGetDeribitOptionChainSuccess(t *testing.T) {
 		t.Fatalf("unexpected request: %#v", provider.request)
 	}
 	if !strings.Contains(recorder.Body.String(), "BTC-28AUG26-110000-P") {
+		t.Fatalf("unexpected response: %s", recorder.Body.String())
+	}
+}
+
+func TestGetDeribitOptionChainHistorySuccess(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	provider := &mockDeribitProvider{historyResponse: &dto.DeribitOptionChainHistoryResponse{Data: []dto.DeribitOptionChainSnapshot{{Date: "2026-08-12", Data: []dto.DeribitOptionChainContract{{Contract: dto.DeribitOptionContract{Ticker: "BTC-28AUG26-110000-P"}}}}}}}
+	router := NewRouterFromDeps(Deps{Config: config.DefaultRuntime(), Deribit: provider})
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/deribit/options/chain/history?underlying=BTC&from=2026-08-12&to=2026-08-13&contract_type=put", nil)
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status=%d want 200 body=%s", recorder.Code, recorder.Body.String())
+	}
+	if provider.request.From != "2026-08-12" || provider.request.To != "2026-08-13" || provider.request.ContractType != "put" {
+		t.Fatalf("unexpected request: %#v", provider.request)
+	}
+	if !strings.Contains(recorder.Body.String(), "2026-08-12") || !strings.Contains(recorder.Body.String(), "BTC-28AUG26-110000-P") {
 		t.Fatalf("unexpected response: %s", recorder.Body.String())
 	}
 }
