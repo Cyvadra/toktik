@@ -37,6 +37,7 @@ const (
 	EnvSchemaDir                             = "TOKTIK_SCHEMA_DIR"
 	EnvDeribitBaseURL                        = "DERIBIT_BASE_URL"
 	EnvDeribitProxyURL                       = "DERIBIT_PROXY_URL"
+	EnvPolygonStaleCacheFallbackEnabled      = "TOKTIK_POLYGON_STALE_CACHE_FALLBACK_ENABLED"
 	EnvFMPAPIKey                             = "FMP_API_KEY"
 	EnvFMPCacheDir                           = "TOKTIK_FMP_CACHE_DIR"
 	EnvTigerID                               = "TIGEROPEN_TIGER_ID"
@@ -187,18 +188,19 @@ type Tiger struct {
 }
 
 type Polygon struct {
-	BaseURL           string  `yaml:"base_url"`
-	FlatFilesBaseURL  string  `yaml:"flat_files_base_url"`
-	FlatFilesTool     string  `yaml:"flat_files_tool"`
-	FlatFilesCacheDir string  `yaml:"flat_files_cache_dir"`
-	TimeoutSeconds    int     `yaml:"timeout_seconds"`
-	Trace             bool    `yaml:"trace"`
-	Pagination        bool    `yaml:"pagination"`
-	RESTQPS           float64 `yaml:"rest_qps"`
-	RESTBurst         int     `yaml:"rest_burst"`
-	RetryAttempts     int     `yaml:"retry_attempts"`
-	RetryBaseDelayMS  int     `yaml:"retry_base_delay_ms"`
-	RetryMaxDelayMS   int     `yaml:"retry_max_delay_ms"`
+	BaseURL                   string  `yaml:"base_url"`
+	FlatFilesBaseURL          string  `yaml:"flat_files_base_url"`
+	FlatFilesTool             string  `yaml:"flat_files_tool"`
+	FlatFilesCacheDir         string  `yaml:"flat_files_cache_dir"`
+	TimeoutSeconds            int     `yaml:"timeout_seconds"`
+	Trace                     bool    `yaml:"trace"`
+	Pagination                bool    `yaml:"pagination"`
+	StaleCacheFallbackEnabled bool    `yaml:"stale_cache_fallback_enabled"`
+	RESTQPS                   float64 `yaml:"rest_qps"`
+	RESTBurst                 int     `yaml:"rest_burst"`
+	RetryAttempts             int     `yaml:"retry_attempts"`
+	RetryBaseDelayMS          int     `yaml:"retry_base_delay_ms"`
+	RetryMaxDelayMS           int     `yaml:"retry_max_delay_ms"`
 
 	apiKey             string
 	flatFilesAccessKey string
@@ -284,21 +286,22 @@ func (t *Tiger) UnmarshalYAML(value *yaml.Node) error {
 
 func (p *Polygon) UnmarshalYAML(value *yaml.Node) error {
 	type rawPolygon struct {
-		APIKey             string  `yaml:"api_key"`
-		BaseURL            string  `yaml:"base_url"`
-		FlatFilesBaseURL   string  `yaml:"flat_files_base_url"`
-		FlatFilesTool      string  `yaml:"flat_files_tool"`
-		FlatFilesCacheDir  string  `yaml:"flat_files_cache_dir"`
-		FlatFilesAccessKey string  `yaml:"flat_files_access_key"`
-		FlatFilesSecretKey string  `yaml:"flat_files_secret_key"`
-		TimeoutSeconds     int     `yaml:"timeout_seconds"`
-		Trace              bool    `yaml:"trace"`
-		Pagination         bool    `yaml:"pagination"`
-		RESTQPS            float64 `yaml:"rest_qps"`
-		RESTBurst          int     `yaml:"rest_burst"`
-		RetryAttempts      int     `yaml:"retry_attempts"`
-		RetryBaseDelayMS   int     `yaml:"retry_base_delay_ms"`
-		RetryMaxDelayMS    int     `yaml:"retry_max_delay_ms"`
+		APIKey                    string  `yaml:"api_key"`
+		BaseURL                   string  `yaml:"base_url"`
+		FlatFilesBaseURL          string  `yaml:"flat_files_base_url"`
+		FlatFilesTool             string  `yaml:"flat_files_tool"`
+		FlatFilesCacheDir         string  `yaml:"flat_files_cache_dir"`
+		FlatFilesAccessKey        string  `yaml:"flat_files_access_key"`
+		FlatFilesSecretKey        string  `yaml:"flat_files_secret_key"`
+		TimeoutSeconds            int     `yaml:"timeout_seconds"`
+		Trace                     bool    `yaml:"trace"`
+		Pagination                bool    `yaml:"pagination"`
+		StaleCacheFallbackEnabled bool    `yaml:"stale_cache_fallback_enabled"`
+		RESTQPS                   float64 `yaml:"rest_qps"`
+		RESTBurst                 int     `yaml:"rest_burst"`
+		RetryAttempts             int     `yaml:"retry_attempts"`
+		RetryBaseDelayMS          int     `yaml:"retry_base_delay_ms"`
+		RetryMaxDelayMS           int     `yaml:"retry_max_delay_ms"`
 	}
 	var raw rawPolygon
 	if err := value.Decode(&raw); err != nil {
@@ -314,6 +317,7 @@ func (p *Polygon) UnmarshalYAML(value *yaml.Node) error {
 	p.TimeoutSeconds = raw.TimeoutSeconds
 	p.Trace = raw.Trace
 	p.Pagination = raw.Pagination
+	p.StaleCacheFallbackEnabled = raw.StaleCacheFallbackEnabled
 	p.RESTQPS = raw.RESTQPS
 	p.RESTBurst = raw.RESTBurst
 	p.RetryAttempts = raw.RetryAttempts
@@ -545,6 +549,11 @@ func (c *Runtime) applyEnvOverrides() {
 	}
 	if value := strings.TrimSpace(os.Getenv(EnvDeribitProxyURL)); value != "" {
 		c.Deribit.ProxyURL = value
+	}
+	if value := strings.TrimSpace(os.Getenv(EnvPolygonStaleCacheFallbackEnabled)); value != "" {
+		if parsed, err := strconv.ParseBool(value); err == nil {
+			c.Polygon.StaleCacheFallbackEnabled = parsed
+		}
 	}
 	if value := strings.TrimSpace(os.Getenv(EnvTigerID)); value != "" {
 		c.Tiger.TigerID = value

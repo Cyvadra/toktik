@@ -19,6 +19,7 @@ const (
 	polygonRecentTTL     = 15 * time.Second
 	polygonHistoricalTTL = 60 * time.Second
 	polygonContractTTL   = 6 * time.Hour
+	polygonStaleTTL      = 90 * 24 * time.Hour
 	polygonTimeCutoff    = 15 * time.Minute
 	polygonDayCutoff     = 24 * time.Hour
 )
@@ -41,9 +42,10 @@ type polygonClient interface {
 }
 
 type PolygonService struct {
-	client polygonClient
-	cache  cache.Store
-	now    func() time.Time
+	client                    polygonClient
+	cache                     cache.Store
+	staleCacheFallbackEnabled bool
+	now                       func() time.Time
 }
 
 func NewPolygonService(client polygonClient, store cache.Store) *PolygonService {
@@ -55,7 +57,12 @@ func NewPolygonServiceFromConfig(cfg config.Runtime, store cache.Store) (*Polygo
 	if err != nil {
 		return nil, fmt.Errorf("init polygon client: %w", err)
 	}
-	return NewPolygonService(client, store), nil
+	return NewPolygonService(client, store).WithStaleCacheFallback(cfg.Polygon.StaleCacheFallbackEnabled), nil
+}
+
+func (s *PolygonService) WithStaleCacheFallback(enabled bool) *PolygonService {
+	s.staleCacheFallbackEnabled = enabled
+	return s
 }
 
 func (s *PolygonService) DownloadStockMinuteAggregates(ctx context.Context, date time.Time, force bool) (string, error) {
@@ -76,7 +83,7 @@ func (s *PolygonService) DownloadOptionDailyAggregates(ctx context.Context, date
 
 func (s *PolygonService) StockSnapshot(ctx context.Context, symbol string) (*polygonpkg.StockSnapshot, error) {
 	key := s.cacheKey("stock-snapshot", strings.ToUpper(strings.TrimSpace(symbol)))
-	return cacheFetch(ctx, s.cache, key, polygonRealtimeTTL, func() (*polygonpkg.StockSnapshot, error) {
+	return polygonCacheFetch(ctx, s.cache, key, polygonRealtimeTTL, s.staleCacheFallbackEnabled, func() (*polygonpkg.StockSnapshot, error) {
 		return s.client.StockSnapshot(ctx, symbol)
 	})
 }
@@ -84,7 +91,7 @@ func (s *PolygonService) StockSnapshot(ctx context.Context, symbol string) (*pol
 func (s *PolygonService) StockAggregates(ctx context.Context, req polygonpkg.AggregateRequest) ([]polygonpkg.AggregateBar, error) {
 	ttl := s.aggregateTTL(req)
 	key := s.cacheKey("stock-aggregates", req)
-	return cacheFetch(ctx, s.cache, key, ttl, func() ([]polygonpkg.AggregateBar, error) {
+	return polygonCacheFetch(ctx, s.cache, key, ttl, s.staleCacheFallbackEnabled, func() ([]polygonpkg.AggregateBar, error) {
 		return s.client.StockAggregates(ctx, req)
 	})
 }
@@ -92,7 +99,7 @@ func (s *PolygonService) StockAggregates(ctx context.Context, req polygonpkg.Agg
 func (s *PolygonService) StockQuotes(ctx context.Context, symbol string, req polygonpkg.QuoteRequest) ([]polygonpkg.Quote, error) {
 	ttl := s.quoteTradeTTL(req.Timestamp, req.TimestampGte, req.TimestampGt, req.TimestampLte, req.TimestampLt)
 	key := s.cacheKey("stock-quotes", strings.ToUpper(strings.TrimSpace(symbol)), req)
-	return cacheFetch(ctx, s.cache, key, ttl, func() ([]polygonpkg.Quote, error) {
+	return polygonCacheFetch(ctx, s.cache, key, ttl, s.staleCacheFallbackEnabled, func() ([]polygonpkg.Quote, error) {
 		return s.client.StockQuotes(ctx, symbol, req)
 	})
 }
@@ -100,21 +107,21 @@ func (s *PolygonService) StockQuotes(ctx context.Context, symbol string, req pol
 func (s *PolygonService) StockTrades(ctx context.Context, symbol string, req polygonpkg.TradeRequest) ([]polygonpkg.Trade, error) {
 	ttl := s.quoteTradeTTL(req.Timestamp, req.TimestampGte, req.TimestampGt, req.TimestampLte, req.TimestampLt)
 	key := s.cacheKey("stock-trades", strings.ToUpper(strings.TrimSpace(symbol)), req)
-	return cacheFetch(ctx, s.cache, key, ttl, func() ([]polygonpkg.Trade, error) {
+	return polygonCacheFetch(ctx, s.cache, key, ttl, s.staleCacheFallbackEnabled, func() ([]polygonpkg.Trade, error) {
 		return s.client.StockTrades(ctx, symbol, req)
 	})
 }
 
 func (s *PolygonService) OptionContract(ctx context.Context, ticker string) (*polygonpkg.OptionContract, error) {
 	key := s.cacheKey("option-contract", strings.ToUpper(strings.TrimSpace(ticker)))
-	return cacheFetch(ctx, s.cache, key, polygonContractTTL, func() (*polygonpkg.OptionContract, error) {
+	return polygonCacheFetch(ctx, s.cache, key, polygonContractTTL, s.staleCacheFallbackEnabled, func() (*polygonpkg.OptionContract, error) {
 		return s.client.OptionContract(ctx, ticker)
 	})
 }
 
 func (s *PolygonService) OptionChain(ctx context.Context, req polygonpkg.OptionChainRequest) ([]polygonpkg.OptionChainContract, error) {
 	key := s.cacheKey("option-chain", req)
-	return cacheFetch(ctx, s.cache, key, polygonRealtimeTTL, func() ([]polygonpkg.OptionChainContract, error) {
+	return polygonCacheFetch(ctx, s.cache, key, polygonRealtimeTTL, s.staleCacheFallbackEnabled, func() ([]polygonpkg.OptionChainContract, error) {
 		return s.client.OptionChain(ctx, req)
 	})
 }
@@ -122,7 +129,7 @@ func (s *PolygonService) OptionChain(ctx context.Context, req polygonpkg.OptionC
 func (s *PolygonService) OptionAggregates(ctx context.Context, req polygonpkg.AggregateRequest) ([]polygonpkg.AggregateBar, error) {
 	ttl := s.aggregateTTL(req)
 	key := s.cacheKey("option-aggregates", req)
-	return cacheFetch(ctx, s.cache, key, ttl, func() ([]polygonpkg.AggregateBar, error) {
+	return polygonCacheFetch(ctx, s.cache, key, ttl, s.staleCacheFallbackEnabled, func() ([]polygonpkg.AggregateBar, error) {
 		return s.client.OptionAggregates(ctx, req)
 	})
 }
@@ -130,7 +137,7 @@ func (s *PolygonService) OptionAggregates(ctx context.Context, req polygonpkg.Ag
 func (s *PolygonService) OptionQuotes(ctx context.Context, ticker string, req polygonpkg.QuoteRequest) ([]polygonpkg.Quote, error) {
 	ttl := s.quoteTradeTTL(req.Timestamp, req.TimestampGte, req.TimestampGt, req.TimestampLte, req.TimestampLt)
 	key := s.cacheKey("option-quotes", strings.ToUpper(strings.TrimSpace(ticker)), req)
-	return cacheFetch(ctx, s.cache, key, ttl, func() ([]polygonpkg.Quote, error) {
+	return polygonCacheFetch(ctx, s.cache, key, ttl, s.staleCacheFallbackEnabled, func() ([]polygonpkg.Quote, error) {
 		return s.client.OptionQuotes(ctx, ticker, req)
 	})
 }
@@ -138,13 +145,13 @@ func (s *PolygonService) OptionQuotes(ctx context.Context, ticker string, req po
 func (s *PolygonService) OptionTrades(ctx context.Context, ticker string, req polygonpkg.TradeRequest) ([]polygonpkg.Trade, error) {
 	ttl := s.quoteTradeTTL(req.Timestamp, req.TimestampGte, req.TimestampGt, req.TimestampLte, req.TimestampLt)
 	key := s.cacheKey("option-trades", strings.ToUpper(strings.TrimSpace(ticker)), req)
-	return cacheFetch(ctx, s.cache, key, ttl, func() ([]polygonpkg.Trade, error) {
+	return polygonCacheFetch(ctx, s.cache, key, ttl, s.staleCacheFallbackEnabled, func() ([]polygonpkg.Trade, error) {
 		return s.client.OptionTrades(ctx, ticker, req)
 	})
 }
 
 func (s *PolygonService) MarketStatusNow(ctx context.Context) (*polygonpkg.MarketStatus, error) {
-	return cacheFetch(ctx, s.cache, s.cacheKey("market-status-now"), polygonRealtimeTTL, func() (*polygonpkg.MarketStatus, error) {
+	return polygonCacheFetch(ctx, s.cache, s.cacheKey("market-status-now"), polygonRealtimeTTL, s.staleCacheFallbackEnabled, func() (*polygonpkg.MarketStatus, error) {
 		return s.client.MarketStatusNow(ctx)
 	})
 }
@@ -194,6 +201,30 @@ func (s *PolygonService) cacheKey(parts ...any) string {
 	payload, _ := json.Marshal(parts)
 	sum := sha256.Sum256(payload)
 	return "polygon:" + hex.EncodeToString(sum[:])
+}
+
+func polygonCacheFetch[T any](ctx context.Context, store cache.Store, key string, ttl time.Duration, staleFallbackEnabled bool, load func() (T, error)) (T, error) {
+	if !staleFallbackEnabled {
+		return cacheFetch(ctx, store, key, ttl, load)
+	}
+	value, err := cacheFetch(ctx, store, key, ttl, load)
+	if err == nil {
+		if raw, marshalErr := json.Marshal(value); marshalErr == nil && store != nil {
+			_ = store.Set(ctx, key+":stale", raw, polygonStaleTTL)
+		}
+		return value, nil
+	}
+
+	if store != nil {
+		if raw, ok, cacheErr := store.Get(ctx, key+":stale"); cacheErr == nil && ok {
+			var stale T
+			if json.Unmarshal(raw, &stale) == nil {
+				return stale, nil
+			}
+		}
+	}
+	var zero T
+	return zero, err
 }
 
 func cacheFetch[T any](ctx context.Context, store cache.Store, key string, ttl time.Duration, load func() (T, error)) (T, error) {

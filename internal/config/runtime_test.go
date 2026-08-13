@@ -52,6 +52,7 @@ func TestLoadRuntimeFromPathYAML(t *testing.T) {
 		"polygon:\n" +
 		"  flat_files_tool: \"mc\"\n" +
 		"  flat_files_cache_dir: \"/srv/toktik/polygon-cache\"\n" +
+		"  stale_cache_fallback_enabled: true\n" +
 		"  flat_files_access_key: \"flat-access\"\n" +
 		"  flat_files_secret_key: \"flat-secret\"\n" +
 		"fmp:\n" +
@@ -148,7 +149,7 @@ func TestLoadRuntimeFromPathYAML(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PolygonFlatFilesSecretKey failed: %v", err)
 	}
-	if cfg.Polygon.FlatFilesTool != "mc" || cfg.Polygon.FlatFilesCacheDir != "/srv/toktik/polygon-cache" || polygonAccessKey != "flat-access" || polygonSecretKey != "flat-secret" {
+	if cfg.Polygon.FlatFilesTool != "mc" || cfg.Polygon.FlatFilesCacheDir != "/srv/toktik/polygon-cache" || !cfg.Polygon.StaleCacheFallbackEnabled || polygonAccessKey != "flat-access" || polygonSecretKey != "flat-secret" {
 		t.Fatalf("unexpected polygon flatfile config: %#v", cfg.Polygon)
 	}
 	fmpAPIKey, err := cfg.FMPAPIKey()
@@ -192,6 +193,7 @@ func TestLoadRuntimeFromPathEnvOverrides(t *testing.T) {
 	t.Setenv(EnvSchemaDir, "/opt/toktik/schema")
 	t.Setenv(EnvDeribitBaseURL, "https://deribit-env.example")
 	t.Setenv(EnvDeribitProxyURL, "http://localhost:17891")
+	t.Setenv(EnvPolygonStaleCacheFallbackEnabled, "true")
 	t.Setenv(EnvTigerID, "20109999")
 	t.Setenv(EnvTigerPrivateKey, "env-private-key")
 	t.Setenv(EnvTigerAccount, "env-account")
@@ -268,8 +270,8 @@ func TestLoadRuntimeFromPathEnvOverrides(t *testing.T) {
 	if cfg.Tiger.EnableDynamicDomain || tigerToken != "env-token" || cfg.Tiger.TokenFile != "/tmp/env-tiger-token.properties" || cfg.Tiger.ServerURL != "https://tiger-env.example" || cfg.Tiger.DeviceID != "env-device" {
 		t.Fatalf("unexpected tiger auth override: %#v", cfg.Tiger)
 	}
-	if cfg.Polygon != DefaultRuntime().Polygon {
-		t.Fatalf("unexpected polygon override from environment: %#v", cfg.Polygon)
+	if !cfg.Polygon.StaleCacheFallbackEnabled {
+		t.Fatalf("expected Polygon stale cache fallback env override")
 	}
 	fmpAPIKey, err := cfg.FMPAPIKey()
 	if err != nil {

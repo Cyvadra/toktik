@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 
 type stubPolygonClient struct {
 	stockSnapshotCalls  int
+	stockSnapshotErr    error
 	stockAggregateCalls int
 	optionChainReq      polygonpkg.OptionChainRequest
 }
@@ -34,6 +36,9 @@ func (s *stubPolygonClient) DownloadOptionDailyAggregates(context.Context, time.
 
 func (s *stubPolygonClient) StockSnapshot(ctx context.Context, symbol string) (*polygonpkg.StockSnapshot, error) {
 	s.stockSnapshotCalls++
+	if s.stockSnapshotErr != nil {
+		return nil, s.stockSnapshotErr
+	}
 	return &polygonpkg.StockSnapshot{Ticker: symbol}, nil
 }
 
@@ -93,6 +98,54 @@ func TestPolygonServiceStockSnapshotUsesCache(t *testing.T) {
 	}
 	if client.stockSnapshotCalls != 1 {
 		t.Fatalf("expected one upstream snapshot call, got %d", client.stockSnapshotCalls)
+	}
+}
+
+func TestPolygonServiceStockSnapshotFallsBackToNinetyDayStaleCache(t *testing.T) {
+	client := &stubPolygonClient{}
+	store := cache.NewMemoryStore()
+	svc := NewPolygonService(client, store).WithStaleCacheFallback(true)
+	ctx := context.Background()
+
+	if _, err := svc.StockSnapshot(ctx, "AAPL"); err != nil {
+		t.Fatalf("populate snapshot cache: %v", err)
+	}
+	key := svc.cacheKey("stock-snapshot", "AAPL")
+	if err := store.Set(ctx, key, []byte("invalid"), polygonRealtimeTTL); err != nil {
+		t.Fatalf("expire fresh cache entry: %v", err)
+	}
+	client.stockSnapshotErr = errors.New("polygon subscription expired")
+
+	stale, err := svc.StockSnapshot(ctx, "AAPL")
+	if err != nil {
+		t.Fatalf("read stale snapshot: %v", err)
+	}
+	if stale == nil || stale.Ticker != "AAPL" {
+		t.Fatalf("unexpected stale snapshot: %#v", stale)
+	}
+	if client.stockSnapshotCalls != 2 {
+		t.Fatalf("expected stale fallback after a second upstream attempt, got %d calls", client.stockSnapshotCalls)
+	}
+}
+
+func TestPolygonServiceStockSnapshotDoesNotFallBackByDefault(t *testing.T) {
+	client := &stubPolygonClient{}
+	store := cache.NewMemoryStore()
+	enabledSvc := NewPolygonService(client, store).WithStaleCacheFallback(true)
+	ctx := context.Background()
+
+	if _, err := enabledSvc.StockSnapshot(ctx, "AAPL"); err != nil {
+		t.Fatalf("populate stale snapshot cache: %v", err)
+	}
+	key := enabledSvc.cacheKey("stock-snapshot", "AAPL")
+	if err := store.Set(ctx, key, []byte("invalid"), polygonRealtimeTTL); err != nil {
+		t.Fatalf("expire fresh cache entry: %v", err)
+	}
+	client.stockSnapshotErr = errors.New("polygon subscription expired")
+
+	disabledSvc := NewPolygonService(client, store)
+	if _, err := disabledSvc.StockSnapshot(ctx, "AAPL"); !errors.Is(err, client.stockSnapshotErr) {
+		t.Fatalf("expected upstream error with stale fallback disabled, got %v", err)
 	}
 }
 

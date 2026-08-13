@@ -10,7 +10,7 @@ import (
 // GetPolygonStockSnapshot handles GET /api/v1/polygon/stocks/snapshot.
 //
 //	@Summary		Get realtime US stock snapshot via Polygon
-//	@Description	Proxies Polygon stock snapshot data. This endpoint bypasses the platform database and is intended for realtime client reads.
+//	@Description	Proxies Polygon stock snapshot data. When stale cache fallback is enabled, successful responses are retained for 90 days and returned when Polygon is unavailable.
 //	@Tags			Polygon
 //	@Produce		json
 //	@Param			ticker	query		string	true	"Stock ticker symbol (alias: symbol)"
@@ -46,7 +46,7 @@ func (h *Handler) GetPolygonStockSnapshot(c *gin.Context) {
 // GetPolygonStockAggregates handles GET /api/v1/polygon/stocks/aggregates.
 //
 //	@Summary		Get US stock aggregate bars via Polygon
-//	@Description	Proxies Polygon aggregate bars for historical or near-realtime stock data with short-TTL caching based on the requested time window.
+//	@Description	Proxies Polygon aggregate bars for historical or near-realtime stock data with short-TTL caching and an optional 90-day stale fallback when Polygon is unavailable.
 //	@Tags			Polygon
 //	@Produce		json
 //	@Param			ticker		query		string	true	"Stock ticker symbol"
@@ -171,7 +171,7 @@ func (h *Handler) GetPolygonOptionContract(c *gin.Context) {
 // GetPolygonOptionChain handles GET /api/v1/polygon/options/chain.
 //
 //	@Summary		Get realtime US option chain snapshot via Polygon
-//	@Description	Proxies Polygon option chain snapshots for a US underlying. This is the recommended endpoint for realtime option surface reads.
+//	@Description	Proxies Polygon option chain snapshots for a US underlying. When stale cache fallback is enabled, successful responses remain available for 90 days when Polygon is unavailable.
 //	@Tags			Polygon
 //	@Produce		json
 //	@Param			underlying			query		string	true	"Underlying ticker symbol"

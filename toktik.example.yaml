@@ -80,6 +80,9 @@ polygon:
   timeout_seconds: 60
   trace: false
   pagination: true
+  # Opt in to returning a cached response for up to 90 days when Polygon fails.
+  # Env override: TOKTIK_POLYGON_STALE_CACHE_FALLBACK_ENABLED=true
+  stale_cache_fallback_enabled: false
 
 fmp:
   cache_dir: "/mnt/hdd/toktik/fmp-cache"
@@ -106,6 +109,8 @@ universe:
   rebuild_start_date: "2022-05-01"
 
 redis:
+  # Enable Redis to retain opted-in Polygon stale responses across API restarts.
+  # When disabled, Polygon caching is process-local only.
   enabled: false
   addr: "127.0.0.1:6379"
   password: ""
