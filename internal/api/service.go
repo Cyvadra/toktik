@@ -163,4 +163,5 @@ type PolygonProvider interface {
 
 type DeribitProvider interface {
 	QueryOptionChain(ctx context.Context, req dto.DeribitOptionChainRequest) (*dto.DeribitOptionChainResponse, error)
+	QueryOptionChainHistory(ctx context.Context, req dto.DeribitOptionChainRequest) (*dto.DeribitOptionChainHistoryResponse, error)
 }

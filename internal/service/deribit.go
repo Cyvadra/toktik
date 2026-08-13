@@ -23,6 +23,7 @@ const (
 	deribitOptionChainMaxLimit = 1000
 	deribitHistoricalChainTTL  = 24 * time.Hour
 	deribitCurrentDayChainTTL  = 5 * time.Minute
+	deribitHistoryMaxDays      = 366
 )
 
 type deribitClient interface {
@@ -67,6 +68,9 @@ func (s *DeribitService) OptionChain(ctx context.Context, underlying string) ([]
 }
 
 func (s *DeribitService) QueryOptionChain(ctx context.Context, req dto.DeribitOptionChainRequest) (*dto.DeribitOptionChainResponse, error) {
+	if strings.TrimSpace(req.From) != "" || strings.TrimSpace(req.To) != "" {
+		return nil, dto.NewValidationError("from and to are only supported by the option-chain history endpoint")
+	}
 	filter, err := newDeribitOptionChainFilter(req)
 	if err != nil {
 		return nil, err
@@ -96,6 +100,29 @@ func (s *DeribitService) QueryOptionChain(ctx context.Context, req dto.DeribitOp
 	}
 	data = filterDeribitOptionChain(data, filter)
 	return &dto.DeribitOptionChainResponse{Data: data}, nil
+}
+
+// QueryOptionChainHistory returns local daily snapshots for an inclusive UTC
+// date range. Each day is loaded through historicalOptionChain so sequential
+// and batch clients share the same cached unfiltered snapshot.
+func (s *DeribitService) QueryOptionChainHistory(ctx context.Context, req dto.DeribitOptionChainRequest) (*dto.DeribitOptionChainHistoryResponse, error) {
+	filter, from, to, err := newDeribitOptionChainHistoryFilter(req)
+	if err != nil {
+		return nil, err
+	}
+
+	snapshots := make([]dto.DeribitOptionChainSnapshot, 0, int(to.Sub(from)/(24*time.Hour))+1)
+	for day := from; !day.After(to); day = day.AddDate(0, 0, 1) {
+		contracts, err := s.historicalOptionChain(ctx, filter.underlying, day)
+		if err != nil {
+			return nil, err
+		}
+		snapshots = append(snapshots, dto.DeribitOptionChainSnapshot{
+			Date: day.Format("2006-01-02"),
+			Data: filterDeribitOptionChain(contracts, filter),
+		})
+	}
+	return &dto.DeribitOptionChainHistoryResponse{Data: snapshots}, nil
 }
 
 func filterDeribitOptionChain(data []dto.DeribitOptionChainContract, filter deribitOptionChainFilter) []dto.DeribitOptionChainContract {
@@ -217,6 +244,43 @@ func newDeribitOptionChainFilter(req dto.DeribitOptionChainRequest) (deribitOpti
 		return filter, err
 	}
 	return filter, nil
+}
+
+func newDeribitOptionChainHistoryFilter(req dto.DeribitOptionChainRequest) (deribitOptionChainFilter, time.Time, time.Time, error) {
+	filter, err := newDeribitOptionChainFilter(req)
+	if err != nil {
+		return filter, time.Time{}, time.Time{}, err
+	}
+	if filter.date != nil {
+		return filter, time.Time{}, time.Time{}, dto.NewValidationError("date cannot be combined with from or to")
+	}
+	from, err := parseDeribitHistoryDate(req.From, "from")
+	if err != nil {
+		return filter, time.Time{}, time.Time{}, err
+	}
+	to, err := parseDeribitHistoryDate(req.To, "to")
+	if err != nil {
+		return filter, time.Time{}, time.Time{}, err
+	}
+	if from.After(to) {
+		return filter, time.Time{}, time.Time{}, dto.NewValidationError("from must be before or equal to to")
+	}
+	if days := int(to.Sub(from)/(24*time.Hour)) + 1; days > deribitHistoryMaxDays {
+		return filter, time.Time{}, time.Time{}, dto.NewValidationError("historical range cannot exceed %d days", deribitHistoryMaxDays)
+	}
+	return filter, from, to, nil
+}
+
+func parseDeribitHistoryDate(raw, field string) (time.Time, error) {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return time.Time{}, dto.NewValidationError("%s is required", field)
+	}
+	parsed, err := time.Parse("2006-01-02", value)
+	if err != nil {
+		return time.Time{}, dto.NewValidationError("%s must use YYYY-MM-DD", field)
+	}
+	return parsed.UTC(), nil
 }
 
 func validateDeribitRanges(filter deribitOptionChainFilter) error {

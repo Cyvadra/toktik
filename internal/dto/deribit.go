@@ -3,6 +3,8 @@ package dto
 type DeribitOptionChainRequest struct {
 	Underlying        string   `form:"underlying" binding:"required"`
 	Date              string   `form:"date"`
+	From              string   `form:"from"`
+	To                string   `form:"to"`
 	ExpirationDate    string   `form:"expiration_date"`
 	ExpirationDateGte string   `form:"expiration_date_gte"`
 	ExpirationDateGt  string   `form:"expiration_date_gt"`
@@ -60,4 +62,18 @@ type DeribitOptionChainContract struct {
 
 type DeribitOptionChainResponse struct {
 	Data []DeribitOptionChainContract `json:"data"`
+}
+
+// DeribitOptionChainSnapshot is a local historical option-chain snapshot for
+// one UTC calendar date. Contracts use the same structure as realtime Deribit
+// option-chain responses.
+type DeribitOptionChainSnapshot struct {
+	Date string                       `json:"date"`
+	Data []DeribitOptionChainContract `json:"data"`
+}
+
+// DeribitOptionChainHistoryResponse groups locally stored daily snapshots by
+// UTC calendar date.
+type DeribitOptionChainHistoryResponse struct {
+	Data []DeribitOptionChainSnapshot `json:"data"`
 }

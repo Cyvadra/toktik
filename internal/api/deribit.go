@@ -52,3 +52,40 @@ func (h *Handler) GetDeribitOptionChain(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, resp)
 }
+
+// GetDeribitOptionChainHistory handles GET /api/v1/deribit/options/chain/history.
+//
+//	@Summary		Get historical crypto option chain snapshots
+//	@Description	Returns local end-of-day option-chain snapshots for each UTC date in the inclusive range. Each snapshot's contracts use the realtime Deribit option-chain structure.
+//	@Tags			Deribit
+//	@Produce		json
+//	@Param			underlying		query		string	true	"Underlying currency (for example BTC or ETH)"
+//	@Param			from			query		string	true	"First historical UTC date (YYYY-MM-DD)"
+//	@Param			to				query		string	true	"Last historical UTC date (YYYY-MM-DD), inclusive"
+//	@Param			expiration_date	query		string	false	"Exact expiration date (YYYY-MM-DD)"
+//	@Param			contract_type	query		string	false	"call or put"
+//	@Param			order			query		string	false	"Sort direction (asc or desc)"
+//	@Param			sort			query		string	false	"Sort field"
+//	@Param			limit			query		int		false	"Maximum contracts per snapshot (max 1000; zero returns all)"
+//	@Success		200				{object}	dto.DeribitOptionChainHistoryResponse
+//	@Failure		400				{object}	dto.ErrorResponse
+//	@Failure		501				{object}	dto.ErrorResponse
+//	@Failure		500				{object}	dto.ErrorResponse
+//	@Router			/deribit/options/chain/history [get]
+func (h *Handler) GetDeribitOptionChainHistory(c *gin.Context) {
+	var req dto.DeribitOptionChainRequest
+	if err := c.ShouldBindQuery(&req); err != nil {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: err.Error()})
+		return
+	}
+	if h.deribit == nil {
+		c.JSON(http.StatusNotImplemented, dto.ErrorResponse{Error: "deribit provider not configured"})
+		return
+	}
+	resp, err := h.deribit.QueryOptionChainHistory(c.Request.Context(), req)
+	if err != nil {
+		h.handleServiceError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, resp)
+}

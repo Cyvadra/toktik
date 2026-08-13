@@ -285,6 +285,7 @@ func registerRoutes(v1 *gin.RouterGroup, h *Handler) {
 	deribitGroup := v1.Group("/deribit")
 	deribitOptions := deribitGroup.Group("/options")
 	deribitOptions.GET("/chain", h.GetDeribitOptionChain)
+	deribitOptions.GET("/chain/history", h.GetDeribitOptionChainHistory)
 
 	v1.GET("/strategies", h.ListStrategies)
 }
