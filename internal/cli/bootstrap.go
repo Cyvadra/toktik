@@ -130,6 +130,11 @@ func FeatureStoreSchemaFile() (string, error) {
 	return FindSchemaFile(schemaCandidates("feature_store.sql"))
 }
 
+// PolymarketSchemaFile returns the path to the Polymarket event DDL file.
+func PolymarketSchemaFile() (string, error) {
+	return FindSchemaFile(schemaCandidates("polymarket.sql"))
+}
+
 // FundamentalsSchemaFile returns the path to the fundamentals DDL file.
 func FundamentalsSchemaFile() (string, error) {
 	return FindSchemaFile(schemaCandidates("fundamentals.sql"))

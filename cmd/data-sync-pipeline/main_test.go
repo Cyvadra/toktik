@@ -298,6 +298,28 @@ func TestSnapshotTargetsForFMPUSStockSplitsUsesUpdatedAt(t *testing.T) {
 	}
 }
 
+func TestSnapshotTargetsForPolymarketArchive(t *testing.T) {
+	targets := snapshotTargetsForJob(syncpipeline.JobSpec{Name: "polymarket_archive"})
+	if len(targets) != 4 {
+		t.Fatalf("Polymarket snapshot target count = %d, want 4", len(targets))
+	}
+	want := map[string]string{
+		"polymarket_l2_event":         "timestamp_received",
+		"polymarket_condition":        "updated_at",
+		"polymarket_outcome":          "updated_at",
+		"polymarket_raw_file_catalog": "updated_at",
+	}
+	for _, target := range targets {
+		if want[target.Table] != target.DateExpr {
+			t.Fatalf("unexpected Polymarket snapshot target: %+v", target)
+		}
+		delete(want, target.Table)
+	}
+	if len(want) != 0 {
+		t.Fatalf("missing Polymarket snapshot targets: %v", want)
+	}
+}
+
 type snapshotSyncer struct {
 	targets []syncpipeline.AuditTarget
 }

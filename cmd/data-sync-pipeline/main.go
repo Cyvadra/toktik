@@ -25,6 +25,7 @@ import (
 	"github.com/Cyvadra/toktik/internal/cryptooptions"
 	"github.com/Cyvadra/toktik/internal/dataintegrity"
 	"github.com/Cyvadra/toktik/internal/forexmarket"
+	"github.com/Cyvadra/toktik/internal/polymarket"
 	"github.com/Cyvadra/toktik/internal/requestpriority"
 	"github.com/Cyvadra/toktik/internal/service"
 	"github.com/Cyvadra/toktik/internal/syncpipeline"
@@ -89,6 +90,7 @@ type jobConfig struct {
 	OverlapDays              int               `yaml:"overlap_days"`
 	PerJobTimeout            string            `yaml:"per_job_timeout"`
 	PerSourceTimeout         string            `yaml:"per_source_timeout"`
+	LockTTL                  string            `yaml:"lock_ttl"`
 	Symbols                  []string          `yaml:"symbols"`
 	SymbolsFile              string            `yaml:"symbols_file"`
 	ResolveAtStartup         bool              `yaml:"resolve_at_startup"`
@@ -131,6 +133,13 @@ type jobConfig struct {
 	CalendarChunkDays        int               `yaml:"calendar_chunk_days"`
 	RepairFrom               string            `yaml:"repair_from"`
 	RepairTo                 string            `yaml:"repair_to"`
+	RawRoot                  string            `yaml:"raw_root"`
+	ConditionMapPath         string            `yaml:"condition_map_path"`
+	ArchiveFrom              string            `yaml:"archive_from"`
+	ArchiveTo                string            `yaml:"archive_to"`
+	LimitFiles               int               `yaml:"limit_files"`
+	EstimatedHourMB          int               `yaml:"estimated_hour_mb"`
+	MemoryBudgetMB           int               `yaml:"memory_budget_mb"`
 }
 
 type optionalBoolFlag struct {
@@ -1016,6 +1025,10 @@ func buildJobSpecs(runtimeCfg config.Runtime, dsn string, cfg pipelineConfig, se
 		return nil, err
 	}
 	buildCtx := syncerBuildContext{Runtime: runtimeCfg, APIKey: apiKey, ClickHouseDSN: dsn, Sessions: sessions, Limiter: distributedLimiterConfig(runtimeCfg)}
+	lockTTL, err := parseDurationDefault(cfg.Runner.LockTTL, 2*time.Hour)
+	if err != nil {
+		return nil, fmt.Errorf("runner.lock_ttl: %w", err)
+	}
 	var specs []syncpipeline.JobSpec
 	for _, name := range sortedJobNames(cfg) {
 		job := cfg.Jobs[name]
@@ -1029,6 +1042,13 @@ func buildJobSpecs(runtimeCfg config.Runtime, dsn string, cfg pipelineConfig, se
 		spec, err := makeJobSpec(name, job, cfg.Runner, syncer)
 		if err != nil {
 			return nil, err
+		}
+		effectiveLockTTL := lockTTL
+		if spec.LockTTL > 0 {
+			effectiveLockTTL = spec.LockTTL
+		}
+		if spec.PerSourceTimeout > 0 && effectiveLockTTL < spec.PerSourceTimeout {
+			return nil, fmt.Errorf("%s per_source_timeout %s exceeds lock_ttl %s", name, spec.PerSourceTimeout, effectiveLockTTL)
 		}
 		specs = append(specs, spec)
 	}
@@ -1044,6 +1064,17 @@ type syncerBuildContext struct {
 }
 
 func buildSyncer(buildCtx syncerBuildContext, name string, job jobConfig) (syncpipeline.Syncer, error) {
+	if name == "polymarket_archive" {
+		archiveFrom, err := parseOptionalArchiveHour(job.ArchiveFrom)
+		if err != nil {
+			return nil, fmt.Errorf("polymarket_archive archive_from: %w", err)
+		}
+		archiveTo, err := parseOptionalArchiveHour(job.ArchiveTo)
+		if err != nil {
+			return nil, fmt.Errorf("polymarket_archive archive_to: %w", err)
+		}
+		return pipelinejobs.NewPolymarketArchive(pipelinejobs.PolymarketArchiveConfig{RawRoot: job.RawRoot, ConditionMap: job.ConditionMapPath, ArchiveFrom: archiveFrom, ArchiveTo: archiveTo, BatchSize: job.BatchSize, LimitFiles: job.LimitFiles, Workers: job.Workers, EstimatedHourMB: job.EstimatedHourMB, MemoryBudgetMB: job.MemoryBudgetMB, ColdStartFloor: parseColdStart(job.ColdStartFloor)})
+	}
 	if syncer, ok, err := buildFMPSyncer(buildCtx, name, job); ok {
 		return syncer, err
 	}
@@ -1211,11 +1242,15 @@ func makeJobSpec(name string, job jobConfig, runner runnerConfig, syncer syncpip
 	if err != nil {
 		return syncpipeline.JobSpec{}, fmt.Errorf("%s per_source_timeout: %w", name, err)
 	}
+	lockTTL, err := parseDurationDefault(job.LockTTL, 0)
+	if err != nil {
+		return syncpipeline.JobSpec{}, fmt.Errorf("%s lock_ttl: %w", name, err)
+	}
 	overlap := job.OverlapDays
 	if overlap == 0 {
 		overlap = runner.OverlapDays
 	}
-	return syncpipeline.JobSpec{Name: name, Syncer: syncer, DependsOn: job.DependsOn, OverlapDays: overlap, PerJobTimeout: perJobTimeout, PerSourceTimeout: perSourceTimeout}, nil
+	return syncpipeline.JobSpec{Name: name, Syncer: syncer, DependsOn: job.DependsOn, OverlapDays: overlap, PerJobTimeout: perJobTimeout, PerSourceTimeout: perSourceTimeout, LockTTL: lockTTL}, nil
 }
 
 func initSelectedSchemas(ctx context.Context, conn driver.Conn, cfg pipelineConfig, selected map[string]bool, enabled bool, retry syncpipeline.RetryOptions) (usmarket.SessionMap, error) {
@@ -1234,6 +1269,7 @@ type schemaRequirements struct {
 	NeedsForex        bool
 	NeedsCrypto       bool
 	NeedsFeatureStore bool
+	NeedsPolymarket   bool
 }
 
 func resolveSchemaRequirements(cfg pipelineConfig, selected map[string]bool) schemaRequirements {
@@ -1261,6 +1297,8 @@ func resolveSchemaRequirements(cfg pipelineConfig, selected map[string]bool) sch
 			requirements.NeedsForex = true
 		case "fmp_crypto_spot":
 			requirements.NeedsCrypto = true
+		case "polymarket_archive":
+			requirements.NeedsPolymarket = true
 		}
 	}
 	return requirements
@@ -1319,6 +1357,15 @@ func initializeSelectedSchemas(ctx context.Context, conn driver.Conn, requiremen
 		}
 		if err := usmarket.InitFundamentalsSchema(ctx, conn, ddl); err != nil {
 			return nil, fmt.Errorf("initialize feature store schema: %w", err)
+		}
+	}
+	if requirements.NeedsPolymarket {
+		ddl, err := appCli.ResolveSchemaFile("", appCli.PolymarketSchemaFile)
+		if err != nil {
+			return nil, err
+		}
+		if err := polymarket.InitSchema(ctx, conn, ddl); err != nil {
+			return nil, fmt.Errorf("initialize Polymarket schema: %w", err)
 		}
 	}
 	return sessions, nil
@@ -1486,7 +1533,7 @@ func printPreRunSnapshotAndWait(ctx context.Context, conn driver.Conn, specs []s
 	}
 	fmt.Fprintln(os.Stderr, "latest records before sync:")
 	if len(rows) == 0 {
-		fmt.Fprintln(os.Stderr, "  no ClickHouse data tables selected; selected jobs may write external storage such as MySQL")
+		fmt.Fprintln(os.Stderr, "  no pre-run snapshot targets are registered for the selected jobs")
 	} else {
 		fmt.Fprintf(os.Stderr, "  %-24s %-24s %-26s %-12s %s\n", "job", "dataset", "table", "rows", "latest")
 		for _, row := range rows {
@@ -1547,6 +1594,13 @@ type snapshotTarget struct {
 
 func snapshotTargetsForJob(spec syncpipeline.JobSpec) []snapshotTarget {
 	switch spec.Name {
+	case "polymarket_archive":
+		return []snapshotTarget{
+			{Dataset: "Polymarket events", Table: "polymarket_l2_event", DateExpr: "timestamp_received"},
+			{Dataset: "Polymarket conditions", Table: "polymarket_condition", DateExpr: "updated_at"},
+			{Dataset: "Polymarket outcomes", Table: "polymarket_outcome", DateExpr: "updated_at"},
+			{Dataset: "Polymarket files", Table: "polymarket_raw_file_catalog", DateExpr: "updated_at"},
+		}
 	case "fmp_crypto_spot":
 		return []snapshotTarget{{Dataset: "crypto spot", Table: "crypto_spot_bar_1m", DateExpr: "timestamp"}}
 	case "fmp_forex":
@@ -1730,6 +1784,17 @@ func parseRequiredDate(value, flagName string) (time.Time, error) {
 func parseColdStart(value string) time.Time {
 	parsed, _ := parseOptionalDate(value, "cold_start_floor")
 	return parsed
+}
+
+func parseOptionalArchiveHour(value string) (time.Time, error) {
+	if strings.TrimSpace(value) == "" {
+		return time.Time{}, nil
+	}
+	parsed, err := time.Parse("2006-01-02T15", strings.TrimSpace(value))
+	if err != nil {
+		return time.Time{}, fmt.Errorf("invalid archive hour %q: %w", value, err)
+	}
+	return parsed.UTC(), nil
 }
 
 func parseDurationDefault(value string, fallback time.Duration) (time.Duration, error) {

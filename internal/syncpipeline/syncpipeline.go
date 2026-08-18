@@ -66,6 +66,12 @@ type Syncer interface {
 	MaxConcurrency() int
 }
 
+// StableScopeSyncer identifies immutable source artifacts whose ledger scope
+// must not change as the runner's date window advances.
+type StableScopeSyncer interface {
+	StableScope(string) (string, bool)
+}
+
 type SyncRequest struct {
 	SourceKey string
 	From      time.Time
@@ -101,6 +107,7 @@ type JobSpec struct {
 	OverlapDays      int
 	PerJobTimeout    time.Duration
 	PerSourceTimeout time.Duration
+	LockTTL          time.Duration
 }
 
 type RunnerOptions struct {
@@ -483,6 +490,11 @@ func (r *Runner) runSource(ctx context.Context, spec JobSpec, ledger *importledg
 	}
 	from, to := window.From, window.To
 	scope := ScopeKeyForRange(from, to)
+	if stable, ok := spec.Syncer.(StableScopeSyncer); ok {
+		if stableScope, ok := stable.StableScope(sourceKey); ok {
+			scope = stableScope
+		}
+	}
 	sourceStarted := time.Now().UTC()
 	r.opts.Logger.Info("sync source started", "job", spec.Name, "source", sourceKey, "scope", scope, "from", formatLogDate(from), "to", formatLogDate(to), "dry_run", r.opts.DryRun, "force", r.opts.Force)
 	if !r.opts.Force {
@@ -501,9 +513,13 @@ func (r *Runner) runSource(ctx context.Context, spec JobSpec, ledger *importledg
 	importID := "dry-run"
 	sourceHash := SourceHashFor(spec.Name, sourceKey, scope)
 	if !r.opts.DryRun {
+		lockTTL := r.opts.LockOptions.TTL
+		if spec.LockTTL > 0 {
+			lockTTL = spec.LockTTL
+		}
 		var err error
 		importID, err = RetryValue(sourceCtx, r.opts.DBRetry, r.opts.Logger, spec.Name+" ledger start", func(ctx context.Context) (string, error) {
-			return ledger.Start(ctx, importledger.StartRequest{ImporterName: spec.Name, SourceKey: sourceKey, ScopeKey: scope, SourceHash: sourceHash, StartedAt: time.Now().UTC(), PendingTTL: r.opts.LockOptions.TTL, IgnorePending: r.opts.LockOptions.ForceUnlock})
+			return ledger.Start(ctx, importledger.StartRequest{ImporterName: spec.Name, SourceKey: sourceKey, ScopeKey: scope, SourceHash: sourceHash, StartedAt: time.Now().UTC(), PendingTTL: lockTTL, IgnorePending: r.opts.LockOptions.ForceUnlock})
 		})
 		if err != nil {
 			r.opts.Logger.Error("sync source ledger start failed", "job", spec.Name, "source", sourceKey, "scope", scope, "err", err)
