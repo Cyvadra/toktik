@@ -58,6 +58,29 @@ func TestComputeTradePnLIncludesEntryCommission(t *testing.T) {
 	}
 }
 
+func TestComputeTradePnLPairsByEntryID(t *testing.T) {
+	ref := SecurityRef{Market: "m", Symbol: "s", Interval: "1h"}
+	trades := []Trade{
+		{Security: ref, EntryID: "first", Side: Buy, Qty: 1, FillPrice: 100},
+		{Security: ref, EntryID: "second", Side: Buy, Qty: 1, FillPrice: 200},
+		{Security: ref, EntryID: "first", ReduceOnly: true, Side: Sell, Qty: 1, FillPrice: 110},
+	}
+
+	pnls, openEntries := computeTradePnLAndOpenEntries(trades)
+	if len(pnls) != 1 || pnls[0] != 10 {
+		t.Fatalf("entry-aware pnls = %v, want [10]", pnls)
+	}
+	if openEntries != 1 {
+		t.Fatalf("open entries = %d, want 1", openEntries)
+	}
+
+	result := &Result{Trades: trades}
+	ApplyTradeSummary(result)
+	if result.TotalTrades != 3 || result.TotalFills != 3 || result.ClosedTrades != 1 || result.OpenEntries != 1 {
+		t.Fatalf("trade counts = total:%d fills:%d closed:%d open:%d", result.TotalTrades, result.TotalFills, result.ClosedTrades, result.OpenEntries)
+	}
+}
+
 // TestComputeTradePnLPartialCloseCommission verifies proportional entry
 // commission deduction when a position is partially closed.
 func TestComputeTradePnLPartialCloseCommission(t *testing.T) {

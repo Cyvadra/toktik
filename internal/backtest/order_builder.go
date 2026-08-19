@@ -20,12 +20,14 @@ import "time"
 //	    TWAP(5).
 //	    Submit()
 type OrderBuilder struct {
-	ctx      *BarContext
-	security SecurityRef
-	side     Side
-	qty      float64
-	notional float64
-	note     string
+	ctx        *BarContext
+	security   SecurityRef
+	side       Side
+	qty        float64
+	notional   float64
+	note       string
+	entryID    string
+	reduceOnly bool
 	// Order type specifics
 	orderType OrderType
 	price     float64 // limit price
@@ -80,6 +82,18 @@ func (ob *OrderBuilder) Note(note string) *OrderBuilder {
 	return ob
 }
 
+// Entry identifies the logical strategy entry affected by this order.
+func (ob *OrderBuilder) Entry(id string) *OrderBuilder {
+	ob.entryID = id
+	return ob
+}
+
+// ReduceOnly prevents the order from increasing or reversing its entry position.
+func (ob *OrderBuilder) ReduceOnly() *OrderBuilder {
+	ob.reduceOnly = true
+	return ob
+}
+
 // Limit converts the order to a limit order at the specified price.
 func (ob *OrderBuilder) Limit(price float64) *OrderBuilder {
 	ob.orderType = LimitOrder
@@ -126,6 +140,8 @@ func (ob *OrderBuilder) Immediate() *OrderBuilder {
 func (ob *OrderBuilder) Submit() int {
 	order := Order{
 		Security:   ob.security,
+		EntryID:    ob.entryID,
+		ReduceOnly: ob.reduceOnly,
 		Side:       ob.side,
 		Type:       ob.orderType,
 		Note:       ob.note,

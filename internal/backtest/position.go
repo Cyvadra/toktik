@@ -44,7 +44,10 @@ func (pt *PositionTracker) Update(trade Trade) {
 		pos = &Position{Security: trade.Security}
 		pt.positions[trade.Security] = pos
 	}
+	updatePosition(pos, trade)
+}
 
+func updatePosition(pos *Position, trade Trade) {
 	fillQty := trade.Qty
 	if trade.Side == Sell {
 		fillQty = -fillQty

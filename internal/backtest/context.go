@@ -467,6 +467,21 @@ func (bc *BarContext) ClosePosition(ref SecurityRef) {
 	}
 }
 
+// CloseEntry submits one idempotent reduce-only order for a logical entry.
+func (bc *BarContext) CloseEntry(ref SecurityRef, entryID string) bool {
+	position := bc.broker.EntryPosition(ref, entryID)
+	if position.Qty == 0 {
+		return false
+	}
+	order := bc.Order(ref).Qty(abs(position.Qty)).Entry(entryID).ReduceOnly().Note("exit:" + entryID)
+	if position.Qty > 0 {
+		order.Sell()
+	} else {
+		order.Buy()
+	}
+	return order.Submit() != 0
+}
+
 // ClosePositionStopNowWithNote attempts to stop out the current position inside the current bar.
 // extraSlippagePct is added on top of the broker's base slippage.
 func (bc *BarContext) ClosePositionStopNowWithNote(ref SecurityRef, stopPrice, extraSlippagePct float64, note string) bool {

@@ -1,6 +1,7 @@
 package backtest
 
 import (
+	"math"
 	"testing"
 	"time"
 )
@@ -82,5 +83,54 @@ func TestOptionsChainExpiryNextMonth(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestOptionsChainExpirationsExpiryAndMinIV(t *testing.T) {
+	first := time.Date(2026, 9, 18, 20, 0, 0, 0, time.UTC)
+	second := time.Date(2026, 10, 16, 20, 0, 0, 0, time.UTC)
+	chain := NewOptionsChain([]OptionContract{
+		{Symbol: "SECOND", Expiration: second, StrikePrice: 210, IV: 0.18},
+		{Symbol: "FIRST-HIGH", Expiration: first, StrikePrice: 205, IV: 0.24},
+		{Symbol: "FIRST-TIE-B", Expiration: first, StrikePrice: 200, IV: 0.15},
+		{Symbol: "FIRST-TIE-A", Expiration: first, StrikePrice: 200, IV: 0.15},
+		{Symbol: "FIRST-ZERO", Expiration: first, StrikePrice: 190, IV: 0},
+		{Symbol: "FIRST-NAN", Expiration: first, StrikePrice: 195, IV: math.NaN()},
+	}, time.Date(2026, 8, 18, 0, 0, 0, 0, time.UTC))
+
+	expirations := chain.Expirations()
+	if len(expirations) != 2 || !expirations[0].Equal(first) || !expirations[1].Equal(second) {
+		t.Fatalf("Expirations() = %v, want [%v %v]", expirations, first, second)
+	}
+
+	firstChain := chain.Expiry(first)
+	if firstChain.Len() != 5 {
+		t.Fatalf("Expiry(first).Len() = %d, want 5", firstChain.Len())
+	}
+	minimum := firstChain.MinIV()
+	if minimum == nil || minimum.Symbol != "FIRST-TIE-A" {
+		t.Fatalf("MinIV() = %#v, want FIRST-TIE-A", minimum)
+	}
+
+	invalid := NewOptionsChain([]OptionContract{{IV: 0}, {IV: math.Inf(1)}}, time.Time{})
+	if minimum := invalid.MinIV(); minimum != nil {
+		t.Fatalf("invalid MinIV() = %#v, want nil", minimum)
+	}
+
+	lowest := firstChain.LowestIV(2)
+	wantLowest := []string{"FIRST-TIE-A", "FIRST-TIE-B"}
+	if len(lowest) != len(wantLowest) {
+		t.Fatalf("LowestIV(2) len = %d, want %d", len(lowest), len(wantLowest))
+	}
+	for i, contract := range lowest {
+		if contract.Symbol != wantLowest[i] {
+			t.Fatalf("LowestIV(2)[%d] = %s, want %s", i, contract.Symbol, wantLowest[i])
+		}
+	}
+	if got := len(firstChain.LowestIV(10)); got != 3 {
+		t.Fatalf("LowestIV(10) len = %d, want 3 (excludes zero/NaN IV)", got)
+	}
+	if got := invalid.LowestIV(5); len(got) != 0 {
+		t.Fatalf("invalid LowestIV(5) = %#v, want empty", got)
 	}
 }

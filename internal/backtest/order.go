@@ -48,6 +48,8 @@ func (ot OrderType) String() string {
 // Order represents a pending order submitted by a strategy.
 type Order struct {
 	ID         int
+	EntryID    string
+	ReduceOnly bool
 	Security   SecurityRef
 	Side       Side
 	Type       OrderType
@@ -65,6 +67,8 @@ type Order struct {
 type Trade struct {
 	ID         int
 	OrderID    int
+	EntryID    string
+	ReduceOnly bool
 	Security   SecurityRef
 	Side       Side
 	Note       string

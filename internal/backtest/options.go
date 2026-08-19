@@ -231,6 +231,79 @@ func (ch *OptionsChain) Len() int { return len(ch.contracts) }
 // Contracts returns the underlying slice.
 func (ch *OptionsChain) Contracts() []OptionContract { return ch.contracts }
 
+// Expirations returns unique contract expirations in chronological order.
+func (ch *OptionsChain) Expirations() []time.Time {
+	seen := make(map[int64]time.Time)
+	for _, contract := range ch.contracts {
+		expiration := contract.Expiration.UTC()
+		seen[expiration.Unix()] = expiration
+	}
+	expirations := make([]time.Time, 0, len(seen))
+	for _, expiration := range seen {
+		expirations = append(expirations, expiration)
+	}
+	sort.Slice(expirations, func(i, j int) bool { return expirations[i].Before(expirations[j]) })
+	return expirations
+}
+
+// Expiry filters the chain to contracts with the exact UTC expiration instant.
+func (ch *OptionsChain) Expiry(expiration time.Time) *OptionsChain {
+	expiration = expiration.UTC()
+	return ch.filter(func(contract *OptionContract) bool {
+		return contract.Expiration.UTC().Equal(expiration)
+	})
+}
+
+// MinIV returns the valid contract with the lowest implied volatility.
+func (ch *OptionsChain) MinIV() *OptionContract {
+	var best *OptionContract
+	for i := range ch.contracts {
+		contract := &ch.contracts[i]
+		if math.IsNaN(contract.IV) || math.IsInf(contract.IV, 0) || contract.IV <= 0 {
+			continue
+		}
+		if best == nil || contract.IV < best.IV ||
+			(contract.IV == best.IV && (contract.StrikePrice < best.StrikePrice ||
+				(contract.StrikePrice == best.StrikePrice && contract.Symbol < best.Symbol))) {
+			best = contract
+		}
+	}
+	if best == nil {
+		return nil
+	}
+	result := *best
+	return &result
+}
+
+// LowestIV returns up to n valid contracts sorted ascending by implied
+// volatility, using the same validity filter and tie-break order (strike,
+// then symbol) as MinIV.
+func (ch *OptionsChain) LowestIV(n int) []OptionContract {
+	if n <= 0 {
+		return nil
+	}
+	valid := make([]OptionContract, 0, len(ch.contracts))
+	for _, contract := range ch.contracts {
+		if math.IsNaN(contract.IV) || math.IsInf(contract.IV, 0) || contract.IV <= 0 {
+			continue
+		}
+		valid = append(valid, contract)
+	}
+	sort.Slice(valid, func(i, j int) bool {
+		if valid[i].IV != valid[j].IV {
+			return valid[i].IV < valid[j].IV
+		}
+		if valid[i].StrikePrice != valid[j].StrikePrice {
+			return valid[i].StrikePrice < valid[j].StrikePrice
+		}
+		return valid[i].Symbol < valid[j].Symbol
+	})
+	if len(valid) > n {
+		valid = valid[:n]
+	}
+	return valid
+}
+
 // Calls returns a new chain containing only call options.
 func (ch *OptionsChain) Calls() *OptionsChain {
 	return ch.filter(func(c *OptionContract) bool { return c.Type == Call })

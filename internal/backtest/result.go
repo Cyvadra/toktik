@@ -32,7 +32,10 @@ type Result struct {
 	MaxDrawdownEnd       int     `json:"max_drawdown_end"`   // bar index
 
 	// Trade statistics
-	TotalTrades   int     `json:"total_trades"`
+	TotalTrades   int     `json:"total_trades"` // Deprecated: fill count; use TotalFills or ClosedTrades.
+	TotalFills    int     `json:"total_fills"`
+	ClosedTrades  int     `json:"closed_trades"`
+	OpenEntries   int     `json:"open_entries"`
 	WinningTrades int     `json:"winning_trades"`
 	LosingTrades  int     `json:"losing_trades"`
 	WinRate       float64 `json:"win_rate"`

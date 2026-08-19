@@ -45,8 +45,12 @@ func computeResult(
 
 	// Trade statistics
 	r.TotalTrades = len(trades)
+	r.TotalFills = len(trades)
 	if r.TotalTrades > 0 {
-		applyRoundTripStats(r, ComputeTradePnL(trades))
+		pnls, openEntries := computeTradePnLAndOpenEntries(trades)
+		r.ClosedTrades = len(pnls)
+		r.OpenEntries = openEntries
+		applyRoundTripStats(r, pnls)
 
 		for _, t := range trades {
 			r.TotalFees += t.Commission
@@ -465,6 +469,11 @@ func durationHours(timestamps []time.Time, start, end int) float64 {
 // Entry-side commissions are tracked and subtracted proportionally when a
 // position is partially or fully closed.
 func ComputeTradePnL(trades []Trade) []float64 {
+	pnls, _ := computeTradePnLAndOpenEntries(trades)
+	return pnls
+}
+
+func computeTradePnLAndOpenEntries(trades []Trade) ([]float64, int) {
 	type openEntry struct {
 		side       Side
 		qty        float64
@@ -472,8 +481,12 @@ func ComputeTradePnL(trades []Trade) []float64 {
 		commission float64 // accumulated entry-side commission
 	}
 
-	// Track pending entries per security
-	pending := make(map[SecurityRef]*openEntry)
+	type tradeEntryKey struct {
+		security SecurityRef
+		entryID  string
+	}
+
+	pending := make(map[tradeEntryKey]*openEntry)
 	var pnls []float64
 
 	for _, t := range trades {
@@ -482,10 +495,11 @@ func ComputeTradePnL(trades []Trade) []float64 {
 		if t.Qty <= 0 {
 			continue
 		}
-		entry, hasPending := pending[t.Security]
+		key := tradeEntryKey{security: t.Security, entryID: t.EntryID}
+		entry, hasPending := pending[key]
 		if !hasPending {
 			// New entry
-			pending[t.Security] = &openEntry{side: t.Side, qty: t.Qty, price: t.FillPrice, commission: t.Commission}
+			pending[key] = &openEntry{side: t.Side, qty: t.Qty, price: t.FillPrice, commission: t.Commission}
 			continue
 		}
 
@@ -522,9 +536,9 @@ func ComputeTradePnL(trades []Trade) []float64 {
 				excess := t.Qty - closeQty
 				if excess > 0 {
 					entryCommissionRemainder := t.Commission - closeCommission
-					pending[t.Security] = &openEntry{side: t.Side, qty: excess, price: t.FillPrice, commission: entryCommissionRemainder}
+					pending[key] = &openEntry{side: t.Side, qty: excess, price: t.FillPrice, commission: entryCommissionRemainder}
 				} else {
-					delete(pending, t.Security)
+					delete(pending, key)
 				}
 			}
 		} else {
@@ -538,7 +552,7 @@ func ComputeTradePnL(trades []Trade) []float64 {
 		}
 	}
 
-	return pnls
+	return pnls, len(pending)
 }
 
 func meanStd(data []float64) (float64, float64) {
@@ -683,6 +697,7 @@ func ApplyTradeSummary(r *Result) {
 		return
 	}
 	r.TotalTrades = len(r.Trades)
+	r.TotalFills = len(r.Trades)
 	r.WinningTrades = 0
 	r.LosingTrades = 0
 	r.ProfitFactor = 0
@@ -690,7 +705,10 @@ func ApplyTradeSummary(r *Result) {
 	r.AvgLoss = 0
 	r.WinRate = 0
 
-	applyRoundTripStats(r, ComputeTradePnL(r.Trades))
+	pnls, openEntries := computeTradePnLAndOpenEntries(r.Trades)
+	r.ClosedTrades = len(pnls)
+	r.OpenEntries = openEntries
+	applyRoundTripStats(r, pnls)
 }
 
 // applyRoundTripStats populates win/loss metrics on r from a pre-computed

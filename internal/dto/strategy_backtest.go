@@ -196,6 +196,9 @@ type StrategyBacktestSummary struct {
 	CalmarRatio      float64                          `json:"calmar_ratio"`
 	MaxDrawdown      float64                          `json:"max_drawdown"`
 	TotalTrades      int                              `json:"total_trades"`
+	TotalFills       int                              `json:"total_fills"`
+	ClosedTrades     int                              `json:"closed_trades"`
+	OpenEntries      int                              `json:"open_entries"`
 	WinningTrades    int                              `json:"winning_trades"`
 	LosingTrades     int                              `json:"losing_trades"`
 	WinRate          float64                          `json:"win_rate"`

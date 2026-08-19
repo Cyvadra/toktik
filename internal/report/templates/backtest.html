@@ -1547,7 +1547,7 @@
 
 	function overlayHoverColumns() {
 		return hoverColumnMaps.filter(function(column) {
-			return column.overlay === true;
+			return column.overlay === true && selectedHoverColumnSources.has(column.source);
 		});
 	}
 
@@ -1707,9 +1707,9 @@
 		);
 	}
 
-	function appendOverlayWindowItem(items, label, value, color) {
+	function appendOverlayWindowItem(items, label, value, source, active, color) {
 		items.push(
-			'<div class="data-window-card">' +
+			'<button type="button" class="data-window-card data-window-card-button' + (active ? ' active' : '') + '" data-hover-source="' + escapeHTML(source) + '">' +
 			'<div class="dw-row">' +
 			'<div>' +
 			'<span class="dw-label">' + escapeHTML(label) + '</span>' +
@@ -1717,10 +1717,10 @@
 			'</div>' +
 			'<div class="dw-side">' +
 			'<span class="feature-legend-swatch" style="background:' + escapeHTML(color) + '"></span>' +
-			'<div class="dw-tag">叠加</div>' +
+			'<span class="dw-state' + (active ? ' is-on' : '') + '">' + (active ? '主图已显示' : '添加到主图') + '</span>' +
 			'</div>' +
 			'</div>' +
-			'</div>'
+			'</button>'
 		);
 	}
 
@@ -1915,7 +1915,7 @@
 		}
 		hoverColumnMaps.forEach(function(column, index) {
 			if (column.overlay) {
-				appendOverlayWindowItem(items, column.label, formatNumber(column.values.get(resolvedTime), column.decimals), featureColor(index));
+				appendOverlayWindowItem(items, column.label, formatNumber(column.values.get(resolvedTime), column.decimals), column.source, selectedHoverColumnSources.has(column.source), featureColor(index));
 				return;
 			}
 			appendFeatureWindowItem(items, column.label, formatNumber(column.values.get(resolvedTime), column.decimals), column.source, selectedHoverColumnSources.has(column.source), featureColor(index));
@@ -2153,6 +2153,7 @@
 			var source = featureButton.getAttribute('data-hover-source');
 			if (selectedHoverColumnSources.has(source)) selectedHoverColumnSources.delete(source);
 			else selectedHoverColumnSources.add(source);
+			renderOverlayPlots();
 			renderFeatureChart();
 			renderDataWindow(currentDataWindowTime);
 		});

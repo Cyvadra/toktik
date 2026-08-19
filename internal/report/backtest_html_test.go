@@ -1294,8 +1294,14 @@ func TestWriteBacktestHTMLIncludesOverlaySeriesSupport(t *testing.T) {
 	if !strings.Contains(html, "column.overlay === true") {
 		t.Fatalf("expected generated html to recognize overlay columns in payload")
 	}
-	if !strings.Contains(html, "叠加</div>") {
-		t.Fatalf("expected generated html to label overlay cards in the data window")
+	if !strings.Contains(html, "column.overlay === true && selectedHoverColumnSources.has(column.source)") {
+		t.Fatalf("expected overlay columns to render only when manually selected")
+	}
+	if !strings.Contains(html, "data-hover-source=\"") {
+		t.Fatalf("expected overlay cards to be selectable in the data window")
+	}
+	if !strings.Contains(html, "renderOverlayPlots();\n\t\t\trenderFeatureChart();") {
+		t.Fatalf("expected data-window selection changes to update overlay plots")
 	}
 	if strings.Contains(html, "<div id=\"underlying-feature-panel\"") {
 		t.Fatalf("did not expect subplot panel when all report columns are overlays")

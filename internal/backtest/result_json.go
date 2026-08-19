@@ -26,6 +26,9 @@ type resultJSONExport struct {
 	MaxDrawdownEnd   int      `json:"max_drawdown_end"`
 
 	TotalTrades   int      `json:"total_trades"`
+	TotalFills    int      `json:"total_fills"`
+	ClosedTrades  int      `json:"closed_trades"`
+	OpenEntries   int      `json:"open_entries"`
 	WinningTrades int      `json:"winning_trades"`
 	LosingTrades  int      `json:"losing_trades"`
 	WinRate       *float64 `json:"win_rate"`
@@ -51,6 +54,8 @@ type resultJSONExport struct {
 type tradeJSONExport struct {
 	ID         int         `json:"id"`
 	OrderID    int         `json:"order_id"`
+	EntryID    string      `json:"entry_id,omitempty"`
+	ReduceOnly bool        `json:"reduce_only,omitempty"`
 	Security   SecurityRef `json:"security"`
 	Side       Side        `json:"side"`
 	Note       string      `json:"note"`
@@ -157,6 +162,9 @@ func (r *Result) jsonExport() resultJSONExport {
 		MaxDrawdownStart: r.MaxDrawdownStart,
 		MaxDrawdownEnd:   r.MaxDrawdownEnd,
 		TotalTrades:      r.TotalTrades,
+		TotalFills:       r.TotalFills,
+		ClosedTrades:     r.ClosedTrades,
+		OpenEntries:      r.OpenEntries,
 		WinningTrades:    r.WinningTrades,
 		LosingTrades:     r.LosingTrades,
 		WinRate:          jsonFloat(r.WinRate),
@@ -174,6 +182,8 @@ func (r *Result) jsonExport() resultJSONExport {
 			out.Trades[i] = tradeJSONExport{
 				ID:         trade.ID,
 				OrderID:    trade.OrderID,
+				EntryID:    trade.EntryID,
+				ReduceOnly: trade.ReduceOnly,
 				Security:   trade.Security,
 				Side:       trade.Side,
 				Note:       trade.Note,

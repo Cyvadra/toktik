@@ -33,6 +33,41 @@ func TestBrokerPositionAndTotalPnL(t *testing.T) {
 	}
 }
 
+func TestBrokerReduceOnlyCloseIsEntryAwareAndIdempotent(t *testing.T) {
+	ref := SecurityRef{Market: "m", Symbol: "s", Interval: "1h", Index: 0}
+	broker := NewBroker(Config{InitialCapital: 1000})
+	broker.SetPriceFunc(func(_ SecurityRef) BarPrices {
+		return BarPrices{Open: 100, High: 100, Low: 100, Close: 100}
+	})
+
+	broker.SubmitOrder(Order{Security: ref, EntryID: "long", Side: Buy, Type: MarketOrder, Qty: 2})
+	broker.ProcessPending(1, time.Unix(0, 0))
+	if got := broker.EntryPosition(ref, "long").Qty; got != 2 {
+		t.Fatalf("entry position qty = %v, want 2", got)
+	}
+
+	closeOrder := Order{Security: ref, EntryID: "long", Side: Sell, Type: MarketOrder, ReduceOnly: true}
+	firstID := broker.SubmitOrder(closeOrder)
+	secondID := broker.SubmitOrder(closeOrder)
+	if firstID == 0 || secondID != firstID || len(broker.pending) != 1 {
+		t.Fatalf("close ids/pending = %d/%d/%d, want same non-zero id and one pending", firstID, secondID, len(broker.pending))
+	}
+	if id := broker.SubmitOrder(Order{Security: ref, EntryID: "missing", Side: Sell, Type: MarketOrder, ReduceOnly: true}); id != 0 {
+		t.Fatalf("missing entry close id = %d, want 0", id)
+	}
+
+	fills := broker.ProcessPending(2, time.Unix(3600, 0))
+	if len(fills) != 1 || !fills[0].ReduceOnly || fills[0].EntryID != "long" {
+		t.Fatalf("close fills = %#v, want one reduce-only long fill", fills)
+	}
+	if got := broker.EntryPosition(ref, "long").Qty; got != 0 {
+		t.Fatalf("closed entry position qty = %v, want 0", got)
+	}
+	if got := broker.Positions().Get(ref).Qty; got != 0 {
+		t.Fatalf("net position qty = %v, want 0", got)
+	}
+}
+
 func TestBarContextTotalPnLIncludesOpenSpreadMark(t *testing.T) {
 	broker := NewBroker(Config{InitialCapital: 1000})
 	tracker := NewSpreadTracker()

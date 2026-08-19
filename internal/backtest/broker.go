@@ -58,6 +58,7 @@ type Broker struct {
 	config    Config
 	cash      float64
 	positions *PositionTracker
+	entries   map[entryPositionKey]*Position
 	pending   []Order
 	trades    []Trade
 	nextOID   int
@@ -67,12 +68,18 @@ type Broker struct {
 	priceFunc func(SecurityRef) BarPrices
 }
 
+type entryPositionKey struct {
+	security SecurityRef
+	entryID  string
+}
+
 // NewBroker creates a broker with the given config.
 func NewBroker(cfg Config) *Broker {
 	return &Broker{
 		config:    cfg,
 		cash:      cfg.InitialCapital,
 		positions: NewPositionTracker(),
+		entries:   make(map[entryPositionKey]*Position),
 		nextOID:   1,
 		nextTID:   1,
 	}
@@ -85,10 +92,62 @@ func (b *Broker) SetPriceFunc(fn func(SecurityRef) BarPrices) {
 
 // SubmitOrder queues an order for processing on the next bar.
 func (b *Broker) SubmitOrder(o Order) int {
+	if o.ReduceOnly {
+		qty, ok := b.reducibleEntryQuantity(o)
+		if !ok {
+			return 0
+		}
+		o.Qty = qty
+		o.Notional = 0
+		for _, pending := range b.pending {
+			if pending.ReduceOnly && pending.Security == o.Security && pending.EntryID == o.EntryID {
+				return pending.ID
+			}
+		}
+	}
 	o.ID = b.nextOID
 	b.nextOID++
 	b.pending = append(b.pending, o)
 	return o.ID
+}
+
+func (b *Broker) EntryPosition(ref SecurityRef, entryID string) *Position {
+	if position, ok := b.entries[entryPositionKey{security: ref, entryID: entryID}]; ok {
+		copy := *position
+		return &copy
+	}
+	return &Position{Security: ref}
+}
+
+func (b *Broker) reducibleEntryQuantity(order Order) (float64, bool) {
+	if order.EntryID == "" {
+		return 0, false
+	}
+	position := b.entries[entryPositionKey{security: order.Security, entryID: order.EntryID}]
+	if position == nil || position.Qty == 0 {
+		return 0, false
+	}
+	if (position.Qty > 0 && order.Side != Sell) || (position.Qty < 0 && order.Side != Buy) {
+		return 0, false
+	}
+	return abs(position.Qty), true
+}
+
+func (b *Broker) applyTrade(trade Trade) {
+	b.positions.Update(trade)
+	if trade.EntryID == "" {
+		return
+	}
+	key := entryPositionKey{security: trade.Security, entryID: trade.EntryID}
+	position := b.entries[key]
+	if position == nil {
+		position = &Position{Security: trade.Security}
+		b.entries[key] = position
+	}
+	updatePosition(position, trade)
+	if position.Qty == 0 {
+		delete(b.entries, key)
+	}
 }
 
 // CancelOrders removes all pending orders for a security.
@@ -161,6 +220,14 @@ func (b *Broker) ExecuteOrderNow(o Order, barIndex int, barTime time.Time) (*Tra
 	if b.priceFunc == nil {
 		return nil, false
 	}
+	if o.ReduceOnly {
+		qty, ok := b.reducibleEntryQuantity(o)
+		if !ok {
+			return nil, false
+		}
+		o.Qty = qty
+		o.Notional = 0
+	}
 	trade, filled, valid := b.executeOrderOnBar(o, barIndex, barTime)
 	if !valid || !filled {
 		return nil, false
@@ -175,6 +242,14 @@ func (b *Broker) ExecuteOrderNow(o Order, barIndex int, barTime time.Time) (*Tra
 func (b *Broker) ExecuteOrderAtCloseNow(o Order, barIndex int, barTime time.Time) (*Trade, bool) {
 	if b.priceFunc == nil {
 		return nil, false
+	}
+	if o.ReduceOnly {
+		qty, ok := b.reducibleEntryQuantity(o)
+		if !ok {
+			return nil, false
+		}
+		o.Qty = qty
+		o.Notional = 0
 	}
 	prices := b.priceFunc(o.Security)
 	closePrice := prices.executionClose(o.Side, b.config.ExecutionMode)
@@ -196,6 +271,8 @@ func (b *Broker) ExecuteOrderAtCloseNow(o Order, barIndex int, barTime time.Time
 	trade := &Trade{
 		ID:         b.nextTID,
 		OrderID:    o.ID,
+		EntryID:    o.EntryID,
+		ReduceOnly: o.ReduceOnly,
 		Security:   o.Security,
 		Side:       o.Side,
 		Note:       o.Note,
@@ -208,7 +285,7 @@ func (b *Broker) ExecuteOrderAtCloseNow(o Order, barIndex int, barTime time.Time
 	}
 	b.nextTID++
 	b.cash += b.tradeCashDelta(*trade)
-	b.positions.Update(*trade)
+	b.applyTrade(*trade)
 	b.trades = append(b.trades, *trade)
 	return trade, true
 }
@@ -256,6 +333,8 @@ func (b *Broker) ExecuteStopOrderNow(o Order, barIndex int, barTime time.Time, e
 	trade := &Trade{
 		ID:         b.nextTID,
 		OrderID:    o.ID,
+		EntryID:    o.EntryID,
+		ReduceOnly: o.ReduceOnly,
 		Security:   o.Security,
 		Side:       o.Side,
 		Note:       o.Note,
@@ -268,12 +347,20 @@ func (b *Broker) ExecuteStopOrderNow(o Order, barIndex int, barTime time.Time, e
 	}
 	b.nextTID++
 	b.cash += b.tradeCashDelta(*trade)
-	b.positions.Update(*trade)
+	b.applyTrade(*trade)
 	b.trades = append(b.trades, *trade)
 	return trade, true
 }
 
 func (b *Broker) executeOrderOnBar(o Order, barIndex int, barTime time.Time) (*Trade, bool, bool) {
+	if o.ReduceOnly {
+		qty, ok := b.reducibleEntryQuantity(o)
+		if !ok {
+			return nil, false, true
+		}
+		o.Qty = qty
+		o.Notional = 0
+	}
 	prices := b.priceFunc(o.Security)
 	open := prices.executionOpen(o.Side, b.config.ExecutionMode)
 	if !isValidPrice(open) {
@@ -372,6 +459,8 @@ func (b *Broker) executeOrderOnBar(o Order, barIndex int, barTime time.Time) (*T
 	trade := &Trade{
 		ID:         b.nextTID,
 		OrderID:    o.ID,
+		EntryID:    o.EntryID,
+		ReduceOnly: o.ReduceOnly,
 		Security:   o.Security,
 		Side:       o.Side,
 		Note:       o.Note,
@@ -384,7 +473,7 @@ func (b *Broker) executeOrderOnBar(o Order, barIndex int, barTime time.Time) (*T
 	}
 	b.nextTID++
 	b.cash += b.tradeCashDelta(*trade)
-	b.positions.Update(*trade)
+	b.applyTrade(*trade)
 	return trade, true, true
 }
 
