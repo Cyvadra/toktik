@@ -26,6 +26,10 @@ type OrderIntent struct {
 	// ID is a human-readable identifier for this order (e.g., strategy.entry id).
 	ID string
 
+	// EntryID identifies the logical strategy entry affected by the order.
+	// Generic order.submit calls leave this empty.
+	EntryID string
+
 	// Side is the order direction: "buy" or "sell".
 	Side OrderSide
 

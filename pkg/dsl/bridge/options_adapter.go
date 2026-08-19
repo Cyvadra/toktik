@@ -69,6 +69,46 @@ func (b *barContextBridge) ChainExpiryMax(chain interface{}, maxDays int) interf
 	return nil
 }
 
+func (b *barContextBridge) ChainExpirations(chain interface{}) []float64 {
+	if ch, ok := chain.(*backtest.OptionsChain); ok {
+		expirations := ch.Expirations()
+		out := make([]float64, len(expirations))
+		for i, expiration := range expirations {
+			out[i] = float64(expiration.Unix())
+		}
+		return out
+	}
+	return nil
+}
+
+func (b *barContextBridge) ChainExpiry(chain interface{}, expiration float64) interface{} {
+	if ch, ok := chain.(*backtest.OptionsChain); ok && !math.IsNaN(expiration) && !math.IsInf(expiration, 0) {
+		return ch.Expiry(time.Unix(int64(expiration), 0).UTC())
+	}
+	return nil
+}
+
+func (b *barContextBridge) ChainMinIV(chain interface{}) interface{} {
+	if ch, ok := chain.(*backtest.OptionsChain); ok {
+		return ch.MinIV()
+	}
+	return nil
+}
+
+func (b *barContextBridge) ChainLowestIV(chain interface{}, n int) []interface{} {
+	ch, ok := chain.(*backtest.OptionsChain)
+	if !ok {
+		return nil
+	}
+	contracts := ch.LowestIV(n)
+	out := make([]interface{}, len(contracts))
+	for i := range contracts {
+		c := contracts[i]
+		out[i] = &c
+	}
+	return out
+}
+
 func (b *barContextBridge) ChainDeltaRange(chain interface{}, minDelta, maxDelta float64) interface{} {
 	if ch, ok := chain.(*backtest.OptionsChain); ok {
 		return ch.DeltaRange(minDelta, maxDelta)

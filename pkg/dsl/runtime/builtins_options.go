@@ -68,6 +68,14 @@ type OptionsBridge interface {
 	ChainExpiryMin(chain interface{}, minDays int) interface{}
 	// ChainExpiryMax filters to at most maxDays DTE.
 	ChainExpiryMax(chain interface{}, maxDays int) interface{}
+	// ChainExpirations returns unique expiration instants as UTC Unix seconds.
+	ChainExpirations(chain interface{}) []float64
+	// ChainExpiry filters to an exact UTC Unix expiration second.
+	ChainExpiry(chain interface{}, expiration float64) interface{}
+	// ChainMinIV returns the valid contract with the lowest IV.
+	ChainMinIV(chain interface{}) interface{}
+	// ChainLowestIV returns up to n valid contracts with the lowest IV, ascending.
+	ChainLowestIV(chain interface{}, n int) []interface{}
 	// ChainDeltaRange filters by delta range.
 	ChainDeltaRange(chain interface{}, minDelta, maxDelta float64) interface{}
 	// ChainMinPremium filters by minimum bid price.
@@ -260,6 +268,47 @@ func RegisterOptionsBuiltins(ip *Interpreter) {
 	// ------- options.expiry_max(chain, max_days) -------
 	registerChainFilter("options.expiry_max", 2, func(b OptionsBridge, args []Value) interface{} {
 		return b.ChainExpiryMax(args[0].Obj(), int(args[1].Float()))
+	})
+
+	// ------- options.expirations(chain) -------
+	ip.RegisterBuiltin("options.expirations", func(args []Value) Value {
+		b := ob()
+		if b == nil || len(args) < 1 {
+			return ArrayVal(nil)
+		}
+		return floatArrayVal(b.ChainExpirations(args[0].Obj()))
+	})
+
+	// ------- options.expiry(chain, expiration) -------
+	registerChainFilter("options.expiry", 2, func(b OptionsBridge, args []Value) interface{} {
+		return b.ChainExpiry(args[0].Obj(), args[1].Float())
+	})
+
+	// ------- options.min_iv(chain) -------
+	ip.RegisterBuiltin("options.min_iv", func(args []Value) Value {
+		b := ob()
+		if b == nil || len(args) < 1 {
+			return NaVal()
+		}
+		contract := b.ChainMinIV(args[0].Obj())
+		if contract == nil {
+			return NaVal()
+		}
+		return ObjVal(contract)
+	})
+
+	// ------- options.lowest_iv(chain, n) -------
+	ip.RegisterBuiltin("options.lowest_iv", func(args []Value) Value {
+		b := ob()
+		if b == nil || len(args) < 2 {
+			return ArrayVal(nil)
+		}
+		contracts := b.ChainLowestIV(args[0].Obj(), int(args[1].Float()))
+		vals := make([]Value, len(contracts))
+		for i, c := range contracts {
+			vals[i] = ObjVal(c)
+		}
+		return ArrayVal(vals)
 	})
 
 	// ------- options.delta_range(chain, min_delta, max_delta) -------

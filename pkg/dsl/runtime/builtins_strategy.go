@@ -4,11 +4,25 @@ package runtime
 
 // RegisterStrategyBuiltins adds strategy.* functions that call through the Bridge.
 func RegisterStrategyBuiltins(ip *Interpreter) {
-	// strategy.entry(id, direction, qty, limit=na, stop=na, twap_bars=0, immediate=false, note="")
+	closeEntry := func(name string, args []Value) Value {
+		if !ip.AllowSideEffect(name) {
+			return NaVal()
+		}
+		if ip.Bridge == nil || len(args) < 1 {
+			return NaVal()
+		}
+		id := args[0].Str()
+		if !ip.Bridge.CloseEntry(id) {
+			ip.ReportBuiltinFailure(name, "entry not found or close already pending: "+id)
+		}
+		return NaVal()
+	}
+
+	// strategy.entry(id, direction, qty, limit=na, stop=na, twap_bars=0, immediate=false, note="", notional=0)
 	// direction: 1 = long, -1 = short
 	// When limit/stop/twap_bars are specified and OrderBridge is available,
 	// uses the richer OrderIntent path. Otherwise falls back to basic Buy/Sell.
-	ip.RegisterBuiltinWithParams("strategy.entry", []string{"id", "direction", "qty", "limit", "stop", "twap_bars", "immediate", "note"}, func(args []Value) Value {
+	ip.RegisterBuiltinWithParams("strategy.entry", []string{"id", "direction", "qty", "limit", "stop", "twap_bars", "immediate", "note", "notional"}, func(args []Value) Value {
 		if !ip.AllowSideEffect("strategy.entry") {
 			return NaVal()
 		}
@@ -23,8 +37,12 @@ func RegisterStrategyBuiltins(ip *Interpreter) {
 		twapBars := int(argFloat(args, 5, 0))
 		immediate := len(args) >= 7 && args[6].Bool()
 		note := argStr(args, 7, id)
+		notional := argFloat(args, 8, 0)
 
-		intent := OrderIntent{ID: id, Note: note, Qty: qty, Immediate: immediate}
+		intent := OrderIntent{ID: id, EntryID: id, Note: note, Qty: qty, Notional: notional, Immediate: immediate}
+		if notional > 0 {
+			intent.Qty = 0
+		}
 		if dir >= 0 {
 			intent.Side = SideBuy
 		} else {
@@ -53,31 +71,12 @@ func RegisterStrategyBuiltins(ip *Interpreter) {
 
 	// strategy.close(id)
 	ip.RegisterBuiltinWithParams("strategy.close", []string{"id"}, func(args []Value) Value {
-		if !ip.AllowSideEffect("strategy.close") {
-			return NaVal()
-		}
-		if ip.Bridge == nil || len(args) < 1 {
-			return NaVal()
-		}
-		id := args[0].Str()
-		// Close by exiting both sides.
-		ip.Bridge.ExitLong(id)
-		ip.Bridge.ExitShort(id)
-		return NaVal()
+		return closeEntry("strategy.close", args)
 	})
 
 	// strategy.exit(id)
 	ip.RegisterBuiltinWithParams("strategy.exit", []string{"id"}, func(args []Value) Value {
-		if !ip.AllowSideEffect("strategy.exit") {
-			return NaVal()
-		}
-		if ip.Bridge == nil || len(args) < 1 {
-			return NaVal()
-		}
-		id := args[0].Str()
-		ip.Bridge.ExitLong(id)
-		ip.Bridge.ExitShort(id)
-		return NaVal()
+		return closeEntry("strategy.exit", args)
 	})
 
 	ip.RegisterBuiltinWithParams("plot", []string{"series", "title", "overlay", "precision"}, func(args []Value) Value {

@@ -5,6 +5,9 @@ import "github.com/Cyvadra/toktik/pkg/dsl/runtime"
 // SubmitOrder implements runtime.OrderBridge by delegating to backtest.OrderBuilder.
 func (b *barContextBridge) SubmitOrder(intent runtime.OrderIntent) int {
 	ob := b.ctx.Order(b.primaryRef())
+	if intent.EntryID != "" {
+		ob.Entry(intent.EntryID)
+	}
 
 	switch intent.Side {
 	case runtime.SideBuy:

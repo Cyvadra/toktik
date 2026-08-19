@@ -443,22 +443,13 @@ func (b *barContextBridge) Buy(qty float64)  { b.ctx.Buy(b.primaryRef(), qty) }
 func (b *barContextBridge) Sell(qty float64) { b.ctx.Sell(b.primaryRef(), qty) }
 
 func (b *barContextBridge) EntryLong(id string, qty float64) {
-	b.ctx.BuyWithNote(b.primaryRef(), qty, id)
+	b.ctx.Order(b.primaryRef()).Buy().Qty(qty).Entry(id).Note(id).Submit()
 }
 func (b *barContextBridge) EntryShort(id string, qty float64) {
-	b.ctx.SellWithNote(b.primaryRef(), qty, id)
+	b.ctx.Order(b.primaryRef()).Sell().Qty(qty).Entry(id).Note(id).Submit()
 }
-func (b *barContextBridge) ExitLong(id string) {
-	pos := b.ctx.Position(b.primaryRef())
-	if pos > 0 {
-		b.ctx.SellWithNote(b.primaryRef(), pos, "exit:"+id)
-	}
-}
-func (b *barContextBridge) ExitShort(id string) {
-	pos := b.ctx.Position(b.primaryRef())
-	if pos < 0 {
-		b.ctx.BuyWithNote(b.primaryRef(), -pos, "exit:"+id)
-	}
+func (b *barContextBridge) CloseEntry(id string) bool {
+	return b.ctx.CloseEntry(b.primaryRef(), id)
 }
 
 func (b *barContextBridge) PositionSize() float64 {

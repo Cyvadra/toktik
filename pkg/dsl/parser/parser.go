@@ -485,12 +485,17 @@ func (p *Parser) startsBlockStatement(tt token.Type) bool {
 func (p *Parser) parseIfStmt() ast.Stmt {
 	tok := p.expect(token.KwIf)
 	cond := p.parseExpr(0)
+	braceStyle := p.cur().Type == token.LBrace
 	body := p.parseBlockAfter(tok)
 
 	var elseIfs []ast.ElseIf
 	var elseBlock *ast.Block
 
-	for p.cur().Type == token.KwElse {
+	// In indented-block style, an `else` must sit at the same column as its
+	// matching `if`. Without this guard, a nested if without its own else
+	// greedily consumes an outer `else`/`else if` that belongs to an
+	// enclosing if statement.
+	for p.cur().Type == token.KwElse && (braceStyle || p.cur().Col == tok.Col) {
 		elseTok := p.advance()
 		if p.cur().Type == token.KwIf {
 			p.advance()

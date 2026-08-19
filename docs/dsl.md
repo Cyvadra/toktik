@@ -235,18 +235,18 @@ aapl_iv_rank = request.security("us", "AAPL", "1d", iv_rank_base)
 | 模組 | 數量 |
 | --- | --- |
 | `alpha` | 20 |
-| `array` | 1 |
+| `array` | 2 |
 | `candidates` | 9 |
 | `config` | 2 |
 | `contract` | 17 |
-| `core` | 20 |
+| `core` | 21 |
 | `event` | 12 |
 | `group` | 7 |
 | `input` | 4 |
 | `leg` | 2 |
 | `market` | 9 |
 | `math` | 13 |
-| `options` | 26 |
+| `options` | 29 |
 | `order` | 10 |
 | `portfolio` | 6 |
 | `ref` | 6 |
@@ -290,6 +290,7 @@ aapl_iv_rank = request.security("us", "AAPL", "1d", iv_rank_base)
 | 名稱 | 簽名 | 種類 | 回傳 | 範例 | 用途 |
 | --- | --- | --- | --- | --- | --- |
 | `array.contains` | `array.contains(items, value)` | `函數` | `布林` | `still_member = array.contains(symbols, contract.underlying(leg))` | 檢查陣列是否包含指定值；可用於比對 point-in-time universe 與目前持倉標的。 |
+| `array.percentile` | `array.percentile(items, percentile)` | `函數` | `數值` | `median = array.percentile(values, 50)` | 忽略缺失值後，以線性插值計算數值陣列的百分位數；percentile 範圍為 0 到 100。 |
 
 ### candidates
 
@@ -357,6 +358,7 @@ aapl_iv_rank = request.security("us", "AAPL", "1d", iv_rank_base)
 | `open_raw` | `open_raw` | `常數` | `series` | `gap_raw = open_raw / close_raw[1] - 1` | 用於讀取未復權開盤價。 |
 | `plot` | `plot(series, title, overlay, precision)` | `函數` | `值` | `plot(ta.sma(close, 20), title="SMA 20", overlay=true, precision=2)` | 用於把中間指標或交易條件輸出到回測結果，方便檢查策略為何進出場。 |
 | `sell` | `sell(qty)` | `函數` | `na` | `sell(1)` | 用於快速送出基本賣出指令，適合最小範例或不需要命名部位的腳本。 |
+| `snapshot` | `snapshot(value)` | `函數` | `目前值` | `entry_bar := snapshot(bar_index)` | 取得 series 在目前 bar 的標量快照；適合把 bar_index 或動態屬性保存到 var/varip，而不保留 live Series 引用。 |
 | `volume` | `volume` | `常數` | `series` | `active_volume = volume > ta.sma(volume, 20)` | 用於成交量濾網、量能均線或流動性條件。 |
 
 ### event
@@ -445,6 +447,8 @@ aapl_iv_rank = request.security("us", "AAPL", "1d", iv_rank_base)
 | `options.calls` | `options.calls(chain)` | `函數` | `期權鏈` | `calls = options.calls(options.chain("us-options", "SPY"))` | 用於把期權鏈縮小到 call 合約。 |
 | `options.chain` | `options.chain(market, symbol)` | `函數` | `期權鏈` | `chain = options.chain("us-options", "SPY")` | 用於取得目前 bar 可用的期權鏈；多標的策略可指定市場與 underlying。 |
 | `options.delta_range` | `options.delta_range(chain, min_delta, max_delta)` | `函數` | `期權鏈或值` | `puts = options.delta_range(options.puts(options.chain("us-options", "SPY")), -0.35, -0.15)` | 用於從期權鏈中篩出符合到期日、Delta、權利金或履約價條件的候選合約。 |
+| `options.expirations` | `options.expirations(chain)` | `函數` | `陣列` | `expirations = options.expirations(chain)` | 用於取得期權鏈中去重並按時間升序排列的 UTC Unix 秒到期日。 |
+| `options.expiry` | `options.expiry(chain, expiration)` | `函數` | `期權鏈` | `expiry_chain = options.expiry(chain, expirations[0])` | 用於保留 UTC Unix 秒到期日精確相符的合約。 |
 | `options.expiry_max` | `options.expiry_max(chain, max_days)` | `函數` | `期權鏈或值` | `chain45 = options.expiry_max(options.chain("us-options", "SPY"), 45)` | 用於從期權鏈中篩出符合到期日、Delta、權利金或履約價條件的候選合約。 |
 | `options.expiry_min` | `options.expiry_min(chain, min_days)` | `函數` | `期權鏈或值` | `chain20 = options.expiry_min(options.chain("us-options", "SPY"), 20)` | 用於從期權鏈中篩出符合到期日、Delta、權利金或履約價條件的候選合約。 |
 | `options.expiry_nearest` | `options.expiry_nearest(chain, target_days)` | `函數` | `期權鏈或值` | `near = options.expiry_nearest(options.chain("us-options", "SPY"), 30)` | 用於從期權鏈中篩出符合到期日、Delta、權利金或履約價條件的候選合約。 |
@@ -460,6 +464,7 @@ aapl_iv_rank = request.security("us", "AAPL", "1d", iv_rank_base)
 | `options.iv_smile_total_oi` | `options.iv_smile_total_oi(smile)` | `函數` | `數值` | `oi = options.iv_smile_total_oi(smile)` | 用於取得指定期限 Call 與 Put 曲線的總 OI。 |
 | `options.iv_smile_values` | `options.iv_smile_values(smile, option_type, smoothed)` | `函數` | `陣列` | `ivs = options.iv_smile_values(smile, "put", true)` | 用於取得 raw 或 OI 加權平滑後的 IV 陣列；預設回傳平滑 IV。 |
 | `options.len` | `options.len(chain)` | `函數` | `期權鏈或值` | `count = options.len(options.chain("us-options", "SPY"))` | 用於從期權鏈中篩出符合到期日、Delta、權利金或履約價條件的候選合約。 |
+| `options.min_iv` | `options.min_iv(chain)` | `函數` | `期權合約` | `contract = options.min_iv(expiry_chain)` | 用於取得鏈中 IV 最低的有效合約；忽略非正數與缺失 IV。 |
 | `options.min_premium` | `options.min_premium(chain, min_bid)` | `函數` | `期權鏈或值` | `rich = options.min_premium(options.puts(options.chain("us-options", "SPY")), 1.0)` | 用於從期權鏈中篩出符合到期日、Delta、權利金或履約價條件的候選合約。 |
 | `options.open_strategy` | `options.open_strategy(chain, name, qty, target_delta, tag)` | `函數` | `spread id` | `sid = options.open_strategy(chain, "BUY_CALL", 1, 0.35, "momentum")` | 用於明確開啟由策略名稱生成的期權 spread。 |
 | `options.puts` | `options.puts(chain)` | `函數` | `期權鏈` | `puts = options.puts(options.chain("us-options", "SPY"))` | 用於把期權鏈縮小到 put 合約。 |
@@ -576,10 +581,10 @@ aapl_iv_rank = request.security("us", "AAPL", "1d", iv_rank_base)
 | 名稱 | 簽名 | 種類 | 回傳 | 範例 | 用途 |
 | --- | --- | --- | --- | --- | --- |
 | `strategy.cash` | `strategy.cash` | `屬性` | `數值` | `qty = math.min(strategy.cash, strategy.equity * 0.5) / close` | 用於避免下單金額超過可用現金。 |
-| `strategy.close` | `strategy.close(id)` | `函數` | `na` | `strategy.close(id="long")` | 用於依 entry ID 平掉既有部位，常放在出場訊號或風控條件中。 |
-| `strategy.entry` | `strategy.entry(id, direction, qty, limit, stop, twap_bars, immediate, note)` | `函數` | `na` | `strategy.entry(id="long", direction=strategy.long, qty=100)` | 用於以命名 ID 建立多頭或空頭部位；需要限價、停損或 TWAP 時也可帶進階參數。 |
+| `strategy.close` | `strategy.close(id)` | `函數` | `na` | `strategy.close(id="long")` | 嚴格依 entry ID 提交 reduce-only 平倉；未知 ID 不會影響其他倉位，同一 ID 已有 pending close 時不重複提交。 |
+| `strategy.entry` | `strategy.entry(id, direction, qty, limit, stop, twap_bars, immediate, note, notional)` | `函數` | `na` | `strategy.entry(id="long", direction=strategy.long, notional=10000)` | 用於以命名 ID 建立多頭或空頭部位；qty 與 notional 二選一，notional 大於零時按名義金額延遲計算數量。 |
 | `strategy.equity` | `strategy.equity` | `屬性` | `數值` | `budget = strategy.equity * 0.95` | 用於依目前權益估算倉位大小或風險預算。 |
-| `strategy.exit` | `strategy.exit(id)` | `函數` | `na` | `strategy.exit(id="long")` | 用於依 entry ID 退出部位；目前行為與 strategy.close 相同。 |
+| `strategy.exit` | `strategy.exit(id)` | `函數` | `na` | `strategy.exit(id="long")` | strategy.close 的相容別名，同樣嚴格依 entry ID 執行 reduce-only 平倉。 |
 | `strategy.long` | `strategy.long` | `常數` | `數值` | `strategy.entry(id="long", direction=strategy.long, qty=1)` | 用於 strategy.entry 表示建立多頭部位。 |
 | `strategy.position_avg_price` | `strategy.position_avg_price` | `屬性` | `數值` | `take_profit = close > strategy.position_avg_price * 1.08` | 用於根據持倉均價設停利、停損或移動停損。 |
 | `strategy.position_size` | `strategy.position_size` | `屬性` | `數值` | `flat = strategy.position_size == 0` | 用於判斷目前是否已有部位，避免重複進場或決定是否出場。 |
@@ -1283,12 +1288,14 @@ data: {"run_id":"c40505f1a16f02f33380b4ccbe4f74db","status":"running","progress"
 | capital_mode | string | no | Resolved capital accounting mode. |
 | capital_note | string | no | Human-readable explanation of the capital model. |
 | capital_profile | string | no | Resolved capital profile label. |
+| closed_trades | integer | no | - |
 | end_time | string | no | Last bar timestamp used by the run. |
 | final_equity | number | no | Final account equity in account_unit. |
 | html_path | string | no | Internal server-side report path. API clients should use report_url. |
 | initial_capital | number | no | Initial capital in account_unit. |
 | losing_trades | integer | no | Number of losing trades. |
 | max_drawdown | number | no | Maximum drawdown as a decimal ratio. |
+| open_entries | integer | no | - |
 | profit_factor | number | no | Gross profit divided by gross loss. |
 | report_url | string | no | Per-strategy HTML report endpoint. |
 | sharpe_ratio | number | no | Sharpe ratio computed from the run equity curve. |
@@ -1296,6 +1303,7 @@ data: {"run_id":"c40505f1a16f02f33380b4ccbe4f74db","status":"running","progress"
 | start_time | string | no | First bar timestamp used by the run. |
 | strategy_name | string | no | Strategy display name used by the engine. |
 | total_fees | number | no | Total commissions and fees charged by the simulation, including option spread leg entry and exit commissions. |
+| total_fills | integer | no | - |
 | total_return | number | no | Total return as a decimal ratio, for example 0.12 means 12%. |
 | total_trades | integer | no | Total trade count. |
 | warnings | array<[StrategyBacktestRuntimeWarning](#strategybacktestruntimewarning)> | no | Strategy-level runtime warnings. |

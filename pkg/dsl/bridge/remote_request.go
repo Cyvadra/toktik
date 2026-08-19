@@ -131,8 +131,7 @@ func (r *remoteContextBridge) Buy(qty float64)                       {}
 func (r *remoteContextBridge) Sell(qty float64)                      {}
 func (r *remoteContextBridge) EntryLong(id string, qty float64)      {}
 func (r *remoteContextBridge) EntryShort(id string, qty float64)     {}
-func (r *remoteContextBridge) ExitLong(id string)                    {}
-func (r *remoteContextBridge) ExitShort(id string)                   {}
+func (r *remoteContextBridge) CloseEntry(id string) bool             { return false }
 func (r *remoteContextBridge) PositionSize() float64                 { return r.parent.PositionSize() }
 func (r *remoteContextBridge) PositionAvgPrice() float64             { return r.parent.PositionAvgPrice() }
 func (r *remoteContextBridge) Equity() float64                       { return r.parent.Equity() }

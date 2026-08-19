@@ -664,8 +664,7 @@ func (b *indicatorBridge) Buy(float64)                {}
 func (b *indicatorBridge) Sell(float64)               {}
 func (b *indicatorBridge) EntryLong(string, float64)  {}
 func (b *indicatorBridge) EntryShort(string, float64) {}
-func (b *indicatorBridge) ExitLong(string)            {}
-func (b *indicatorBridge) ExitShort(string)           {}
+func (b *indicatorBridge) CloseEntry(string) bool     { return false }
 func (b *indicatorBridge) PositionSize() float64      { return 0 }
 func (b *indicatorBridge) PositionAvgPrice() float64  { return 0 }
 func (b *indicatorBridge) Equity() float64            { return 0 }

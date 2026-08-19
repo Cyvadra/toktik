@@ -150,6 +150,37 @@ func TestParsePineIndentedIfElse(t *testing.T) {
 	}
 }
 
+// A nested if without its own else must NOT consume an outer else/else-if that
+// belongs to the enclosing if. Previously the else-if/else attached to the
+// inner if, so the outer else branch was unreachable.
+func TestParseNestedIfDoesNotConsumeOuterElse(t *testing.T) {
+	src := "if a\n    if b\n        x = 1\nelse if c\n    x = 2\nelse\n    x = 3"
+	prog, errs := Parse(src)
+	if len(errs) > 0 {
+		t.Fatal(errs)
+	}
+	if len(prog.Stmts) != 1 {
+		t.Fatalf("expected 1 top-level statement, got %d", len(prog.Stmts))
+	}
+	outer, ok := prog.Stmts[0].(*ast.IfStmt)
+	if !ok {
+		t.Fatalf("expected IfStmt, got %T", prog.Stmts[0])
+	}
+	if len(outer.Body.Stmts) != 1 {
+		t.Fatalf("outer body should contain exactly the nested if, got %d", len(outer.Body.Stmts))
+	}
+	inner, ok := outer.Body.Stmts[0].(*ast.IfStmt)
+	if !ok {
+		t.Fatalf("outer body[0] should be a nested IfStmt, got %T", outer.Body.Stmts[0])
+	}
+	if len(inner.ElseIfs) != 0 || inner.Else != nil {
+		t.Fatalf("nested if must not swallow the outer else-if/else: %#v", inner)
+	}
+	if len(outer.ElseIfs) != 1 || outer.Else == nil {
+		t.Fatalf("outer if should keep its own else-if/else: %#v", outer)
+	}
+}
+
 func TestParseForStmt(t *testing.T) {
 	src := "for i = 0 to 10 by 2 {\n  x = i\n}"
 	prog, errs := Parse(src)

@@ -110,8 +110,7 @@ type Bridge interface {
 	Sell(qty float64)
 	EntryLong(id string, qty float64)
 	EntryShort(id string, qty float64)
-	ExitLong(id string)
-	ExitShort(id string)
+	CloseEntry(id string) bool
 
 	// Position.
 	PositionSize() float64

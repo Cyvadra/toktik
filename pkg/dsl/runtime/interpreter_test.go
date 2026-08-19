@@ -786,8 +786,7 @@ func (m *mockBridge) Buy(qty float64)                   {}
 func (m *mockBridge) Sell(qty float64)                  {}
 func (m *mockBridge) EntryLong(id string, qty float64)  {}
 func (m *mockBridge) EntryShort(id string, qty float64) {}
-func (m *mockBridge) ExitLong(id string)                {}
-func (m *mockBridge) ExitShort(id string)               {}
+func (m *mockBridge) CloseEntry(id string) bool         { return true }
 func (m *mockBridge) PositionSize() float64             { return 0 }
 func (m *mockBridge) PositionAvgPrice() float64         { return m.closeVal }
 func (m *mockBridge) Equity() float64                   { return 100000 }

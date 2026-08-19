@@ -256,6 +256,28 @@ func (b *testOptionsBridge) ChainExpiryRange(chain interface{}, minDays, maxDays
 }
 func (b *testOptionsBridge) ChainExpiryMin(chain interface{}, minDays int) interface{} { return chain }
 func (b *testOptionsBridge) ChainExpiryMax(chain interface{}, maxDays int) interface{} { return chain }
+func (b *testOptionsBridge) ChainExpirations(chain interface{}) []float64              { return []float64{30, 60} }
+func (b *testOptionsBridge) ChainExpiry(chain interface{}, expiration float64) interface{} {
+	return filterTestOptions(chain, func(contract testOptionContract) bool { return contract.dte == expiration })
+}
+func (b *testOptionsBridge) ChainMinIV(chain interface{}) interface{} {
+	contracts := asTestOptions(chain)
+	if len(contracts) == 0 {
+		return nil
+	}
+	return contracts[0]
+}
+func (b *testOptionsBridge) ChainLowestIV(chain interface{}, n int) []interface{} {
+	contracts := asTestOptions(chain)
+	if n < len(contracts) {
+		contracts = contracts[:n]
+	}
+	out := make([]interface{}, len(contracts))
+	for i := range contracts {
+		out[i] = contracts[i]
+	}
+	return out
+}
 func (b *testOptionsBridge) ChainDeltaRange(chain interface{}, minDelta, maxDelta float64) interface{} {
 	return filterTestOptions(chain, func(contract testOptionContract) bool {
 		return contract.delta >= minDelta && contract.delta <= maxDelta

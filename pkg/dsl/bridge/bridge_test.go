@@ -1336,6 +1336,87 @@ if strategy.position_size == 0 {
 	}
 }
 
+func TestStrategyPositionSizeRefreshesAndCloseExits(t *testing.T) {
+	src := `strategy("PositionCloseTest")
+varip holding_bars = 0
+if bar_index == 0 and strategy.position_size == 0
+    strategy.entry(id="long", direction=strategy.long, qty=1)
+if strategy.position_size == 0
+	holding_bars := 0
+else
+	holding_bars += 1
+if holding_bars >= 2
+    strategy.close(id="long")
+`
+	engine := backtest.NewEngine(backtest.Config{InitialCapital: 10000})
+	engine.RegisterDataFeed("test", &testDataFeed{fields: []string{"open", "high", "low", "close", "volume"}})
+
+	from := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	to := from.Add(6 * time.Hour)
+	result, err := engine.Run(context.Background(), "test", "TEST", "1h", from, to, New(src), nil)
+	if err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+	if len(result.Trades) != 2 {
+		t.Fatalf("trades = %d, want entry and exit fills", len(result.Trades))
+	}
+}
+
+func TestStrategyCloseTargetsEntryIDAndDeduplicates(t *testing.T) {
+	src := `strategy("EntryIdentityTest")
+if bar_index == 0
+    strategy.entry(id="first", direction=strategy.long, qty=1)
+    strategy.entry(id="second", direction=strategy.long, qty=2)
+if bar_index == 2
+    strategy.close(id="missing")
+    strategy.close(id="first")
+    strategy.close(id="first")
+`
+	engine := backtest.NewEngine(backtest.Config{InitialCapital: 10000})
+	engine.RegisterDataFeed("test", &testDataFeed{fields: []string{"open", "high", "low", "close", "volume"}})
+
+	from := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	to := from.Add(6 * time.Hour)
+	result, err := engine.Run(context.Background(), "test", "TEST", "1h", from, to, New(src), nil)
+	if err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+	if len(result.Trades) != 3 {
+		t.Fatalf("trades = %d, want two entries and one targeted close", len(result.Trades))
+	}
+	closeTrade := result.Trades[2]
+	if closeTrade.EntryID != "first" || !closeTrade.ReduceOnly || closeTrade.Qty != 1 {
+		t.Fatalf("close trade = %#v, want reduce-only close of first entry qty 1", closeTrade)
+	}
+}
+
+func TestStrategyNotionalEntryCanCloseByID(t *testing.T) {
+	src := `strategy("NotionalEntryCloseTest")
+if bar_index == 0
+    strategy.entry(id="long", direction=strategy.long, notional=1000)
+if bar_index == 2
+    strategy.close(id="long")
+`
+	engine := backtest.NewEngine(backtest.Config{InitialCapital: 10000})
+	engine.RegisterDataFeed("test", &testDataFeed{fields: []string{"open", "high", "low", "close", "volume"}})
+
+	from := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	to := from.Add(6 * time.Hour)
+	result, err := engine.Run(context.Background(), "test", "TEST", "1h", from, to, New(src), nil)
+	if err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+	if len(result.Trades) != 2 {
+		t.Fatalf("trades = %d, want notional entry and strict close", len(result.Trades))
+	}
+	if result.Trades[0].EntryID != "long" || result.Trades[0].Qty <= 0 {
+		t.Fatalf("entry trade = %#v, want positive-qty long entry", result.Trades[0])
+	}
+	if result.Trades[1].EntryID != "long" || !result.Trades[1].ReduceOnly || result.Trades[1].Qty != result.Trades[0].Qty {
+		t.Fatalf("close trade = %#v, want matching reduce-only close", result.Trades[1])
+	}
+}
+
 // TestCrossoverStrategy verifies ta.crossover detects crossovers and generates trades.
 func TestCrossoverStrategy(t *testing.T) {
 	src := `strategy("CrossoverTest")
