@@ -1,3 +1,5 @@
+#!/usr/bin/env bash
+
 set -euo pipefail
 
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
@@ -27,16 +29,16 @@ payload=$(jq -n \
     }
   }')
 
-port=9020
+api_base_url=${TOKTIK_API_BASE_URL:-http://127.0.0.1:9020}
 
 curl -sS -X POST \
-  "http://127.0.0.1:$port/api/v1/backtests/validate" \
+  "$api_base_url/api/v1/backtests/validate" \
   -H "X-API-Key: $api_key" \
   -H "Content-Type: application/json" \
   --data "$payload" | jq
 
 accepted=$(curl -sS -X POST \
-  "http://127.0.0.1:$port/api/v1/backtests/runs" \
+  "$api_base_url/api/v1/backtests/runs" \
   -H "X-API-Key: $api_key" \
   -H "Content-Type: application/json" \
   --data "$payload")
@@ -46,6 +48,6 @@ run_id=$(printf '%s\n' "$accepted" | jq -r '.run_id')
 
 curl -N \
   -H "X-API-Key: $api_key" \
-  "http://127.0.0.1:$port/api/v1/backtests/runs/$run_id/events"
+  "$api_base_url/api/v1/backtests/runs/$run_id/events"
 
-find ../ -type f -name run.json -mtime -3
+find "$script_dir/../reports/backtests/api/$run_id" -maxdepth 1 -type f -print

@@ -1,102 +1,88 @@
 //@version=6
-strategy("us-option-min-iv-strike-percentiles")
+strategy("us-option-iv-ridge-trend")
 
-// Idea: strikes with the lowest IV on each expiry sit near the market-implied
-// forward price. There's no open-interest data to weight by liquidity, so a
-// single min-IV contract is fragile (one thin/stale quote can flip which
-// strike "wins"). Instead take the `low_iv_count` lowest-IV contracts per
-// expiry and use their median strike as that expiry's estimate; the median
-// across expiries is the "anchor". A gap between anchor and spot signals
-// mean-reversion back toward the anchor.
-// Refinements: (1) only take counter-trend shorts once price has already rolled
-// below its trend MA, so we stop fighting a persistent uptrend; (2) target
-// volatility while capping leverage in calm markets; (3) combine time,
-// convergence, and price stops to limit tail losses.
+// The option IV ridge is a directional input, not a standalone fair value.
+// A long-only core captures the underlying risk premium. Confirmed ridge
+// displacement rotates the core into a tactical long or short position until
+// the ridge converges, the direction invalidates, or risk limits are reached.
 
-symbol = input.string("AAPL", title="Symbol")
+symbol = input.string("SPY", title="Symbol")
 min_dte = input.int(20, title="Minimum DTE", minval=0)
 max_dte = input.int(120, title="Maximum DTE", minval=1)
 min_expiries = input.int(3, title="Minimum Expiries", minval=1)
-low_iv_count = input.int(5, title="Lowest IV Contracts Per Expiry", minval=1)
-entry_gap_percent = input.float(2, title="Entry Gap Percent", minval=0.1, step=0.1)
-exit_gap_percent = input.float(0.5, title="Exit Gap Percent", minval=0, step=0.1)
-max_hold_bars = input.int(20, title="Maximum Holding Bars", minval=1)
-stop_loss_percent = input.float(5, title="Stop Loss Percent", minval=0.1, maxval=100, step=0.5)
-equity_percent = input.float(30, title="Equity Percent", minval=1, maxval=100)
-trend_len = input.int(50, title="Trend MA Length", minval=1)
-atr_len = input.int(14, title="ATR Length", minval=1)
-target_vol_percent = input.float(1.5, title="Target Daily Vol Percent", minval=0.1, step=0.1)
-min_size_mult = input.float(0.4, title="Min Vol Multiplier", minval=0.1, step=0.1)
-max_size_mult = input.float(1.5, title="Max Vol Multiplier", minval=1, step=0.1)
+ridge_contract_count = input.int(5, title="Ridge Contracts Per Expiry", minval=3)
+ridge_entry_percent = input.float(2, title="Ridge Entry Percent", minval=0.2, step=0.1)
+ridge_exit_percent = input.float(0.4, title="Ridge Exit Percent", minval=0, step=0.1)
+fast_len = input.int(20, title="Fast EMA Length", minval=2)
+slow_len = input.int(100, title="Slow EMA Length", minval=20)
+rsi_len = input.int(14, title="RSI Length", minval=2)
+core_equity_percent = input.float(80, title="Core Equity Percent", minval=10, maxval=100)
+max_hold_bars = input.int(15, title="Maximum Ridge Holding Bars", minval=2)
 
-varip holding_bars = 0
-if strategy.position_size == 0
-    holding_bars := 0
-else
-    holding_bars += 1
+fast_ema = ta.ema(close, fast_len)
+slow_ema = ta.ema(close, slow_len)
+rsi = ta.rsi(close, rsi_len)
+trend_up = not na(slow_ema) and close > slow_ema and fast_ema > slow_ema
+trend_down = not na(slow_ema) and close < slow_ema and fast_ema < slow_ema
 
-// --- Signal: median min-IV strike across eligible expiries ---
 chain = options.chain("us", symbol)
-strikes = []
+ridge_strikes = []
 
 if chain != na
     eligible_chain = options.expiry_range(chain, min_dte, max_dte)
     expirations = options.expirations(eligible_chain)
     for expiration in expirations
         expiry_chain = options.expiry(eligible_chain, expiration)
-        low_iv_contracts = options.lowest_iv(expiry_chain, low_iv_count)
+        low_iv_contracts = options.lowest_iv(expiry_chain, ridge_contract_count)
         if len(low_iv_contracts) > 0
-            expiry_strikes = []
-            for low_iv_contract in low_iv_contracts
-                expiry_strikes = expiry_strikes + [contract.strike(low_iv_contract)]
-            strikes = strikes + [array.percentile(expiry_strikes, 50)]
+            expiry_ridge_strikes = []
+            for ridge_contract in low_iv_contracts
+                expiry_ridge_strikes = expiry_ridge_strikes + [contract.strike(ridge_contract)]
+            ridge_strikes = ridge_strikes + [array.percentile(expiry_ridge_strikes, 50)]
 
-anchor = array.percentile(strikes, 50)
-gap_percent = close > 0 ? (anchor - close) / close * 100 : na
-valid_signal = len(strikes) >= min_expiries and not na(anchor) and not na(gap_percent)
+ridge = array.percentile(ridge_strikes, 50)
+ridge_gap_percent = close > 0 ? (ridge - close) / close * 100 : na
+ridge_ready = len(ridge_strikes) >= min_expiries and not na(ridge_gap_percent)
 
-// Regime filter: over this sample SPY trends up, so counter-trend shorts (anchor
-// below spot) get run over. Only allow shorts once price is already below its
-// trend MA; longs (buy the dip toward anchor) stay allowed in any regime.
-trend_ma = ta.sma(close, trend_len)
-downtrend = not na(trend_ma) and close < trend_ma
+// Two-bar confirmation rejects one-day quote noise. Trend only filters the
+// counter-trend short side; bullish ridge reversion remains available broadly.
+bullish_ridge = ridge_ready and ridge_gap_percent >= ridge_entry_percent and ridge_gap_percent[1] >= ridge_entry_percent
+bearish_ridge = ridge_ready and ridge_gap_percent <= -ridge_entry_percent and ridge_gap_percent[1] <= -ridge_entry_percent
+bullish_setup = bullish_ridge
+bearish_setup = bearish_ridge and close < fast_ema
 
-// Require the gap on two consecutive bars to avoid single-snapshot noise.
-long_entry = valid_signal and gap_percent >= entry_gap_percent and gap_percent[1] >= entry_gap_percent
-short_entry = valid_signal and downtrend and gap_percent <= -entry_gap_percent and gap_percent[1] <= -entry_gap_percent
+varip ridge_direction = 0
+varip ridge_holding_bars = 0
 
-// Volatility-targeted sizing: keep daily risk roughly constant by scaling the
-// notional inversely to ATR%. In calm tapes we lean in; when volatility spikes
-// (e.g. the Apr-2025 crash) size shrinks, capping tail losses. Clamped to
-// [min_size_mult, max_size_mult].
-atr = ta.atr(atr_len)
-atr_pct = close > 0 ? atr / close * 100 : na
-raw_size_mult = (na(atr_pct) or atr_pct <= 0) ? 1 : target_vol_percent / atr_pct
-size_mult = math.min(math.max(raw_size_mult, min_size_mult), max_size_mult)
+if ridge_direction == 0 and bullish_setup
+    ridge_direction := 1
+    strategy.close(id="core")
+else if ridge_direction == 0 and bearish_setup
+    ridge_direction := -1
+    strategy.close(id="core")
 
-// --- Exits ---
-time_exit = holding_bars >= max_hold_bars
-long_stop_exit = strategy.position_size > 0 and close <= strategy.position_avg_price * (1 - stop_loss_percent / 100)
-short_stop_exit = strategy.position_size < 0 and close >= strategy.position_avg_price * (1 + stop_loss_percent / 100)
-long_converged = strategy.position_size > 0 and valid_signal and gap_percent <= exit_gap_percent
-short_converged = strategy.position_size < 0 and valid_signal and gap_percent >= -exit_gap_percent
+// The engine does not pyramid regular orders on the same underlying. When a
+// ridge setup appears, rotate out of the core first, then enter a separate
+// tactical trade on the following bar.
+if ridge_direction != 0
+    if strategy.position_size == 0
+        strategy.entry(id="ridge_trade", direction=ridge_direction > 0 ? strategy.long : strategy.short, notional=strategy.equity * core_equity_percent / 100)
+    else
+        ridge_holding_bars += 1
+        ridge_converged = ridge_ready and math.abs(ridge_gap_percent) <= ridge_exit_percent
+        ridge_invalid = (ridge_direction > 0 and ridge_ready and ridge_gap_percent < 0) or (ridge_direction < 0 and ridge_ready and ridge_gap_percent > 0)
+        ridge_stop = (ridge_direction > 0 and close <= strategy.position_avg_price * 0.95) or (ridge_direction < 0 and close >= strategy.position_avg_price * 1.05)
+        if ridge_converged or ridge_invalid or ridge_stop or ridge_holding_bars >= max_hold_bars
+            strategy.close(id="ridge_trade")
+            ridge_direction := 0
+            ridge_holding_bars := 0
+else if strategy.position_size == 0
+    strategy.entry(id="core", direction=strategy.long, notional=strategy.equity * core_equity_percent / 100)
 
-plot(anchor, title="min_iv_anchor", precision=2, overlay=true)
-plot(gap_percent, title="anchor_gap_percent", precision=2)
-plot(trend_ma, title="trend_ma", precision=2, overlay=true)
-plot(size_mult, title="size_mult", precision=2)
-plot(len(strikes), title="eligible_expiry_count")
-plot(holding_bars, title="holding_bars")
-
-if strategy.position_size > 0
-    if time_exit or long_stop_exit or long_converged
-        strategy.close(id="long")
-else if strategy.position_size < 0
-    if time_exit or short_stop_exit or short_converged
-        strategy.close(id="short")
-else
-    entry_notional = strategy.equity * equity_percent / 100 * size_mult
-    if long_entry
-        strategy.entry(id="long", direction=strategy.long, notional=entry_notional)
-    else if short_entry
-        strategy.entry(id="short", direction=strategy.short, notional=entry_notional)
+plot(ridge, title="iv_ridge", precision=2, overlay=true)
+plot(ridge_gap_percent, title="ridge_gap_percent", precision=2)
+plot(fast_ema, title="fast_ema", precision=2, overlay=true)
+plot(slow_ema, title="slow_ema", precision=2, overlay=true)
+plot(rsi, title="rsi", precision=2)
+plot(len(ridge_strikes), title="ridge_expiry_count", precision=0)
+plot(ridge_holding_bars, title="ridge_holding_bars", precision=0)
