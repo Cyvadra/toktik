@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"strings"
@@ -10,6 +11,17 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/Cyvadra/toktik/internal/syncpipeline"
 )
+
+func TestTerminalProgressRendersArchiveUnits(t *testing.T) {
+	var output bytes.Buffer
+	progress := newTerminalProgress(&output)
+	progress.StartUnitProgress("polymarket archive", "MiB", 100)
+	progress.AdvanceUnitProgress("polymarket import hour.parquet", 25)
+	progress.Close()
+	if got := output.String(); !strings.Contains(got, "MiB/") || !strings.Contains(got, "[0s:0s]") {
+		t.Fatalf("progress output %q does not include MiB throughput and ETA", got)
+	}
+}
 
 func TestDefaultPipelineConfigEnablesETFFundamentalsForSPYAndIWM(t *testing.T) {
 	cfg := defaultPipelineConfig()

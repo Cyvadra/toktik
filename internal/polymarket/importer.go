@@ -3,24 +3,21 @@ package polymarket
 import (
 	"context"
 	"crypto/sha256"
-	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
-	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
 
 	clickhouse "github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
-	"github.com/parquet-go/parquet-go"
 )
 
 const eventInsertSQL = `INSERT INTO polymarket_l2_event (
     condition_id, asset_id, event_type, timestamp, timestamp_received,
-    source_file, source_row_number, event_id, side, price_e4, size_e6,
+	source_file, import_file, source_row_number, event_id, side, price_e4, size_e6,
     best_bid_e4, best_ask_e4, fee_rate_bps, transaction_hash,
     old_tick_size_e4, new_tick_size_e4, bids_json, asks_json
 )`
@@ -28,7 +25,7 @@ const eventInsertSQL = `INSERT INTO polymarket_l2_event (
 const conditionInsertSQL = `INSERT INTO polymarket_condition (
 	condition_id, event_id, market_id, slug, underlying, contract_interval,
 	window_start, window_end, market_start, market_end, closed,
-	resolved_outcome, metadata_version
+	resolved, winner, metadata_version
 )`
 
 const outcomeInsertSQL = `INSERT INTO polymarket_outcome (
@@ -38,22 +35,22 @@ const outcomeInsertSQL = `INSERT INTO polymarket_outcome (
 const rawFileCatalogInsertSQL = `INSERT INTO polymarket_raw_file_catalog (
 	source_file, source_hash, selection_hash, file_size, row_count, target_row_count,
 	first_received_at, last_received_at, schema_version, import_status,
-	error_message
+	error_message, checkpoint_version
 )`
 
-const MetadataSchemaVersion uint16 = 4
-const RawFileCatalogSchemaVersion uint16 = 2
+const metadataCatalogInsertSQL = `INSERT INTO polymarket_metadata_catalog (
+	selection_hash, schema_version, condition_count, outcome_count, import_status,
+	error_message, checkpoint_version
+)`
+
+const MetadataSchemaVersion uint16 = 5
+const RawFileCatalogSchemaVersion uint16 = 3
 
 var lastMetadataVersion atomic.Uint64
 
-type ImportOptions struct {
-	BatchSize     int
-	DryRun        bool
-	SelectionHash string
-}
-
 type ImportResult struct {
 	SourceFile      string
+	SourceRows      uint64
 	SelectedRows    uint64
 	InsertedRows    uint64
 	FirstReceivedAt *time.Time
@@ -66,7 +63,69 @@ type MetadataImportResult struct {
 	Version    uint64
 }
 
-func ImportConditionMetadata(ctx context.Context, conn driver.Conn, catalog *ConditionCatalog, conditionMapHash string, batchSize int, dryRun bool) (MetadataImportResult, error) {
+type RawFileCheckpoint struct {
+	SourceHash    string
+	SelectionHash string
+	SchemaVersion uint16
+	Status        string
+}
+
+func MetadataCurrent(ctx context.Context, conn driver.Conn, selectionHash string) (bool, error) {
+	var current uint8
+	if err := conn.QueryRow(ctx, `SELECT count() > 0
+		FROM polymarket_metadata_catalog FINAL
+		WHERE selection_hash = {selection_hash:String}
+			AND schema_version = {schema_version:UInt16}
+			AND import_status = 'success'`,
+		clickhouse.Named("selection_hash", selectionHash),
+		clickhouse.Named("schema_version", MetadataSchemaVersion),
+	).Scan(&current); err != nil {
+		return false, fmt.Errorf("check Polymarket metadata checkpoint: %w", err)
+	}
+	return current != 0, nil
+}
+
+func LoadRawFileCheckpoints(ctx context.Context, conn driver.Conn) (map[string]RawFileCheckpoint, error) {
+	checkpoints := make(map[string]RawFileCheckpoint)
+	if conn == nil {
+		return checkpoints, nil
+	}
+	rows, err := conn.Query(ctx, `SELECT
+		source_file,
+		checkpoint.1,
+		checkpoint.2,
+		checkpoint.3,
+		toString(checkpoint.4)
+	FROM
+	(
+		SELECT
+			source_file,
+			argMax(
+				tuple(source_hash, selection_hash, schema_version, import_status),
+				tuple(checkpoint_version, updated_at)
+			) AS checkpoint
+	FROM polymarket_raw_file_catalog
+	GROUP BY source_file
+	)`)
+	if err != nil {
+		return nil, fmt.Errorf("load Polymarket file checkpoints: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var sourceFile string
+		var checkpoint RawFileCheckpoint
+		if err := rows.Scan(&sourceFile, &checkpoint.SourceHash, &checkpoint.SelectionHash, &checkpoint.SchemaVersion, &checkpoint.Status); err != nil {
+			return nil, fmt.Errorf("scan Polymarket file checkpoint: %w", err)
+		}
+		checkpoints[sourceFile] = checkpoint
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate Polymarket file checkpoints: %w", err)
+	}
+	return checkpoints, nil
+}
+
+func ImportConditionMetadata(ctx context.Context, conn driver.Conn, catalog *ConditionCatalog, batchSize int, dryRun bool) (MetadataImportResult, error) {
 	if catalog == nil {
 		return MetadataImportResult{}, fmt.Errorf("condition catalog is required")
 	}
@@ -80,152 +139,261 @@ func ImportConditionMetadata(ctx context.Context, conn driver.Conn, catalog *Con
 	if batchSize <= 0 {
 		batchSize = 50_000
 	}
-	result.Version = metadataVersion(time.Now().UTC(), MetadataSchemaVersion)
+	result.Version = metadataVersion(time.Now().UTC())
 
-	conditionBatch, err := conn.PrepareBatch(ctx, conditionInsertSQL)
+	conditionWriter, err := newBatchWriter(ctx, conn, conditionInsertSQL, "condition", batchSize)
 	if err != nil {
-		return result, fmt.Errorf("prepare Polymarket condition batch: %w", err)
+		return result, err
 	}
-	outcomeBatch, err := conn.PrepareBatch(ctx, outcomeInsertSQL)
+	outcomeWriter, err := newBatchWriter(ctx, conn, outcomeInsertSQL, "outcome", batchSize)
 	if err != nil {
-		return result, fmt.Errorf("prepare Polymarket outcome batch: %w", err)
+		return result, err
 	}
-	defer func() { _ = conditionBatch.Abort() }()
-	defer func() { _ = outcomeBatch.Abort() }()
-	conditionPending := 0
-	outcomePending := 0
-	flushConditions := func() error {
-		if conditionPending == 0 {
-			return nil
-		}
-		if err := conditionBatch.Send(); err != nil {
-			return fmt.Errorf("send Polymarket condition batch: %w", err)
-		}
-		conditionPending = 0
-		return nil
-	}
-	flushOutcomes := func() error {
-		if outcomePending == 0 {
-			return nil
-		}
-		if err := outcomeBatch.Send(); err != nil {
-			return fmt.Errorf("send Polymarket outcome batch: %w", err)
-		}
-		outcomePending = 0
-		return nil
-	}
+	defer conditionWriter.Abort()
+	defer outcomeWriter.Abort()
 	for _, meta := range catalog.Conditions {
 		if meta.WindowEnd.IsZero() {
 			return result, fmt.Errorf("condition %s has no window end", meta.ConditionID)
 		}
-		if err := conditionBatch.Append(meta.ConditionID, meta.EventID, meta.MarketID, meta.Slug, meta.Underlying, meta.Interval, meta.WindowStart, meta.WindowEnd, meta.StartDate, meta.EndDate, meta.Closed, nil, result.Version); err != nil {
+		if err := conditionWriter.Append(meta.ConditionID, meta.EventID, meta.MarketID, meta.Slug, meta.Underlying, meta.Interval, meta.WindowStart, meta.WindowEnd, meta.StartDate, meta.EndDate, meta.Closed, meta.Resolved, meta.Winner, result.Version); err != nil {
 			return result, fmt.Errorf("append Polymarket condition %s: %w", meta.ConditionID, err)
 		}
-		conditionPending++
 		for index, assetID := range meta.OutcomeAsset {
-			if err := outcomeBatch.Append(assetID, meta.ConditionID, uint8(index), meta.Outcomes[index], result.Version); err != nil {
+			if err := outcomeWriter.Append(assetID, meta.ConditionID, uint8(index), meta.Outcomes[index], result.Version); err != nil {
 				return result, fmt.Errorf("append Polymarket outcome %s: %w", assetID, err)
 			}
-			outcomePending++
-			if outcomePending >= batchSize {
-				if err := flushOutcomes(); err != nil {
-					return result, err
-				}
-				outcomeBatch, err = conn.PrepareBatch(ctx, outcomeInsertSQL)
-				if err != nil {
-					return result, fmt.Errorf("prepare Polymarket outcome batch: %w", err)
-				}
-			}
-		}
-		if conditionPending >= batchSize {
-			if err := flushConditions(); err != nil {
-				return result, err
-			}
-			conditionBatch, err = conn.PrepareBatch(ctx, conditionInsertSQL)
-			if err != nil {
-				return result, fmt.Errorf("prepare Polymarket condition batch: %w", err)
-			}
 		}
 	}
-	if err := flushConditions(); err != nil {
+	if err := conditionWriter.Close(); err != nil {
 		return result, err
 	}
-	if err := flushOutcomes(); err != nil {
+	if err := outcomeWriter.Close(); err != nil {
 		return result, err
 	}
 	return result, nil
 }
 
-func ImportSelectedEvents(ctx context.Context, conn driver.Conn, parquetPath string, catalog *ConditionCatalog, options ImportOptions) (ImportResult, error) {
+func ImportArchive(ctx context.Context, conn driver.Conn, files []RawFileRef, catalog *ConditionCatalog, options ArchiveImportOptions) (result ArchiveImportResult, err error) {
 	if catalog == nil {
-		return ImportResult{}, fmt.Errorf("condition catalog is required")
+		return result, fmt.Errorf("condition catalog is required")
+	}
+	if !options.DryRun && conn == nil {
+		return result, fmt.Errorf("ClickHouse connection is required")
 	}
 	if options.BatchSize <= 0 {
 		options.BatchSize = 50_000
 	}
-	sourceFile := filepath.Base(parquetPath)
-	result := ImportResult{SourceFile: sourceFile}
-	if options.DryRun {
-		selected, err := StreamSelectedEvents(ctx, parquetPath, catalog.Conditions, func(RawEvent) error { return nil })
-		result.SelectedRows = selected
-		return result, err
+	if options.Horizon <= 0 {
+		options.Horizon = 49 * time.Hour
 	}
-	if conn == nil {
-		return result, fmt.Errorf("ClickHouse connection is required")
+	if len(files) == 0 {
+		return result, nil
 	}
-	if err := conn.Exec(ctx, `ALTER TABLE polymarket_l2_event DELETE WHERE source_file = {source_file:String} SETTINGS mutations_sync = 2`, clickhouse.Named("source_file", sourceFile)); err != nil {
-		return result, fmt.Errorf("clear Polymarket event scope %s: %w", sourceFile, err)
+	processor := NewArchiveProcessor(catalog, options.Horizon)
+	metadataCurrent := false
+	if !options.DryRun {
+		metadataCurrent, err = MetadataCurrent(ctx, conn, options.SelectionHash)
+		if err != nil {
+			return result, err
+		}
+	}
+	if !metadataCurrent {
+		metadataResult, metadataErr := ImportConditionMetadata(ctx, conn, catalog, options.BatchSize, options.DryRun)
+		if metadataErr != nil {
+			if !options.DryRun {
+				_ = writeMetadataCatalog(ctx, conn, options.SelectionHash, metadataResult, "failed", metadataErr.Error())
+			}
+			return result, metadataErr
+		}
+		if !options.DryRun {
+			if err := writeMetadataCatalog(ctx, conn, options.SelectionHash, metadataResult, "success", ""); err != nil {
+				return result, err
+			}
+		}
+		result.ConditionsInserted = metadataResult.Conditions
+		result.OutcomesInserted = metadataResult.Outcomes
+	}
+	totalMiB := 0
+	for _, file := range files {
+		totalMiB += fileProgressMiB(file.SizeBytes)
+	}
+	completedMiB := 0
+	if options.Progress != nil && totalMiB > 0 {
+		options.Progress.StartUnitProgress("polymarket archive", "MiB", totalMiB)
 	}
 
-	writer, err := newEventBatchWriter(ctx, conn, options.BatchSize)
-	if err != nil {
-		return result, err
+	for _, file := range files {
+		if err := ctx.Err(); err != nil {
+			return result, err
+		}
+		if hour, parseErr := archiveFileHour(file.Name); parseErr == nil {
+			processor.AdvanceWatermark(hour)
+		}
+		if file.Warmup {
+			rows, scanErr := ScanRawEvents(ctx, file.Path, catalog.Conditions, func(event RawEvent) error {
+				if file.Committed {
+					return processor.ReplayCommitted(event)
+				}
+				_, processErr := processor.Process(event, false)
+				return processErr
+			})
+			result.RowsScanned += rows
+			if scanErr != nil {
+				return result, fmt.Errorf("warm Polymarket file %s: %w", file.Name, scanErr)
+			}
+			result.FilesWarmed++
+			completedMiB += fileProgressMiB(file.SizeBytes)
+			if options.Progress != nil {
+				options.Progress.AdvanceUnitProgress("polymarket warm "+file.Name, completedMiB)
+			}
+			continue
+		}
+
+		processorBeforeFile := processor.clone()
+		fileResult, fileErr := importArchiveFile(ctx, conn, file, processor, options)
+		result.RowsScanned += fileResult.SourceRows
+		if fileErr != nil {
+			if errors.Is(fileErr, ErrPMXTFileRead) {
+				processor = processorBeforeFile
+				if !options.DryRun {
+					if catalogErr := writeRawFileCatalog(ctx, conn, file.Path, options.SelectionHash, fileResult, "skipped", fileErr.Error()); catalogErr != nil {
+						return result, fmt.Errorf("record skipped Polymarket file %s: %w", file.Name, catalogErr)
+					}
+				}
+				result.FilesSkipped++
+				completedMiB += fileProgressMiB(file.SizeBytes)
+				if options.Progress != nil {
+					options.Progress.AdvanceUnitProgress("polymarket skip "+file.Name, completedMiB)
+				}
+				continue
+			}
+			return result, fileErr
+		}
+		result.RowsInserted += fileResult.InsertedRows
+		result.FilesProcessed++
+		completedMiB += fileProgressMiB(file.SizeBytes)
+		if options.Progress != nil {
+			options.Progress.AdvanceUnitProgress("polymarket import "+file.Name, completedMiB)
+		}
 	}
-	defer writer.Abort()
-	selected, streamErr := StreamSelectedEvents(ctx, parquetPath, catalog.Conditions, func(event RawEvent) error {
-		if result.FirstReceivedAt == nil || event.Key.ReceivedTime.Before(*result.FirstReceivedAt) {
-			value := event.Key.ReceivedTime
-			result.FirstReceivedAt = &value
+	stats := processor.Stats()
+	result.SyntheticBooksInserted = stats.SyntheticBooksInserted
+	result.PreInitializationSkipped = stats.PreInitializationSkipped
+	result.LateRowsSkipped = stats.LateRowsSkipped
+	return result, nil
+}
+
+func fileProgressMiB(sizeBytes int64) int {
+	const mib = int64(1024 * 1024)
+	if sizeBytes <= 0 {
+		return 1
+	}
+	return int((sizeBytes + mib - 1) / mib)
+}
+
+func archiveFileHour(name string) (time.Time, error) {
+	const prefix = "polymarket_orderbook_"
+	const suffix = ".parquet"
+	value := strings.TrimSuffix(strings.TrimPrefix(name, prefix), suffix)
+	if value == name || !strings.HasSuffix(name, suffix) {
+		return time.Time{}, fmt.Errorf("invalid Polymarket archive filename %q", name)
+	}
+	return time.ParseInLocation("2006-01-02T15", value, time.UTC)
+}
+
+func importArchiveFile(ctx context.Context, conn driver.Conn, file RawFileRef, processor *ArchiveProcessor, options ArchiveImportOptions) (result ImportResult, err error) {
+	result.SourceFile = file.Name
+	if !options.DryRun {
+		defer func() {
+			if err == nil {
+				return
+			}
+			if catalogErr := writeRawFileCatalog(ctx, conn, file.Path, options.SelectionHash, result, "failed", err.Error()); catalogErr != nil {
+				err = fmt.Errorf("%w; record Polymarket file failure: %v", err, catalogErr)
+			}
+		}()
+		if err := writeRawFileCatalog(ctx, conn, file.Path, options.SelectionHash, result, "pending", ""); err != nil {
+			return result, fmt.Errorf("record pending Polymarket file %s: %w", file.Name, err)
 		}
-		if result.LastReceivedAt == nil || event.Key.ReceivedTime.After(*result.LastReceivedAt) {
-			value := event.Key.ReceivedTime
-			result.LastReceivedAt = &value
+		if file.Replace {
+			if err := clearImportedFileEvents(ctx, conn, file.Name); err != nil {
+				return result, fmt.Errorf("clear Polymarket event scope %s: %w", file.Name, err)
+			}
 		}
-		return writer.Append(event)
+	}
+
+	var eventWriter *batchWriter
+	if !options.DryRun {
+		if eventWriter, err = newBatchWriter(ctx, conn, eventInsertSQL, "event", options.BatchSize); err != nil {
+			return result, err
+		}
+		defer eventWriter.Abort()
+	}
+
+	rows, scanErr := ScanRawEvents(ctx, file.Path, processor.catalog.Conditions, func(event RawEvent) error {
+		emitted, err := processor.Process(event, true)
+		if err != nil {
+			return err
+		}
+		for _, selected := range emitted {
+			if result.FirstReceivedAt == nil || selected.Key.ReceivedTime.Before(*result.FirstReceivedAt) {
+				value := selected.Key.ReceivedTime
+				result.FirstReceivedAt = &value
+			}
+			if result.LastReceivedAt == nil || selected.Key.ReceivedTime.After(*result.LastReceivedAt) {
+				value := selected.Key.ReceivedTime
+				result.LastReceivedAt = &value
+			}
+			if !options.DryRun {
+				if err := appendEvent(eventWriter, file.Name, selected); err != nil {
+					return err
+				}
+			}
+			result.SelectedRows++
+		}
+		return nil
 	})
-	result.SelectedRows = selected
-	if streamErr != nil {
-		return result, streamErr
+	result.SourceRows = rows
+	result.InsertedRows = result.SelectedRows
+	if scanErr != nil {
+		if !options.DryRun && errors.Is(scanErr, ErrPMXTFileRead) {
+			if cleanupErr := clearImportedFileEvents(ctx, conn, file.Name); cleanupErr != nil {
+				return result, fmt.Errorf("import Polymarket file %s: %w; clear partial events: %v", file.Name, scanErr, cleanupErr)
+			}
+		}
+		return result, fmt.Errorf("import Polymarket file %s: %w", file.Name, scanErr)
 	}
-	if err := writer.Close(); err != nil {
+	if options.DryRun {
+		return result, nil
+	}
+	if err := eventWriter.Close(); err != nil {
 		return result, err
 	}
-	result.InsertedRows = writer.inserted
-	if err := writeRawFileCatalog(ctx, conn, parquetPath, options.SelectionHash, result); err != nil {
+	if err := writeRawFileCatalog(ctx, conn, file.Path, options.SelectionHash, result, "success", ""); err != nil {
 		return result, err
 	}
 	return result, nil
 }
 
-func writeRawFileCatalog(ctx context.Context, conn driver.Conn, parquetPath, selectionHash string, result ImportResult) error {
+func clearImportedFileEvents(ctx context.Context, conn driver.Conn, fileName string) error {
+	return conn.Exec(ctx, `ALTER TABLE polymarket_l2_event DELETE WHERE import_file = {import_file:String} SETTINGS mutations_sync = 2`, clickhouse.Named("import_file", fileName))
+}
+
+func writeRawFileCatalog(ctx context.Context, conn driver.Conn, parquetPath, selectionHash string, result ImportResult, status, errorMessage string) error {
 	info, err := os.Stat(parquetPath)
 	if err != nil {
 		return fmt.Errorf("stat imported Polymarket file: %w", err)
-	}
-	rowCount, err := sourceRowCount(parquetPath)
-	if err != nil {
-		return err
-	}
-	hash, err := fileSHA256(parquetPath)
-	if err != nil {
-		return fmt.Errorf("hash imported Polymarket file: %w", err)
 	}
 	batch, err := conn.PrepareBatch(ctx, rawFileCatalogInsertSQL)
 	if err != nil {
 		return fmt.Errorf("prepare Polymarket file catalog batch: %w", err)
 	}
 	defer func() { _ = batch.Abort() }()
-	if err := batch.Append(result.SourceFile, hash, selectionHash, uint64(info.Size()), rowCount, result.SelectedRows, result.FirstReceivedAt, result.LastReceivedAt, RawFileCatalogSchemaVersion, "success", ""); err != nil {
+	sourceFingerprint, err := FileFingerprint(parquetPath, info)
+	if err != nil {
+		return fmt.Errorf("fingerprint imported Polymarket file: %w", err)
+	}
+	if err := batch.Append(result.SourceFile, sourceFingerprint, selectionHash, uint64(info.Size()), result.SourceRows, result.SelectedRows, result.FirstReceivedAt, result.LastReceivedAt, RawFileCatalogSchemaVersion, status, errorMessage, metadataVersion(time.Now().UTC())); err != nil {
 		return fmt.Errorf("append Polymarket file catalog: %w", err)
 	}
 	if err := batch.Send(); err != nil {
@@ -234,60 +402,45 @@ func writeRawFileCatalog(ctx context.Context, conn driver.Conn, parquetPath, sel
 	return nil
 }
 
-func sourceRowCount(parquetPath string) (uint64, error) {
-	rows, err := readOKRowCount(parquetPath + ".ok")
-	if err == nil {
-		return rows, nil
+func writeMetadataCatalog(ctx context.Context, conn driver.Conn, selectionHash string, result MetadataImportResult, status, errorMessage string) error {
+	batch, err := conn.PrepareBatch(ctx, metadataCatalogInsertSQL)
+	if err != nil {
+		return fmt.Errorf("prepare Polymarket metadata catalog batch: %w", err)
 	}
-	file, openErr := os.Open(filepath.Clean(parquetPath))
-	if openErr != nil {
-		return 0, fmt.Errorf("open PMXT parquet for row count: %w", openErr)
+	defer func() { _ = batch.Abort() }()
+	if err := batch.Append(selectionHash, MetadataSchemaVersion, result.Conditions, result.Outcomes, status, errorMessage, metadataVersion(time.Now().UTC())); err != nil {
+		return fmt.Errorf("append Polymarket metadata catalog: %w", err)
 	}
-	defer file.Close()
-	info, statErr := file.Stat()
-	if statErr != nil {
-		return 0, fmt.Errorf("stat PMXT parquet for row count: %w", statErr)
+	if err := batch.Send(); err != nil {
+		return fmt.Errorf("send Polymarket metadata catalog: %w", err)
 	}
-	parquetFile, openErr := parquet.OpenFile(file, info.Size())
-	if openErr != nil {
-		return 0, fmt.Errorf("read PMXT parquet footer after marker error %v: %w", err, openErr)
-	}
-	return uint64(parquetFile.NumRows()), nil
+	return nil
 }
 
-func readOKRowCount(path string) (uint64, error) {
-	data, err := os.ReadFile(filepath.Clean(path))
+func FileFingerprint(path string, info os.FileInfo) (string, error) {
+	file, err := os.Open(path)
 	if err != nil {
-		return 0, fmt.Errorf("read PMXT marker %s: %w", path, err)
+		return "", err
 	}
-	for _, line := range strings.Split(string(data), "\n") {
-		key, value, ok := strings.Cut(strings.TrimSpace(line), "=")
-		if ok && key == "rows" {
-			rows, err := strconv.ParseUint(value, 10, 64)
-			if err != nil {
-				return 0, fmt.Errorf("parse PMXT marker rows: %w", err)
-			}
-			return rows, nil
+	defer file.Close()
+
+	const sampleSize = int64(64 * 1024)
+	hash := sha256.New()
+	if _, err := io.CopyN(hash, file, min(info.Size(), sampleSize)); err != nil {
+		return "", err
+	}
+	if info.Size() > sampleSize {
+		if _, err := file.Seek(max(sampleSize, info.Size()-sampleSize), io.SeekStart); err != nil {
+			return "", err
+		}
+		if _, err := io.Copy(hash, file); err != nil {
+			return "", err
 		}
 	}
-	return 0, fmt.Errorf("PMXT marker %s has no rows", path)
+	return fmt.Sprintf("size=%d;modified=%d;sample=%x", info.Size(), info.ModTime().UTC().UnixNano(), hash.Sum(nil)), nil
 }
 
-func fileSHA256(path string) (string, error) {
-	file, err := os.Open(filepath.Clean(path))
-	if err != nil {
-		return "", err
-	}
-	defer file.Close()
-	hash := sha256.New()
-	if _, err := io.Copy(hash, file); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(hash.Sum(nil)), nil
-}
-
-func metadataVersion(importedAt time.Time, schemaVersion uint16) uint64 {
-	_ = schemaVersion
+func metadataVersion(importedAt time.Time) uint64 {
 	candidate := uint64(importedAt.UTC().UnixNano())
 	for {
 		previous := lastMetadataVersion.Load()
@@ -300,40 +453,43 @@ func metadataVersion(importedAt time.Time, schemaVersion uint16) uint64 {
 	}
 }
 
-type eventBatchWriter struct {
+type batchWriter struct {
 	ctx       context.Context
 	conn      driver.Conn
 	batch     driver.Batch
 	batchSize int
+	name      string
+	query     string
 	pending   int
 	inserted  uint64
 }
 
-func newEventBatchWriter(ctx context.Context, conn driver.Conn, batchSize int) (*eventBatchWriter, error) {
-	writer := &eventBatchWriter{ctx: ctx, conn: conn, batchSize: batchSize}
+func newBatchWriter(ctx context.Context, conn driver.Conn, query, name string, batchSize int) (*batchWriter, error) {
+	writer := &batchWriter{ctx: ctx, conn: conn, batchSize: batchSize, name: name, query: query}
 	if err := writer.prepare(); err != nil {
 		return nil, err
 	}
 	return writer, nil
 }
 
-func (writer *eventBatchWriter) prepare() error {
-	batch, err := writer.conn.PrepareBatch(writer.ctx, eventInsertSQL)
+func (writer *batchWriter) prepare() error {
+	batch, err := writer.conn.PrepareBatch(writer.ctx, writer.query)
 	if err != nil {
-		return fmt.Errorf("prepare Polymarket event batch: %w", err)
+		return fmt.Errorf("prepare Polymarket %s batch: %w", writer.name, err)
 	}
 	writer.batch = batch
 	return nil
 }
 
-func (writer *eventBatchWriter) Append(event RawEvent) error {
-	if err := writer.batch.Append(
+func appendEvent(writer *batchWriter, importFile string, event RawEvent) error {
+	if err := writer.Append(
 		event.ConditionID,
 		event.AssetID,
 		string(event.Type),
 		event.Key.ExchangeTime,
 		event.Key.ReceivedTime,
 		event.Key.SourceFile,
+		importFile,
 		event.Key.SourceRow,
 		event.Key.EventID(),
 		nullableStringValue(event.Side),
@@ -350,6 +506,13 @@ func (writer *eventBatchWriter) Append(event RawEvent) error {
 	); err != nil {
 		return fmt.Errorf("append Polymarket event row %d: %w", event.Key.SourceRow, err)
 	}
+	return nil
+}
+
+func (writer *batchWriter) Append(values ...any) error {
+	if err := writer.batch.Append(values...); err != nil {
+		return fmt.Errorf("append Polymarket %s batch: %w", writer.name, err)
+	}
 	writer.pending++
 	if writer.pending >= writer.batchSize {
 		return writer.flush(true)
@@ -357,7 +520,7 @@ func (writer *eventBatchWriter) Append(event RawEvent) error {
 	return nil
 }
 
-func (writer *eventBatchWriter) Close() error {
+func (writer *batchWriter) Close() error {
 	if writer.pending == 0 {
 		return writer.Abort()
 	}
@@ -367,7 +530,7 @@ func (writer *eventBatchWriter) Close() error {
 	return nil
 }
 
-func (writer *eventBatchWriter) Abort() error {
+func (writer *batchWriter) Abort() error {
 	if writer.batch == nil {
 		return nil
 	}
@@ -376,12 +539,12 @@ func (writer *eventBatchWriter) Abort() error {
 	return err
 }
 
-func (writer *eventBatchWriter) flush(prepareNext bool) error {
+func (writer *batchWriter) flush(prepareNext bool) error {
 	if writer.pending == 0 {
 		return nil
 	}
 	if err := writer.batch.Send(); err != nil {
-		return fmt.Errorf("send Polymarket event batch: %w", err)
+		return fmt.Errorf("send Polymarket %s batch: %w", writer.name, err)
 	}
 	writer.inserted += uint64(writer.pending)
 	writer.pending = 0

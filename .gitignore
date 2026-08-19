@@ -77,3 +77,5 @@ toktik.yaml
 # DAMN
 __pycache__/
 *.pyc
+
+scripts/toktik-api-key

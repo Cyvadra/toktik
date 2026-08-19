@@ -140,6 +140,44 @@ func (book *Book) Levels(side Side) []Level {
 	return out
 }
 
+func (book *Book) SnapshotEvent() (Event, error) {
+	if !book.initialized {
+		return Event{}, ErrBookNotInitialized
+	}
+	bids, err := encodeLevels(book.Levels(SideBid))
+	if err != nil {
+		return Event{}, fmt.Errorf("encode bids: %w", err)
+	}
+	asks, err := encodeLevels(book.Levels(SideAsk))
+	if err != nil {
+		return Event{}, fmt.Errorf("encode asks: %w", err)
+	}
+	return Event{Type: EventBook, BidsJSON: bids, AsksJSON: asks, NewTickSize: book.tickSize}, nil
+}
+
+func encodeLevels(levels []Level) (string, error) {
+	values := make([][2]string, 0, len(levels))
+	for _, level := range levels {
+		values = append(values, [2]string{formatFixed(level.Price, PriceScale), formatFixed(level.Size, SizeScale)})
+	}
+	encoded, err := json.Marshal(values)
+	if err != nil {
+		return "", err
+	}
+	return string(encoded), nil
+}
+
+func formatFixed(value, scale int64) string {
+	whole := value / scale
+	fraction := value % scale
+	if fraction < 0 {
+		fraction = -fraction
+	}
+	digits := len(strconv.FormatInt(scale, 10)) - 1
+	formatted := fmt.Sprintf("%d.%0*d", whole, digits, fraction)
+	return strings.TrimRight(strings.TrimRight(formatted, "0"), ".")
+}
+
 func (book *Book) levelsForSide(side Side) (map[int64]int64, error) {
 	switch side {
 	case SideBid:

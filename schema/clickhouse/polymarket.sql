@@ -11,12 +11,19 @@ CREATE TABLE IF NOT EXISTS polymarket_condition
     market_start       Nullable(DateTime64(3, 'UTC')),
     market_end         Nullable(DateTime64(3, 'UTC')),
     closed             UInt8,
-    resolved_outcome   Nullable(String),
+    resolved           UInt8,
+    winner             UInt8,
     metadata_version   UInt64,
     updated_at         DateTime64(3, 'UTC') DEFAULT now64(3)
 )
 ENGINE = ReplacingMergeTree(metadata_version)
 ORDER BY condition_id;
+
+ALTER TABLE polymarket_condition
+    ADD COLUMN IF NOT EXISTS resolved UInt8 DEFAULT 0 AFTER closed;
+
+ALTER TABLE polymarket_condition
+    ADD COLUMN IF NOT EXISTS winner UInt8 DEFAULT 0 AFTER resolved;
 
 CREATE TABLE IF NOT EXISTS polymarket_outcome
 (
@@ -43,6 +50,7 @@ CREATE TABLE IF NOT EXISTS polymarket_raw_file_catalog
     schema_version       UInt16,
     import_status        Enum8('pending' = 1, 'success' = 2, 'failed' = 3),
     error_message        String DEFAULT '',
+    checkpoint_version   UInt64 DEFAULT 0,
     updated_at           DateTime64(3, 'UTC') DEFAULT now64(3)
 )
 ENGINE = ReplacingMergeTree(updated_at)
@@ -50,6 +58,23 @@ ORDER BY source_file;
 
 ALTER TABLE polymarket_raw_file_catalog
     ADD COLUMN IF NOT EXISTS selection_hash String DEFAULT '' AFTER source_hash;
+
+ALTER TABLE polymarket_raw_file_catalog
+    ADD COLUMN IF NOT EXISTS checkpoint_version UInt64 DEFAULT 0 AFTER error_message;
+
+CREATE TABLE IF NOT EXISTS polymarket_metadata_catalog
+(
+    selection_hash       String,
+    schema_version       UInt16,
+    condition_count      UInt64,
+    outcome_count        UInt64,
+    import_status        Enum8('pending' = 1, 'success' = 2, 'failed' = 3),
+    error_message        String DEFAULT '',
+    checkpoint_version   UInt64,
+    updated_at           DateTime64(3, 'UTC') DEFAULT now64(3)
+)
+ENGINE = ReplacingMergeTree(checkpoint_version)
+ORDER BY (selection_hash, schema_version);
 
 CREATE TABLE IF NOT EXISTS polymarket_l2_event
 (
@@ -59,6 +84,7 @@ CREATE TABLE IF NOT EXISTS polymarket_l2_event
     timestamp          DateTime64(3, 'UTC'),
     timestamp_received DateTime64(3, 'UTC'),
     source_file       LowCardinality(String),
+    import_file       LowCardinality(String),
     source_row_number UInt64,
     event_id          FixedString(32),
     side              Nullable(Enum8('BUY' = 1, 'SELL' = 2)),
@@ -73,8 +99,19 @@ CREATE TABLE IF NOT EXISTS polymarket_l2_event
     bids_json         Nullable(String),
     asks_json         Nullable(String),
     ingested_at       DateTime64(3, 'UTC') DEFAULT now64(3),
-    INDEX idx_condition condition_id TYPE bloom_filter GRANULARITY 4
+    INDEX idx_condition condition_id TYPE bloom_filter GRANULARITY 4,
+    INDEX idx_source_file source_file TYPE bloom_filter GRANULARITY 4,
+    INDEX idx_import_file import_file TYPE bloom_filter GRANULARITY 4
 )
 ENGINE = MergeTree()
 PARTITION BY toYYYYMMDD(timestamp_received)
 ORDER BY (asset_id, timestamp_received, timestamp, source_file, source_row_number);
+
+ALTER TABLE polymarket_l2_event
+    ADD INDEX IF NOT EXISTS idx_source_file source_file TYPE bloom_filter GRANULARITY 4;
+
+ALTER TABLE polymarket_l2_event
+    ADD COLUMN IF NOT EXISTS import_file LowCardinality(String) DEFAULT source_file AFTER source_file;
+
+ALTER TABLE polymarket_l2_event
+    ADD INDEX IF NOT EXISTS idx_import_file import_file TYPE bloom_filter GRANULARITY 4;

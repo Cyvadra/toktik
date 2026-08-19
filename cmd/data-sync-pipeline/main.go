@@ -140,6 +140,7 @@ type jobConfig struct {
 	LimitFiles               int               `yaml:"limit_files"`
 	EstimatedHourMB          int               `yaml:"estimated_hour_mb"`
 	MemoryBudgetMB           int               `yaml:"memory_budget_mb"`
+	StateHorizonHours        int               `yaml:"state_horizon_hours"`
 }
 
 type optionalBoolFlag struct {
@@ -586,6 +587,8 @@ func (p *terminalProgress) StartUnitProgress(description, unit string, total int
 		progressbar.OptionSetDescription(description),
 		progressbar.OptionShowCount(),
 		progressbar.OptionShowIts(),
+		progressbar.OptionShowElapsedTimeOnFinish(),
+		progressbar.OptionSetPredictTime(true),
 		progressbar.OptionSetItsString(unit),
 		progressbar.OptionSetWidth(28),
 		progressbar.OptionThrottle(100*time.Millisecond),
@@ -1073,7 +1076,7 @@ func buildSyncer(buildCtx syncerBuildContext, name string, job jobConfig) (syncp
 		if err != nil {
 			return nil, fmt.Errorf("polymarket_archive archive_to: %w", err)
 		}
-		return pipelinejobs.NewPolymarketArchive(pipelinejobs.PolymarketArchiveConfig{RawRoot: job.RawRoot, ConditionMap: job.ConditionMapPath, ArchiveFrom: archiveFrom, ArchiveTo: archiveTo, BatchSize: job.BatchSize, LimitFiles: job.LimitFiles, Workers: job.Workers, EstimatedHourMB: job.EstimatedHourMB, MemoryBudgetMB: job.MemoryBudgetMB, ColdStartFloor: parseColdStart(job.ColdStartFloor)})
+		return pipelinejobs.NewPolymarketArchive(pipelinejobs.PolymarketArchiveConfig{RawRoot: job.RawRoot, ConditionMap: job.ConditionMapPath, ArchiveFrom: archiveFrom, ArchiveTo: archiveTo, BatchSize: job.BatchSize, LimitFiles: job.LimitFiles, StateHorizon: time.Duration(job.StateHorizonHours) * time.Hour, ColdStartFloor: parseColdStart(job.ColdStartFloor)})
 	}
 	if syncer, ok, err := buildFMPSyncer(buildCtx, name, job); ok {
 		return syncer, err

@@ -5,10 +5,12 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -16,6 +18,8 @@ import (
 )
 
 const pmxtColumnCount = 16
+
+var ErrPMXTFileRead = errors.New("read PMXT file")
 
 type NullableInt64 struct {
 	Value int64
@@ -50,6 +54,32 @@ type RawEvent struct {
 	NewTickSizeE4   NullableInt64
 }
 
+func (event RawEvent) ReplayEvent() (Event, error) {
+	replay := Event{
+		Type:        event.Type,
+		Price:       event.PriceE4.Value,
+		Size:        event.SizeE6.Value,
+		BidsJSON:    event.BidsJSON.Value,
+		AsksJSON:    event.AsksJSON.Value,
+		BestBid:     event.BestBidE4.Value,
+		BestAsk:     event.BestAskE4.Value,
+		HasBestBid:  event.BestBidE4.Valid,
+		HasBestAsk:  event.BestAskE4.Valid,
+		NewTickSize: event.NewTickSizeE4.Value,
+	}
+	if event.Side.Valid {
+		switch event.Side.Value {
+		case "BUY":
+			replay.Side = SideBid
+		case "SELL":
+			replay.Side = SideAsk
+		default:
+			return Event{}, fmt.Errorf("unsupported Polymarket side %q", event.Side.Value)
+		}
+	}
+	return replay, nil
+}
+
 type ConditionMeta struct {
 	ConditionID  string
 	EventID      string
@@ -62,6 +92,8 @@ type ConditionMeta struct {
 	StartDate    *time.Time
 	EndDate      *time.Time
 	Closed       bool
+	Resolved     bool
+	Winner       uint8
 	Outcomes     []string
 	OutcomeAsset []string
 }
@@ -85,6 +117,10 @@ type conditionMapRecord struct {
 	Closed       bool     `json:"closed"`
 	Outcomes     []string `json:"outcomes"`
 	ClobTokenIDs []string `json:"clob_token_ids"`
+	TokenUp      string   `json:"token_up"`
+	TokenDown    string   `json:"token_down"`
+	Resolved     bool     `json:"resolved"`
+	Winner       string   `json:"winner"`
 }
 
 func LoadConditionCatalog(path string) (*ConditionCatalog, error) {
@@ -97,6 +133,9 @@ func LoadConditionCatalog(path string) (*ConditionCatalog, error) {
 	catalog := &ConditionCatalog{
 		Conditions: make(map[string]ConditionMeta),
 		Assets:     make(map[string]string),
+	}
+	if strings.HasSuffix(strings.ToLower(path), ".json") {
+		return loadConditionCatalogByCondition(file, path)
 	}
 	scanner := bufio.NewScanner(file)
 	scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
@@ -113,17 +152,9 @@ func LoadConditionCatalog(path string) (*ConditionCatalog, error) {
 		if len(record.ConditionID) != 66 || len(record.Outcomes) != len(record.ClobTokenIDs) || len(record.Outcomes) == 0 {
 			return nil, fmt.Errorf("invalid condition map line %d for %q", lineNumber, record.ConditionID)
 		}
-		meta := ConditionMeta{
-			ConditionID:  record.ConditionID,
-			EventID:      record.EventID,
-			MarketID:     record.MarketID,
-			Slug:         record.Slug,
-			Underlying:   strings.ToUpper(record.Asset),
-			Interval:     strings.ToLower(record.Period),
-			WindowStart:  time.Unix(record.WindowStart, 0).UTC(),
-			Closed:       record.Closed,
-			Outcomes:     append([]string(nil), record.Outcomes...),
-			OutcomeAsset: append([]string(nil), record.ClobTokenIDs...),
+		meta, err := conditionMetaFromRecord(record)
+		if err != nil {
+			return nil, fmt.Errorf("condition map line %d: %w", lineNumber, err)
 		}
 		if meta.StartDate, err = parseOptionalTime(record.StartDate); err != nil {
 			return nil, fmt.Errorf("condition map line %d start_date: %w", lineNumber, err)
@@ -131,20 +162,8 @@ func LoadConditionCatalog(path string) (*ConditionCatalog, error) {
 		if meta.EndDate, err = parseOptionalTime(record.EndDate); err != nil {
 			return nil, fmt.Errorf("condition map line %d end_date: %w", lineNumber, err)
 		}
-		windowDuration, err := polymarketIntervalDuration(meta.Interval)
-		if err != nil {
-			return nil, fmt.Errorf("condition map line %d interval: %w", lineNumber, err)
-		}
-		meta.WindowEnd = meta.WindowStart.Add(windowDuration)
-		if existing, ok := catalog.Conditions[meta.ConditionID]; ok && existing.Slug != meta.Slug {
-			return nil, fmt.Errorf("condition %s maps to multiple slugs", meta.ConditionID)
-		}
-		catalog.Conditions[meta.ConditionID] = meta
-		for _, assetID := range meta.OutcomeAsset {
-			if conditionID, ok := catalog.Assets[assetID]; ok && conditionID != meta.ConditionID {
-				return nil, fmt.Errorf("asset %s maps to multiple conditions", assetID)
-			}
-			catalog.Assets[assetID] = meta.ConditionID
+		if err := addConditionMeta(catalog, meta); err != nil {
+			return nil, err
 		}
 	}
 	if err := scanner.Err(); err != nil {
@@ -153,28 +172,118 @@ func LoadConditionCatalog(path string) (*ConditionCatalog, error) {
 	return catalog, nil
 }
 
-func StreamSelectedEvents(ctx context.Context, path string, allowedConditions map[string]ConditionMeta, consume func(RawEvent) error) (uint64, error) {
+func loadConditionCatalogByCondition(file *os.File, path string) (*ConditionCatalog, error) {
+	var records map[string]conditionMapRecord
+	if err := json.NewDecoder(file).Decode(&records); err != nil {
+		return nil, fmt.Errorf("decode condition map %s: %w", path, err)
+	}
+	catalog := &ConditionCatalog{
+		Conditions: make(map[string]ConditionMeta),
+		Assets:     make(map[string]string),
+	}
+	conditionIDs := make([]string, 0, len(records))
+	for conditionID := range records {
+		conditionIDs = append(conditionIDs, conditionID)
+	}
+	sort.Strings(conditionIDs)
+	for _, conditionID := range conditionIDs {
+		record := records[conditionID]
+		record.ConditionID = conditionID
+		if record.Status == "" {
+			record.Status = "ok"
+		}
+		if record.Status != "ok" {
+			continue
+		}
+		meta, err := conditionMetaFromRecord(record)
+		if err != nil {
+			return nil, fmt.Errorf("condition %s: %w", conditionID, err)
+		}
+		if err := addConditionMeta(catalog, meta); err != nil {
+			return nil, err
+		}
+	}
+	return catalog, nil
+}
+
+func conditionMetaFromRecord(record conditionMapRecord) (ConditionMeta, error) {
+	outcomes := record.Outcomes
+	outcomeAsset := record.ClobTokenIDs
+	if len(outcomes) == 0 && record.TokenUp != "" && record.TokenDown != "" {
+		outcomes = []string{"Up", "Down"}
+		outcomeAsset = []string{record.TokenUp, record.TokenDown}
+	}
+	if len(record.ConditionID) != 66 || len(outcomes) != len(outcomeAsset) || len(outcomes) == 0 {
+		return ConditionMeta{}, fmt.Errorf("invalid condition metadata for %q", record.ConditionID)
+	}
+	meta := ConditionMeta{
+		ConditionID:  record.ConditionID,
+		EventID:      record.EventID,
+		MarketID:     record.MarketID,
+		Slug:         record.Slug,
+		Underlying:   strings.ToUpper(record.Asset),
+		Interval:     strings.ToLower(record.Period),
+		WindowStart:  time.Unix(record.WindowStart, 0).UTC(),
+		Closed:       record.Closed,
+		Resolved:     record.Resolved,
+		Winner:       binaryWinner(record.Winner),
+		Outcomes:     append([]string(nil), outcomes...),
+		OutcomeAsset: append([]string(nil), outcomeAsset...),
+	}
+	windowDuration, err := polymarketIntervalDuration(meta.Interval)
+	if err != nil {
+		return ConditionMeta{}, fmt.Errorf("interval: %w", err)
+	}
+	meta.WindowEnd = meta.WindowStart.Add(windowDuration)
+	return meta, nil
+}
+
+func addConditionMeta(catalog *ConditionCatalog, meta ConditionMeta) error {
+	if existing, ok := catalog.Conditions[meta.ConditionID]; ok && existing.Slug != meta.Slug {
+		return fmt.Errorf("condition %s maps to multiple slugs", meta.ConditionID)
+	}
+	catalog.Conditions[meta.ConditionID] = meta
+	for _, assetID := range meta.OutcomeAsset {
+		if conditionID, ok := catalog.Assets[assetID]; ok && conditionID != meta.ConditionID {
+			return fmt.Errorf("asset %s maps to multiple conditions", assetID)
+		}
+		catalog.Assets[assetID] = meta.ConditionID
+	}
+	return nil
+}
+
+func binaryWinner(winner string) uint8 {
+	switch strings.ToLower(strings.TrimSpace(winner)) {
+	case "up":
+		return 1
+	case "down":
+		return 2
+	default:
+		return 0
+	}
+}
+
+func ScanRawEvents(ctx context.Context, path string, allowedConditions map[string]ConditionMeta, consume func(RawEvent) error) (uint64, error) {
 	file, err := os.Open(filepath.Clean(path))
 	if err != nil {
-		return 0, fmt.Errorf("open PMXT parquet %s: %w", path, err)
+		return 0, fmt.Errorf("%w: open PMXT parquet %s: %w", ErrPMXTFileRead, path, err)
 	}
 	defer file.Close()
 	info, err := file.Stat()
 	if err != nil {
-		return 0, fmt.Errorf("stat PMXT parquet %s: %w", path, err)
+		return 0, fmt.Errorf("%w: stat PMXT parquet %s: %w", ErrPMXTFileRead, path, err)
 	}
 	parquetFile, err := parquet.OpenFile(file, info.Size())
 	if err != nil {
-		return 0, fmt.Errorf("open PMXT parquet metadata %s: %w", path, err)
+		return 0, fmt.Errorf("%w: open PMXT parquet metadata %s: %w", ErrPMXTFileRead, path, err)
 	}
-	if parquetFile.Schema().String() == "" || len(parquetFile.RowGroups()) == 0 {
+	if len(parquetFile.RowGroups()) == 0 {
 		return 0, nil
 	}
 
 	sourceFile := filepath.Base(path)
 	rowBuffer := make([]parquet.Row, 2048)
-	var sourceRow uint64
-	var selected uint64
+	var sourceRows uint64
 	for _, rowGroup := range parquetFile.RowGroups() {
 		rows := rowGroup.Rows()
 		for {
@@ -182,46 +291,73 @@ func StreamSelectedEvents(ctx context.Context, path string, allowedConditions ma
 			for index := 0; index < n; index++ {
 				if err := ctx.Err(); err != nil {
 					rows.Close()
-					return selected, err
+					return sourceRows, err
 				}
 				row := rowBuffer[index]
 				if len(row) != pmxtColumnCount {
 					rows.Close()
-					return selected, fmt.Errorf("PMXT row %d has %d columns, want %d", sourceRow, len(row), pmxtColumnCount)
+					return sourceRows, fmt.Errorf("%w: PMXT row %d has %d columns, want %d", ErrPMXTFileRead, sourceRows, len(row), pmxtColumnCount)
 				}
 				conditionID := string(row[2].Bytes())
 				if _, ok := allowedConditions[conditionID]; ok {
-					event, err := decodePMXTRow(row, sourceFile, sourceRow)
+					event, err := decodePMXTRow(row, sourceFile, sourceRows)
 					if err != nil {
 						rows.Close()
-						return selected, fmt.Errorf("decode PMXT row %d: %w", sourceRow, err)
+						return sourceRows, fmt.Errorf("%w: decode PMXT row %d: %w", ErrPMXTFileRead, sourceRows, err)
 					}
 					if err := consume(event); err != nil {
 						rows.Close()
-						return selected, err
+						return sourceRows, err
 					}
-					selected++
 				}
-				sourceRow++
+				sourceRows++
 				rowBuffer[index] = row[:0]
 			}
 			if readErr != nil {
 				if closeErr := rows.Close(); closeErr != nil && readErr == io.EOF {
-					return selected, fmt.Errorf("close PMXT row group: %w", closeErr)
+					return sourceRows, fmt.Errorf("%w: close PMXT row group: %w", ErrPMXTFileRead, closeErr)
 				}
 				if readErr == io.EOF {
 					break
 				}
-				return selected, fmt.Errorf("read PMXT parquet %s: %w", path, readErr)
+				return sourceRows, fmt.Errorf("%w: read PMXT parquet %s: %w", ErrPMXTFileRead, path, readErr)
 			}
 		}
 	}
-	return selected, nil
+	return sourceRows, nil
+}
+
+func eventWithinConditionWindow(event RawEvent, meta ConditionMeta) bool {
+	return !event.Key.ExchangeTime.Before(meta.WindowStart) && event.Key.ExchangeTime.Before(meta.WindowEnd)
 }
 
 func decodePMXTRow(row parquet.Row, sourceFile string, sourceRow uint64) (RawEvent, error) {
 	if len(row) != pmxtColumnCount {
 		return RawEvent{}, fmt.Errorf("unexpected column count %d", len(row))
+	}
+	priceE4, err := nullableDecimal(row[7])
+	if err != nil {
+		return RawEvent{}, fmt.Errorf("price: %w", err)
+	}
+	sizeE6, err := nullableDecimal(row[8])
+	if err != nil {
+		return RawEvent{}, fmt.Errorf("size: %w", err)
+	}
+	bestBidE4, err := nullableDecimal(row[10])
+	if err != nil {
+		return RawEvent{}, fmt.Errorf("best bid: %w", err)
+	}
+	bestAskE4, err := nullableDecimal(row[11])
+	if err != nil {
+		return RawEvent{}, fmt.Errorf("best ask: %w", err)
+	}
+	oldTickSizeE4, err := nullableDecimal(row[14])
+	if err != nil {
+		return RawEvent{}, fmt.Errorf("old tick size: %w", err)
+	}
+	newTickSizeE4, err := nullableDecimal(row[15])
+	if err != nil {
+		return RawEvent{}, fmt.Errorf("new tick size: %w", err)
 	}
 	event := RawEvent{
 		Key: EventKey{
@@ -235,15 +371,18 @@ func decodePMXTRow(row parquet.Row, sourceFile string, sourceRow uint64) (RawEve
 		AssetID:         row[4].String(),
 		BidsJSON:        nullableString(row[5]),
 		AsksJSON:        nullableString(row[6]),
-		PriceE4:         nullableDecimal(row[7]),
-		SizeE6:          nullableDecimal(row[8]),
+		PriceE4:         priceE4,
+		SizeE6:          sizeE6,
 		Side:            nullableString(row[9]),
-		BestBidE4:       nullableDecimal(row[10]),
-		BestAskE4:       nullableDecimal(row[11]),
+		BestBidE4:       bestBidE4,
+		BestAskE4:       bestAskE4,
 		FeeRateBPS:      nullableUint16(row[12]),
 		TransactionHash: nullableString(row[13]),
-		OldTickSizeE4:   nullableDecimal(row[14]),
-		NewTickSizeE4:   nullableDecimal(row[15]),
+		OldTickSizeE4:   oldTickSizeE4,
+		NewTickSizeE4:   newTickSizeE4,
+	}
+	if event.Side.Valid {
+		event.Side.Value = strings.ToUpper(strings.TrimSpace(event.Side.Value))
 	}
 	switch event.Type {
 	case EventBook, EventPriceChange, EventLastTradePrice, EventTickSizeChange:
@@ -260,11 +399,15 @@ func nullableString(value parquet.Value) NullableString {
 	return NullableString{Value: value.String(), Valid: true}
 }
 
-func nullableDecimal(value parquet.Value) NullableInt64 {
+func nullableDecimal(value parquet.Value) (NullableInt64, error) {
 	if value.IsNull() {
-		return NullableInt64{}
+		return NullableInt64{}, nil
 	}
-	return NullableInt64{Value: signedBigEndian(value.Bytes()), Valid: true}
+	decoded, err := signedBigEndian(value.Bytes())
+	if err != nil {
+		return NullableInt64{}, err
+	}
+	return NullableInt64{Value: decoded, Valid: true}, nil
 }
 
 func nullableUint16(value parquet.Value) NullableUint16 {
@@ -274,21 +417,34 @@ func nullableUint16(value parquet.Value) NullableUint16 {
 	return NullableUint16{Value: uint16(value.Uint32()), Valid: true}
 }
 
-func signedBigEndian(value []byte) int64 {
+func signedBigEndian(value []byte) (int64, error) {
 	if len(value) == 0 {
-		return 0
+		return 0, nil
+	}
+	negative := value[0]&0x80 != 0
+	if len(value) > 8 {
+		extension := byte(0)
+		if negative {
+			extension = 0xff
+		}
+		for _, leading := range value[:len(value)-8] {
+			if leading != extension {
+				return 0, fmt.Errorf("decimal exceeds int64 range")
+			}
+		}
+		value = value[len(value)-8:]
+		if negative != (value[0]&0x80 != 0) {
+			return 0, fmt.Errorf("decimal exceeds int64 range")
+		}
 	}
 	var padded [8]byte
-	if value[0]&0x80 != 0 {
+	if negative {
 		for index := range padded {
 			padded[index] = 0xff
 		}
 	}
-	if len(value) > len(padded) {
-		value = value[len(value)-len(padded):]
-	}
 	copy(padded[len(padded)-len(value):], value)
-	return int64(binary.BigEndian.Uint64(padded[:]))
+	return int64(binary.BigEndian.Uint64(padded[:])), nil
 }
 
 func parseOptionalTime(value string) (*time.Time, error) {
