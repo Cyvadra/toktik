@@ -53,3 +53,13 @@ func TestUSOptionMinIVStrikePercentilesParses(t *testing.T) {
 		t.Fatalf("parse US option minimum IV strike percentiles: %v", errors)
 	}
 }
+
+func TestVRPShortStrangleParses(t *testing.T) {
+	source, err := ReadStrategy("vrp-short-strangle.toktik")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, errors := parser.Parse(source); len(errors) > 0 {
+		t.Fatalf("parse VRP short strangle: %v", errors)
+	}
+}
