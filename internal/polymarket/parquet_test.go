@@ -28,7 +28,8 @@ func TestDecodePMXTRow(t *testing.T) {
 		parquet.NullValue().Level(0, 0, 14),
 		parquet.NullValue().Level(0, 0, 15),
 	}
-	event, err := decodePMXTRow(row, "sample.parquet", 7)
+	conditionID := string(row[2].Bytes())
+	event, err := decodePMXTRow(row, conditionID, "sample.parquet", 7)
 	if err != nil {
 		t.Fatalf("decode row: %v", err)
 	}

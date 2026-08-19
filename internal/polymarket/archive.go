@@ -18,13 +18,17 @@ type ArchiveProcessorStats struct {
 }
 
 type RawFileRef struct {
-	Path        string
-	Name        string
-	Fingerprint string
-	SizeBytes   int64
-	Warmup      bool
-	Committed   bool
-	Replace     bool
+	Path          string
+	Name          string
+	Fingerprint   string
+	SizeBytes     int64
+	Warmup        bool
+	Committed     bool
+	Replace       bool
+	StagePath     string
+	StageRows     uint64
+	StageCacheHit bool
+	StageWait     time.Duration
 }
 
 type ArchiveProgressReporter interface {
@@ -39,6 +43,51 @@ type ArchiveImportOptions struct {
 	Horizon       time.Duration
 	Progress      ArchiveProgressReporter
 	EventConns    []driver.Conn
+	FileCompleted func(ArchiveFileMetrics)
+	StageRoot     string
+	StageWorkers  int
+}
+
+type ArchiveFileStatus string
+
+const (
+	ArchiveFileWarmed   ArchiveFileStatus = "warmed"
+	ArchiveFileImported ArchiveFileStatus = "imported"
+	ArchiveFileSkipped  ArchiveFileStatus = "skipped"
+)
+
+type ArchiveFileMetrics struct {
+	Name          string
+	Status        ArchiveFileStatus
+	SizeBytes     int64
+	SourceRows    uint64
+	SelectedRows  uint64
+	WriterBatches uint64
+	WriterWait    time.Duration
+	Elapsed       time.Duration
+	StageCacheHit bool
+	StageWait     time.Duration
+}
+
+func (metrics ArchiveFileMetrics) MiBPerSecond() float64 {
+	if metrics.Elapsed <= 0 {
+		return 0
+	}
+	return float64(metrics.SizeBytes) / (1024 * 1024) / metrics.Elapsed.Seconds()
+}
+
+func (metrics ArchiveFileMetrics) RowsPerSecond() float64 {
+	if metrics.Elapsed <= 0 {
+		return 0
+	}
+	return float64(metrics.SourceRows) / metrics.Elapsed.Seconds()
+}
+
+func (metrics ArchiveFileMetrics) WriterWaitRatio() float64 {
+	if metrics.Elapsed <= 0 {
+		return 0
+	}
+	return float64(metrics.WriterWait) / float64(metrics.Elapsed)
 }
 
 type ArchiveImportResult struct {
@@ -52,6 +101,9 @@ type ArchiveImportResult struct {
 	LateRowsSkipped          uint64
 	ConditionsInserted       uint64
 	OutcomesInserted         uint64
+	WriterBatches            uint64
+	WriterWait               time.Duration
+	Elapsed                  time.Duration
 }
 
 type archiveBookState struct {

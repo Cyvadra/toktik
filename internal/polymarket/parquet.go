@@ -300,7 +300,7 @@ func ScanRawEvents(ctx context.Context, path string, allowedConditions map[strin
 				}
 				conditionID := string(row[2].Bytes())
 				if _, ok := allowedConditions[conditionID]; ok {
-					event, err := decodePMXTRow(row, sourceFile, sourceRows)
+					event, err := decodePMXTRow(row, conditionID, sourceFile, sourceRows)
 					if err != nil {
 						rows.Close()
 						return sourceRows, fmt.Errorf("%w: decode PMXT row %d: %w", ErrPMXTFileRead, sourceRows, err)
@@ -346,7 +346,7 @@ func eventWithinConditionWindow(event RawEvent, meta ConditionMeta) bool {
 	return !event.Key.ExchangeTime.Before(meta.WindowStart) && event.Key.ExchangeTime.Before(meta.WindowEnd)
 }
 
-func decodePMXTRow(row parquet.Row, sourceFile string, sourceRow uint64) (RawEvent, error) {
+func decodePMXTRow(row parquet.Row, conditionID, sourceFile string, sourceRow uint64) (RawEvent, error) {
 	if len(row) != pmxtColumnCount {
 		return RawEvent{}, fmt.Errorf("unexpected column count %d", len(row))
 	}
@@ -381,7 +381,7 @@ func decodePMXTRow(row parquet.Row, sourceFile string, sourceRow uint64) (RawEve
 			SourceFile:   sourceFile,
 			SourceRow:    sourceRow,
 		},
-		ConditionID:     string(row[2].Bytes()),
+		ConditionID:     conditionID,
 		Type:            EventType(row[3].String()),
 		AssetID:         row[4].String(),
 		BidsJSON:        nullableString(row[5]),

@@ -2,6 +2,7 @@ package polymarket
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -243,12 +244,64 @@ func TestImportArchiveSkipsUnreadableWritableFile(t *testing.T) {
 	if err := os.WriteFile(path, []byte("not a parquet file"), 0o600); err != nil {
 		t.Fatalf("write corrupt parquet: %v", err)
 	}
-	result, err := ImportArchive(context.Background(), nil, []RawFileRef{{Path: path, Name: filepath.Base(path)}}, newTestArchiveProcessor(time.Now().UTC()).catalog, ArchiveImportOptions{DryRun: true})
+	var completed []ArchiveFileMetrics
+	result, err := ImportArchive(context.Background(), nil, []RawFileRef{{Path: path, Name: filepath.Base(path), SizeBytes: 18}}, newTestArchiveProcessor(time.Now().UTC()).catalog, ArchiveImportOptions{
+		DryRun: true,
+		FileCompleted: func(metrics ArchiveFileMetrics) {
+			completed = append(completed, metrics)
+		},
+	})
 	if err != nil {
 		t.Fatalf("import archive: %v", err)
 	}
 	if result.FilesSkipped != 1 || result.FilesProcessed != 0 {
 		t.Fatalf("unexpected import result: %+v", result)
+	}
+	if len(completed) != 1 || completed[0].Status != ArchiveFileSkipped || completed[0].Name != filepath.Base(path) || completed[0].SelectedRows != 0 {
+		t.Fatalf("unexpected completion metrics: %+v", completed)
+	}
+}
+
+func TestArchiveFileMetricsDerivedRates(t *testing.T) {
+	metrics := ArchiveFileMetrics{
+		SizeBytes:  8 * 1024 * 1024,
+		SourceRows: 1_000,
+		WriterWait: 500 * time.Millisecond,
+		Elapsed:    2 * time.Second,
+	}
+	if got := metrics.MiBPerSecond(); got != 4 {
+		t.Fatalf("MiB/s = %v, want 4", got)
+	}
+	if got := metrics.RowsPerSecond(); got != 500 {
+		t.Fatalf("rows/s = %v, want 500", got)
+	}
+	if got := metrics.WriterWaitRatio(); got != 0.25 {
+		t.Fatalf("writer wait ratio = %v, want 0.25", got)
+	}
+}
+
+func TestNewAsyncEventWriterSupportsMoreThanTwoSlots(t *testing.T) {
+	writer := &asyncEventWriter{batches: make([]asyncEventBatch, 3)}
+	if len(writer.batches) != 3 {
+		t.Fatalf("writer slots = %d, want 3", len(writer.batches))
+	}
+}
+
+func TestAsyncEventWriterClearsFailedSendBeforeAbort(t *testing.T) {
+	sendErr := errors.New("send failed")
+	completed := make(chan error, 1)
+	completed <- sendErr
+	writer := &asyncEventWriter{batches: make([]asyncEventBatch, 1)}
+	writer.batches[0].sending = completed
+
+	if err := writer.wait(0); !errors.Is(err, sendErr) {
+		t.Fatalf("wait error = %v, want %v", err, sendErr)
+	}
+	if writer.batches[0].sending != nil {
+		t.Fatal("failed send must be cleared after wait")
+	}
+	if err := writer.Abort(); err != nil {
+		t.Fatalf("abort after failed send: %v", err)
 	}
 }
 
