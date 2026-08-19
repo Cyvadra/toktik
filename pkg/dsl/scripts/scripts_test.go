@@ -43,3 +43,13 @@ func TestCryptoIVSmileProbeParses(t *testing.T) {
 		t.Fatalf("parse IV smile probe: %v", errors)
 	}
 }
+
+func TestUSOptionMinIVStrikePercentilesParses(t *testing.T) {
+	source, err := ReadStrategy("us-option-min-iv-strike-percentiles.toktik")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, errors := parser.Parse(source); len(errors) > 0 {
+		t.Fatalf("parse US option minimum IV strike percentiles: %v", errors)
+	}
+}
