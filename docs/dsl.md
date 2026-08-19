@@ -246,7 +246,7 @@ aapl_iv_rank = request.security("us", "AAPL", "1d", iv_rank_base)
 | `leg` | 2 |
 | `market` | 9 |
 | `math` | 13 |
-| `options` | 29 |
+| `options` | 30 |
 | `order` | 10 |
 | `portfolio` | 6 |
 | `ref` | 6 |
@@ -464,6 +464,7 @@ aapl_iv_rank = request.security("us", "AAPL", "1d", iv_rank_base)
 | `options.iv_smile_total_oi` | `options.iv_smile_total_oi(smile)` | `函數` | `數值` | `oi = options.iv_smile_total_oi(smile)` | 用於取得指定期限 Call 與 Put 曲線的總 OI。 |
 | `options.iv_smile_values` | `options.iv_smile_values(smile, option_type, smoothed)` | `函數` | `陣列` | `ivs = options.iv_smile_values(smile, "put", true)` | 用於取得 raw 或 OI 加權平滑後的 IV 陣列；預設回傳平滑 IV。 |
 | `options.len` | `options.len(chain)` | `函數` | `期權鏈或值` | `count = options.len(options.chain("us-options", "SPY"))` | 用於從期權鏈中篩出符合到期日、Delta、權利金或履約價條件的候選合約。 |
+| `options.lowest_iv` | `options.lowest_iv(chain, n)` | `函數` | `陣列` | `contracts = options.lowest_iv(expiry_chain, 5)` | 用於取得鏈中 IV 最低的前 n 個有效合約，由低到高排序；忽略非正數與缺失 IV。 |
 | `options.min_iv` | `options.min_iv(chain)` | `函數` | `期權合約` | `contract = options.min_iv(expiry_chain)` | 用於取得鏈中 IV 最低的有效合約；忽略非正數與缺失 IV。 |
 | `options.min_premium` | `options.min_premium(chain, min_bid)` | `函數` | `期權鏈或值` | `rich = options.min_premium(options.puts(options.chain("us-options", "SPY")), 1.0)` | 用於從期權鏈中篩出符合到期日、Delta、權利金或履約價條件的候選合約。 |
 | `options.open_strategy` | `options.open_strategy(chain, name, qty, target_delta, tag)` | `函數` | `spread id` | `sid = options.open_strategy(chain, "BUY_CALL", 1, 0.35, "momentum")` | 用於明確開啟由策略名稱生成的期權 spread。 |
