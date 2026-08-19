@@ -3,6 +3,8 @@ package polymarket
 import (
 	"fmt"
 	"time"
+
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
 const syntheticSourcePrefix = "_synthetic:"
@@ -36,6 +38,7 @@ type ArchiveImportOptions struct {
 	SelectionHash string
 	Horizon       time.Duration
 	Progress      ArchiveProgressReporter
+	EventConns    []driver.Conn
 }
 
 type ArchiveImportResult struct {
@@ -58,31 +61,56 @@ type archiveBookState struct {
 }
 
 type ArchiveProcessor struct {
-	catalog *ConditionCatalog
-	horizon time.Duration
-	books   map[string]*archiveBookState
-	stats   ArchiveProcessorStats
+	catalog   *ConditionCatalog
+	horizon   time.Duration
+	books     map[string]*archiveBookState
+	stats     ArchiveProcessorStats
+	undo      map[string]*archiveBookState
+	undoStats ArchiveProcessorStats
 }
 
 func NewArchiveProcessor(catalog *ConditionCatalog, horizon time.Duration) *ArchiveProcessor {
 	return &ArchiveProcessor{catalog: catalog, horizon: horizon, books: make(map[string]*archiveBookState)}
 }
 
-func (processor *ArchiveProcessor) clone() *ArchiveProcessor {
-	clone := &ArchiveProcessor{
-		catalog: processor.catalog,
-		horizon: processor.horizon,
-		books:   make(map[string]*archiveBookState, len(processor.books)),
-		stats:   processor.stats,
-	}
-	for key, state := range processor.books {
-		clone.books[key] = &archiveBookState{
-			conditionID: state.conditionID,
-			book:        cloneBook(state.book),
-			emitted:     state.emitted,
+func (processor *ArchiveProcessor) BeginFile() {
+	processor.undo = make(map[string]*archiveBookState)
+	processor.undoStats = processor.stats
+}
+
+func (processor *ArchiveProcessor) CommitFile() {
+	processor.undo = nil
+}
+
+func (processor *ArchiveProcessor) RollbackFile() {
+	for key, previous := range processor.undo {
+		if previous == nil {
+			delete(processor.books, key)
+			continue
 		}
+		processor.books[key] = previous
 	}
-	return clone
+	processor.stats = processor.undoStats
+	processor.undo = nil
+}
+
+func (processor *ArchiveProcessor) beforeMutate(key string) {
+	if processor.undo == nil {
+		return
+	}
+	if _, recorded := processor.undo[key]; recorded {
+		return
+	}
+	state := processor.books[key]
+	if state == nil {
+		processor.undo[key] = nil
+		return
+	}
+	processor.undo[key] = &archiveBookState{
+		conditionID: state.conditionID,
+		book:        cloneBook(state.book),
+		emitted:     state.emitted,
+	}
 }
 
 func cloneBook(book *Book) *Book {
@@ -125,19 +153,30 @@ func (processor *ArchiveProcessor) process(event RawEvent, writable, committed b
 	key := archiveBookKey(event.ConditionID, event.AssetID)
 	state := processor.books[key]
 	if state == nil {
+		processor.beforeMutate(key)
 		state = &archiveBookState{conditionID: event.ConditionID, book: NewBook()}
 		processor.books[key] = state
 	}
+	inWindow := eventWithinConditionWindow(event, meta)
+	if inWindow && committed && (state.book.Initialized() || event.Type == EventBook) {
+		processor.beforeMutate(key)
+		state.emitted = true
+	}
+	if state.emitted {
+		if inWindow && writable {
+			processor.stats.RowsInserted++
+			return []RawEvent{event}, nil
+		}
+		return nil, nil
+	}
+
 	replay, err := event.ReplayEvent()
 	if err != nil {
 		return nil, err
 	}
-	inWindow := eventWithinConditionWindow(event, meta)
-	if inWindow && committed && (state.book.Initialized() || event.Type == EventBook) {
-		state.emitted = true
-	}
 	if inWindow && writable && !state.emitted {
 		if event.Type == EventBook {
+			processor.beforeMutate(key)
 			if err := state.book.Apply(replay); err != nil {
 				return nil, err
 			}
@@ -153,6 +192,7 @@ func (processor *ArchiveProcessor) process(event RawEvent, writable, committed b
 		if err != nil {
 			return nil, err
 		}
+		processor.beforeMutate(key)
 		if err := state.book.Apply(replay); err != nil {
 			return nil, err
 		}
@@ -162,6 +202,7 @@ func (processor *ArchiveProcessor) process(event RawEvent, writable, committed b
 		return []RawEvent{synthetic, event}, nil
 	}
 
+	processor.beforeMutate(key)
 	if err := state.book.Apply(replay); err != nil {
 		if err == ErrBookNotInitialized {
 			processor.stats.PreInitializationSkipped++

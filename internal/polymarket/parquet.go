@@ -327,6 +327,21 @@ func ScanRawEvents(ctx context.Context, path string, allowedConditions map[strin
 	return sourceRows, nil
 }
 
+func ParseArchiveFileHour(name string) (time.Time, error) {
+	name = filepath.Base(name)
+	const prefix = "polymarket_orderbook_"
+	const suffix = ".parquet"
+	if !strings.HasPrefix(name, prefix) || !strings.HasSuffix(name, suffix) {
+		return time.Time{}, fmt.Errorf("invalid Polymarket archive filename %q", name)
+	}
+	value := strings.TrimSuffix(strings.TrimPrefix(name, prefix), suffix)
+	timestamp, err := time.Parse("2006-01-02T15", value)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("parse Polymarket archive filename %q: %w", name, err)
+	}
+	return timestamp.UTC(), nil
+}
+
 func eventWithinConditionWindow(event RawEvent, meta ConditionMeta) bool {
 	return !event.Key.ExchangeTime.Before(meta.WindowStart) && event.Key.ExchangeTime.Before(meta.WindowEnd)
 }

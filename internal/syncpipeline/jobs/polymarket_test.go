@@ -104,7 +104,7 @@ func TestDirtyPolymarketFilesDoesNotReplaceFreshFiles(t *testing.T) {
 	}
 }
 
-func TestDirtyPolymarketFilesTreatsSkippedFilesAsCurrent(t *testing.T) {
+func TestDirtyPolymarketFilesRetriesSkippedFiles(t *testing.T) {
 	plan := polymarketArchivePlan{Files: []polymarketArchiveFile{{
 		Name:        "corrupt",
 		Hour:        time.Date(2026, 8, 8, 0, 0, 0, 0, time.UTC),
@@ -113,8 +113,9 @@ func TestDirtyPolymarketFilesTreatsSkippedFilesAsCurrent(t *testing.T) {
 	checkpoints := map[string]polymarket.RawFileCheckpoint{
 		"corrupt": {SourceHash: "fp", SelectionHash: "map", SchemaVersion: 2, Status: "skipped"},
 	}
-	if files := dirtyPolymarketFiles(plan, checkpoints, "map", 2, 49*time.Hour); len(files) != 0 {
-		t.Fatalf("dirty files = %+v, want none", files)
+	files := dirtyPolymarketFiles(plan, checkpoints, "map", 2, 49*time.Hour)
+	if len(files) != 1 || files[0].Name != "corrupt" || !files[0].Replace {
+		t.Fatalf("dirty files = %+v, want corrupt file retry", files)
 	}
 }
 

@@ -78,6 +78,54 @@ func TestArchiveProcessorUsesFirstInWindowBookDirectly(t *testing.T) {
 	}
 }
 
+func TestArchiveProcessorDoesNotRebuildEmittedBook(t *testing.T) {
+	start := time.Date(2026, 8, 18, 15, 0, 0, 0, time.UTC)
+	processor := newTestArchiveProcessor(start)
+	book := RawEvent{
+		Key:         EventKey{ExchangeTime: start, ReceivedTime: start},
+		ConditionID: "condition",
+		AssetID:     "asset",
+		Type:        EventBook,
+		BidsJSON:    NullableString{Value: `[]`, Valid: true},
+		AsksJSON:    NullableString{Value: `[]`, Valid: true},
+	}
+	if _, err := processor.Process(book, true); err != nil {
+		t.Fatalf("process first book: %v", err)
+	}
+	invalidDelta := RawEvent{
+		Key:         EventKey{ExchangeTime: start.Add(time.Second), ReceivedTime: start.Add(time.Second)},
+		ConditionID: "condition",
+		AssetID:     "asset",
+		Type:        EventPriceChange,
+		Side:        NullableString{Value: "HOLD", Valid: true},
+	}
+	emitted, err := processor.Process(invalidDelta, true)
+	if err != nil || len(emitted) != 1 || emitted[0].Key != invalidDelta.Key {
+		t.Fatalf("emitted=%+v err=%v", emitted, err)
+	}
+}
+
+func TestArchiveProcessorRollsBackOnlyFileMutations(t *testing.T) {
+	start := time.Date(2026, 8, 18, 15, 0, 0, 0, time.UTC)
+	processor := newTestArchiveProcessor(start)
+	processor.BeginFile()
+	book := RawEvent{
+		Key:         EventKey{ExchangeTime: start, ReceivedTime: start},
+		ConditionID: "condition",
+		AssetID:     "asset",
+		Type:        EventBook,
+		BidsJSON:    NullableString{Value: `[]`, Valid: true},
+		AsksJSON:    NullableString{Value: `[]`, Valid: true},
+	}
+	if _, err := processor.Process(book, false); err != nil {
+		t.Fatalf("process book: %v", err)
+	}
+	processor.RollbackFile()
+	if processor.ActiveBooks() != 0 || processor.Stats().RowsMatched != 0 {
+		t.Fatalf("rollback left state: books=%d stats=%+v", processor.ActiveBooks(), processor.Stats())
+	}
+}
+
 func TestArchiveProcessorDefersUntilInWindowBook(t *testing.T) {
 	start := time.Date(2026, 8, 18, 15, 0, 0, 0, time.UTC)
 	processor := newTestArchiveProcessor(start)

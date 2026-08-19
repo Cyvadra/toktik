@@ -15,6 +15,7 @@ import (
 	"github.com/Cyvadra/toktik/internal/importledger"
 	"github.com/Cyvadra/toktik/internal/polymarket"
 	"github.com/Cyvadra/toktik/internal/syncpipeline"
+	"github.com/Cyvadra/toktik/internal/usmarket"
 )
 
 const (
@@ -25,6 +26,7 @@ const (
 type PolymarketArchiveConfig struct {
 	RawRoot        string
 	ConditionMap   string
+	ClickHouseDSN  string
 	ArchiveFrom    time.Time
 	ArchiveTo      time.Time
 	BatchSize      int
@@ -61,7 +63,7 @@ func planPolymarketArchive(cfg PolymarketArchiveConfig, horizon time.Duration) (
 	}
 	files := make([]polymarketArchiveFile, 0, len(matches))
 	for _, path := range matches {
-		hour, err := parsePolymarketFileHour(path)
+		hour, err := polymarket.ParseArchiveFileHour(path)
 		if err != nil {
 			return polymarketArchivePlan{}, err
 		}
@@ -116,7 +118,7 @@ func dirtyPolymarketFiles(plan polymarketArchivePlan, checkpoints map[string]pol
 	for index := plan.WritableFrom; index < len(plan.Files); index++ {
 		file := plan.Files[index]
 		checkpoint, ok := checkpoints[file.Name]
-		if !ok || (checkpoint.Status != "success" && checkpoint.Status != "skipped") || checkpoint.SourceHash != file.Fingerprint || checkpoint.SelectionHash != selectionHash || checkpoint.SchemaVersion != schemaVersion {
+		if !ok || checkpoint.Status != "success" || checkpoint.SourceHash != file.Fingerprint || checkpoint.SelectionHash != selectionHash || checkpoint.SchemaVersion != schemaVersion {
 			firstDirty = index
 			break
 		}
@@ -211,6 +213,24 @@ func (syncer *polymarketArchive) Sync(ctx context.Context, conn driver.Conn, req
 	if err != nil && !req.DryRun {
 		return syncpipeline.SyncResult{SourceKey: req.SourceKey}, err
 	}
+	var eventConns []driver.Conn
+	if !req.DryRun && syncer.cfg.ClickHouseDSN != "" {
+		for range 2 {
+			eventConn, connectErr := usmarket.ConnectClickHouse(ctx, syncer.cfg.ClickHouseDSN)
+			if connectErr != nil {
+				for _, opened := range eventConns {
+					_ = opened.Close()
+				}
+				return syncpipeline.SyncResult{SourceKey: req.SourceKey}, fmt.Errorf("connect Polymarket event writer: %w", connectErr)
+			}
+			eventConns = append(eventConns, eventConn)
+		}
+		defer func() {
+			for _, eventConn := range eventConns {
+				_ = eventConn.Close()
+			}
+		}()
+	}
 	files := dirtyPolymarketFiles(plan, checkpoints, syncer.conditionMapHash, polymarket.RawFileCatalogSchemaVersion, syncer.cfg.StateHorizon)
 	result, err := polymarket.ImportArchive(ctx, conn, files, syncer.catalog, polymarket.ArchiveImportOptions{
 		BatchSize:     syncer.cfg.BatchSize,
@@ -218,6 +238,7 @@ func (syncer *polymarketArchive) Sync(ctx context.Context, conn driver.Conn, req
 		SelectionHash: syncer.conditionMapHash,
 		Horizon:       syncer.cfg.StateHorizon,
 		Progress:      req.Progress,
+		EventConns:    eventConns,
 	})
 	return syncpipeline.SyncResult{
 		SourceKey:    req.SourceKey,
@@ -249,16 +270,5 @@ func (syncer *polymarketArchive) AuditTargets(sourceKey string) []syncpipeline.A
 func (syncer *polymarketArchive) MaxConcurrency() int { return 1 }
 
 func parsePolymarketFileHour(path string) (time.Time, error) {
-	name := filepath.Base(path)
-	const prefix = "polymarket_orderbook_"
-	const suffix = ".parquet"
-	if !strings.HasPrefix(name, prefix) || !strings.HasSuffix(name, suffix) {
-		return time.Time{}, fmt.Errorf("invalid Polymarket archive filename %q", name)
-	}
-	value := strings.TrimSuffix(strings.TrimPrefix(name, prefix), suffix)
-	timestamp, err := time.Parse("2006-01-02T15", value)
-	if err != nil {
-		return time.Time{}, fmt.Errorf("parse Polymarket archive filename %q: %w", name, err)
-	}
-	return timestamp.UTC(), nil
+	return polymarket.ParseArchiveFileHour(path)
 }

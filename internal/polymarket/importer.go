@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"strings"
 	"sync/atomic"
 	"time"
 
@@ -17,7 +16,7 @@ import (
 
 const eventInsertSQL = `INSERT INTO polymarket_l2_event (
     condition_id, asset_id, event_type, timestamp, timestamp_received,
-	source_file, import_file, source_row_number, event_id, side, price_e4, size_e6,
+	source_file, import_file, import_hour, source_row_number, event_id, side, price_e4, size_e6,
     best_bid_e4, best_ask_e4, fee_rate_bps, transaction_hash,
     old_tick_size_e4, new_tick_size_e4, bids_json, asks_json
 )`
@@ -226,7 +225,7 @@ func ImportArchive(ctx context.Context, conn driver.Conn, files []RawFileRef, ca
 		if err := ctx.Err(); err != nil {
 			return result, err
 		}
-		if hour, parseErr := archiveFileHour(file.Name); parseErr == nil {
+		if hour, parseErr := ParseArchiveFileHour(file.Name); parseErr == nil {
 			processor.AdvanceWatermark(hour)
 		}
 		if file.Warmup {
@@ -249,12 +248,12 @@ func ImportArchive(ctx context.Context, conn driver.Conn, files []RawFileRef, ca
 			continue
 		}
 
-		processorBeforeFile := processor.clone()
+		processor.BeginFile()
 		fileResult, fileErr := importArchiveFile(ctx, conn, file, processor, options)
 		result.RowsScanned += fileResult.SourceRows
 		if fileErr != nil {
 			if errors.Is(fileErr, ErrPMXTFileRead) {
-				processor = processorBeforeFile
+				processor.RollbackFile()
 				if !options.DryRun {
 					if catalogErr := writeRawFileCatalog(ctx, conn, file.Path, options.SelectionHash, fileResult, "skipped", fileErr.Error()); catalogErr != nil {
 						return result, fmt.Errorf("record skipped Polymarket file %s: %w", file.Name, catalogErr)
@@ -267,8 +266,10 @@ func ImportArchive(ctx context.Context, conn driver.Conn, files []RawFileRef, ca
 				}
 				continue
 			}
+			processor.RollbackFile()
 			return result, fileErr
 		}
+		processor.CommitFile()
 		result.RowsInserted += fileResult.InsertedRows
 		result.FilesProcessed++
 		completedMiB += fileProgressMiB(file.SizeBytes)
@@ -291,18 +292,12 @@ func fileProgressMiB(sizeBytes int64) int {
 	return int((sizeBytes + mib - 1) / mib)
 }
 
-func archiveFileHour(name string) (time.Time, error) {
-	const prefix = "polymarket_orderbook_"
-	const suffix = ".parquet"
-	value := strings.TrimSuffix(strings.TrimPrefix(name, prefix), suffix)
-	if value == name || !strings.HasSuffix(name, suffix) {
-		return time.Time{}, fmt.Errorf("invalid Polymarket archive filename %q", name)
-	}
-	return time.ParseInLocation("2006-01-02T15", value, time.UTC)
-}
-
 func importArchiveFile(ctx context.Context, conn driver.Conn, file RawFileRef, processor *ArchiveProcessor, options ArchiveImportOptions) (result ImportResult, err error) {
 	result.SourceFile = file.Name
+	importHour, err := ParseArchiveFileHour(file.Name)
+	if err != nil {
+		return result, err
+	}
 	if !options.DryRun {
 		defer func() {
 			if err == nil {
@@ -316,24 +311,31 @@ func importArchiveFile(ctx context.Context, conn driver.Conn, file RawFileRef, p
 			return result, fmt.Errorf("record pending Polymarket file %s: %w", file.Name, err)
 		}
 		if file.Replace {
-			if err := clearImportedFileEvents(ctx, conn, file.Name); err != nil {
+			if err := clearImportedFileEvents(ctx, conn, importHour); err != nil {
 				return result, fmt.Errorf("clear Polymarket event scope %s: %w", file.Name, err)
 			}
 		}
 	}
 
-	var eventWriter *batchWriter
+	var eventWriter eventWriter
 	if !options.DryRun {
-		if eventWriter, err = newBatchWriter(ctx, conn, eventInsertSQL, "event", options.BatchSize); err != nil {
+		eventWriter, err = newEventWriter(ctx, conn, options.EventConns, options.BatchSize)
+		if err != nil {
 			return result, err
 		}
 		defer eventWriter.Abort()
 	}
 
-	rows, scanErr := ScanRawEvents(ctx, file.Path, processor.catalog.Conditions, func(event RawEvent) error {
+	processCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	events, scanResult := streamRawEvents(processCtx, file.Path, processor.catalog.Conditions)
+	var processErr error
+	for event := range events {
 		emitted, err := processor.Process(event, true)
 		if err != nil {
-			return err
+			processErr = err
+			cancel()
+			break
 		}
 		for _, selected := range emitted {
 			if result.FirstReceivedAt == nil || selected.Key.ReceivedTime.Before(*result.FirstReceivedAt) {
@@ -345,23 +347,31 @@ func importArchiveFile(ctx context.Context, conn driver.Conn, file RawFileRef, p
 				result.LastReceivedAt = &value
 			}
 			if !options.DryRun {
-				if err := appendEvent(eventWriter, file.Name, selected); err != nil {
-					return err
+				if err := eventWriter.Append(file.Name, importHour, selected); err != nil {
+					processErr = err
+					cancel()
+					break
 				}
 			}
 			result.SelectedRows++
 		}
-		return nil
-	})
-	result.SourceRows = rows
+		if processErr != nil {
+			break
+		}
+	}
+	scan := <-scanResult
+	result.SourceRows = scan.rows
 	result.InsertedRows = result.SelectedRows
-	if scanErr != nil {
-		if !options.DryRun && errors.Is(scanErr, ErrPMXTFileRead) {
-			if cleanupErr := clearImportedFileEvents(ctx, conn, file.Name); cleanupErr != nil {
-				return result, fmt.Errorf("import Polymarket file %s: %w; clear partial events: %v", file.Name, scanErr, cleanupErr)
+	if processErr != nil {
+		return result, fmt.Errorf("import Polymarket file %s: %w", file.Name, processErr)
+	}
+	if scan.err != nil {
+		if !options.DryRun && errors.Is(scan.err, ErrPMXTFileRead) {
+			if cleanupErr := clearImportedFileEvents(ctx, conn, importHour); cleanupErr != nil {
+				return result, fmt.Errorf("import Polymarket file %s: %w; clear partial events: %v", file.Name, scan.err, cleanupErr)
 			}
 		}
-		return result, fmt.Errorf("import Polymarket file %s: %w", file.Name, scanErr)
+		return result, fmt.Errorf("import Polymarket file %s: %w", file.Name, scan.err)
 	}
 	if options.DryRun {
 		return result, nil
@@ -375,8 +385,8 @@ func importArchiveFile(ctx context.Context, conn driver.Conn, file RawFileRef, p
 	return result, nil
 }
 
-func clearImportedFileEvents(ctx context.Context, conn driver.Conn, fileName string) error {
-	return conn.Exec(ctx, `ALTER TABLE polymarket_l2_event DELETE WHERE import_file = {import_file:String} SETTINGS mutations_sync = 2`, clickhouse.Named("import_file", fileName))
+func clearImportedFileEvents(ctx context.Context, conn driver.Conn, importHour time.Time) error {
+	return conn.Exec(ctx, "ALTER TABLE polymarket_l2_event DROP PARTITION {import_hour:DateTime}", clickhouse.Named("import_hour", importHour.UTC()))
 }
 
 func writeRawFileCatalog(ctx context.Context, conn driver.Conn, parquetPath, selectionHash string, result ImportResult, status, errorMessage string) error {
@@ -481,8 +491,46 @@ func (writer *batchWriter) prepare() error {
 	return nil
 }
 
-func appendEvent(writer *batchWriter, importFile string, event RawEvent) error {
-	if err := writer.Append(
+type eventWriter interface {
+	Append(importFile string, importHour time.Time, event RawEvent) error
+	Close() error
+	Abort() error
+}
+
+type synchronousEventWriter struct{ writer *batchWriter }
+
+func (writer synchronousEventWriter) Append(importFile string, importHour time.Time, event RawEvent) error {
+	return appendEvent(writer.writer, importFile, importHour, event)
+}
+
+func (writer synchronousEventWriter) Close() error { return writer.writer.Close() }
+
+func (writer synchronousEventWriter) Abort() error { return writer.writer.Abort() }
+
+func newEventWriter(ctx context.Context, conn driver.Conn, eventConns []driver.Conn, batchSize int) (eventWriter, error) {
+	if len(eventConns) != 2 {
+		writer, err := newBatchWriter(ctx, conn, eventInsertSQL, "event", batchSize)
+		if err != nil {
+			return nil, err
+		}
+		return synchronousEventWriter{writer: writer}, nil
+	}
+	return newAsyncEventWriter(ctx, eventConns, batchSize)
+}
+
+func appendEvent(writer *batchWriter, importFile string, importHour time.Time, event RawEvent) error {
+	if err := appendEventBatch(writer.batch, importFile, importHour, event); err != nil {
+		return err
+	}
+	writer.pending++
+	if writer.pending >= writer.batchSize {
+		return writer.flush(true)
+	}
+	return nil
+}
+
+func appendEventBatch(batch driver.Batch, importFile string, importHour time.Time, event RawEvent) error {
+	if err := batch.Append(
 		event.ConditionID,
 		event.AssetID,
 		string(event.Type),
@@ -490,6 +538,7 @@ func appendEvent(writer *batchWriter, importFile string, event RawEvent) error {
 		event.Key.ReceivedTime,
 		event.Key.SourceFile,
 		importFile,
+		importHour,
 		event.Key.SourceRow,
 		event.Key.EventID(),
 		nullableStringValue(event.Side),
@@ -507,6 +556,151 @@ func appendEvent(writer *batchWriter, importFile string, event RawEvent) error {
 		return fmt.Errorf("append Polymarket event row %d: %w", event.Key.SourceRow, err)
 	}
 	return nil
+}
+
+type asyncEventBatch struct {
+	conn    driver.Conn
+	batch   driver.Batch
+	pending int
+	sending chan error
+}
+
+type asyncEventWriter struct {
+	ctx       context.Context
+	batchSize int
+	batches   [2]asyncEventBatch
+	current   int
+}
+
+func newAsyncEventWriter(ctx context.Context, conns []driver.Conn, batchSize int) (*asyncEventWriter, error) {
+	writer := &asyncEventWriter{ctx: ctx, batchSize: batchSize}
+	for index, conn := range conns {
+		writer.batches[index].conn = conn
+		if err := writer.prepare(index); err != nil {
+			_ = writer.Abort()
+			return nil, err
+		}
+	}
+	return writer, nil
+}
+
+func (writer *asyncEventWriter) Append(importFile string, importHour time.Time, event RawEvent) error {
+	if err := writer.ready(writer.current); err != nil {
+		return err
+	}
+	batch := &writer.batches[writer.current]
+	if err := appendEventBatch(batch.batch, importFile, importHour, event); err != nil {
+		return err
+	}
+	batch.pending++
+	if batch.pending >= writer.batchSize {
+		writer.send(writer.current)
+		writer.current = (writer.current + 1) % len(writer.batches)
+	}
+	return nil
+}
+
+func (writer *asyncEventWriter) Close() error {
+	if writer.batches[writer.current].pending > 0 {
+		writer.send(writer.current)
+	}
+	for index := range writer.batches {
+		if err := writer.wait(index); err != nil {
+			return err
+		}
+		batch := &writer.batches[index]
+		if batch.batch != nil {
+			if err := batch.batch.Abort(); err != nil {
+				return err
+			}
+			batch.batch = nil
+		}
+	}
+	return nil
+}
+
+func (writer *asyncEventWriter) Abort() error {
+	var firstErr error
+	for index := range writer.batches {
+		batch := &writer.batches[index]
+		if batch.sending != nil {
+			if err := <-batch.sending; err != nil && firstErr == nil {
+				firstErr = err
+			}
+			batch.sending = nil
+		}
+		if batch.batch != nil {
+			if err := batch.batch.Abort(); err != nil && firstErr == nil {
+				firstErr = err
+			}
+			batch.batch = nil
+		}
+	}
+	return firstErr
+}
+
+func (writer *asyncEventWriter) send(index int) {
+	batch := &writer.batches[index]
+	sending := make(chan error, 1)
+	pendingBatch := batch.batch
+	batch.sending = sending
+	batch.batch = nil
+	batch.pending = 0
+	go func(batch driver.Batch) { sending <- batch.Send() }(pendingBatch)
+}
+
+func (writer *asyncEventWriter) ready(index int) error {
+	if err := writer.wait(index); err != nil {
+		return err
+	}
+	if writer.batches[index].batch == nil {
+		return writer.prepare(index)
+	}
+	return nil
+}
+
+func (writer *asyncEventWriter) wait(index int) error {
+	batch := &writer.batches[index]
+	if batch.sending == nil {
+		return nil
+	}
+	if err := <-batch.sending; err != nil {
+		return fmt.Errorf("send Polymarket event batch: %w", err)
+	}
+	batch.sending = nil
+	return nil
+}
+
+func (writer *asyncEventWriter) prepare(index int) error {
+	batch, err := writer.batches[index].conn.PrepareBatch(writer.ctx, eventInsertSQL)
+	if err != nil {
+		return fmt.Errorf("prepare Polymarket event batch: %w", err)
+	}
+	writer.batches[index].batch = batch
+	return nil
+}
+
+type rawEventScanResult struct {
+	rows uint64
+	err  error
+}
+
+func streamRawEvents(ctx context.Context, path string, conditions map[string]ConditionMeta) (<-chan RawEvent, <-chan rawEventScanResult) {
+	events := make(chan RawEvent, 4_096)
+	result := make(chan rawEventScanResult, 1)
+	go func() {
+		defer close(events)
+		rows, err := ScanRawEvents(ctx, path, conditions, func(event RawEvent) error {
+			select {
+			case events <- event:
+				return nil
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		})
+		result <- rawEventScanResult{rows: rows, err: err}
+	}()
+	return events, result
 }
 
 func (writer *batchWriter) Append(values ...any) error {

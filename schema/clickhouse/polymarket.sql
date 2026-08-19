@@ -85,6 +85,7 @@ CREATE TABLE IF NOT EXISTS polymarket_l2_event
     timestamp_received DateTime64(3, 'UTC'),
     source_file       LowCardinality(String),
     import_file       LowCardinality(String),
+    import_hour       DateTime('UTC'),
     source_row_number UInt64,
     event_id          FixedString(32),
     side              Nullable(Enum8('BUY' = 1, 'SELL' = 2)),
@@ -104,7 +105,7 @@ CREATE TABLE IF NOT EXISTS polymarket_l2_event
     INDEX idx_import_file import_file TYPE bloom_filter GRANULARITY 4
 )
 ENGINE = MergeTree()
-PARTITION BY toYYYYMMDD(timestamp_received)
+PARTITION BY import_hour
 ORDER BY (asset_id, timestamp_received, timestamp, source_file, source_row_number);
 
 ALTER TABLE polymarket_l2_event
@@ -112,6 +113,9 @@ ALTER TABLE polymarket_l2_event
 
 ALTER TABLE polymarket_l2_event
     ADD COLUMN IF NOT EXISTS import_file LowCardinality(String) DEFAULT source_file AFTER source_file;
+
+ALTER TABLE polymarket_l2_event
+    ADD COLUMN IF NOT EXISTS import_hour DateTime('UTC') DEFAULT toStartOfHour(timestamp_received) AFTER import_file;
 
 ALTER TABLE polymarket_l2_event
     ADD INDEX IF NOT EXISTS idx_import_file import_file TYPE bloom_filter GRANULARITY 4;
