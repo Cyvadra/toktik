@@ -9,7 +9,7 @@ require (
 	github.com/gin-gonic/gin v1.12.0
 	github.com/klauspost/compress v1.18.4
 	github.com/massive-com/client-go/v3 v3.2.0
-	github.com/parquet-go/parquet-go v0.29.0
+	github.com/parquet-go/parquet-go v0.32.0
 	github.com/redis/go-redis/v9 v9.7.1
 	github.com/swaggo/files v1.0.1
 	github.com/swaggo/gin-swagger v1.6.1
