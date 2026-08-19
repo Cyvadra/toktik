@@ -26,7 +26,7 @@ func InitSchema(ctx context.Context, conn driver.Conn, ddlPath string) error {
 }
 
 func rebuildEmptyLegacyEventTable(ctx context.Context, conn driver.Conn) error {
-	var exists uint8
+	var exists uint64
 	var partitionKey string
 	err := conn.QueryRow(ctx, `SELECT count(), any(partition_key)
 		FROM system.tables
