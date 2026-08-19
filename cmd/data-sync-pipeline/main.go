@@ -98,6 +98,7 @@ type jobConfig struct {
 	LimitSymbols             int               `yaml:"limit_symbols"`
 	Interval                 string            `yaml:"interval"`
 	BatchSize                int               `yaml:"batch_size"`
+	WriterConcurrency        int               `yaml:"writer_concurrency"`
 	Workers                  int               `yaml:"workers"`
 	PageSize                 int               `yaml:"page_size"`
 	QPS                      int               `yaml:"qps"`
@@ -134,6 +135,8 @@ type jobConfig struct {
 	RepairFrom               string            `yaml:"repair_from"`
 	RepairTo                 string            `yaml:"repair_to"`
 	RawRoot                  string            `yaml:"raw_root"`
+	StageRoot                string            `yaml:"stage_root"`
+	StageWorkers             int               `yaml:"stage_workers"`
 	ConditionMapPath         string            `yaml:"condition_map_path"`
 	ArchiveFrom              string            `yaml:"archive_from"`
 	ArchiveTo                string            `yaml:"archive_to"`
@@ -1076,7 +1079,7 @@ func buildSyncer(buildCtx syncerBuildContext, name string, job jobConfig) (syncp
 		if err != nil {
 			return nil, fmt.Errorf("polymarket_archive archive_to: %w", err)
 		}
-		return pipelinejobs.NewPolymarketArchive(pipelinejobs.PolymarketArchiveConfig{RawRoot: job.RawRoot, ConditionMap: job.ConditionMapPath, ClickHouseDSN: buildCtx.ClickHouseDSN, ArchiveFrom: archiveFrom, ArchiveTo: archiveTo, BatchSize: job.BatchSize, LimitFiles: job.LimitFiles, StateHorizon: time.Duration(job.StateHorizonHours) * time.Hour, ColdStartFloor: parseColdStart(job.ColdStartFloor)})
+		return pipelinejobs.NewPolymarketArchive(pipelinejobs.PolymarketArchiveConfig{RawRoot: job.RawRoot, StageRoot: job.StageRoot, StageWorkers: job.StageWorkers, ConditionMap: job.ConditionMapPath, ClickHouseDSN: buildCtx.ClickHouseDSN, ArchiveFrom: archiveFrom, ArchiveTo: archiveTo, BatchSize: job.BatchSize, WriterConcurrency: job.WriterConcurrency, LimitFiles: job.LimitFiles, StateHorizon: time.Duration(job.StateHorizonHours) * time.Hour, ColdStartFloor: parseColdStart(job.ColdStartFloor)})
 	}
 	if syncer, ok, err := buildFMPSyncer(buildCtx, name, job); ok {
 		return syncer, err

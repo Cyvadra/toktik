@@ -5,10 +5,12 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
@@ -24,21 +26,26 @@ const (
 )
 
 type PolymarketArchiveConfig struct {
-	RawRoot        string
-	ConditionMap   string
-	ClickHouseDSN  string
-	ArchiveFrom    time.Time
-	ArchiveTo      time.Time
-	BatchSize      int
-	LimitFiles     int
-	StateHorizon   time.Duration
-	ColdStartFloor time.Time
+	RawRoot           string
+	StageRoot         string
+	StageWorkers      int
+	ConditionMap      string
+	ClickHouseDSN     string
+	ArchiveFrom       time.Time
+	ArchiveTo         time.Time
+	BatchSize         int
+	WriterConcurrency int
+	LimitFiles        int
+	StateHorizon      time.Duration
+	ColdStartFloor    time.Time
 }
 
 type polymarketArchive struct {
 	cfg              PolymarketArchiveConfig
 	catalog          *polymarket.ConditionCatalog
 	conditionMapHash string
+	planMu           sync.Mutex
+	pendingPlan      *polymarketArchivePlan
 }
 
 type polymarketArchiveFile struct {
@@ -150,12 +157,27 @@ func dirtyPolymarketFiles(plan polymarketArchivePlan, checkpoints map[string]pol
 
 func NewPolymarketArchive(cfg PolymarketArchiveConfig) (syncpipeline.Syncer, error) {
 	cfg.RawRoot = filepath.Clean(strings.TrimSpace(cfg.RawRoot))
+	if strings.TrimSpace(cfg.StageRoot) != "" {
+		cfg.StageRoot = filepath.Clean(strings.TrimSpace(cfg.StageRoot))
+	}
 	cfg.ConditionMap = filepath.Clean(strings.TrimSpace(cfg.ConditionMap))
 	if cfg.RawRoot == "." || cfg.ConditionMap == "." {
 		return nil, fmt.Errorf("polymarket_archive: raw_root and condition_map_path are required")
 	}
 	if cfg.BatchSize <= 0 {
 		cfg.BatchSize = 50_000
+	}
+	if cfg.WriterConcurrency <= 0 {
+		cfg.WriterConcurrency = 2
+	}
+	if cfg.WriterConcurrency > 8 {
+		return nil, fmt.Errorf("polymarket_archive: writer_concurrency must not exceed 8")
+	}
+	if cfg.StageRoot != "" && cfg.StageWorkers <= 0 {
+		cfg.StageWorkers = 4
+	}
+	if cfg.StageWorkers > 16 {
+		return nil, fmt.Errorf("polymarket_archive: stage_workers must not exceed 16")
 	}
 	if cfg.StateHorizon <= 0 {
 		cfg.StateHorizon = defaultPolymarketStateHorizon
@@ -190,6 +212,9 @@ func (syncer *polymarketArchive) SourceKeys(context.Context, driver.Conn) ([]str
 	if len(plan.Files) == plan.WritableFrom {
 		return nil, nil
 	}
+	syncer.planMu.Lock()
+	syncer.pendingPlan = &plan
+	syncer.planMu.Unlock()
 	return []string{fmt.Sprintf("%s%d:%s:%s", polymarketArchiveSourcePrefix, polymarket.RawFileCatalogSchemaVersion, syncer.conditionMapHash, plan.ManifestHash)}, nil
 }
 
@@ -205,9 +230,19 @@ func (syncer *polymarketArchive) ColdStartFloor(sourceKey string) time.Time {
 }
 
 func (syncer *polymarketArchive) Sync(ctx context.Context, conn driver.Conn, req syncpipeline.SyncRequest) (syncpipeline.SyncResult, error) {
-	plan, err := planPolymarketArchive(syncer.cfg, syncer.cfg.StateHorizon)
-	if err != nil {
-		return syncpipeline.SyncResult{SourceKey: req.SourceKey}, err
+	syncer.planMu.Lock()
+	cachedPlan := syncer.pendingPlan
+	syncer.pendingPlan = nil
+	syncer.planMu.Unlock()
+	var plan polymarketArchivePlan
+	if cachedPlan != nil {
+		plan = *cachedPlan
+	} else {
+		var err error
+		plan, err = planPolymarketArchive(syncer.cfg, syncer.cfg.StateHorizon)
+		if err != nil {
+			return syncpipeline.SyncResult{SourceKey: req.SourceKey}, err
+		}
 	}
 	checkpoints, err := polymarket.LoadRawFileCheckpoints(ctx, conn)
 	if err != nil && !req.DryRun {
@@ -215,7 +250,7 @@ func (syncer *polymarketArchive) Sync(ctx context.Context, conn driver.Conn, req
 	}
 	var eventConns []driver.Conn
 	if !req.DryRun && syncer.cfg.ClickHouseDSN != "" {
-		for range 2 {
+		for range syncer.cfg.WriterConcurrency {
 			eventConn, connectErr := usmarket.ConnectClickHouse(ctx, syncer.cfg.ClickHouseDSN)
 			if connectErr != nil {
 				for _, opened := range eventConns {
@@ -239,6 +274,9 @@ func (syncer *polymarketArchive) Sync(ctx context.Context, conn driver.Conn, req
 		Horizon:       syncer.cfg.StateHorizon,
 		Progress:      req.Progress,
 		EventConns:    eventConns,
+		FileCompleted: polymarketArchiveFileLogger(req.Logger),
+		StageRoot:     syncer.cfg.StageRoot,
+		StageWorkers:  syncer.cfg.StageWorkers,
 	})
 	return syncpipeline.SyncResult{
 		SourceKey:    req.SourceKey,
@@ -251,8 +289,35 @@ func (syncer *polymarketArchive) Sync(ctx context.Context, conn driver.Conn, req
 			fmt.Sprintf("files_skipped=%d", result.FilesSkipped),
 			fmt.Sprintf("synthetic_books=%d", result.SyntheticBooksInserted),
 			fmt.Sprintf("pre_init_skipped=%d", result.PreInitializationSkipped),
+			fmt.Sprintf("rows_scanned=%d", result.RowsScanned),
+			fmt.Sprintf("writer_batches=%d", result.WriterBatches),
+			fmt.Sprintf("writer_wait=%s", result.WriterWait.Round(time.Millisecond)),
+			fmt.Sprintf("archive_elapsed=%s", result.Elapsed.Round(time.Millisecond)),
 		},
 	}, err
+}
+
+func polymarketArchiveFileLogger(logger *slog.Logger) func(polymarket.ArchiveFileMetrics) {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	return func(metrics polymarket.ArchiveFileMetrics) {
+		logger.Info("Polymarket archive file completed",
+			"file", metrics.Name,
+			"status", metrics.Status,
+			"size_bytes", metrics.SizeBytes,
+			"source_rows", metrics.SourceRows,
+			"selected_rows", metrics.SelectedRows,
+			"writer_batches", metrics.WriterBatches,
+			"writer_wait", metrics.WriterWait.Round(time.Millisecond),
+			"elapsed", metrics.Elapsed.Round(time.Millisecond),
+			"mib_per_second", metrics.MiBPerSecond(),
+			"rows_per_second", metrics.RowsPerSecond(),
+			"writer_wait_ratio", metrics.WriterWaitRatio(),
+			"stage_cache_hit", metrics.StageCacheHit,
+			"stage_wait", metrics.StageWait.Round(time.Millisecond),
+		)
+	}
 }
 
 func (syncer *polymarketArchive) StableScope(sourceKey string) (string, bool) {

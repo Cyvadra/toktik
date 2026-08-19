@@ -78,6 +78,7 @@ type SyncRequest struct {
 	To        time.Time
 	DryRun    bool
 	Progress  UnitProgressReporter
+	Logger    *slog.Logger
 }
 
 type UnitProgressReporter interface {
@@ -526,7 +527,7 @@ func (r *Runner) runSource(ctx context.Context, spec JobSpec, ledger *importledg
 			return SourceReport{SourceKey: sourceKey, From: from, To: to, Status: JobStatusFailed, Err: err.Error()}
 		}
 	}
-	res, err := spec.Syncer.Sync(sourceCtx, r.conn, SyncRequest{SourceKey: sourceKey, From: from, To: to, DryRun: r.opts.DryRun, Progress: r.opts.Progress})
+	res, err := spec.Syncer.Sync(sourceCtx, r.conn, SyncRequest{SourceKey: sourceKey, From: from, To: to, DryRun: r.opts.DryRun, Progress: r.opts.Progress, Logger: r.opts.Logger})
 	if err != nil {
 		if !r.opts.DryRun {
 			syncErr := err

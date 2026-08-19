@@ -1,7 +1,9 @@
 package jobs
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -329,5 +331,82 @@ func TestPolymarketArchiveUsesSingleSourceConcurrency(t *testing.T) {
 	}
 	if got := syncer.MaxConcurrency(); got != 1 {
 		t.Fatalf("max concurrency = %d, want 1", got)
+	}
+	archive := syncer.(*polymarketArchive)
+	if archive.cfg.WriterConcurrency != 2 {
+		t.Fatalf("writer concurrency = %d, want default 2", archive.cfg.WriterConcurrency)
+	}
+}
+
+func TestPolymarketArchiveDefaultsStageWorkersWhenEnabled(t *testing.T) {
+	dir := t.TempDir()
+	conditionMap := filepath.Join(dir, "conditions.jsonl")
+	if err := os.WriteFile(conditionMap, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	syncer, err := NewPolymarketArchive(PolymarketArchiveConfig{RawRoot: dir, StageRoot: filepath.Join(dir, "stage"), ConditionMap: conditionMap})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := syncer.(*polymarketArchive).cfg.StageWorkers; got != 4 {
+		t.Fatalf("stage workers = %d, want default 4", got)
+	}
+}
+
+func TestPolymarketArchiveRejectsExcessiveStageWorkers(t *testing.T) {
+	dir := t.TempDir()
+	conditionMap := filepath.Join(dir, "conditions.jsonl")
+	if err := os.WriteFile(conditionMap, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewPolymarketArchive(PolymarketArchiveConfig{RawRoot: dir, StageRoot: filepath.Join(dir, "stage"), StageWorkers: 17, ConditionMap: conditionMap}); err == nil || !strings.Contains(err.Error(), "stage_workers") {
+		t.Fatalf("expected stage worker validation error, got %v", err)
+	}
+}
+
+func TestPolymarketArchiveRejectsExcessiveWriterConcurrency(t *testing.T) {
+	dir := t.TempDir()
+	conditionMap := filepath.Join(dir, "conditions.jsonl")
+	if err := os.WriteFile(conditionMap, nil, 0o600); err != nil {
+		t.Fatalf("write condition map: %v", err)
+	}
+	if _, err := NewPolymarketArchive(PolymarketArchiveConfig{
+		RawRoot:           dir,
+		ConditionMap:      conditionMap,
+		WriterConcurrency: 9,
+	}); err == nil || !strings.Contains(err.Error(), "writer_concurrency") {
+		t.Fatalf("expected writer concurrency validation error, got %v", err)
+	}
+}
+
+func TestPolymarketArchiveFileLoggerEmitsBenchmarkFields(t *testing.T) {
+	var output bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&output, nil))
+	polymarketArchiveFileLogger(logger)(polymarket.ArchiveFileMetrics{
+		Name:          "polymarket_orderbook_2026-08-08T05.parquet",
+		Status:        polymarket.ArchiveFileImported,
+		SizeBytes:     8 * 1024 * 1024,
+		SourceRows:    1_000,
+		SelectedRows:  250,
+		WriterBatches: 2,
+		WriterWait:    500 * time.Millisecond,
+		Elapsed:       2 * time.Second,
+		StageCacheHit: true,
+		StageWait:     125 * time.Millisecond,
+	})
+
+	logged := output.String()
+	for _, want := range []string{
+		`"msg":"Polymarket archive file completed"`,
+		`"status":"imported"`,
+		`"mib_per_second":4`,
+		`"rows_per_second":500`,
+		`"writer_wait_ratio":0.25`,
+		`"stage_cache_hit":true`,
+		`"stage_wait":125000000`,
+	} {
+		if !strings.Contains(logged, want) {
+			t.Fatalf("log %q missing %q", logged, want)
+		}
 	}
 }

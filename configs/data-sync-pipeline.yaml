@@ -15,12 +15,15 @@ jobs:
   polymarket_archive:
     enabled: false
     raw_root: /mnt/hdd/pmxt/raw
+    stage_root: /mnt/p3600/toktik/polymarket-stage
+    stage_workers: 4
     condition_map_path: /mnt/hdd/hephaestus/pmxt/generated/2026-08-17/pmxt_condition_map/condition_map_by_condition.json
     # UTC, inclusive lower bound and exclusive upper bound. Keep validation
     # runs narrow before increasing this range.
     archive_from: 2026-04-13T19
     # archive_to: 2026-04-16T19
     batch_size: 50000
+    writer_concurrency: 2
     state_horizon_hours: 49
     cold_start_floor: 2026-04-13
     per_source_timeout: 0
