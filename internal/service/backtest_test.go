@@ -1,6 +1,8 @@
 package service
 
 import (
+	"encoding/json"
+	"math"
 	"testing"
 	"time"
 
@@ -121,6 +123,27 @@ func TestBuildStrategyBacktestSummaryKeepsRegularTradeCount(t *testing.T) {
 
 	if summary.TotalTrades != 3 {
 		t.Fatalf("expected regular trade count, got %d", summary.TotalTrades)
+	}
+}
+
+func TestBuildStrategyBacktestSummaryProducesValidJSONForNonFiniteMetrics(t *testing.T) {
+	result := &backtest.Result{
+		StrategyName: "non-finite",
+		FinalEquity:  math.Inf(1),
+		SharpeRatio:  math.NaN(),
+		ProfitFactor: math.Inf(1),
+		SpreadSummary: &backtest.SpreadSummary{
+			TotalPnL: math.Inf(-1),
+			WinRate:  math.NaN(),
+		},
+	}
+
+	summary := buildStrategyBacktestSummary(result, "/tmp/report.html")
+	if _, err := json.Marshal(summary); err != nil {
+		t.Fatalf("summary must be JSON encodable: %v", err)
+	}
+	if summary.FinalEquity != 0 || summary.SharpeRatio != 0 || summary.ProfitFactor != 0 || summary.SpreadSummary.TotalPnL != 0 || summary.SpreadSummary.WinRate != 0 {
+		t.Fatalf("non-finite metrics were not sanitized: %+v", summary)
 	}
 }
 
