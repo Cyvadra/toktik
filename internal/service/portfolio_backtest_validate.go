@@ -84,28 +84,30 @@ func (s *PortfolioBacktestService) resolveBacktestPlan(ctx context.Context, run 
 	if err := validatePreloadableDSLRequests(resolved); err != nil {
 		return nil, err
 	}
-	injectedConfig := make(map[string]interface{})
 	var universeSymbols []string
 	var universeCodes []string
 	var universe *bridge.UniverseSnapshot
-	universeSymbols, universeCodes, universe, err = s.resolveDSLUniverses(ctx, req, resolved, from, to)
-	if err != nil {
-		return nil, err
-	}
-	if asset == "" && len(universeSymbols) > 0 {
-		asset = universeSymbols[0]
-	}
-	if len(universeCodes) > 0 {
-		if universe != nil {
-			strategyCfg.UniverseProvider = universe.Provider
-			strategyCfg.UniverseMembers = universe.Members
-		}
-		resolved, strategyLabel, err = resolveRequestedStrategiesWithConfig(req, strategyCfg, asset, injectedConfig, universe)
+	if !skipExpensiveValidationPreflight(run, req) {
+		injectedConfig := make(map[string]interface{})
+		universeSymbols, universeCodes, universe, err = s.resolveDSLUniverses(ctx, req, resolved, from, to)
 		if err != nil {
 			return nil, err
 		}
-		if err := validatePreloadableDSLRequests(resolved); err != nil {
-			return nil, err
+		if asset == "" && len(universeSymbols) > 0 {
+			asset = universeSymbols[0]
+		}
+		if len(universeCodes) > 0 {
+			if universe != nil {
+				strategyCfg.UniverseProvider = universe.Provider
+				strategyCfg.UniverseMembers = universe.Members
+			}
+			resolved, strategyLabel, err = resolveRequestedStrategiesWithConfig(req, strategyCfg, asset, injectedConfig, universe)
+			if err != nil {
+				return nil, err
+			}
+			if err := validatePreloadableDSLRequests(resolved); err != nil {
+				return nil, err
+			}
 		}
 	}
 	if asset == "" {
@@ -173,6 +175,10 @@ func (s *PortfolioBacktestService) resolveBacktestPlan(ctx context.Context, run 
 		chainTargets:     targets,
 		runtimeWarnings:  runtimeWarnings,
 	}, nil
+}
+
+func skipExpensiveValidationPreflight(run *portfolioBacktestRun, req dto.StrategyBacktestRunRequest) bool {
+	return run == nil && req.Preflight != nil && !*req.Preflight
 }
 
 func resolveRequestedStrategiesWithConfig(req dto.StrategyBacktestRunRequest, cfg strategies.Config, asset string, injectedConfig map[string]interface{}, universe *bridge.UniverseSnapshot) ([]strategies.ResolvedStrategy, string, error) {

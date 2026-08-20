@@ -1,0 +1,26 @@
+{{define "validation.html"}}
+{{if .Error}}<div class="alert alert-danger"><strong>无法校验</strong><div class="mt-1">{{.Error}}</div></div>{{else}}
+<div class="panel p-3">
+  <div class="d-flex justify-content-between align-items-start mb-3"><div><h2 class="h5 mb-1">{{.Selected.DisplayName}}</h2><span class="text-secondary small">{{.Selected.FileName}}</span></div><span class="badge text-bg-success">校验通过</span></div>
+  {{if .Validation}}
+    {{range .Validation.Strategies}}
+      {{range .Warnings}}<div class="alert alert-warning py-2">{{.}}</div>{{end}}
+      {{range .DSLDiagnostics}}<div class="alert {{if eq .Severity "error"}}alert-danger{{else}}alert-info{{end}} py-2"><strong>{{.Code}}</strong> {{.Message}}{{if .Hint}}<div class="small">{{.Hint}}</div>{{end}}</div>{{end}}
+      <h3 class="h6 mt-4">策略参数</h3>
+      <div class="row g-3">
+      {{range .DSLParams}}
+        <div class="col-md-6">
+          <label class="form-label">{{if .Title}}{{.Title}}{{else}}{{.Name}}{{end}}</label>
+          <input type="hidden" name="param_type.{{.Name}}" value="{{.Type}}">
+          {{if .Options}}<select class="form-select" name="param.{{.Name}}">{{range .Options}}<option>{{.}}</option>{{end}}</select>
+          {{else if eq .Type "bool"}}<select class="form-select" name="param.{{.Name}}"><option value="true">true</option><option value="false">false</option></select>
+          {{else}}<input class="form-control" name="param.{{.Name}}" value="{{.Default}}" {{if or (eq .Type "int") (eq .Type "float")}}type="number" step="{{if .Step}}{{.Step}}{{else}}any{{end}}"{{else}}type="text"{{end}}>{{end}}
+        </div>
+      {{else}}<div class="col-12 text-secondary">此策略没有可调 input 参数。</div>{{end}}
+      </div>
+    {{end}}
+  {{end}}
+  <button class="btn btn-success mt-4" type="button" hx-post="/runs" hx-include="#backtest-form" hx-target="#workspace" hx-swap="innerHTML">开始回测</button>
+</div>
+{{end}}
+{{end}}

@@ -289,6 +289,66 @@ plot(ta.sma(close, length), title="SMA")`,
 	}
 }
 
+func TestValidateStrategyBacktestSkipsPreparePreflightWhenRequested(t *testing.T) {
+	feed := &validationTestFeed{}
+	svc := NewPortfolioBacktestService(nil, nil)
+	t.Cleanup(func() { _ = svc.Close() })
+	svc.engineBuilder = func(cfg backtest.Config, chainProvider backtest.OptionsChainProvider, usesOptions bool) *backtest.Engine {
+		engine := backtest.NewEngine(cfg)
+		engine.RegisterDataFeed(cryptoUnderlyingFeed, feed)
+		return engine
+	}
+	skipPreflight := false
+	resp, err := svc.ValidateStrategyBacktest(context.Background(), dto.StrategyBacktestRunRequest{
+		Asset:     "BTC",
+		From:      "2026-01-01",
+		To:        "2026-01-02",
+		Capital:   5,
+		Preflight: &skipPreflight,
+		DSL: `strategy("Runtime DSL")
+length = input.int(5, title="Length", minval=1, maxval=10)
+plot(ta.sma(close, length), title="SMA")`,
+	})
+	if err != nil {
+		t.Fatalf("ValidateStrategyBacktest returned error: %v", err)
+	}
+	if len(resp.Strategies) != 1 || len(resp.Strategies[0].DSLParams) != 1 {
+		t.Fatalf("unexpected validation response: %+v", resp)
+	}
+	if feed.loads.Load() != 0 {
+		t.Fatalf("prepare loaded market data %d times", feed.loads.Load())
+	}
+}
+
+func TestValidateStrategyBacktestSkipsUniverseResolutionWhenPreflightIsDisabled(t *testing.T) {
+	svc := NewPortfolioBacktestService(nil, nil)
+	t.Cleanup(func() { _ = svc.Close() })
+	resolver := &stubPortfolioUniverseResolver{}
+	svc.universes = resolver
+	skipPreflight := false
+	resp, err := svc.ValidateStrategyBacktest(context.Background(), dto.StrategyBacktestRunRequest{
+		Market:    "us",
+		Asset:     "SPY",
+		Interval:  "1d",
+		From:      "2026-01-01",
+		To:        "2026-01-02",
+		Capital:   100000,
+		Preflight: &skipPreflight,
+		DSL: `strategy("Universe DSL")
+symbols = universe.symbols("strong_momentum")
+plot(len(symbols), title="universe_size")`,
+	})
+	if err != nil {
+		t.Fatalf("ValidateStrategyBacktest returned error: %v", err)
+	}
+	if len(resp.Strategies) != 1 {
+		t.Fatalf("unexpected validation response: %+v", resp)
+	}
+	if len(resolver.calls) != 0 {
+		t.Fatalf("universe resolver calls = %+v, want none", resolver.calls)
+	}
+}
+
 func TestValidateStrategyBacktestRejectsUniverseWithoutReplayCoverage(t *testing.T) {
 	feed := &validationTestFeed{}
 	from := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)

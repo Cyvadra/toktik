@@ -1,0 +1,11 @@
+:root { --ink: #17211b; --paper: #f4f5f1; --line: #d9ddd6; --accent: #087f5b; }
+body { background: var(--paper); color: var(--ink); font-family: "IBM Plex Sans", "Noto Sans TC", sans-serif; min-height: 100vh; }
+.app-header { background: #fff; }
+.panel { background: #fff; border: 1px solid var(--line); border-radius: 6px; }
+.form-label { color: #4e5952; font-size: .8rem; font-weight: 650; margin-bottom: .35rem; }
+.form-control, .form-select, .btn { border-radius: 4px; }
+.strategy-select { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.empty-state { align-items: center; border: 1px dashed #b9c0b8; display: flex; justify-content: center; min-height: 28rem; text-align: center; }
+.report-frame { background: #fff; border: 1px solid var(--line); height: calc(100vh - 12rem); min-height: 40rem; width: 100%; }
+code { color: var(--accent); font-size: .75rem; }
+@media (max-width: 991px) { .empty-state { min-height: 14rem; } .report-frame { height: 70vh; min-height: 32rem; } }

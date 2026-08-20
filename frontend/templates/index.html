@@ -1,0 +1,58 @@
+{{define "index.html"}}
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Toktik DSL Backtest</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="https://cdn.jsdelivr.net/npm/htmx.org@2.0.8/dist/htmx.min.js" defer></script>
+</head>
+<body>
+  <header class="app-header border-bottom">
+    <div class="container-fluid px-4 py-3 d-flex align-items-center justify-content-between">
+      <div><h1 class="h4 mb-0">Toktik DSL Backtest</h1><p class="text-secondary mb-0 small">本地策略实验台</p></div>
+      <span class="badge text-bg-light border">API proxy</span>
+    </div>
+  </header>
+  <main class="container-fluid px-4 py-4">
+    <form id="backtest-form" class="row g-4" hx-post="/validate" hx-target="#workspace" hx-swap="innerHTML">
+      <section class="col-xl-4 col-lg-5">
+        <div class="panel p-3">
+          <h2 class="h6 mb-3">运行配置</h2>
+          <label class="form-label" for="strategy">策略</label>
+          <select class="form-select mb-3 strategy-select" id="strategy" name="strategy_file" title="选择策略">
+            {{range .Strategies}}<option value="{{.FileName}}">{{.DisplayName}} · {{.FileName}}</option>{{end}}
+          </select>
+          <div class="row g-3">
+            <div class="col-6"><label class="form-label">市场</label><select class="form-select" name="market"><option>us</option><option>crypto</option><option>forex</option></select></div>
+            <div class="col-6"><label class="form-label">品类</label><select class="form-select" name="instrument"><option>auto</option><option>spot</option><option>contract</option><option>mixed</option></select></div>
+            <div class="col-6"><label class="form-label">资产</label><input class="form-control" name="asset" value="{{.Request.Asset}}" required></div>
+            <div class="col-6"><label class="form-label">周期</label><input class="form-control" name="interval" value="{{.Request.Interval}}" required></div>
+            <div class="col-12"><label class="form-label">Symbols</label><input class="form-control" name="symbols" value="SPY" placeholder="SPY, QQQ"></div>
+            <div class="col-6"><label class="form-label">开始</label><input class="form-control" type="date" name="from" value="{{.Request.From}}" required></div>
+            <div class="col-6"><label class="form-label">结束</label><input class="form-control" type="date" name="to" value="{{.Request.To}}" required></div>
+            <div class="col-12"><label class="form-label">初始资金</label><input class="form-control" type="number" min="0.01" step="any" name="capital" value="{{.Request.Capital}}" required></div>
+          </div>
+          <button class="btn btn-dark w-100 mt-4" type="submit">校验并载入参数</button>
+        </div>
+      </section>
+      <section class="col-xl-8 col-lg-7" id="workspace">
+        <div class="empty-state"><div><h2 class="h5">准备回测</h2><p class="text-secondary mb-0">选择策略并校验，运行参数会在这里展开。</p></div></div>
+      </section>
+    </form>
+  </main>
+  <script>
+    const strategySelect = document.getElementById("strategy");
+    const workspace = document.getElementById("workspace");
+    const resetWorkspace = () => {
+      workspace.innerHTML = '<div class="empty-state"><div><h2 class="h5">准备回测</h2><p class="text-secondary mb-0">选择策略并校验，运行参数会在这里展开。</p></div></div>';
+      strategySelect.title = strategySelect.selectedOptions[0]?.textContent || "选择策略";
+    };
+    strategySelect.addEventListener("change", resetWorkspace);
+    strategySelect.title = strategySelect.selectedOptions[0]?.textContent || "选择策略";
+  </script>
+</body>
+</html>
+{{end}}

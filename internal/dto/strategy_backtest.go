@@ -22,6 +22,7 @@ type StrategyBacktestRunRequest struct {
 	DSL                      string                         `json:"dsl,omitempty"`
 	DSLParams                map[string]interface{}         `json:"dsl_params,omitempty"`
 	DSLProfile               *StrategyBacktestDSLProfile    `json:"dsl_profile,omitempty"`
+	Preflight                *bool                          `json:"preflight,omitempty"`
 	SignalSource             string                         `json:"signal_source,omitempty"`
 	ReportChartMarket        string                         `json:"report_chart_market,omitempty"`
 	ReportChartSymbol        string                         `json:"report_chart_symbol,omitempty"`

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -620,8 +621,10 @@ func (s *PortfolioBacktestService) ValidateStrategyBacktest(ctx context.Context,
 	if err != nil {
 		return nil, err
 	}
-	if err := s.preflightBacktestPlan(ctx, nil, plan); err != nil {
-		return nil, err
+	if req.Preflight == nil || *req.Preflight {
+		if err := s.preflightBacktestPlan(ctx, nil, plan); err != nil {
+			return nil, err
+		}
 	}
 	return buildStrategyBacktestValidationResponse(plan), nil
 }
@@ -855,28 +858,28 @@ func buildStrategyBacktestSummary(result *backtest.Result, htmlPath string) dto.
 		StartTime:        result.StartTime,
 		EndTime:          result.EndTime,
 		BarsCount:        result.BarsCount,
-		InitialCapital:   result.InitialCapital,
-		FinalEquity:      result.FinalEquity,
+		InitialCapital:   finiteBacktestMetric(result.InitialCapital),
+		FinalEquity:      finiteBacktestMetric(result.FinalEquity),
 		AccountUnit:      result.AccountUnit,
 		CapitalMode:      result.CapitalMode,
 		CapitalProfile:   result.CapitalProfile,
 		CapitalNote:      result.CapitalNote,
-		TotalReturn:      result.TotalReturn,
-		AnnualizedReturn: result.AnnualizedReturn,
-		SharpeRatio:      result.SharpeRatio,
-		CalmarRatio:      result.CalmarRatio,
-		MaxDrawdown:      result.MaxDrawdown,
+		TotalReturn:      finiteBacktestMetric(result.TotalReturn),
+		AnnualizedReturn: finiteBacktestMetric(result.AnnualizedReturn),
+		SharpeRatio:      finiteBacktestMetric(result.SharpeRatio),
+		CalmarRatio:      finiteBacktestMetric(result.CalmarRatio),
+		MaxDrawdown:      finiteBacktestMetric(result.MaxDrawdown),
 		TotalTrades:      summaryTotalTrades(result),
 		TotalFills:       result.TotalFills,
 		ClosedTrades:     result.ClosedTrades,
 		OpenEntries:      result.OpenEntries,
 		WinningTrades:    result.WinningTrades,
 		LosingTrades:     result.LosingTrades,
-		WinRate:          result.WinRate,
-		ProfitFactor:     result.ProfitFactor,
-		AvgWin:           result.AvgWin,
-		AvgLoss:          result.AvgLoss,
-		TotalFees:        result.TotalFees,
+		WinRate:          finiteBacktestMetric(result.WinRate),
+		ProfitFactor:     finiteBacktestMetric(result.ProfitFactor),
+		AvgWin:           finiteBacktestMetric(result.AvgWin),
+		AvgLoss:          finiteBacktestMetric(result.AvgLoss),
+		TotalFees:        finiteBacktestMetric(result.TotalFees),
 		HTMLPath:         htmlPath,
 	}
 	if result.SpreadSummary != nil {
@@ -884,16 +887,23 @@ func buildStrategyBacktestSummary(result *backtest.Result, htmlPath string) dto.
 			TotalSpreads:   result.SpreadSummary.TotalSpreads,
 			ClosedSpreads:  result.SpreadSummary.ClosedSpreads,
 			OpenSpreads:    result.SpreadSummary.OpenSpreads,
-			TotalPnL:       result.SpreadSummary.TotalPnL,
+			TotalPnL:       finiteBacktestMetric(result.SpreadSummary.TotalPnL),
 			WinningSpreads: result.SpreadSummary.WinningSpreads,
 			LosingSpreads:  result.SpreadSummary.LosingSpreads,
-			WinRate:        result.SpreadSummary.WinRate,
+			WinRate:        finiteBacktestMetric(result.SpreadSummary.WinRate),
 		}
 	}
 	if len(result.Warnings) > 0 {
 		summary.Warnings = backtestWarningsToDTO(result.Warnings)
 	}
 	return summary
+}
+
+func finiteBacktestMetric(value float64) float64 {
+	if math.IsNaN(value) || math.IsInf(value, 0) {
+		return 0
+	}
+	return value
 }
 
 func summaryTotalTrades(result *backtest.Result) int {

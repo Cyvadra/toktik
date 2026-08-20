@@ -1,0 +1,9 @@
+{{define "run.html"}}
+<div class="panel p-3" id="run-panel" {{if and .Status (or (eq .Status.Status "queued") (eq .Status.Status "running"))}}hx-get="/runs/{{.Record.ID}}" hx-trigger="every 1s" hx-target="this" hx-swap="outerHTML"{{end}}>
+  <div class="d-flex justify-content-between align-items-start mb-3"><div><h2 class="h5 mb-1">{{.Record.StrategyName}}</h2><code>{{.Record.ID}}</code></div>{{if .Status}}<span class="badge {{if eq .Status.Status "completed"}}text-bg-success{{else if eq .Status.Status "failed"}}text-bg-danger{{else}}text-bg-primary{{end}}">{{.Status.Status}}</span>{{end}}</div>
+  {{if .Error}}<div class="alert alert-warning">{{.Error}}<div class="small mt-1">稍后将自动重试。</div></div>
+  {{else if and .Status (eq .Status.Status "failed")}}<div class="alert alert-danger">{{.Status.Error}}</div>
+  {{else if and .Status (eq .Status.Status "completed")}}<div class="d-flex justify-content-end mb-3"><a class="btn btn-outline-secondary btn-sm" href="/runs/{{.Record.ID}}/report" target="_blank" rel="noopener">在新标签页打开报告</a></div><iframe class="report-frame" src="/runs/{{.Record.ID}}/report" title="回测报告"></iframe>
+  {{else}}{{$percent := 0.0}}{{if and .Status .Status.Progress}}{{$percent = .Status.Progress.Percent}}{{end}}{{$roundedPercent := printf "%.0f" $percent}}<div class="progress" role="progressbar" aria-valuenow="{{$roundedPercent}}" aria-valuemin="0" aria-valuemax="100"><div class="progress-bar progress-bar-striped progress-bar-animated" style="width: {{$roundedPercent}}%">{{$roundedPercent}}%</div></div>{{if and .Status .Status.Progress}}<p class="text-secondary small mt-2 mb-0">{{.Status.Progress.Phase}} · {{.Status.Progress.Message}}</p>{{end}}{{end}}
+</div>
+{{end}}

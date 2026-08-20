@@ -1,0 +1,18 @@
+{{define "reports.html"}}
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>本地回测报告</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <main class="container py-4">
+    <div class="d-flex align-items-center justify-content-between mb-4"><h1 class="h4 mb-0">本地回测报告</h1><a class="btn btn-outline-secondary btn-sm" href="/">返回回测台</a></div>
+    <div class="panel p-3"><div class="list-group list-group-flush">{{range .}}<a class="list-group-item list-group-item-action" href="/reports/{{.}}" target="_blank" rel="noopener">{{.}}</a>{{else}}<p class="text-secondary mb-0">没有找到已落盘的 HTML 报告。</p>{{end}}</div></div>
+  </main>
+</body>
+</html>
+{{end}}
