@@ -1,0 +1,129 @@
+//@version=6
+strategy("IV-Timed Leveraged SPY + Put Carry")
+
+// ============================================================
+// 全面版：期權訊號擇時的多頭 + 賣 Put 權利金增益
+// 牛市跑贏正股的關鍵是 beta；期權訊號負責何時持有/離場，
+// put credit spread 疊加 skew premium，極端 regime 全平防尾部。
+// ============================================================
+
+// ---- Beta 引擎 ----
+leverage    = input.float(1.5, "SPY Leverage", 0.0, 3.0, 0.1)
+panic_rank  = input.float(95.0, "Panic IV Rank", 0.0, 100.0, 1.0)
+vrp_kill    = input.float(1.00, "VRP Kill", 0.5, 2.0, 0.05)
+skew_panic  = input.float(0.15, "Skew Panic", 0.0, 0.30, 0.01)
+exit_confirm_bars    = input.int(2, "Panic Confirmation Bars", 1, 10, 1)
+entry_confirm_bars   = input.int(3, "Risk-On Confirmation Bars", 1, 20, 1)
+min_hold_bars        = input.int(5, "Minimum Beta Hold Bars", 0, 60, 1)
+reentry_cooldown_bars = input.int(5, "Beta Reentry Cooldown Bars", 0, 60, 1)
+
+// ---- Carry overlay ----
+overlay_on      = input.bool(true, "Enable Put Carry")
+overlay_iv_rank = input.float(75.0, "Overlay Min IV Rank", 0.0, 100.0, 1.0)
+overlay_dte     = input.int(30, "Overlay DTE", 7, 90, 1)
+overlay_min_dte = input.int(5, "Overlay Exit DTE", 1, 30, 1)
+put_sell_delta  = input.float(-0.20, "Sell Put Delta", -0.45, -0.05, 0.01)
+put_buy_delta   = input.float(-0.10, "Buy Put Delta", -0.30, -0.02, 0.01)
+overlay_qty     = input.int(1, "Overlay Contracts", 1, 100, 1)
+overlay_tp_pct  = input.float(0.50, "Overlay Take Profit %", 0.10, 1.0, 0.05)
+
+// ---- 波動率特徵（主標的 SPY）----
+iv      = request.factor("volatility", "1d", "iv")
+hv20    = request.factor("volatility", "1d", "hv20")
+iv_rank = request.factor("volatility", "1d", "iv_rank")
+vrp = iv / hv20
+
+// ---- skew（25Δ put IV - 25Δ call IV）----
+skew = 0.0
+chain = options.chain("us", "SPY")
+exp_chain = options.expiry_nearest(chain, overlay_dte)
+if options.len(exp_chain) > 0
+    put25 = options.sort_by_delta(options.puts(exp_chain), -0.25)
+    call25 = options.sort_by_delta(options.calls(exp_chain), 0.25)
+    if len(put25) > 0 and len(call25) > 0
+        skew = nz(contract.iv(put25[0]), 0.0) - nz(contract.iv(call25[0]), 0.0)
+
+// ---- regime：極端訊號觸發全平 ----
+panic = (not na(iv_rank) and iv_rank >= panic_rank) or (not na(vrp) and vrp < vrp_kill) or skew > skew_panic
+risk_on = not panic and not na(iv_rank) and not na(vrp) and bar_index > 30
+
+// ============================================================
+// Beta 引擎：確認期、最短持有與冷卻期降低 regime 邊界的來回交易
+// ============================================================
+varip panic_streak = 0
+varip risk_on_streak = 0
+varip beta_entry_bar = -100000
+varip beta_exit_bar = -100000
+varip beta_entry_pending = false
+varip beta_exit_pending = false
+
+if beta_entry_pending and strategy.position_size > 0
+    beta_entry_pending = false
+    beta_entry_bar = bar_index
+
+if beta_exit_pending and strategy.position_size == 0
+    beta_exit_pending = false
+    beta_exit_bar = bar_index
+
+if panic
+    panic_streak += 1
+    risk_on_streak = 0
+else
+    panic_streak = 0
+    if risk_on
+        risk_on_streak += 1
+    else
+        risk_on_streak = 0
+
+beta_held_bars = bar_index - beta_entry_bar
+beta_cooled_down = bar_index - beta_exit_bar >= reentry_cooldown_bars
+exit_ready = panic_streak >= exit_confirm_bars and beta_held_bars >= min_hold_bars
+entry_ready = risk_on_streak >= entry_confirm_bars and beta_cooled_down
+
+if exit_ready and strategy.position_size > 0 and not beta_exit_pending
+    strategy.close(id="spy_long")
+    beta_exit_pending = true
+
+if entry_ready and strategy.position_size == 0 and not beta_entry_pending and not beta_exit_pending
+    strategy.entry(id="spy_long", direction=strategy.long, notional=strategy.equity * leverage)
+    beta_entry_pending = true
+
+// ============================================================
+// Carry overlay：put credit spread（risk-on 且 IV 夠貴時賣）
+// ============================================================
+if overlay_on
+    // 管理既有 overlay
+    if ref.has("overlay_id")
+        sid = ref.get("overlay_id")
+        pnl = spread.pnl(sid)
+        leg0 = spread.leg_contract(sid, 0)
+        tp_target = ref.get("ov_tp")
+        ov_exit = (not na(pnl) and not na(tp_target) and pnl >= tp_target) or (not na(leg0) and contract.dte(leg0) <= overlay_min_dte) or panic
+        if ov_exit
+            spread.close(sid, "overlay_exit")
+            ref.clear("overlay_id")
+
+    // 開新 overlay
+    overlay_ok = not na(iv_rank) and iv_rank >= overlay_iv_rank
+    if risk_on and overlay_ok and not ref.has("overlay_id") and options.len(exp_chain) > 0
+        sell_cands = options.sort_by_delta(options.delta_range(options.puts(exp_chain), -0.40, -0.10), put_sell_delta)
+        buy_cands = options.sort_by_delta(options.delta_range(options.puts(exp_chain), -0.20, -0.03), put_buy_delta)
+        if len(sell_cands) > 0 and len(buy_cands) > 0
+            sell_c = sell_cands[0]
+            buy_c = buy_cands[0]
+            // put credit spread：賣較高履約價、買較低履約價
+            if contract.strike(sell_c) > contract.strike(buy_c)
+                credit = (nz(contract.bid(sell_c), 0.0) - nz(contract.ask(buy_c), 0.0)) * 100 * overlay_qty
+                if credit > 0
+                    sid = spread.open([leg.sell(sell_c, overlay_qty), leg.buy(buy_c, overlay_qty)], "put_credit_spread")
+                    if not na(sid)
+                        ref.set("overlay_id", sid)
+                        ref.set("ov_tp", credit * overlay_tp_pct)
+
+// ---- 診斷 ----
+plot(iv_rank, title="IV Rank", precision=2)
+plot(skew, title="Skew 25D", precision=4)
+plot(vrp, title="VRP", precision=4)
+plot(strategy.position_size, title="SPY Shares", precision=0)
+plot(panic_streak, title="Panic Streak", precision=0)
+plot(risk_on_streak, title="Risk-On Streak", precision=0)

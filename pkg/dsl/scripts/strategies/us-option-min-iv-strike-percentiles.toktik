@@ -54,10 +54,10 @@ bearish_setup = bearish_ridge and close < fast_ema
 varip ridge_direction = 0
 varip ridge_holding_bars = 0
 
-if ridge_direction == 0 and bullish_setup
+if ridge_direction == 0 and bullish_setup and strategy.position_size > 0
     ridge_direction := 1
     strategy.close(id="core")
-else if ridge_direction == 0 and bearish_setup
+else if ridge_direction == 0 and bearish_setup and strategy.position_size > 0
     ridge_direction := -1
     strategy.close(id="core")
 
