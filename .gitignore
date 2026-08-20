@@ -78,4 +78,4 @@ toktik.yaml
 __pycache__/
 *.pyc
 
-scripts/toktik-api-key
+toktik-api-key

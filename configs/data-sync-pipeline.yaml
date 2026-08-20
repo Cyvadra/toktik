@@ -83,7 +83,7 @@ jobs:
     batch_size: 50000
 
   fmp_forex:
-    enabled: false
+    enabled: true
     symbols_file: signal-list/forex-fmp-watchlist.txt
     resolve_at_startup: true
     interval: 1min

@@ -3,7 +3,7 @@ BUILD_DIR := bin
 GOFLAGS := -trimpath
 LDFLAGS := -s -w
 
-.PHONY: build-convert build-import build-missing-days build-kline-backfill build-kline-migrate-utc build-symbol-id-migrate build-volume-migrate build-api build-api-smoke build-backtest-example build-backtest-portfolio build-backtest-btc-portfolio build-us-market-import build-feature-store-backfill web-install web-dev web-build swagger-fmt swagger-market-docs swagger-backtests-docs swagger-third-party-docs export-market-api-md export-backtests-api-md export-third-party-docs refresh-api-docs build-all build-win-arm clean
+.PHONY: build-convert build-import build-missing-days build-kline-backfill build-kline-migrate-utc build-symbol-id-migrate build-volume-migrate build-api build-api-smoke build-backtest-example build-backtest-portfolio build-backtest-btc-portfolio build-us-market-import build-feature-store-backfill build-frontend frontend-dev web-install web-dev web-build swagger-fmt swagger-market-docs swagger-backtests-docs swagger-third-party-docs export-market-api-md export-backtests-api-md export-third-party-docs refresh-api-docs build-all build-win-arm clean
 
 build-all: build-convert build-import build-missing-days build-kline-backfill build-kline-migrate-utc build-symbol-id-migrate build-volume-migrate build-api build-api-smoke build-backtest-example build-backtest-portfolio build-us-market-import build-feature-store-backfill
 
@@ -60,6 +60,13 @@ build-us-market-import:
 build-feature-store-backfill:
 	@mkdir -p $(BUILD_DIR)
 	go build $(GOFLAGS) -ldflags '$(LDFLAGS)' -o $(BUILD_DIR)/feature-store-backfill ./cmd/feature-store-backfill
+
+build-frontend:
+	@mkdir -p $(BUILD_DIR)
+	go build $(GOFLAGS) -ldflags '$(LDFLAGS)' -o $(BUILD_DIR)/dsl-backtest-frontend ./frontend
+
+frontend-dev:
+	go run ./frontend
 
 web-install:
 	npm --prefix web/data-browser install
