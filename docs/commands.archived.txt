@@ -1,0 +1,116 @@
+commands
+
+
+
+
+
+
+go run ./cmd/data-sync-pipeline integrity --from 2023-05-01 --to 2026-05-17 --repair --max-memory-gb 64 --external-group-by-gb 16 --max-threads 8
+
+
+go run ./cmd/data-sync-pipeline integrity \
+  --from 2023-05-01 \
+  --to 2026-05-17
+
+
+---
+
+
+# 部分数据回填命令
+
+go run ./cmd/us-market-fmp-klines-sync --symbols AAPL --start-date 2026-04-01 --end-date 2026-05-09 --interval 1min # --dry-run
+
+go run ./cmd/crypto-spot-fmp-sync --symbols BTCUSD --start-date 2026-04-01 --end-date 2025-05-09 --interval 1min # --dry-run
+
+go run ./cmd/forex-market-fmp-klines-sync --start-date 2026-04-01 --end-date 2026-05-09
+
+go run ./cmd/us-market-fundamentals-backfill \
+  --provider fmp \
+  --start-date 2026-04-01 \
+  --end-date 2026-05-09 \
+  --fmp-quarter-limit 40 \
+  --workers 2 \
+  --qps 5 \
+  --batch-size 1000 \
+  --dry-run
+
+# 我应该还有遗漏的，帮我整理一下，并给出建议的执行命令和顺序
+
+
+---
+
+
+go run ./cmd/backtest-portfolio/main.go \
+  --asset BTC \
+  --from 2025-01-01 \
+  --to 2025-12-30 \
+  --ma-period 120 \
+  --p-threshold 0.15 \
+  --spread-entry-price-mode mark_close \
+  --spread-exit-price-mode mark_close \
+  --spread-valuation-price-mode mark_close \
+  --position-size 1 \
+  --strategy both
+
+  --strategy bull-put-spread
+
+
+
+
+go run ./cmd/backtest-portfolio/main.go --asset BTC --from 2023-01-11 --to 2025-12-30 --strategy turtle-trend-simp --spread-entry-price-mode mark_close --spread-exit-price-mode mark_close --spread-valuation-price-mode mark_close --capital 100 --interval 6h --direction long_only
+
+go run ./cmd/backtest-portfolio/main.go --asset BTC --from 2024-11-11 --to 2025-12-30 --strategy sf31-long --spread-entry-price-mode mark_close --spread-exit-price-mode mark_close --spread-valuation-price-mode mark_close --capital 100
+
+
+
+go run ./cmd/backtest-portfolio/main.go \
+  --asset BTC \
+  --from 2023-01-11 \
+  --to 2025-12-30 \
+  --strategy dual-spreads-btc-volatility \
+  --interval 15m \
+  --capital 100 \
+  --spread-entry-price-mode mark_close \
+  --spread-exit-price-mode mark_close \
+  --spread-valuation-price-mode mark_close
+
+
+go run ./cmd/backtest-portfolio/main.go \
+  --asset BTC \
+  --from 2023-01-11 \
+  --to 2025-12-30 \
+  --strategy retracement-ratio-protective-spread-short \
+  --interval 15m \
+  --capital 100 \
+  --spread-entry-price-mode mark_close \
+  --spread-exit-price-mode mark_close \
+  --spread-valuation-price-mode mark_close
+
+
+
+
+
+
+
+
+SIGNAL_LEVEL=1d RRPS_DIRECTION=long go run ./cmd/backtest-portfolio/main.go \
+  --market crypto \
+  --instrument contract \
+  --asset BTC \
+  --from 2023-01-01 \
+  --to 2025-12-31 \
+  --strategy retracement-ratio-protective-spread \
+  --interval 1h \
+  --capital 100 \
+  --spread-entry-price-mode mark_close \
+  --spread-exit-price-mode mark_close \
+  --spread-valuation-price-mode mark_close \
+  --direction long_only \
+  --clear-previous-data
+
+
+
+
+
+
+
